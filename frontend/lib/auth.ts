@@ -1,14 +1,10 @@
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import NextAuth from "next-auth"
-import EmailProvider from "next-auth/providers/email"
-import { Resend } from "resend"
+import Resend from "next-auth/providers/resend"
 
 import { prisma } from "./db"
 
-const resend = new Resend(process.env.RESEND_API_KEY || "re_placeholder")
-
 function generateCode(token: string): string {
-  // Generate a deterministic 8-digit code from the token
   let hash = 0
   for (let i = 0; i < token.length; i++) {
     const char = token.charCodeAt(i)
@@ -19,12 +15,15 @@ function generateCode(token: string): string {
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  debug: process.env.NODE_ENV === "development",
   providers: [
-    EmailProvider({
-      server: {},
-      from: "noreply@unilinkportal.com",
+    Resend({
+      apiKey: process.env.RESEND_API_KEY,
+      from: "Analytics Hub <noreply@unilinkportal.com>",
       sendVerificationRequest: async ({ identifier: email, token, url }) => {
         const code = generateCode(token)
+        const { Resend: ResendClient } = await import("resend")
+        const resend = new ResendClient(process.env.RESEND_API_KEY)
         await resend.emails.send({
           from: "Analytics Hub <noreply@unilinkportal.com>",
           to: email,
@@ -51,19 +50,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token.sub) {
         session.user.id = token.sub
 
-        const dbUser = await prisma.user.findUnique({
-          where: { id: token.sub },
-          include: {
-            userRoles: {
-              include: { role: true },
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: token.sub },
+            include: {
+              userRoles: {
+                include: { role: true },
+              },
             },
-          },
-        })
+          })
 
-        if (dbUser) {
-          session.user.roles = dbUser.userRoles.map((ur: { role: { name: string } }) => ur.role.name)
-          session.user.department = dbUser.department
-          session.user.company = dbUser.company
+          if (dbUser) {
+            session.user.roles = dbUser.userRoles.map((ur: { role: { name: string } }) => ur.role.name)
+            session.user.department = dbUser.department
+            session.user.company = dbUser.company
+          }
+        } catch (e) {
+          console.error("Failed to fetch user roles:", e)
         }
       }
       return session
