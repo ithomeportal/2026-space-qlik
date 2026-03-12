@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: 2026-space-qlik-back
+    runtime: python
+    region: ohio
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: QLIK_TENANT_URL
+        value: https://mb01txe2h9rovgh.us.qlikcloud.com
+      - key: QLIK_PRIVATE_KEY
+        sync: false
+      - key: QLIK_ISSUER
+        sync: false
+      - key: QLIK_KEY_ID
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TYPESENSE_API_KEY
+        sync: false
+      - key: TYPESENSE_HOST
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.0"
