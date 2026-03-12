@@ -28,9 +28,11 @@ build/
 .DS_Store
 Thumbs.db
 
-# Credentials
+# Credentials & notes
 *credentials*
 *secret*
+*.txt
+!requirements.txt
 
 # Documentation (local only)
 docs/

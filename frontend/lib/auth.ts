@@ -23,7 +23,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     EmailProvider({
       server: {},
       from: "noreply@unilinkportal.com",
-      sendVerificationRequest: async ({ identifier: email, token }) => {
+      sendVerificationRequest: async ({ identifier: email, token, url }) => {
         const code = generateCode(token)
         await resend.emails.send({
           from: "Analytics Hub <noreply@unilinkportal.com>",
@@ -35,6 +35,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               <p style="color: #111827; font-size: 16px;">Your verification code is:</p>
               <p style="font-size: 32px; font-weight: 700; color: #2563EB; letter-spacing: 4px; margin: 24px 0;">${code}</p>
               <p style="color: #6B7280; font-size: 14px;">This code expires in 10 minutes.</p>
+              <p style="color: #6B7280; font-size: 14px; margin-top: 24px;">Or <a href="${url}" style="color: #2563EB;">click here to sign in directly</a>.</p>
             </div>
           `,
         })

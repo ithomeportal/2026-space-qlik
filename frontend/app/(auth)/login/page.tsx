@@ -22,7 +22,19 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      await signIn("email", { email, callbackUrl: "/" })
+      const res = await signIn("email", {
+        email,
+        redirect: false,
+      })
+
+      if (res?.error) {
+        setError("Failed to send verification code. Please try again.")
+        setLoading(false)
+        return
+      }
+
+      // Redirect to verify page with email in query params
+      window.location.href = `/login/verify?email=${encodeURIComponent(email)}`
     } catch {
       setError("Failed to send verification code")
       setLoading(false)
