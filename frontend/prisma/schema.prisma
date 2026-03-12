@@ -9,7 +9,7 @@ datasource db {
 
 model Report {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  qlikAppId    String   @map("qlik_app_id")
+  qlikAppId    String   @unique @map("qlik_app_id")
   qlikSheetId  String?  @map("qlik_sheet_id")
   qlikSpaceId  String?  @map("qlik_space_id")
   title        String

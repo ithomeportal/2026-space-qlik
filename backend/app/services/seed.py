@@ -254,6 +254,26 @@ async def seed_all():
     pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=1, max_size=3)
 
     try:
+        # 0. Remove duplicate reports (keep oldest by created_at)
+        await pool.execute(
+            """
+            DELETE FROM reports r
+            WHERE r.id NOT IN (
+              SELECT DISTINCT ON (qlik_app_id) id
+              FROM reports
+              ORDER BY qlik_app_id, created_at ASC
+            )
+            """
+        )
+
+        # Ensure unique constraint exists for idempotent seeding
+        await pool.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS reports_qlik_app_id_key
+            ON reports (qlik_app_id)
+            """
+        )
+
         # 1. Seed roles
         role_ids = {}
         for name, description in DEFAULT_ROLES:
@@ -277,7 +297,13 @@ async def seed_all():
                 INSERT INTO reports (qlik_app_id, qlik_sheet_id, title, description,
                                      category, tags, owner_name)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (qlik_app_id) DO UPDATE SET
+                  qlik_sheet_id = EXCLUDED.qlik_sheet_id,
+                  title = EXCLUDED.title,
+                  description = EXCLUDED.description,
+                  category = EXCLUDED.category,
+                  tags = EXCLUDED.tags,
+                  owner_name = EXCLUDED.owner_name
                 RETURNING id
                 """,
                 report["qlik_app_id"],
