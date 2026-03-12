@@ -156,3 +156,16 @@ model VerificationToken {
   @@unique([identifier, token])
   @@map("verification_tokens")
 }
+
+model EmailCode {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String
+  code        String
+  callbackUrl String   @map("callback_url")
+  expires     DateTime
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([email, code])
+  @@index([email, expires])
+  @@map("email_codes")
+}

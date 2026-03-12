@@ -28,7 +28,7 @@ export default function LoginPage() {
       })
 
       if (res?.error) {
-        setError(`Auth error: ${res.error} (status: ${res.status}, ok: ${res.ok})`)
+        setError("Failed to send verification code. Please try again.")
         setLoading(false)
         return
       }

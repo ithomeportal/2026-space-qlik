@@ -45,3 +45,4 @@ typesense-data/
 
 # Claude
 .claude/
+.vercel

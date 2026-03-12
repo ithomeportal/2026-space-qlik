@@ -1,4 +1,4 @@
-# Analytics Hub — Role-Based Qlik Dashboard Portal
+# UNILINK Space (Analytics Hub) — Role-Based Qlik Dashboard Portal
 
 > For detailed specs, see `docs/SPEC-*.md`
 
@@ -23,7 +23,7 @@
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
 - CSP: only allow iframes from `mb01txe2h9rovgh.us.qlikcloud.com`
 - CORS: restrict to Vercel deployment origin only
-- Email auth: 8-digit code, 10-min TTL, via Resend
+- Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 
 ### Code Style
 - Immutable updates only (spread operator, no mutation)
@@ -62,7 +62,7 @@
 | Styling | Tailwind CSS + shadcn/ui |
 | State | Zustand + React Query |
 | Backend | FastAPI (Python) on Render |
-| Auth | NextAuth.js v5 (email code via Resend) |
+| Auth | NextAuth.js v5 beta-30 (Resend provider, JWT strategy) |
 | Qlik Embed | `@qlik/embed-web-components` with JWT |
 | Database | PostgreSQL (Aiven) |
 | Search | Typesense |
@@ -111,14 +111,17 @@ backend/
 
 ## Environment Variables
 
-### Frontend (Vercel)
+### Frontend (Vercel) — project: `2026-space-qlik-front`
 ```
+AUTH_URL=https://test.unilink.space
+AUTH_SECRET=<from-env>
+AUTH_TRUST_HOST=true
 NEXTAUTH_URL=https://test.unilink.space
 NEXTAUTH_SECRET=<from-env>
+DATABASE_URL=<from-env> (must start with postgresql://)
 RESEND_API_KEY=<from-env>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
 NEXT_PUBLIC_QLIK_TENANT=mb01txe2h9rovgh.us.qlikcloud.com
-DATABASE_URL=<from-env>
 ```
 
 ### Backend (Render)
