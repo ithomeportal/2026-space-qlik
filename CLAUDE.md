@@ -25,6 +25,18 @@
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 
+### Vercel Env Var Management (Critical)
+- ALWAYS run `vercel env` commands from `frontend/` directory (correct `.vercel/project.json`)
+- Use `printf 'value' | npx vercel env add NAME production` — NOT `echo` (adds newline)
+- Never run `vercel --prod` from repo root — use git push for auto-deploy
+- After changing env vars, push empty commit to trigger redeploy with new values
+
+### NextAuth v5 Gotchas
+- Provider ID is `"resend"` not `"email"` — affects signIn() and callback URLs
+- Requires `AUTH_SECRET` (not just `NEXTAUTH_SECRET`) + `AUTH_TRUST_HOST=true`
+- Tokens are hashed before DB storage — code verification uses `email_codes` table, NOT `verification_tokens`
+- Login page must check session and redirect authenticated users to `/`
+
 ### Code Style
 - Immutable updates only (spread operator, no mutation)
 - Files < 400 lines (800 max), functions < 50 lines
@@ -80,8 +92,10 @@ frontend/
     reports/[id]/page.tsx   # Full-screen Qlik embed viewer
     admin/                  # Admin guard + sidebar + CRUD pages
     api/auth/[...nextauth]/ # NextAuth handlers
+    api/auth/verify-code/   # 8-digit code → callback URL lookup
     api/proxy/[...path]/    # Backend proxy
-    (auth)/login/page.tsx   # Login page
+    (auth)/login/page.tsx   # Login page (redirects if authenticated)
+    (auth)/login/verify/    # Code entry page
   components/
     SearchBar.tsx           # cmdk command palette
     ReportGrid.tsx          # CSS Grid, groups by category
@@ -150,7 +164,8 @@ ALLOWED_ORIGINS=https://test.unilink.space,https://2026-space-qlik-front.vercel.
 | DFW | DFW-specific |
 | CORP | CORP-specific |
 
-Users seeded from time-off DB. Auth: `@unilinktransportation.com` only. Roles assigned by admin.
+Users seeded from time-off DB (100 users). Auth: `@unilinktransportation.com` only. Roles assigned by admin.
+Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + executive roles).
 
 ---
 
