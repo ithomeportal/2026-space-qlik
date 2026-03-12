@@ -15,16 +15,18 @@ function generateCode(token: string): string {
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
-  debug: process.env.NODE_ENV === "development",
+  debug: true,
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
       from: "UNILINK Space <noreply@unilinkportal.com>",
       sendVerificationRequest: async ({ identifier: email, token, url }) => {
+        console.error("[auth] sendVerificationRequest called for:", email)
+        console.error("[auth] RESEND_API_KEY present:", !!process.env.RESEND_API_KEY, "length:", process.env.RESEND_API_KEY?.length)
         const code = generateCode(token)
         const { Resend: ResendClient } = await import("resend")
         const resend = new ResendClient(process.env.RESEND_API_KEY)
-        await resend.emails.send({
+        const result = await resend.emails.send({
           from: "UNILINK Space <noreply@unilinkportal.com>",
           to: email,
           subject: `Your login code: ${code}`,
@@ -38,13 +40,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             </div>
           `,
         })
+        console.error("[auth] Resend result:", JSON.stringify(result))
       },
       maxAge: 10 * 60,
     }),
   ],
   callbacks: {
-    async signIn({ user }) {
-      return user.email?.endsWith("@unilinktransportation.com") ?? false
+    async signIn({ user, account }) {
+      console.error("[auth] signIn callback:", { email: user.email, provider: account?.provider, type: account?.type })
+      const allowed = user.email?.endsWith("@unilinktransportation.com") ?? false
+      console.error("[auth] signIn allowed:", allowed)
+      return allowed
     },
     async session({ session, token }) {
       if (token.sub) {
