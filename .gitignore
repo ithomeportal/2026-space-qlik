@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Keys
+*.pem
+*.key
+
+# Build
+.next/
+out/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials (NEVER commit these)
+*credentials*
+*secret*
+*.txt
+!requirements.txt
+
+# Prisma
+prisma/*.db
+
+# Typesense
+typesense-data/
+
+# Claude
+.claude/
