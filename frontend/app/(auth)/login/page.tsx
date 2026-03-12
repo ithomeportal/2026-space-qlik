@@ -1,15 +1,22 @@
 "use client"
 
-import { signIn } from "next-auth/react"
-import { useState } from "react"
+import { signIn, useSession } from "next-auth/react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 
 export default function LoginPage() {
+  const { data: session, status } = useSession()
   const [email, setEmail] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      window.location.href = "/"
+    }
+  }, [status])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
