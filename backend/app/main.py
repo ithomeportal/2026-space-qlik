@@ -13,11 +13,20 @@ from app.routers import admin, preferences, qlik, reports, search
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.pool = await asyncpg.create_pool(
-        settings.DATABASE_URL, min_size=2, max_size=10
-    )
+    if settings.DATABASE_URL:
+        try:
+            app.state.pool = await asyncpg.create_pool(
+                settings.DATABASE_URL, min_size=2, max_size=10
+            )
+        except Exception as e:
+            import logging
+            logging.warning(f"Database connection failed: {e}. Running without DB.")
+            app.state.pool = None
+    else:
+        app.state.pool = None
     yield
-    await app.state.pool.close()
+    if app.state.pool:
+        await app.state.pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)

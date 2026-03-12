@@ -3,7 +3,10 @@ from fastapi import Header, HTTPException, Request
 
 
 def get_pool(request: Request) -> asyncpg.Pool:
-    return request.app.state.pool
+    pool = request.app.state.pool
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    return pool
 
 
 async def require_user(authorization: str = Header(...)) -> dict:
