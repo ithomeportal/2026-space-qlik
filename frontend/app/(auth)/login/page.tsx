@@ -59,7 +59,7 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
               type="email"
-              placeholder="your.name@unilinktransportation.com"
+              placeholder="your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
