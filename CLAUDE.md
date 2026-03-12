@@ -113,7 +113,7 @@ backend/
 
 ### Frontend (Vercel)
 ```
-NEXTAUTH_URL=https://2026-space-qlik-front.vercel.app
+NEXTAUTH_URL=https://test.unilink.space
 NEXTAUTH_SECRET=<from-env>
 RESEND_API_KEY=<from-env>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
@@ -128,7 +128,7 @@ QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<from-env>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
 QLIK_KEY_ID=analytics-hub-key-1
-ALLOWED_ORIGINS=https://2026-space-qlik-front.vercel.app
+ALLOWED_ORIGINS=https://test.unilink.space,https://2026-space-qlik-front.vercel.app
 ```
 
 ---
@@ -165,7 +165,7 @@ Users seeded from time-off DB. Auth: `@unilinktransportation.com` only. Roles as
 
 | Service | URL |
 |---------|-----|
-| Frontend | https://2026-space-qlik-front.vercel.app |
+| Frontend | https://test.unilink.space (also: 2026-space-qlik-front.vercel.app) |
 | Backend | https://two026-space-qlik-back.onrender.com |
 | Database | Aiven PostgreSQL (`analytics_hub`) |
 | Repo | https://github.com/ithomeportal/2026-space-qlik |
