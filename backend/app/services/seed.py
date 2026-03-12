@@ -228,6 +228,14 @@ REPORTS = [
     },
 ]
 
+# Admin users get admin + executive roles
+ADMIN_EMAILS = [
+    "dfrodriguez@unilinktransportation.com",
+    "kmeneses@unilinktransportation.com",
+    "msalazarm@unilinktransportation.com",
+    "dcastrog@unilinktransportation.com",
+]
+
 # Department → role mapping for auto-assignment
 DEPT_ROLE_MAP = {
     "Sales": "sales",
@@ -297,6 +305,23 @@ async def seed_all():
         # 3. Seed users from time-off DB (if available)
         if settings.TIMEOFF_DATABASE_URL:
             await _seed_users_from_timeoff(pool, role_ids)
+
+        # 4. Assign admin + executive roles to admin users
+        for admin_email in ADMIN_EMAILS:
+            user_row = await pool.fetchrow(
+                "SELECT id FROM users WHERE email = $1", admin_email
+            )
+            if user_row:
+                for role_name in ("admin", "executive"):
+                    if role_name in role_ids:
+                        await pool.execute(
+                            """
+                            INSERT INTO user_roles (user_id, role_id)
+                            VALUES ($1, $2) ON CONFLICT DO NOTHING
+                            """,
+                            user_row["id"],
+                            role_ids[role_name],
+                        )
 
     finally:
         await pool.close()

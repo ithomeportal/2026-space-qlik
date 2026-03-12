@@ -18,9 +18,18 @@ async def lifespan(app: FastAPI):
             app.state.pool = await asyncpg.create_pool(
                 settings.DATABASE_URL, min_size=2, max_size=10
             )
+            # Auto-seed if no role-report mappings exist
+            count = await app.state.pool.fetchval(
+                "SELECT COUNT(*) FROM role_report_access"
+            )
+            if count == 0:
+                import logging
+                logging.info("No role-report mappings found, running seed...")
+                from app.services.seed import seed_all
+                await seed_all()
         except Exception as e:
             import logging
-            logging.warning(f"Database connection failed: {e}. Running without DB.")
+            logging.warning(f"Database startup error: {e}. Running without DB.")
             app.state.pool = None
     else:
         app.state.pool = None

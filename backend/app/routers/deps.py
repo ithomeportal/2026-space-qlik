@@ -12,22 +12,20 @@ def get_pool(request: Request) -> asyncpg.Pool:
 async def require_user(authorization: str = Header(...)) -> dict:
     """Extract user info from the Authorization header.
 
-    The Next.js proxy forwards the session JWT. In production this would
-    verify the NextAuth JWT signature. For MVP we trust the proxy and
-    decode the payload claims.
+    The Next.js proxy forwards the session as a JSON-serialised object.
+    We trust the proxy (it already validated the session) and parse the
+    payload directly.
     """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
     token = authorization[7:]
 
-    # For MVP, we decode without verification since the Next.js proxy
-    # already validated the session. In production, verify with NEXTAUTH_SECRET.
-    import jwt as pyjwt
+    import json
 
     try:
-        payload = pyjwt.decode(token, options={"verify_signature": False})
-    except pyjwt.DecodeError:
+        payload = json.loads(token)
+    except (json.JSONDecodeError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     if not payload.get("sub"):

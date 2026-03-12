@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from app.routers.deps import get_pool, require_user
 
+from app.config import settings
+
 router = APIRouter(tags=["admin"])
 
 
@@ -310,6 +312,21 @@ async def admin_update_user_roles(
             role_id,
         )
     return {"success": True, "data": {"updated": True}}
+
+
+# --- Seed ---
+
+
+@router.post("/seed")
+async def admin_seed(request: Request, secret: str = Query(...)):
+    """Trigger database seed. Protected by secret query param."""
+    if secret != settings.SEED_SECRET:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from app.services.seed import seed_all
+    await seed_all()
+    return {"success": True, "data": {"seeded": True}}
 
 
 # --- Usage Analytics ---
