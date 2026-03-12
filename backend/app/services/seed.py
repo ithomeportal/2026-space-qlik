@@ -291,7 +291,7 @@ async def seed_all():
 
         # 2. Seed reports and role-report mappings
         for report in REPORTS:
-            roles = report.pop("roles")
+            roles = report.get("roles", [])
             row = await pool.fetchrow(
                 """
                 INSERT INTO reports (qlik_app_id, qlik_sheet_id, title, description,
