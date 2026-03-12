@@ -22,7 +22,7 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      const res = await signIn("email", {
+      const res = await signIn("resend", {
         email,
         redirect: false,
       })

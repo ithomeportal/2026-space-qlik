@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     if (expectedCode === code) {
       // Build the NextAuth callback URL
       const baseUrl = process.env.NEXTAUTH_URL || `https://${request.headers.get("host")}`
-      const callbackUrl = `${baseUrl}/api/auth/callback/email?token=${encodeURIComponent(record.token)}&email=${encodeURIComponent(email)}`
+      const callbackUrl = `${baseUrl}/api/auth/callback/resend?token=${encodeURIComponent(record.token)}&email=${encodeURIComponent(email)}`
 
       return NextResponse.json({ url: callbackUrl })
     }
