@@ -46,10 +46,10 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#1B3A5C]">
-            <span className="text-lg font-bold text-white">AH</span>
+            <span className="text-lg font-bold text-white">US</span>
           </div>
           <CardTitle className="text-2xl font-bold text-[#1B3A5C]">
-            Analytics Hub
+            UNILINK Space
           </CardTitle>
           <CardDescription>
             Sign in with your corporate email to access dashboards

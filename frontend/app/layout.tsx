@@ -7,7 +7,7 @@ import { Header } from "@/components/Header"
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
 
 export const metadata: Metadata = {
-  title: "Analytics Hub — Unilink",
+  title: "UNILINK Space (Analytics Hub)",
   description: "Role-based Qlik dashboard portal for Unilink Transportation",
 }
 

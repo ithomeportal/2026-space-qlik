@@ -19,18 +19,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
-      from: "Analytics Hub <noreply@unilinkportal.com>",
+      from: "UNILINK Space <noreply@unilinkportal.com>",
       sendVerificationRequest: async ({ identifier: email, token, url }) => {
         const code = generateCode(token)
         const { Resend: ResendClient } = await import("resend")
         const resend = new ResendClient(process.env.RESEND_API_KEY)
         await resend.emails.send({
-          from: "Analytics Hub <noreply@unilinkportal.com>",
+          from: "UNILINK Space <noreply@unilinkportal.com>",
           to: email,
           subject: `Your login code: ${code}`,
           html: `
             <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-              <h2 style="color: #1B3A5C; margin-bottom: 24px;">Analytics Hub</h2>
+              <h2 style="color: #1B3A5C; margin-bottom: 24px;">UNILINK Space</h2>
               <p style="color: #111827; font-size: 16px;">Your verification code is:</p>
               <p style="font-size: 32px; font-weight: 700; color: #2563EB; letter-spacing: 4px; margin: 24px 0;">${code}</p>
               <p style="color: #6B7280; font-size: 14px;">This code expires in 10 minutes.</p>

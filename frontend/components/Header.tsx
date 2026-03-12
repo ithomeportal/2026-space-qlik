@@ -20,10 +20,10 @@ export function Header() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#1B3A5C]">
-            <span className="text-sm font-bold text-white">AH</span>
+            <span className="text-sm font-bold text-white">US</span>
           </div>
           <span className="hidden text-lg font-semibold text-[#1B3A5C] sm:inline">
-            Analytics Hub
+            UNILINK Space
           </span>
         </Link>
 
