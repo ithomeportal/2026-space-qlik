@@ -10,6 +10,7 @@ interface QlikEmbedProps {
 
 const TENANT = process.env.NEXT_PUBLIC_QLIK_TENANT ?? "mb01txe2h9rovgh.us.qlikcloud.com"
 const TENANT_URL = `https://${TENANT}`
+const WEB_INTEGRATION_ID = process.env.NEXT_PUBLIC_QLIK_WEB_INTEGRATION_ID ?? "Cp8l1tscJveGLgUN3m0CFNuohbotG9eO"
 
 async function fetchToken(): Promise<string> {
   const res = await fetch("/api/proxy/qlik/token", {
@@ -70,6 +71,7 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
         if (sheetId) embed.setAttribute("sheet-id", sheetId)
         embed.setAttribute("host", TENANT_URL)
         embed.setAttribute("auth-type", "cookie")
+        embed.setAttribute("web-integration-id", WEB_INTEGRATION_ID)
 
         // Set getAccessToken as a property (not attribute) so it's a function
         ;(embed as unknown as Record<string, unknown>).getAccessToken = () => currentToken
