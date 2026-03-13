@@ -126,16 +126,8 @@ REPORTS = [
         "owner_name": "Melany",
         "roles": ["executive", "operations"],
     },
-    {
-        "qlik_app_id": "0857253a-9c3d-4c37-b02f-2ef5faf25705",
-        "qlik_sheet_id": None,  # App has no sheets — will show app overview
-        "title": "Customer Attrition Detail",
-        "description": "Detailed customer attrition analysis and trends",
-        "category": "Operations",
-        "tags": ["attrition", "customer", "churn"],
-        "owner_name": "Melany",
-        "roles": ["executive", "operations", "sales"],
-    },
+    # Customer Attrition Detail (0857253a-9c3d-4c37-b02f-2ef5faf25705) removed:
+    # app has 0 sheets in Qlik Cloud — nothing to embed
     {
         "qlik_app_id": "b4f70f83-36b8-4426-a9b3-ca26f25b55f4",
         "qlik_sheet_id": "5a52424c-91e5-4df4-a7a9-e5fe95895435",
