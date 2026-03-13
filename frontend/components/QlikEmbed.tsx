@@ -10,7 +10,7 @@ interface QlikEmbedProps {
 
 const TENANT = process.env.NEXT_PUBLIC_QLIK_TENANT ?? "mb01txe2h9rovgh.us.qlikcloud.com"
 const TENANT_URL = `https://${TENANT}`
-const WEB_INTEGRATION_ID = process.env.NEXT_PUBLIC_QLIK_WEB_INTEGRATION_ID ?? "Cp8l1tscJveGLgUN3m0CFNuohbotG9eO"
+const WEB_INTEGRATION_ID = process.env.NEXT_PUBLIC_QLIK_WEB_INTEGRATION_ID ?? "UcOYHRHZf7W4ydusUB3cJPin3HHOPnit"
 
 async function fetchToken(): Promise<string> {
   const res = await fetch("/api/proxy/qlik/token", {
