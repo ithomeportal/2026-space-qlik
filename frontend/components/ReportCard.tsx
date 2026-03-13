@@ -2,28 +2,9 @@
 
 import { motion } from "framer-motion"
 import Link from "next/link"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
 import { Star } from "lucide-react"
 import type { Report } from "@/lib/api"
-
-const CATEGORY_COLORS: Record<string, string> = {
-  Executive: "bg-[#1B3A5C] text-white",
-  Finance: "bg-[#1D4ED8] text-white",
-  Operations: "bg-[#D97706] text-white",
-  Sales: "bg-[#7C3AED] text-white",
-  HR: "bg-[#0D9488] text-white",
-  IT: "bg-[#6366F1] text-white",
-}
-
-function getInitials(title: string): string {
-  return title
-    .split(/[\s-]+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
-}
+import { getReportIcon } from "./ReportIcons"
 
 function formatTimeAgo(date: string | null): string {
   if (!date) return "Unknown"
@@ -39,73 +20,129 @@ interface ReportCardProps {
   report: Report
   isFavorited?: boolean
   onToggleFavorite?: (id: string) => void
+  view?: "tiles" | "list"
 }
 
-export function ReportCard({ report, isFavorited, onToggleFavorite }: ReportCardProps) {
-  const categoryColor = CATEGORY_COLORS[report.category ?? ""] ?? "bg-gray-500 text-white"
+function FavoriteButton({
+  reportId,
+  isFavorited,
+  onToggleFavorite,
+}: {
+  reportId: string
+  isFavorited?: boolean
+  onToggleFavorite?: (id: string) => void
+}) {
+  if (!onToggleFavorite) return null
+  return (
+    <button
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onToggleFavorite(reportId)
+      }}
+      className="p-1 transition-colors hover:text-[#2563EB]"
+    >
+      <Star
+        className={`h-4 w-4 ${
+          isFavorited ? "fill-[#2563EB] text-[#2563EB]" : "text-[#9CA3AF]"
+        }`}
+      />
+    </button>
+  )
+}
+
+/** Tile view — square app-icon style */
+function TileView({ report, isFavorited, onToggleFavorite }: ReportCardProps) {
+  const { icon: Icon, bg } = getReportIcon(report.title, report.category)
 
   return (
     <motion.div
-      whileHover={{ y: -4 }}
+      whileHover={{ y: -4, scale: 1.02 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
     >
-      <Link href={`/reports/${report.id}`}>
-        <Card className="group h-full cursor-pointer border-[#E5E7EB] transition-shadow duration-150 hover:shadow-lg">
-          <CardContent className="flex h-full flex-col gap-3 p-5">
-            {/* Top row: icon + category + favorite */}
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${categoryColor}`}
-                >
-                  {getInitials(report.title)}
-                </div>
-                {report.category && (
-                  <Badge className={`text-[11px] uppercase ${categoryColor}`}>
-                    {report.category}
-                  </Badge>
-                )}
-              </div>
-              {onToggleFavorite && (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onToggleFavorite(report.id)
-                  }}
-                  className="p-1 transition-colors hover:text-[#2563EB]"
-                >
-                  <Star
-                    className={`h-4 w-4 ${
-                      isFavorited
-                        ? "fill-[#2563EB] text-[#2563EB]"
-                        : "text-[#6B7280]"
-                    }`}
-                  />
-                </button>
-              )}
+      <Link href={`/reports/${report.id}`} className="block">
+        <div className="group flex cursor-pointer flex-col items-center text-center">
+          {/* App icon */}
+          <div
+            className={`relative flex h-20 w-20 items-center justify-center rounded-[22px] bg-gradient-to-br ${bg} shadow-md transition-shadow group-hover:shadow-xl`}
+          >
+            <Icon className="h-9 w-9 text-white" />
+            {/* Favorite star overlay */}
+            <div className="absolute -right-1 -top-1">
+              <FavoriteButton
+                reportId={report.id}
+                isFavorited={isFavorited}
+                onToggleFavorite={onToggleFavorite}
+              />
             </div>
-
-            {/* Title */}
-            <h3 className="line-clamp-2 text-[15px] font-semibold text-[#111827]">
-              {report.title}
-            </h3>
-
-            {/* Description */}
-            {report.description && (
-              <p className="line-clamp-2 text-sm text-[#6B7280]">
-                {report.description}
-              </p>
-            )}
-
-            {/* Footer */}
-            <div className="mt-auto flex items-center justify-between pt-2 text-xs text-[#6B7280]">
-              {report.owner_name && <span>{report.owner_name}</span>}
-              <span>Updated {formatTimeAgo(report.last_reload)}</span>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          {/* Label */}
+          <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
+            {report.title}
+          </p>
+        </div>
       </Link>
     </motion.div>
   )
+}
+
+/** List view — row with icon, title, category, owner, date */
+function ListView({ report, isFavorited, onToggleFavorite }: ReportCardProps) {
+  const { icon: Icon, bg } = getReportIcon(report.title, report.category)
+
+  return (
+    <Link href={`/reports/${report.id}`}>
+      <div className="group flex cursor-pointer items-center gap-4 rounded-lg border border-transparent px-4 py-3 transition-colors hover:border-[#E5E7EB] hover:bg-[#F9FAFB]">
+        {/* Icon */}
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${bg} shadow-sm`}
+        >
+          <Icon className="h-5 w-5 text-white" />
+        </div>
+
+        {/* Title + description */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-[#111827]">
+            {report.title}
+          </p>
+          {report.description && (
+            <p className="truncate text-xs text-[#6B7280]">{report.description}</p>
+          )}
+        </div>
+
+        {/* Category */}
+        <div className="hidden w-28 shrink-0 sm:block">
+          {report.category && (
+            <span className="rounded-full bg-[#F3F4F6] px-2.5 py-1 text-xs font-medium text-[#374151]">
+              {report.category}
+            </span>
+          )}
+        </div>
+
+        {/* Owner */}
+        <div className="hidden w-24 shrink-0 text-xs text-[#6B7280] md:block">
+          {report.owner_name ?? "—"}
+        </div>
+
+        {/* Updated */}
+        <div className="hidden w-24 shrink-0 text-right text-xs text-[#6B7280] lg:block">
+          {formatTimeAgo(report.last_reload)}
+        </div>
+
+        {/* Favorite */}
+        <div className="shrink-0">
+          <FavoriteButton
+            reportId={report.id}
+            isFavorited={isFavorited}
+            onToggleFavorite={onToggleFavorite}
+          />
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+export function ReportCard(props: ReportCardProps) {
+  if (props.view === "list") return <ListView {...props} />
+  return <TileView {...props} />
 }
