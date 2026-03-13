@@ -28,7 +28,7 @@ DEFAULT_ROLES = [
 REPORTS = [
     {
         "qlik_app_id": "e4d975eb-e8ca-4727-8a9a-50db58907ef7",
-        "qlik_sheet_id": "c77110fc-e146-4bbb-9d47-f534c2ac7803",
+        "qlik_sheet_id": "238b3a1a-ca98-4c67-92ca-826e3c5b67ab",
         "title": "Executive Report",
         "description": "All-teams KPIs: revenue, loads, profit, margin",
         "category": "Executive",
@@ -68,7 +68,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "4b45853f-057b-4710-a4b8-38a98856cd5e",
-        "qlik_sheet_id": "0ced6dcb-1cd8-4843-a3c7-68a364e46aac",
+        "qlik_sheet_id": "d5d95d43-0cd4-4553-acb8-96a79f5ac1f5",
         "title": "CORP X-RAY",
         "description": "Detailed CORP division drill-down analysis",
         "category": "Executive",
@@ -118,7 +118,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "9ba464ca-b42f-43bd-86cc-fbda730f881b",
-        "qlik_sheet_id": None,
+        "qlik_sheet_id": "MygcmP",
         "title": "Available",
         "description": "Available capacity and operations overview",
         "category": "Operations",
@@ -128,7 +128,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "0857253a-9c3d-4c37-b02f-2ef5faf25705",
-        "qlik_sheet_id": None,
+        "qlik_sheet_id": None,  # App has no sheets — will show app overview
         "title": "Customer Attrition Detail",
         "description": "Detailed customer attrition analysis and trends",
         "category": "Operations",
@@ -138,7 +138,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "b4f70f83-36b8-4426-a9b3-ca26f25b55f4",
-        "qlik_sheet_id": "65a2b752-0c2c-4024-a733-6cd3057a08bd",
+        "qlik_sheet_id": "5a52424c-91e5-4df4-a7a9-e5fe95895435",
         "title": "Spot Details by Express Module",
         "description": "Spot rate details and express module analysis",
         "category": "Operations",
@@ -148,7 +148,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "6df25048-2917-43e9-a944-a48cc355fdb4",
-        "qlik_sheet_id": None,
+        "qlik_sheet_id": "Kpmpkd",
         "title": "RFP Performance Tracker",
         "description": "RFP tracking and performance metrics",
         "category": "Operations",
@@ -198,7 +198,7 @@ REPORTS = [
     },
     {
         "qlik_app_id": "4573ff42-c0b5-48ef-9945-20861b7a6f63",
-        "qlik_sheet_id": None,
+        "qlik_sheet_id": "ZYDdxs",
         "title": "HR - Access Log Doors",
         "description": "Door access log analysis for HR and security",
         "category": "HR",

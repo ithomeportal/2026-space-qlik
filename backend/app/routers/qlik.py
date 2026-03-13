@@ -19,11 +19,15 @@ _token_cache: dict[str, tuple[str, float]] = {}
 
 def generate_qlik_jwt(user_sub: str, groups: list[str], attrs: dict) -> str:
     now = time.time()
+    # Always include "Viewers" group so JWT-provisioned users get
+    # view-only permissions in Qlik Cloud shared spaces.
+    # This group must be assigned "Can view" role on each space in Qlik admin.
+    all_groups = list({*groups, "Viewers"})
     payload = {
         "sub": user_sub,
         "name": attrs.get("display_name", ""),
         "email": attrs.get("email", ""),
-        "groups": groups,
+        "groups": all_groups,
         "jti": str(uuid.uuid4()),
         "iat": int(now),
         "exp": int(now + 3600),

@@ -24,6 +24,7 @@ async function fetchToken(): Promise<string> {
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null
 let currentToken: string | null = null
+let configInjected = false
 
 function startTokenRefresh() {
   if (refreshInterval) return
@@ -43,6 +44,30 @@ function stopTokenRefresh() {
   }
 }
 
+/**
+ * Inject a global <script type="qlik-embed/config"> tag once.
+ * This configures auth for ALL qlik-embed elements on the page.
+ * autoRedirect: false prevents redirect to Qlik login page.
+ */
+function injectGlobalConfig() {
+  if (configInjected) return
+  if (document.querySelector('script[type="qlik-embed/config"]')) {
+    configInjected = true
+    return
+  }
+
+  const script = document.createElement("script")
+  script.setAttribute("type", "qlik-embed/config")
+  script.textContent = JSON.stringify({
+    host: TENANT_URL,
+    authType: "cookie",
+    webIntegrationId: WEB_INTEGRATION_ID,
+    autoRedirect: false,
+  })
+  document.head.appendChild(script)
+  configInjected = true
+}
+
 export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
@@ -53,28 +78,35 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
 
     async function init() {
       try {
-        // 1. Get JWT token
+        // 1. Get JWT token before rendering any Qlik component
         currentToken = await fetchToken()
         startTokenRefresh()
 
         if (!mounted || !containerRef.current) return
 
-        // 2. Load qlik-embed web components
+        // 2. Inject global config (once) — must come before import
+        injectGlobalConfig()
+
+        // 3. Load qlik-embed web components
         await import("@qlik/embed-web-components")
 
         if (!mounted || !containerRef.current) return
 
-        // 3. Create qlik-embed element with cookie auth + getAccessToken
+        // 4. Create qlik-embed element
         const embed = document.createElement("qlik-embed")
         embed.setAttribute("ui", "classic/app")
         embed.setAttribute("app-id", appId)
         if (sheetId) embed.setAttribute("sheet-id", sheetId)
-        embed.setAttribute("host", TENANT_URL)
-        embed.setAttribute("auth-type", "cookie")
-        embed.setAttribute("web-integration-id", WEB_INTEGRATION_ID)
 
-        // Set getAccessToken as a property (not attribute) so it's a function
-        ;(embed as unknown as Record<string, unknown>).getAccessToken = () => currentToken
+        // getAccessToken must be an async function returning Promise<string>
+        // This is how qlik-embed obtains the JWT for session creation
+        const embedEl = embed as unknown as Record<string, unknown>
+        embedEl.getAccessToken = async (): Promise<string> => {
+          if (!currentToken) {
+            currentToken = await fetchToken()
+          }
+          return currentToken
+        }
 
         embed.style.width = "100%"
         embed.style.height = "100%"
