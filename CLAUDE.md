@@ -46,8 +46,14 @@
 
 ### Qlik Embedding
 - Use `@qlik/embed-web-components` npm package with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
-- Set `getAccessToken` as a JS property on the element (returns JWT from backend)
+- Valid auth-type values: `apikey`, `cookie`, `none`, `noauth`, `oauth2`, `anonymous`, `windowscookie`, `reference`
+- Set `getAccessToken` as an async JS property on the element (returns Promise<string> with JWT)
+- There is NO `configure()` method — all config goes as attributes on each `<qlik-embed>` element
+- Must include `host`, `auth-type`, `web-integration-id` attributes on every element
+- Viewer-only: use `ui="analytics/sheet"` + `toolbar="false"` + specific `sheet-id`
+- `ui="classic/app"` = full app with sheet tabs/editing; `ui="analytics/sheet"` = single sheet, modern responsive
 - Must include `web-integration-id` attribute — Qlik rejects origins not in the web integration
+- JWT `groups` claim always includes "Viewers" — this group must have "Can view" role on Qlik spaces
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit` (allowed origins: test/www/app/analytics.unilink.space, Vercel, localhost)
 - Always `ui="classic/app"` for full app embeds
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
