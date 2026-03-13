@@ -16,12 +16,13 @@
 - FastAPI backend: JWT generation, report catalog CRUD, search index, usage analytics
 - API envelope: `{ success: boolean, data?: T, error?: string, meta?: { total, page, limit } }`
 - Validate inputs with Zod (frontend) and Pydantic (backend)
+- Next.js proxy sends user info as JSON in Authorization header (NOT a JWT) — backend parses with `json.loads`
 
 ### Security (Non-Negotiable)
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: only allow iframes from `mb01txe2h9rovgh.us.qlikcloud.com`
+- CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` (scripts, styles, connect, worker, frame)
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 
@@ -44,25 +45,34 @@
 - ONLY light mode — block dark mode
 
 ### Qlik Embedding
-- Use `@qlik/embed-web-components` (`<qlik-embed>`) — NOT raw iframes
-- Always `ui="classic/app"` with `auth-type="Jwt"`
+- Use `@qlik/embed-web-components` npm package with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
+- Set `getAccessToken` as a JS property on the element (returns JWT from backend)
+- Always `ui="classic/app"` for full app embeds
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
 - Mobile `(Mob)` app copies excluded — only production app IDs
 - JWT IdP: configured (issuer: `https://analytics-hub.unilinkportal.com`, key: `analytics-hub-key-1`)
+
+### Database Seeding
+- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent, no duplicates
+- Never use `dict.pop()` on module-level constants — use `dict.get()` to avoid mutation across calls
+- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) get admin+executive roles explicitly in seed
+- Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>` for manual re-seeding
+- Auto-seed on startup if `role_report_access` table is empty
 
 ---
 
 ## Features
 
 1. **Email Code Auth** — 8-digit code via Resend, NextAuth session, admin role management
-2. **Search-First Home** — Centered search bar (cmdk), pinned reports, category grid
+2. **Search-First Home** — Centered search bar (cmdk), iPad-style tile icons with list view toggle
 3. **Role-Based Catalog** — Users see only reports assigned to their role(s)
-4. **Report Cards** — Icon, title, category pill, description, owner, freshness, favorite star
-5. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh, JWT auth
-6. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
-7. **Admin Console** — Report CRUD, role manager, usage analytics
-8. **Favorites & Pinned** — Personal pinned row in user_preferences
-9. **Deep Links** — Stable URLs per report, shareable, role-gated
+4. **Report Tiles** — Colorful gradient icons per report, category grouping, favorite star
+5. **View Toggle** — Switch between Tiles (iPad icons) and List (OneDrive-style rows) views
+6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh, cookie auth + JWT
+7. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
+8. **Admin Console** — Report CRUD, role manager, usage analytics
+9. **Favorites & Pinned** — Personal pinned row in user_preferences
+10. **Deep Links** — Stable URLs per report, shareable, role-gated
 
 ---
 
@@ -72,10 +82,10 @@
 |-------|-----------|
 | Frontend | Next.js 14 (App Router) on Vercel |
 | Styling | Tailwind CSS + shadcn/ui |
-| State | Zustand + React Query |
+| State | React Query (TanStack) |
 | Backend | FastAPI (Python) on Render |
 | Auth | NextAuth.js v5 beta-30 (Resend provider, JWT strategy) |
-| Qlik Embed | `@qlik/embed-web-components` with JWT |
+| Qlik Embed | `@qlik/embed-web-components` with cookie auth |
 | Database | PostgreSQL (Aiven) |
 | Search | Typesense |
 | Email | Resend |
@@ -93,32 +103,34 @@ frontend/
     admin/                  # Admin guard + sidebar + CRUD pages
     api/auth/[...nextauth]/ # NextAuth handlers
     api/auth/verify-code/   # 8-digit code → callback URL lookup
-    api/proxy/[...path]/    # Backend proxy
+    api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
     (auth)/login/verify/    # Code entry page
   components/
     SearchBar.tsx           # cmdk command palette
-    ReportGrid.tsx          # CSS Grid, groups by category
-    ReportCard.tsx          # Card component
-    QlikEmbed.tsx           # <qlik-embed> wrapper
+    ReportGrid.tsx          # View toggle + categorized grid/list
+    ReportCard.tsx          # Tile view (iPad icon) + list view (OneDrive row)
+    ReportIcons.tsx         # Per-report icon + gradient color mapping
+    QlikEmbed.tsx           # <qlik-embed> wrapper (cookie auth + getAccessToken)
     RoleGuard.tsx           # Session role check
   lib/
     auth.ts                 # NextAuth config
-    qlik.ts                 # Token fetch + refresh
-    api.ts                  # React Query hooks
+    api.ts                  # React Query hooks + API fetch wrapper
+  next.config.mjs           # CSP headers (Qlik tenant + CDN)
 
 backend/
   app/
-    main.py                 # FastAPI app, CORS, health check
-    config.py               # Pydantic Settings
+    main.py                 # FastAPI app, CORS, health check, auto-seed
+    config.py               # Pydantic Settings (incl SEED_SECRET)
     routers/
-      reports.py            # GET /api/reports (role-filtered)
-      qlik.py               # POST /api/qlik/token (RS256 JWT)
+      deps.py               # require_user (JSON parse), require_admin
+      reports.py            # GET /api/reports (role-filtered via user_roles join)
+      qlik.py               # POST /api/qlik/token (RS256 JWT, cached)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
-      admin.py              # Admin CRUD endpoints
+      admin.py              # Admin CRUD + POST /api/admin/seed
     services/
-      seed.py               # DB seeding script
+      seed.py               # Idempotent DB seeding (dedup + upsert)
 ```
 
 ---
@@ -146,6 +158,7 @@ QLIK_PRIVATE_KEY=<from-env>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
 QLIK_KEY_ID=analytics-hub-key-1
 ALLOWED_ORIGINS=https://test.unilink.space,https://2026-space-qlik-front.vercel.app
+SEED_SECRET=<from-env> (default: change-me-in-production)
 ```
 
 ---
@@ -196,7 +209,7 @@ Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + execut
 |------|----------|
 | `docs/SPEC-AUTH.md` | Auth flow, email code, NextAuth, roles, user seeding |
 | `docs/SPEC-UI.md` | Design system, colors, typography, components |
-| `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup |
+| `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup, auth-type gotchas |
 | `docs/SPEC-QLIK-INVENTORY.md` | Full app inventory with IDs, sheets, categories |
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints, Typesense index |
 | `docs/SPEC-SEARCH.md` | Search engine, Typesense, cmdk |
