@@ -13,6 +13,7 @@ async def list_reports(
     request: Request,
     user: dict = Depends(require_user),
     category: Optional[str] = Query(None),
+    mobile: bool = Query(False),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
 ):
@@ -25,6 +26,7 @@ async def list_reports(
         SELECT DISTINCT r.id, r.qlik_app_id, r.qlik_sheet_id, r.title,
                r.description, r.category, r.tags, r.owner_name,
                r.data_sources, r.last_reload, r.is_active, r.created_at,
+               COALESCE(r.is_mobile, FALSE) AS is_mobile,
                EXISTS(
                  SELECT 1 FROM user_preferences up
                  WHERE up.user_id = $1 AND r.id = ANY(up.pinned_reports)
@@ -33,11 +35,13 @@ async def list_reports(
         JOIN role_report_access rra ON rra.report_id = r.id
         JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
         WHERE r.is_active = TRUE
-          AND ($2::text IS NULL OR r.category = $2)
+          AND COALESCE(r.is_mobile, FALSE) = $2
+          AND ($3::text IS NULL OR r.category = $3)
         ORDER BY r.category, r.title
-        LIMIT $3 OFFSET $4
+        LIMIT $4 OFFSET $5
         """,
         user_id,
+        mobile,
         category,
         limit,
         offset,
@@ -50,9 +54,11 @@ async def list_reports(
         JOIN role_report_access rra ON rra.report_id = r.id
         JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
         WHERE r.is_active = TRUE
-          AND ($2::text IS NULL OR r.category = $2)
+          AND COALESCE(r.is_mobile, FALSE) = $2
+          AND ($3::text IS NULL OR r.category = $3)
         """,
         user_id,
+        mobile,
         category,
     )
 
@@ -67,6 +73,7 @@ async def list_reports(
 async def trending_reports(
     request: Request,
     user: dict = Depends(require_user),
+    mobile: bool = Query(False),
     limit: int = Query(6, ge=1, le=20),
 ):
     pool = get_pool(request)
@@ -83,11 +90,13 @@ async def trending_reports(
         LEFT JOIN access_log al ON al.report_id = r.id
           AND al.accessed_at > NOW() - INTERVAL '7 days'
         WHERE r.is_active = TRUE
+          AND COALESCE(r.is_mobile, FALSE) = $2
         GROUP BY r.id
         ORDER BY view_count DESC
-        LIMIT $2
+        LIMIT $3
         """,
         user_id,
+        mobile,
         limit,
     )
 

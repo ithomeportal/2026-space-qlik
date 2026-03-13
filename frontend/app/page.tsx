@@ -14,10 +14,10 @@ export default function HomePage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1280px] px-6 py-8 md:px-12">
+    <div className="mx-auto w-full max-w-[1920px] px-4 py-6 min-[1920px]:px-12 min-[1920px]:py-8">
       {/* Search-first hero */}
-      <div className="mb-12 flex flex-col items-center pt-8">
-        <h1 className="mb-6 text-center text-3xl font-bold text-[#1B3A5C] md:text-4xl">
+      <div className="mb-8 flex flex-col items-center pt-4 min-[1920px]:mb-12 min-[1920px]:pt-8">
+        <h1 className="mb-4 text-center text-2xl font-bold text-[#1B3A5C] min-[1920px]:mb-6 min-[1920px]:text-4xl">
           Find the data you need
         </h1>
         <SearchBar />

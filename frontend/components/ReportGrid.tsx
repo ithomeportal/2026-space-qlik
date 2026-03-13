@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { LayoutGrid, List } from "lucide-react"
 import { useReports, usePreferences, useToggleFavorite, type Report } from "@/lib/api"
+import { useIsMobile } from "@/lib/use-is-mobile"
 import { ReportCard } from "./ReportCard"
 import { ReportGridSkeleton } from "./skeletons/ReportGridSkeleton"
 import { CATEGORY_COLORS } from "./ReportIcons"
@@ -40,7 +41,8 @@ function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode
 
 export function ReportGrid() {
   const [view, setView] = useState<ViewMode>("tiles")
-  const { data: reportsRes, isLoading } = useReports()
+  const isMobile = useIsMobile()
+  const { data: reportsRes, isLoading } = useReports(undefined, isMobile)
   const { data: prefsRes } = usePreferences()
   const toggleFavorite = useToggleFavorite()
 

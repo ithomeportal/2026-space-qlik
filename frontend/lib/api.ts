@@ -39,10 +39,14 @@ export interface Report {
   is_favorited?: boolean
 }
 
-export function useReports(category?: string) {
+export function useReports(category?: string, mobile?: boolean) {
+  const params = new URLSearchParams()
+  if (category) params.set("category", category)
+  if (mobile) params.set("mobile", "true")
+  const qs = params.toString()
   return useQuery({
-    queryKey: ["reports", category],
-    queryFn: () => apiFetch<Report[]>(`reports${category ? `?category=${category}` : ""}`),
+    queryKey: ["reports", category, mobile],
+    queryFn: () => apiFetch<Report[]>(`reports${qs ? `?${qs}` : ""}`),
   })
 }
 
@@ -54,10 +58,11 @@ export function useReport(id: string) {
   })
 }
 
-export function useTrending() {
+export function useTrending(mobile?: boolean) {
+  const qs = mobile ? "?mobile=true" : ""
   return useQuery({
-    queryKey: ["trending"],
-    queryFn: () => apiFetch<Report[]>("reports/trending"),
+    queryKey: ["trending", mobile],
+    queryFn: () => apiFetch<Report[]>(`reports/trending${qs}`),
   })
 }
 

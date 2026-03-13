@@ -20,6 +20,7 @@ model Report {
   ownerName    String?  @map("owner_name")
   dataSources  String[] @map("data_sources")
   lastReload   DateTime? @map("last_reload") @db.Timestamptz
+  isMobile     Boolean  @default(false) @map("is_mobile")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

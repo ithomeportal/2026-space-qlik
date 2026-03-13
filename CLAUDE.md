@@ -147,10 +147,10 @@ backend/
 
 ### Frontend (Vercel) — project: `2026-space-qlik-front`
 ```
-AUTH_URL=https://test.unilink.space
+AUTH_URL=https://analytics.unilink.space
 AUTH_SECRET=<from-env>
 AUTH_TRUST_HOST=true
-NEXTAUTH_URL=https://test.unilink.space
+NEXTAUTH_URL=https://analytics.unilink.space
 NEXTAUTH_SECRET=<from-env>
 DATABASE_URL=<from-env> (must start with postgresql://)
 RESEND_API_KEY=<from-env>
@@ -165,7 +165,7 @@ QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<from-env>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
 QLIK_KEY_ID=analytics-hub-key-1
-ALLOWED_ORIGINS=https://test.unilink.space,https://2026-space-qlik-front.vercel.app
+ALLOWED_ORIGINS=https://analytics.unilink.space,https://2026-space-qlik-front.vercel.app
 SEED_SECRET=<from-env> (default: change-me-in-production)
 ```
 
@@ -204,7 +204,7 @@ Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + execut
 
 | Service | URL |
 |---------|-----|
-| Frontend | https://test.unilink.space (also: 2026-space-qlik-front.vercel.app) |
+| Frontend | https://analytics.unilink.space (also: 2026-space-qlik-front.vercel.app) |
 | Backend | https://two026-space-qlik-back.onrender.com |
 | Database | Aiven PostgreSQL (`analytics_hub`) |
 | Repo | https://github.com/ithomeportal/2026-space-qlik |

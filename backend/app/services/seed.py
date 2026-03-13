@@ -24,7 +24,7 @@ DEFAULT_ROLES = [
     ("corp", "CORP division reports"),
 ]
 
-# 20 production reports from SPEC-QLIK-INVENTORY
+# 19 desktop + 12 mobile reports
 REPORTS = [
     {
         "qlik_app_id": "e4d975eb-e8ca-4727-8a9a-50db58907ef7",
@@ -220,6 +220,143 @@ REPORTS = [
     },
 ]
 
+# 12 mobile (Mob) reports — same roles as desktop counterparts
+MOBILE_REPORTS = [
+    {
+        "qlik_app_id": "a942067d-32e7-4805-b1f1-36764bcf578a",
+        "qlik_sheet_id": "78180b73-c0c5-4af9-923c-2f9aea37791d",
+        "title": "(Mob) Executive",
+        "description": "Executive KPIs optimized for mobile",
+        "category": "Executive",
+        "tags": ["executive", "mobile", "kpi"],
+        "owner_name": "Melany",
+        "roles": ["executive", "dfw", "corp"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "aa25d6c1-c18f-49a7-8ae3-2cdc8a5d7a3a",
+        "qlik_sheet_id": "8552203b-070e-40d3-8bd4-ed90e869f91b",
+        "title": "(Mob) DIRECT COMPARE",
+        "description": "Division comparison optimized for mobile",
+        "category": "Executive",
+        "tags": ["comparison", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "dfw", "corp"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "56d883e0-69b0-4500-ae16-2745e374760f",
+        "qlik_sheet_id": "a4cdb08f-9340-424b-97e2-1efd9b01204f",
+        "title": "(Mob) Budget Follow-up",
+        "description": "Budget tracking optimized for mobile",
+        "category": "Finance",
+        "tags": ["budget", "finance", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "finance"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "6e7a2f51-6d5a-464a-871b-42a395fa872f",
+        "qlik_sheet_id": "755f3da5-80b6-449d-8899-a2c892e9a5e2",
+        "title": "(Mob) Customer Scorecard",
+        "description": "Customer scorecard optimized for mobile",
+        "category": "Operations",
+        "tags": ["customer", "scorecard", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "operations"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "10b0a4a6-593f-429d-98e9-f7379603ca8e",
+        "qlik_sheet_id": "7c5b0cfd-57be-4dd1-b298-aa06d074f75e",
+        "title": "(Mob) Carrier Savings Dashboard",
+        "description": "Carrier savings optimized for mobile",
+        "category": "Operations",
+        "tags": ["carrier", "savings", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "operations"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "6339df0f-7487-4737-9ac6-7b45a7e8bf93",
+        "qlik_sheet_id": "5af43aac-6bd4-4875-a43d-8d18d054a05c",
+        "title": "(Mob) Spot Details by Express Module",
+        "description": "Spot details optimized for mobile",
+        "category": "Operations",
+        "tags": ["spot", "pricing", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "operations"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "069e3865-d19e-442b-82ff-7a89ef6cb704",
+        "qlik_sheet_id": "MygcmP",
+        "title": "(Mob) Available",
+        "description": "Available capacity optimized for mobile",
+        "category": "Operations",
+        "tags": ["available", "capacity", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "operations"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "651f789a-f9a4-44ad-9ce3-301a1a3dc2ef",
+        "qlik_sheet_id": "fae4a96e-3ed3-447a-abda-be899d0d0dab",
+        "title": "(Mob) Awards Tracker",
+        "description": "Awards tracking optimized for mobile",
+        "category": "Sales",
+        "tags": ["awards", "sales", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "sales"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "b2faa2ec-a923-4f27-9b18-0fd5cebd962c",
+        "qlik_sheet_id": "0ff273bb-7aa2-40a1-898d-6cdb7d64f2a5",
+        "title": "(Mob) Attrition Week-Over-Week",
+        "description": "Weekly attrition trends optimized for mobile",
+        "category": "Sales",
+        "tags": ["attrition", "weekly", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "sales"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "22bdd2b4-34a8-496f-937c-2142adabcd6a",
+        "qlik_sheet_id": "ZYDdxs",
+        "title": "(Mob) HR - Access Log Doors",
+        "description": "Access log analysis optimized for mobile",
+        "category": "HR",
+        "tags": ["access", "doors", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "hr", "it"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "9e477387-e2ce-46bc-a27f-ec85b06c0f7e",
+        "qlik_sheet_id": "NfAFQFz",
+        "title": "(Mob) Vonage VoIP Calls",
+        "description": "VoIP call analytics optimized for mobile",
+        "category": "IT",
+        "tags": ["voip", "vonage", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "it"],
+        "is_mobile": True,
+    },
+    {
+        "qlik_app_id": "b45e95b3-15f0-4cd8-8fa6-bb968917d9d2",
+        "qlik_sheet_id": "8aae69c7-d3be-4759-91aa-4f31960f2155",
+        "title": "(Mob) IT Managed Services",
+        "description": "IT service desk optimized for mobile",
+        "category": "IT",
+        "tags": ["it", "service-desk", "mobile"],
+        "owner_name": "Melany",
+        "roles": ["executive", "it"],
+        "is_mobile": True,
+    },
+]
+# (Mob) Attrition to Sales (a9457bc4) skipped: 0 sheets in Qlik
+
 # Admin users get admin + executive roles
 ADMIN_EMAILS = [
     "dfrodriguez@unilinktransportation.com",
@@ -266,6 +403,13 @@ async def seed_all():
             """
         )
 
+        # Add is_mobile column if it doesn't exist
+        await pool.execute(
+            """
+            ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_mobile BOOLEAN DEFAULT FALSE
+            """
+        )
+
         # 1. Seed roles
         role_ids = {}
         for name, description in DEFAULT_ROLES:
@@ -281,21 +425,24 @@ async def seed_all():
             )
             role_ids[name] = row["id"]
 
-        # 2. Seed reports and role-report mappings
-        for report in REPORTS:
+        # 2. Seed reports and role-report mappings (desktop + mobile)
+        all_reports = REPORTS + MOBILE_REPORTS
+        for report in all_reports:
             roles = report.get("roles", [])
+            is_mobile = report.get("is_mobile", False)
             row = await pool.fetchrow(
                 """
                 INSERT INTO reports (qlik_app_id, qlik_sheet_id, title, description,
-                                     category, tags, owner_name)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                     category, tags, owner_name, is_mobile)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (qlik_app_id) DO UPDATE SET
                   qlik_sheet_id = EXCLUDED.qlik_sheet_id,
                   title = EXCLUDED.title,
                   description = EXCLUDED.description,
                   category = EXCLUDED.category,
                   tags = EXCLUDED.tags,
-                  owner_name = EXCLUDED.owner_name
+                  owner_name = EXCLUDED.owner_name,
+                  is_mobile = EXCLUDED.is_mobile
                 RETURNING id
                 """,
                 report["qlik_app_id"],
@@ -305,6 +452,7 @@ async def seed_all():
                 report.get("category"),
                 report.get("tags", []),
                 report.get("owner_name"),
+                is_mobile,
             )
 
             if row:
