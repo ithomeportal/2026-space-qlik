@@ -47,6 +47,8 @@
 ### Qlik Embedding
 - Use `@qlik/embed-web-components` npm package with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
 - Set `getAccessToken` as a JS property on the element (returns JWT from backend)
+- Must include `web-integration-id` attribute — Qlik rejects origins not in the web integration
+- Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit` (allowed origins: test/www/app/analytics.unilink.space, Vercel, localhost)
 - Always `ui="classic/app"` for full app embeds
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
 - Mobile `(Mob)` app copies excluded — only production app IDs
