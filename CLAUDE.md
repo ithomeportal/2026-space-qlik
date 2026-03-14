@@ -47,15 +47,23 @@
 ### Qlik Embedding
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
 - Valid auth-type values: `apikey`, `cookie`, `none`, `noauth`, `oauth2`, `anonymous`, `windowscookie`, `reference`
-- Set `getAccessToken` as an async JS property on the element (returns `Promise<string>` with JWT)
+- **Universal Viewer**: ALL portal users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
+  - Portal (NextAuth roles) controls who sees which reports — Qlik just renders
+  - Only 1 Qlik seat consumed (user-based licensing locked for 3 years)
+- **Session pre-exchange**: Frontend calls `POST /login/jwt-session` to exchange JWT for cookie BEFORE rendering
+  - `getAccessToken` kept as fallback if cookie exchange fails
+  - Third-party cookies are the root cause of the "AUTHORIZE" button (cross-domain cookie blocking)
+  - Phase 2 fallback: full JWT proxy if cookie approach fails in some browsers
 - There is NO `configure()` method — all config goes as attributes on each `<qlik-embed>` element
 - Must include `host`, `auth-type`, `web-integration-id` attributes on every element
 - Viewer-only: `ui="analytics/sheet"` + `toolbar="false"` + specific `sheet-id`
 - Fallback: `ui="classic/app"` only for apps without a sheet ID
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
+- Web Integration origins verified: `analytics.unilink.space`, `2026-space-qlik-front.vercel.app`, `localhost:3000`
 - JWT `groups` always includes `"Viewers"` — group has "consumer" (Can view) role on all shared spaces
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
 - JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
+- Qlik Anonymous Access NOT available (US region only supports Stockholm/se region)
 
 ### Responsive Mobile
 - Minimum desktop resolution: 1920x1080
@@ -120,7 +128,7 @@ frontend/
     SearchBar.tsx           # cmdk command palette
     ReportGrid.tsx          # View toggle + categorized grid/list + mobile detection
     ReportCard.tsx          # Tile view (iPad icon) + list view (OneDrive row)
-    QlikEmbed.tsx           # <qlik-embed> wrapper (analytics/sheet + getAccessToken)
+    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange)
   lib/
     auth.ts                 # NextAuth config
     api.ts                  # React Query hooks + API fetch wrapper
@@ -134,7 +142,7 @@ backend/
     routers/
       deps.py               # require_user (JSON parse), require_admin
       reports.py            # GET /api/reports?mobile=true (role-filtered)
-      qlik.py               # POST /api/qlik/token (RS256 JWT + Viewers group)
+      qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
       admin.py              # Admin CRUD + POST /api/admin/seed
