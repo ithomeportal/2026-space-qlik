@@ -28,12 +28,13 @@ let sessionEstablished = false
 async function establishQlikSession(): Promise<void> {
   if (sessionEstablished) return
 
-  // 1. Get a JWT for the universal portal viewer
+  // 1. Get a JWT for the universal portal viewer (now includes nbf claim)
   currentToken = await fetchViewerToken()
 
-  // 2. Exchange the JWT for a Qlik session cookie server-side
-  // This call goes to Qlik Cloud directly — the browser will attempt
-  // to store the session cookie. Works in Chrome/Edge (most corporate browsers).
+  // 2. Exchange the JWT for a Qlik session cookie
+  // This call goes to Qlik Cloud directly — the browser stores the session cookie.
+  // The JWT now includes the required `nbf` claim that was previously missing,
+  // which caused a silent 400 error and the AUTHORIZE button fallback.
   try {
     const resp = await fetch(
       `${TENANT_URL}/login/jwt-session?qlik-web-integration-id=${WEB_INTEGRATION_ID}`,
@@ -43,16 +44,15 @@ async function establishQlikSession(): Promise<void> {
         headers: {
           "Authorization": `Bearer ${currentToken}`,
           "qlik-web-integration-id": WEB_INTEGRATION_ID,
-          "Content-Type": "application/json",
         },
       }
     )
-    if (resp.ok || resp.status === 200 || resp.status === 201) {
+    if (resp.ok) {
       sessionEstablished = true
     }
   } catch {
     // If the direct exchange fails (CORS or cookie blocking),
-    // fall back to getAccessToken approach
+    // fall back to getAccessToken approach below
   }
 }
 

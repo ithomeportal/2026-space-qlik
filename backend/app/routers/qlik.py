@@ -35,6 +35,7 @@ def _generate_viewer_jwt() -> str:
         "groups": ["Viewers"],
         "jti": str(uuid.uuid4()),
         "iat": int(now),
+        "nbf": int(now),
         "exp": int(now + 3600),
         "iss": settings.QLIK_ISSUER,
         "aud": "qlik.api/login/jwt-session",
