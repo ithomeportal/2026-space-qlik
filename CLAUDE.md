@@ -52,18 +52,18 @@
   - Only 1 Qlik seat consumed (user-based licensing locked for 3 years)
 - **Session pre-exchange**: Frontend calls `POST /login/jwt-session` to exchange JWT for cookie BEFORE rendering
   - `getAccessToken` kept as fallback if cookie exchange fails
-  - Third-party cookies are the root cause of the "AUTHORIZE" button (cross-domain cookie blocking)
-  - Phase 2 fallback: full JWT proxy if cookie approach fails in some browsers
+  - Third-party cookies may still cause AUTHORIZE button in Safari/Firefox (Phase 2: full JWT proxy)
+- **JWT required claims**: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud`
+  - `nbf` (not-before) is MANDATORY — omitting it causes silent 400 on `/login/jwt-session`
+  - `aud` must be `"qlik.api/login/jwt-session"`
 - There is NO `configure()` method — all config goes as attributes on each `<qlik-embed>` element
 - Must include `host`, `auth-type`, `web-integration-id` attributes on every element
 - Viewer-only: `ui="analytics/sheet"` + `toolbar="false"` + specific `sheet-id`
 - Fallback: `ui="classic/app"` only for apps without a sheet ID
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
-- Web Integration origins verified: `analytics.unilink.space`, `2026-space-qlik-front.vercel.app`, `localhost:3000`
-- JWT `groups` always includes `"Viewers"` — group has "consumer" (Can view) role on all shared spaces
-- Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
 - JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
-- Qlik Anonymous Access NOT available (US region only supports Stockholm/se region)
+- Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
+- OAuth M2M impersonation requires "trusted" consent (set via Management Console > OAuth > three dots > Change consent method) — not available via API
 
 ### Responsive Mobile
 - Minimum desktop resolution: 1920x1080
