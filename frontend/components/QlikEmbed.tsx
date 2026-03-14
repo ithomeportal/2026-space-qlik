@@ -12,8 +12,8 @@ const TENANT = process.env.NEXT_PUBLIC_QLIK_TENANT ?? "mb01txe2h9rovgh.us.qlikcl
 const TENANT_URL = `https://${TENANT}`
 const WEB_INTEGRATION_ID = process.env.NEXT_PUBLIC_QLIK_WEB_INTEGRATION_ID ?? "UcOYHRHZf7W4ydusUB3cJPin3HHOPnit"
 
-async function fetchToken(): Promise<string> {
-  const res = await fetch("/api/proxy/qlik/token", {
+async function fetchViewerToken(): Promise<string> {
+  const res = await fetch("/api/proxy/qlik/viewer-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   })
@@ -22,24 +22,37 @@ async function fetchToken(): Promise<string> {
   return json.data.token
 }
 
-let refreshInterval: ReturnType<typeof setInterval> | null = null
 let currentToken: string | null = null
+let sessionEstablished = false
 
-function startTokenRefresh() {
-  if (refreshInterval) return
-  refreshInterval = setInterval(async () => {
-    try {
-      currentToken = await fetchToken()
-    } catch {
-      // Silently retry next interval
+async function establishQlikSession(): Promise<void> {
+  if (sessionEstablished) return
+
+  // 1. Get a JWT for the universal portal viewer
+  currentToken = await fetchViewerToken()
+
+  // 2. Exchange the JWT for a Qlik session cookie server-side
+  // This call goes to Qlik Cloud directly — the browser will attempt
+  // to store the session cookie. Works in Chrome/Edge (most corporate browsers).
+  try {
+    const resp = await fetch(
+      `${TENANT_URL}/login/jwt-session?qlik-web-integration-id=${WEB_INTEGRATION_ID}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Authorization": `Bearer ${currentToken}`,
+          "qlik-web-integration-id": WEB_INTEGRATION_ID,
+          "Content-Type": "application/json",
+        },
+      }
+    )
+    if (resp.ok || resp.status === 200 || resp.status === 201) {
+      sessionEstablished = true
     }
-  }, 50 * 60 * 1000)
-}
-
-function stopTokenRefresh() {
-  if (refreshInterval) {
-    clearInterval(refreshInterval)
-    refreshInterval = null
+  } catch {
+    // If the direct exchange fails (CORS or cookie blocking),
+    // fall back to getAccessToken approach
   }
 }
 
@@ -53,9 +66,8 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
 
     async function init() {
       try {
-        // 1. Get JWT token before rendering any Qlik component
-        currentToken = await fetchToken()
-        startTokenRefresh()
+        // 1. Establish Qlik session (JWT→cookie exchange)
+        await establishQlikSession()
 
         if (!mounted || !containerRef.current) return
 
@@ -67,8 +79,6 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
         // 3. Create qlik-embed element — viewer-only mode
         const embed = document.createElement("qlik-embed")
 
-        // Use analytics/sheet for single-sheet viewer-only when we have a sheetId,
-        // fall back to classic/app for apps without a specific sheet
         if (sheetId) {
           embed.setAttribute("ui", "analytics/sheet")
           embed.setAttribute("sheet-id", sheetId)
@@ -80,16 +90,14 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
         embed.setAttribute("host", TENANT_URL)
         embed.setAttribute("auth-type", "cookie")
         embed.setAttribute("web-integration-id", WEB_INTEGRATION_ID)
-
-        // Viewer-only: no toolbar, no editing
         embed.setAttribute("toolbar", "false")
 
-        // getAccessToken as async function returning Promise<string>
-        // qlik-embed uses this to create a JWT session instead of redirecting to login
+        // Provide getAccessToken as fallback — if the session cookie
+        // was blocked, qlik-embed's service worker will use this JWT
         const embedEl = embed as unknown as Record<string, unknown>
         embedEl.getAccessToken = async (): Promise<string> => {
           if (!currentToken) {
-            currentToken = await fetchToken()
+            currentToken = await fetchViewerToken()
           }
           return currentToken
         }
@@ -112,7 +120,6 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
 
     return () => {
       mounted = false
-      stopTokenRefresh()
     }
   }, [appId, sheetId])
 
