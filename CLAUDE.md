@@ -22,7 +22,7 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` (scripts, styles, connect, worker, frame)
+- CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com`
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 
@@ -45,26 +45,30 @@
 - ONLY light mode — block dark mode
 
 ### Qlik Embedding
-- Use `@qlik/embed-web-components` npm package with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
+- Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
 - Valid auth-type values: `apikey`, `cookie`, `none`, `noauth`, `oauth2`, `anonymous`, `windowscookie`, `reference`
-- Set `getAccessToken` as an async JS property on the element (returns Promise<string> with JWT)
+- Set `getAccessToken` as an async JS property on the element (returns `Promise<string>` with JWT)
 - There is NO `configure()` method — all config goes as attributes on each `<qlik-embed>` element
 - Must include `host`, `auth-type`, `web-integration-id` attributes on every element
-- Viewer-only: use `ui="analytics/sheet"` + `toolbar="false"` + specific `sheet-id`
-- `ui="classic/app"` = full app with sheet tabs/editing; `ui="analytics/sheet"` = single sheet, modern responsive
-- Must include `web-integration-id` attribute — Qlik rejects origins not in the web integration
-- JWT `groups` claim always includes "Viewers" — this group must have "Can view" role on Qlik spaces
-- Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit` (allowed origins: test/www/app/analytics.unilink.space, Vercel, localhost)
-- Always `ui="classic/app"` for full app embeds
+- Viewer-only: `ui="analytics/sheet"` + `toolbar="false"` + specific `sheet-id`
+- Fallback: `ui="classic/app"` only for apps without a sheet ID
+- Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
+- JWT `groups` always includes `"Viewers"` — group has "consumer" (Can view) role on all shared spaces
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
-- Mobile `(Mob)` app copies excluded — only production app IDs
-- JWT IdP: configured (issuer: `https://analytics-hub.unilinkportal.com`, key: `analytics-hub-key-1`)
+- JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
+
+### Responsive Mobile
+- Minimum desktop resolution: 1920x1080
+- Below 1920px viewport = mobile mode → show only `(Mob)` prefixed Qlik reports
+- Desktop (>=1920px) → show regular reports (no `(Mob)` prefix)
+- Reports table has `is_mobile` boolean column; API filters via `?mobile=true`
+- 12 mobile + 19 desktop reports seeded; `useIsMobile()` hook detects viewport
 
 ### Database Seeding
 - Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent, no duplicates
-- Never use `dict.pop()` on module-level constants — use `dict.get()` to avoid mutation across calls
-- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) get admin+executive roles explicitly in seed
-- Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>` for manual re-seeding
+- Never use `dict.pop()` on module-level constants — use `dict.get()` to avoid mutation
+- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) get admin+executive roles
+- Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
 - Auto-seed on startup if `role_report_access` table is empty
 
 ---
@@ -74,9 +78,9 @@
 1. **Email Code Auth** — 8-digit code via Resend, NextAuth session, admin role management
 2. **Search-First Home** — Centered search bar (cmdk), iPad-style tile icons with list view toggle
 3. **Role-Based Catalog** — Users see only reports assigned to their role(s)
-4. **Report Tiles** — Colorful gradient icons per report, category grouping, favorite star
-5. **View Toggle** — Switch between Tiles (iPad icons) and List (OneDrive-style rows) views
-6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh, cookie auth + JWT
+4. **Responsive Mobile** — <1920px shows (Mob) Qlik apps optimized for small screens
+5. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
+6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
 7. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
 8. **Admin Console** — Report CRUD, role manager, usage analytics
 9. **Favorites & Pinned** — Personal pinned row in user_preferences
@@ -106,25 +110,22 @@
 frontend/
   app/
     layout.tsx              # Root layout: providers, auth, header
-    page.tsx                # Home: search bar + report grid
+    page.tsx                # Home: search bar + report grid (responsive)
     reports/[id]/page.tsx   # Full-screen Qlik embed viewer
     admin/                  # Admin guard + sidebar + CRUD pages
     api/auth/[...nextauth]/ # NextAuth handlers
-    api/auth/verify-code/   # 8-digit code → callback URL lookup
     api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
-    (auth)/login/verify/    # Code entry page
   components/
     SearchBar.tsx           # cmdk command palette
-    ReportGrid.tsx          # View toggle + categorized grid/list
+    ReportGrid.tsx          # View toggle + categorized grid/list + mobile detection
     ReportCard.tsx          # Tile view (iPad icon) + list view (OneDrive row)
-    ReportIcons.tsx         # Per-report icon + gradient color mapping
-    QlikEmbed.tsx           # <qlik-embed> wrapper (cookie auth + getAccessToken)
-    RoleGuard.tsx           # Session role check
+    QlikEmbed.tsx           # <qlik-embed> wrapper (analytics/sheet + getAccessToken)
   lib/
     auth.ts                 # NextAuth config
     api.ts                  # React Query hooks + API fetch wrapper
-  next.config.mjs           # CSP headers (Qlik tenant + CDN)
+    use-is-mobile.ts        # Viewport detection hook (<1920px = mobile)
+  next.config.mjs           # CSP headers (Qlik tenant + CDN + login.qlik.com)
 
 backend/
   app/
@@ -132,13 +133,13 @@ backend/
     config.py               # Pydantic Settings (incl SEED_SECRET)
     routers/
       deps.py               # require_user (JSON parse), require_admin
-      reports.py            # GET /api/reports (role-filtered via user_roles join)
-      qlik.py               # POST /api/qlik/token (RS256 JWT, cached)
+      reports.py            # GET /api/reports?mobile=true (role-filtered)
+      qlik.py               # POST /api/qlik/token (RS256 JWT + Viewers group)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
       admin.py              # Admin CRUD + POST /api/admin/seed
     services/
-      seed.py               # Idempotent DB seeding (dedup + upsert)
+      seed.py               # Idempotent seeding: 19 desktop + 12 mobile reports
 ```
 
 ---
@@ -185,8 +186,8 @@ SEED_SECRET=<from-env> (default: change-me-in-production)
 | DFW | DFW-specific |
 | CORP | CORP-specific |
 
-Users seeded from time-off DB (100 users). Auth: `@unilinktransportation.com` only. Roles assigned by admin.
-Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + executive roles).
+Users seeded from time-off DB (~100 users). Auth: `@unilinktransportation.com` only.
+Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (admin + executive roles).
 
 ---
 
@@ -196,7 +197,8 @@ Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + execut
 - **Tenant ID**: `ZC6dict00GLAZhISVRVWKm4d-l105j0n`
 - **API Key**: `bot-mcp` (expires 2027-03-12) — in `/BOT/qlik-api/.env`
 - **JWT IdP**: Configured (ID: `69b30b03dbb54989a11adb6b`)
-- **20 production apps** across 7 spaces (see local docs/SPEC-QLIK-INVENTORY.md)
+- **Viewers Group**: ID `69b4c6eec98c45424617135b` — "consumer" on all shared spaces
+- **19 desktop + 12 mobile apps** across 7 spaces (see docs/SPEC-QLIK-INVENTORY.md)
 
 ---
 
@@ -217,7 +219,7 @@ Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (all have admin + execut
 |------|----------|
 | `docs/SPEC-AUTH.md` | Auth flow, email code, NextAuth, roles, user seeding |
 | `docs/SPEC-UI.md` | Design system, colors, typography, components |
-| `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup, auth-type gotchas |
+| `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup, auth-type gotchas, lessons learned |
 | `docs/SPEC-QLIK-INVENTORY.md` | Full app inventory with IDs, sheets, categories |
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints, Typesense index |
 | `docs/SPEC-SEARCH.md` | Search engine, Typesense, cmdk |
