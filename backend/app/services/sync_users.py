@@ -87,12 +87,15 @@ async def sync_users() -> dict:
             active_emails.add(email)
 
             # Prefer "name" field; fall back to firstName + lastName
-            name = (emp.get("name") or "").strip()
-            if not name:
-                name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
-            department = emp.get("department")
-            job_title = emp.get("jobTitle")
-            company = emp.get("companyName")
+            full_name = emp["name"] or ""
+            if not full_name.strip():
+                first = emp["firstName"] or ""
+                last = emp["lastName"] or ""
+                full_name = f"{first} {last}"
+            name = full_name.strip()
+            department = emp["department"]
+            job_title = emp["jobTitle"]
+            company = emp["companyName"]
 
             # Upsert user — also reactivate if previously deactivated
             result = await pool.fetchrow(
@@ -130,7 +133,7 @@ async def sync_users() -> dict:
                     )
 
             # Directors/Owners get executive role
-            role_level = emp.get("roleLevel") or ""
+            role_level = emp["roleLevel"] or ""
             if role_level.upper() in ("OWNER", "DIRECTOR") and "executive" in role_ids:
                 await pool.execute(
                     """

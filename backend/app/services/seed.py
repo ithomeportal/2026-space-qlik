@@ -515,9 +515,12 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
                 continue
 
             # Prefer "name" field; fall back to firstName + lastName
-            name = (emp.get("name") or "").strip()
-            if not name:
-                name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
+            full_name = emp["name"] or ""
+            if not full_name.strip():
+                first = emp["firstName"] or ""
+                last = emp["lastName"] or ""
+                full_name = f"{first} {last}"
+            name = full_name.strip()
 
             user_row = await pool.fetchrow(
                 """
@@ -529,13 +532,13 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
                 """,
                 email.lower(),
                 name,
-                emp.get("department"),
-                emp.get("jobTitle"),
-                emp.get("companyName"),
+                emp["department"],
+                emp["jobTitle"],
+                emp["companyName"],
             )
 
             user_id = user_row["id"]
-            dept = emp.get("department") or ""
+            dept = emp["department"] or ""
 
             # Auto-assign roles based on department
             for keyword, role_name in DEPT_ROLE_MAP.items():
@@ -550,7 +553,7 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
                     )
 
             # Directors/Owners also get executive role
-            role_level = emp.get("roleLevel") or ""
+            role_level = emp["roleLevel"] or ""
             if role_level.upper() in ("OWNER", "DIRECTOR") and "executive" in role_ids:
                 await pool.execute(
                     """
