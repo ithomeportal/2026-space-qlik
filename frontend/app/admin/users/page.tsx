@@ -1,10 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Search, RefreshCw } from "lucide-react"
+import { Search, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
 
 interface User {
   id: string
@@ -16,15 +16,65 @@ interface User {
   roles: string[]
 }
 
+type SortKey = "name" | "email" | "department" | "job_title" | "roles" | "is_active"
+type SortDir = "asc" | "desc"
+
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "email", label: "Email" },
+  { key: "department", label: "Department" },
+  { key: "job_title", label: "Role Name" },
+  { key: "roles", label: "Tag Roles" },
+  { key: "is_active", label: "Status" },
+]
+
+function compareUsers(a: User, b: User, key: SortKey, dir: SortDir): number {
+  let valA: string
+  let valB: string
+
+  switch (key) {
+    case "roles":
+      valA = (a.roles ?? []).join(", ")
+      valB = (b.roles ?? []).join(", ")
+      break
+    case "is_active":
+      valA = a.is_active ? "Active" : "Inactive"
+      valB = b.is_active ? "Active" : "Inactive"
+      break
+    default:
+      valA = (a[key] ?? "") as string
+      valB = (b[key] ?? "") as string
+  }
+
+  const cmp = valA.localeCompare(valB, undefined, { sensitivity: "base" })
+  return dir === "asc" ? cmp : -cmp
+}
+
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([])
   const [search, setSearch] = useState("")
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<SortKey>("name")
+  const [sortDir, setSortDir] = useState<SortDir>("asc")
 
   useEffect(() => {
     loadUsers()
   }, [])
+
+  const sortedUsers = useMemo(
+    () => [...users].sort((a, b) => compareUsers(a, b, sortKey, sortDir)),
+    [users, sortKey, sortDir]
+  )
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc")
+    } else {
+      setSortKey(key)
+      setSortDir("asc")
+    }
+  }
 
   async function loadUsers(query?: string) {
     const url = query
@@ -55,6 +105,17 @@ export default function AdminUsersPage() {
     } finally {
       setSyncing(false)
     }
+  }
+
+  function SortIcon({ column }: { column: SortKey }) {
+    if (sortKey !== column) {
+      return <ArrowUpDown className="ml-1 inline h-3 w-3 opacity-40" />
+    }
+    return sortDir === "asc" ? (
+      <ArrowUp className="ml-1 inline h-3 w-3" />
+    ) : (
+      <ArrowDown className="ml-1 inline h-3 w-3" />
+    )
   }
 
   return (
@@ -103,16 +164,20 @@ export default function AdminUsersPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-[#F9FAFB] text-left text-[#6B7280]">
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Department</th>
-              <th className="px-4 py-3">Role Name</th>
-              <th className="px-4 py-3">Tag Roles</th>
-              <th className="px-4 py-3">Status</th>
+              {COLUMNS.map((col) => (
+                <th
+                  key={col.key}
+                  className="cursor-pointer select-none px-4 py-3 hover:text-[#111827]"
+                  onClick={() => handleSort(col.key)}
+                >
+                  {col.label}
+                  <SortIcon column={col.key} />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {sortedUsers.map((user) => (
               <tr key={user.id} className="border-b last:border-0">
                 <td className="px-4 py-3 font-medium">{user.name ?? "—"}</td>
                 <td className="px-4 py-3 text-[#6B7280]">{user.email}</td>
