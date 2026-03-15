@@ -37,6 +37,30 @@ async def lifespan(app: FastAPI):
             app.state.pool = await asyncpg.create_pool(
                 settings.DATABASE_URL, min_size=2, max_size=10
             )
+            # Ensure apps tables exist
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS apps (
+                  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  title       TEXT NOT NULL,
+                  url         TEXT NOT NULL,
+                  description TEXT,
+                  is_active   BOOLEAN DEFAULT TRUE,
+                  created_at  TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_role_access (
+                  role_id  UUID REFERENCES roles(id) ON DELETE CASCADE,
+                  app_id   UUID REFERENCES apps(id) ON DELETE CASCADE,
+                  PRIMARY KEY (role_id, app_id)
+                )
+                """
+            )
+
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
                 "SELECT COUNT(*) FROM role_report_access"
