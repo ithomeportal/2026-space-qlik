@@ -34,6 +34,11 @@ class ReportCreate(BaseModel):
     tags: list[str] | None = None
     owner_name: str | None = None
     data_sources: list[str] | None = None
+    role_names: list[str] | None = None
+
+
+class ReportRolesUpdate(BaseModel):
+    role_names: list[str]
 
 
 class ReportUpdate(BaseModel):
@@ -59,12 +64,19 @@ async def admin_list_reports(
 
     rows = await pool.fetch(
         """
-        SELECT r.*, COALESCE(
-          (SELECT COUNT(*) FROM access_log al WHERE al.report_id = r.id
-           AND al.accessed_at > NOW() - INTERVAL '30 days'), 0
-        ) AS views_30d
+        SELECT r.*,
+               COALESCE(
+                 (SELECT COUNT(*) FROM access_log al WHERE al.report_id = r.id
+                  AND al.accessed_at > NOW() - INTERVAL '30 days'), 0
+               ) AS views_30d,
+               ARRAY(
+                 SELECT ro.name FROM roles ro
+                 JOIN role_report_access rra ON rra.role_id = ro.id
+                 WHERE rra.report_id = r.id
+                 ORDER BY ro.name
+               ) AS tag_roles
         FROM reports r
-        ORDER BY r.category, r.title
+        ORDER BY r.title
         LIMIT $1 OFFSET $2
         """,
         limit,
@@ -105,6 +117,20 @@ async def admin_create_report(
         body.owner_name,
         body.data_sources or [],
     )
+
+    # Assign tag roles if provided
+    if body.role_names:
+        report_id = row["id"]
+        for role_name in body.role_names:
+            await pool.execute(
+                """
+                INSERT INTO role_report_access (role_id, report_id)
+                SELECT id, $2 FROM roles WHERE name = $1
+                ON CONFLICT DO NOTHING
+                """,
+                role_name,
+                report_id,
+            )
 
     return {"success": True, "data": dict(row)}
 
@@ -153,6 +179,31 @@ async def admin_delete_report(
         report_id,
     )
     return {"success": True, "data": {"deleted": True}}
+
+
+@router.patch("/reports/{report_id}/roles")
+async def admin_update_report_roles(
+    report_id: UUID,
+    body: ReportRolesUpdate,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    """Replace tag roles for a report."""
+    pool = get_pool(request)
+    await pool.execute(
+        "DELETE FROM role_report_access WHERE report_id = $1", report_id
+    )
+    for role_name in body.role_names:
+        await pool.execute(
+            """
+            INSERT INTO role_report_access (role_id, report_id)
+            SELECT id, $2 FROM roles WHERE name = $1
+            ON CONFLICT DO NOTHING
+            """,
+            role_name,
+            report_id,
+        )
+    return {"success": True, "data": {"updated": True}}
 
 
 # --- Roles CRUD ---
