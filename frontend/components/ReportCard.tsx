@@ -110,11 +110,11 @@ function AppTileView({ app }: AppCardProps) {
         className="block"
       >
         <div className="group flex cursor-pointer flex-col items-center text-center">
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] border-2 border-dashed border-[#93C5FD] bg-gradient-to-br from-[#EFF6FF] to-[#DBEAFE] shadow-md transition-shadow group-hover:shadow-xl">
-            <ExternalLink className="h-8 w-8 text-[#2563EB]" />
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] bg-gradient-to-br from-[#0EA5E9] to-[#2563EB] shadow-md transition-shadow group-hover:shadow-xl">
+            <ExternalLink className="h-9 w-9 text-white" />
             {/* App badge */}
-            <div className="absolute -bottom-1 -right-1 rounded-full bg-[#2563EB] px-1.5 py-0.5 text-[9px] font-bold text-white">
-              APP
+            <div className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-sm">
+              <div className="h-4 w-4 rounded-full bg-gradient-to-br from-[#10B981] to-[#059669]" />
             </div>
           </div>
           <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
@@ -130,8 +130,8 @@ function AppListView({ app }: AppCardProps) {
   return (
     <a href={app.url} target="_blank" rel="noopener noreferrer">
       <div className="group flex cursor-pointer items-center gap-4 rounded-lg border border-transparent px-4 py-3 transition-colors hover:border-[#E5E7EB] hover:bg-[#F9FAFB]">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-[#93C5FD] bg-[#EFF6FF] shadow-sm">
-          <ExternalLink className="h-5 w-5 text-[#2563EB]" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#0EA5E9] to-[#2563EB] shadow-sm">
+          <ExternalLink className="h-5 w-5 text-white" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[#111827]">
