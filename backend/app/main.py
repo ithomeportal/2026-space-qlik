@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
                   title       TEXT NOT NULL,
                   url         TEXT NOT NULL,
                   description TEXT,
+                  icon_data   TEXT,
                   is_active   BOOLEAN DEFAULT TRUE,
                   created_at  TIMESTAMPTZ DEFAULT NOW(),
                   updated_at  TIMESTAMPTZ DEFAULT NOW()
@@ -59,6 +60,10 @@ async def lifespan(app: FastAPI):
                   PRIMARY KEY (role_id, app_id)
                 )
                 """
+            )
+            # Add icon_data column if missing (existing DBs)
+            await app.state.pool.execute(
+                "ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_data TEXT"
             )
 
             # Auto-seed if no role-report mappings exist

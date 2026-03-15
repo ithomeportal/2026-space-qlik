@@ -79,6 +79,7 @@ export interface AppItem {
   title: string
   url: string
   description: string | null
+  icon_data: string | null
   is_active: boolean
 }
 

@@ -153,7 +153,7 @@ async def list_apps(
     rows = await pool.fetch(
         """
         SELECT DISTINCT a.id, a.title, a.url, a.description,
-               a.is_active, a.created_at
+               a.icon_data, a.is_active, a.created_at
         FROM apps a
         JOIN app_role_access ara ON ara.app_id = a.id
         JOIN user_roles ur ON ur.role_id = ara.role_id AND ur.user_id = $1

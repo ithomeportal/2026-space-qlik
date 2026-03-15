@@ -388,6 +388,28 @@ async def admin_update_user_roles(
 # --- Apps CRUD ---
 
 
+async def _fetch_favicon(url: str) -> str | None:
+    """Fetch favicon for a URL and return as base64 data URI."""
+    import base64
+
+    import httpx
+
+    try:
+        domain = url.split("//")[-1].split("/")[0]
+        favicon_url = (
+            f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
+        )
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            resp = await client.get(favicon_url)
+            if resp.status_code == 200 and len(resp.content) > 100:
+                content_type = resp.headers.get("content-type", "image/png")
+                b64 = base64.b64encode(resp.content).decode()
+                return f"data:{content_type};base64,{b64}"
+    except Exception:
+        pass
+    return None
+
+
 class AppCreate(BaseModel):
     title: str
     url: str
@@ -435,15 +457,20 @@ async def admin_create_app(
     _admin: dict = Depends(require_admin),
 ):
     pool = get_pool(request)
+
+    # Fetch favicon and store as base64
+    icon_data = await _fetch_favicon(body.url)
+
     row = await pool.fetchrow(
         """
-        INSERT INTO apps (title, url, description)
-        VALUES ($1, $2, $3)
+        INSERT INTO apps (title, url, description, icon_data)
+        VALUES ($1, $2, $3, $4)
         RETURNING *
         """,
         body.title,
         body.url,
         body.description,
+        icon_data,
     )
 
     if body.role_names:
@@ -473,6 +500,11 @@ async def admin_update_app(
     updates = body.model_dump(exclude_none=True)
     if not updates:
         return {"success": False, "error": "No fields to update"}
+
+    # Re-fetch favicon if URL changed
+    if "url" in updates:
+        icon_data = await _fetch_favicon(updates["url"])
+        updates["icon_data"] = icon_data
 
     set_clauses = []
     values = []
