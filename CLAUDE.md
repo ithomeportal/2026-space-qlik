@@ -22,6 +22,7 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
+- CSP `img-src`: includes `https://www.google.com` for app favicon loading
 - CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com`
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
@@ -69,11 +70,12 @@
 - Use `emp["name"]` (bracket access) for asyncpg Records, NOT `.get("name")`
 - Time-off DB `name` field is primary; `firstName`/`lastName` are fallback (23 users have null firstName)
 
-### Database Seeding
+### Database & Seeding
 - Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent, no duplicates
 - Never use `dict.pop()` on module-level constants — use `dict.get()` to avoid mutation
 - Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
 - Auto-seed on startup if `role_report_access` table is empty
+- Apps tables (`apps`, `app_role_access`) created on startup AND in seed — must exist before API use
 
 ---
 
@@ -81,14 +83,15 @@
 
 1. **Email Code Auth** — 8-digit code via Resend, NextAuth session, admin role management
 2. **Search-First Home** — Centered search bar (cmdk), iPad-style tile icons with list view toggle
-3. **TagRole-Based Access** — Users see only reports with matching TagRoles (assigned by admin)
+3. **TagRole-Based Access** — Users see only reports/apps with matching TagRoles (assigned by admin)
 4. **Responsive Mobile** — <1920px shows (Mob) Qlik apps optimized for small screens
 5. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
 6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
 7. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
-8. **Admin Console** — Report CRUD with TagRole assignment, TagRole manager, user management with access preview, usage analytics
-9. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
-10. **Deep Links** — Stable URLs per report, shareable, role-gated
+8. **Admin Console** — Reports/Apps CRUD, TagRole manager, user management with matrix view, usage analytics
+9. **Apps (External Links)** — External links with favicon icons, TagRole access, open in new tab
+10. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
+11. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
 
 ---
 
@@ -115,41 +118,43 @@
 frontend/
   app/
     layout.tsx              # Root layout: providers, auth, header
-    page.tsx                # Home: search bar + report grid (responsive)
+    page.tsx                # Home: search bar + report grid + apps (responsive)
     reports/[id]/page.tsx   # Full-screen Qlik embed viewer
     admin/
-      layout.tsx            # Admin sidebar (Dashboard, Reports, Tag Roles, Users)
+      layout.tsx            # Admin sidebar (Dashboard, Reports, Apps, Tag Roles, Users)
       page.tsx              # Usage analytics dashboard
       reports/page.tsx      # Report CRUD + TagRole assignment per report
+      apps/page.tsx         # App CRUD (external links) + TagRole assignment
       roles/page.tsx        # TagRole CRUD (create, edit name/description, delete)
-      users/page.tsx        # User list + click-to-assign TagRoles with access preview
+      users/page.tsx        # User list with sortable columns
+      users/[id]/page.tsx   # User detail: TagRole assignment + report access matrix
     api/auth/[...nextauth]/ # NextAuth handlers
     api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
   components/
     SearchBar.tsx           # cmdk command palette
-    ReportGrid.tsx          # View toggle + categorized grid/list + mobile detection
-    ReportCard.tsx          # Tile view (iPad icon) + list view (OneDrive row)
+    ReportGrid.tsx          # View toggle + categorized grid/list + apps section
+    ReportCard.tsx          # Report tile/list + App tile/list (favicon from URL)
     QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange)
   lib/
     auth.ts                 # NextAuth config
-    api.ts                  # React Query hooks + API fetch wrapper
+    api.ts                  # React Query hooks + API fetch wrapper (reports, apps, prefs)
     use-is-mobile.ts        # Viewport detection hook (<1920px = mobile)
-  next.config.mjs           # CSP headers (Qlik tenant + CDN + login.qlik.com)
+  next.config.mjs           # CSP headers (Qlik + Google favicons)
 
 backend/
   app/
-    main.py                 # FastAPI app, CORS, health check, auto-seed, APScheduler
+    main.py                 # FastAPI app, CORS, health check, auto-seed, apps tables, APScheduler
     config.py               # Pydantic Settings (incl SEED_SECRET, TIMEOFF_DATABASE_URL)
     routers/
       deps.py               # require_user (JSON parse), require_admin
-      reports.py            # GET /api/reports?mobile=true (role-filtered)
+      reports.py            # GET /api/reports, GET /api/apps (both role-filtered)
       qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
-      admin.py              # Admin CRUD + seed + sync-users + report-roles
+      admin.py              # Admin CRUD: reports, apps, roles, users, seed, sync
     services/
-      seed.py               # Idempotent seeding: 19 desktop + 12 mobile reports
+      seed.py               # Idempotent seeding: reports, roles, apps tables
       sync_users.py         # Daily user sync from time-off DB (no auto-assign)
 ```
 
@@ -186,11 +191,12 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 
 ## TagRole Access Model
 
-- **TagRoles** are created/edited by admins at `/admin/roles` (e.g., finance, operations, sales, hr, it)
-- **Reports** are assigned TagRoles at `/admin/reports` (each report can have multiple TagRoles)
-- **Users** are assigned TagRoles at `/admin/users` (click name → assign TagRoles with live access preview)
-- **Access rule**: User sees a report only if they share at least one TagRole with it
-- **No auto-assign**: TagRoles are 100% manually assigned by admins (no department-based auto-assign)
+- **TagRoles** are created/edited by admins at `/admin/roles`
+- **Reports** are assigned TagRoles at `/admin/reports` (pencil icon per report)
+- **Apps** are assigned TagRoles at `/admin/apps` ("All TagRoles" toggle or select individual)
+- **Users** are assigned TagRoles at `/admin/users/[id]` (full-page matrix view)
+- **Access rule**: User sees a report/app only if they share at least one TagRole with it
+- **No auto-assign**: TagRoles are 100% manually assigned by admins
 - Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned)
 
 ---
@@ -227,4 +233,4 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints, Typesense index |
 | `docs/SPEC-SEARCH.md` | Search engine, Typesense, cmdk |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
-| `docs/SPEC-ADMIN.md` | Admin console features, TagRole model, user sync, lessons learned |
+| `docs/SPEC-ADMIN.md` | Admin console, TagRole model, user sync, apps, lessons learned |
