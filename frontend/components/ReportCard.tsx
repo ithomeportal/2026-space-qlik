@@ -91,13 +91,25 @@ export function ReportCard(props: ReportCardProps) {
   return <TileView {...props} />
 }
 
-/** App card — external link tile with distinct style */
+/** Get favicon URL from an app URL using Google's favicon service */
+function getFaviconUrl(url: string, size: number = 64): string {
+  try {
+    const domain = new URL(url).hostname
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`
+  } catch {
+    return ""
+  }
+}
+
+/** App card — external link tile with favicon from the app's URL */
 interface AppCardProps {
   app: AppItem
   view?: "tiles" | "list"
 }
 
 function AppTileView({ app }: AppCardProps) {
+  const faviconUrl = getFaviconUrl(app.url, 64)
+
   return (
     <motion.div
       whileHover={{ y: -4, scale: 1.02 }}
@@ -110,11 +122,24 @@ function AppTileView({ app }: AppCardProps) {
         className="block"
       >
         <div className="group flex cursor-pointer flex-col items-center text-center">
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] bg-gradient-to-br from-[#0EA5E9] to-[#2563EB] shadow-md transition-shadow group-hover:shadow-xl">
-            <ExternalLink className="h-9 w-9 text-white" />
-            {/* App badge */}
-            <div className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-sm">
-              <div className="h-4 w-4 rounded-full bg-gradient-to-br from-[#10B981] to-[#059669]" />
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] bg-white shadow-md ring-1 ring-[#E5E7EB] transition-shadow group-hover:shadow-xl">
+            {faviconUrl ? (
+              <img
+                src={faviconUrl}
+                alt={app.title}
+                className="h-10 w-10 rounded-md"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none"
+                  e.currentTarget.nextElementSibling?.classList.remove("hidden")
+                }}
+              />
+            ) : null}
+            <ExternalLink
+              className={`h-9 w-9 text-[#2563EB] ${faviconUrl ? "hidden" : ""}`}
+            />
+            {/* External link badge */}
+            <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#2563EB] shadow-sm">
+              <ExternalLink className="h-2.5 w-2.5 text-white" />
             </div>
           </div>
           <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
@@ -127,11 +152,26 @@ function AppTileView({ app }: AppCardProps) {
 }
 
 function AppListView({ app }: AppCardProps) {
+  const faviconUrl = getFaviconUrl(app.url, 32)
+
   return (
     <a href={app.url} target="_blank" rel="noopener noreferrer">
       <div className="group flex cursor-pointer items-center gap-4 rounded-lg border border-transparent px-4 py-3 transition-colors hover:border-[#E5E7EB] hover:bg-[#F9FAFB]">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#0EA5E9] to-[#2563EB] shadow-sm">
-          <ExternalLink className="h-5 w-5 text-white" />
+        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-[#E5E7EB]">
+          {faviconUrl ? (
+            <img
+              src={faviconUrl}
+              alt={app.title}
+              className="h-6 w-6 rounded"
+              onError={(e) => {
+                e.currentTarget.style.display = "none"
+                e.currentTarget.nextElementSibling?.classList.remove("hidden")
+              }}
+            />
+          ) : null}
+          <ExternalLink
+            className={`h-5 w-5 text-[#2563EB] ${faviconUrl ? "hidden" : ""}`}
+          />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[#111827]">
