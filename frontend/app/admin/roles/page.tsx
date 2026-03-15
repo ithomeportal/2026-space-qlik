@@ -54,7 +54,7 @@ export default function AdminRolesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[#1B3A5C]">Role Management</h1>
+        <h1 className="text-2xl font-bold text-[#1B3A5C]">Tag Roles</h1>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger>
             <Button className="bg-[#2563EB]">

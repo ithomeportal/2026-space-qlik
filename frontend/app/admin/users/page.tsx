@@ -4,14 +4,14 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Search } from "lucide-react"
+import { Search, RefreshCw } from "lucide-react"
 
 interface User {
   id: string
   email: string
   name: string | null
   department: string | null
-  company: string | null
+  job_title: string | null
   is_active: boolean
   roles: string[]
 }
@@ -19,6 +19,8 @@ interface User {
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([])
   const [search, setSearch] = useState("")
+  const [syncing, setSyncing] = useState(false)
+  const [lastSync, setLastSync] = useState<string | null>(null)
 
   useEffect(() => {
     loadUsers()
@@ -38,9 +40,49 @@ export default function AdminUsersPage() {
     loadUsers(search)
   }
 
+  async function handleSync() {
+    setSyncing(true)
+    try {
+      const res = await fetch("/api/proxy/admin/sync-users", { method: "POST" })
+      const json = await res.json()
+      if (json.success) {
+        const d = json.data
+        setLastSync(
+          `Synced ${d.synced} users (${d.new_users} new, ${d.deactivated} deactivated)`
+        )
+        await loadUsers(search || undefined)
+      }
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-[#1B3A5C]">User Management</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-[#1B3A5C]">User Management</h1>
+        <div className="flex items-center gap-3">
+          {lastSync && (
+            <span className="text-sm text-[#6B7280]">{lastSync}</span>
+          )}
+          <Button
+            onClick={handleSync}
+            disabled={syncing}
+            variant="outline"
+            size="sm"
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
+            />
+            {syncing ? "Syncing..." : "Sync from People App"}
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-sm text-[#6B7280]">
+        Users are automatically synced from the People Management app daily at
+        2:00 AM CST.
+      </p>
 
       <form onSubmit={handleSearch} className="flex gap-2">
         <div className="relative flex-1">
@@ -64,8 +106,8 @@ export default function AdminUsersPage() {
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3">Department</th>
-              <th className="px-4 py-3">Company</th>
-              <th className="px-4 py-3">Roles</th>
+              <th className="px-4 py-3">Role Name</th>
+              <th className="px-4 py-3">Tag Roles</th>
               <th className="px-4 py-3">Status</th>
             </tr>
           </thead>
@@ -75,7 +117,7 @@ export default function AdminUsersPage() {
                 <td className="px-4 py-3 font-medium">{user.name ?? "—"}</td>
                 <td className="px-4 py-3 text-[#6B7280]">{user.email}</td>
                 <td className="px-4 py-3">{user.department ?? "—"}</td>
-                <td className="px-4 py-3">{user.company ?? "—"}</td>
+                <td className="px-4 py-3">{user.job_title ?? "—"}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1">
                     {(user.roles ?? []).map((role) => (

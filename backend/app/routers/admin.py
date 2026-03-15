@@ -322,11 +322,22 @@ async def admin_seed(request: Request, secret: str = Query(...)):
     """Trigger database seed. Protected by secret query param."""
     if secret != settings.SEED_SECRET:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     from app.services.seed import seed_all
+
     await seed_all()
     return {"success": True, "data": {"seeded": True}}
+
+
+@router.post("/sync-users")
+async def admin_sync_users(_admin: dict = Depends(require_admin)):
+    """Manually trigger user sync from time-off DB. Admin only."""
+    from app.services.sync_users import sync_users
+
+    result = await sync_users()
+    return {"success": True, "data": result}
 
 
 # --- Usage Analytics ---
