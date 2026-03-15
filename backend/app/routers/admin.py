@@ -215,6 +215,7 @@ class RoleCreate(BaseModel):
 
 
 class RoleUpdate(BaseModel):
+    name: str | None = None
     description: str | None = None
     report_ids: list[UUID] | None = None
 
@@ -257,6 +258,25 @@ async def admin_update_role(
     _admin: dict = Depends(require_admin),
 ):
     pool = get_pool(request)
+
+    if body.name is not None:
+        # Check uniqueness
+        existing = await pool.fetchrow(
+            "SELECT id FROM roles WHERE name = $1 AND id != $2",
+            body.name,
+            role_id,
+        )
+        if existing:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=409, detail="A TagRole with that name already exists"
+            )
+        await pool.execute(
+            "UPDATE roles SET name = $1 WHERE id = $2",
+            body.name,
+            role_id,
+        )
 
     if body.description is not None:
         await pool.execute(
