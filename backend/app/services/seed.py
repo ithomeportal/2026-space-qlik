@@ -502,7 +502,7 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
     try:
         employees = await timeoff_pool.fetch(
             """
-            SELECT "email", "firstName", "lastName", "department",
+            SELECT "email", "name", "firstName", "lastName", "department",
                    "jobTitle", "companyName", "role", "roleLevel"
             FROM users
             WHERE "isActive" = true
@@ -514,7 +514,10 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
             if not email:
                 continue
 
-            name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
+            # Prefer "name" field; fall back to firstName + lastName
+            name = (emp.get("name") or "").strip()
+            if not name:
+                name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
 
             user_row = await pool.fetchrow(
                 """

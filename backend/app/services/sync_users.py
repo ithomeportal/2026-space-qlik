@@ -63,7 +63,7 @@ async def sync_users() -> dict:
         # Fetch all active employees from time-off system
         employees = await timeoff_pool.fetch(
             """
-            SELECT "email", "firstName", "lastName", "department",
+            SELECT "email", "name", "firstName", "lastName", "department",
                    "jobTitle", "companyName", "role", "roleLevel"
             FROM users
             WHERE "isActive" = true
@@ -86,7 +86,10 @@ async def sync_users() -> dict:
             email = email.lower().strip()
             active_emails.add(email)
 
-            name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
+            # Prefer "name" field; fall back to firstName + lastName
+            name = (emp.get("name") or "").strip()
+            if not name:
+                name = f"{emp['firstName'] or ''} {emp['lastName'] or ''}".strip()
             department = emp.get("department")
             job_title = emp.get("jobTitle")
             company = emp.get("companyName")
