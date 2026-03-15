@@ -89,9 +89,9 @@ export default function AdminDashboard() {
           <CardTitle>Daily Views — Last 30 Days</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+          <div className="h-64" style={{ minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <BarChart data={chartData.length > 0 ? chartData : [{ date: "", views: 0 }]}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                 <XAxis
                   dataKey="date"
