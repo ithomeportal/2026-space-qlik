@@ -1,23 +1,16 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   Search,
   RefreshCw,
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
-  Check,
-  X,
 } from "lucide-react"
 
 interface User {
@@ -28,18 +21,6 @@ interface User {
   job_title: string | null
   is_active: boolean
   roles: string[]
-}
-
-interface Report {
-  id: string
-  title: string
-  tag_roles: string[]
-  is_active: boolean
-}
-
-interface Role {
-  id: string
-  name: string
 }
 
 type SortKey =
@@ -83,19 +64,13 @@ function compareUsers(a: User, b: User, key: SortKey, dir: SortDir): number {
 }
 
 export default function AdminUsersPage() {
+  const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
   const [search, setSearch] = useState("")
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>("name")
   const [sortDir, setSortDir] = useState<SortDir>("asc")
-
-  // User detail dialog state
-  const [selectedUser, setSelectedUser] = useState<User | null>(null)
-  const [allReports, setAllReports] = useState<Report[]>([])
-  const [allRoles, setAllRoles] = useState<Role[]>([])
-  const [userRoles, setUserRoles] = useState<string[]>([])
-  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     loadUsers()
@@ -151,55 +126,6 @@ export default function AdminUsersPage() {
     }
   }
 
-  async function openUserDetail(user: User) {
-    setSelectedUser(user)
-    setUserRoles(user.roles ?? [])
-
-    // Load reports and roles in parallel
-    const [reportsRes, rolesRes] = await Promise.all([
-      fetch("/api/proxy/admin/reports?limit=200"),
-      fetch("/api/proxy/admin/roles"),
-    ])
-    const reportsJson = await reportsRes.json()
-    const rolesJson = await rolesRes.json()
-
-    if (reportsJson.success) setAllReports(reportsJson.data)
-    if (rolesJson.success) setAllRoles(rolesJson.data)
-  }
-
-  function toggleUserRole(roleName: string) {
-    setUserRoles((prev) =>
-      prev.includes(roleName)
-        ? prev.filter((r) => r !== roleName)
-        : [...prev, roleName]
-    )
-  }
-
-  async function handleSaveUserRoles() {
-    if (!selectedUser) return
-    setSaving(true)
-
-    // Find role IDs for selected role names
-    const roleIds = allRoles
-      .filter((r) => userRoles.includes(r.name))
-      .map((r) => r.id)
-
-    await fetch(`/api/proxy/admin/users/${selectedUser.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role_ids: roleIds }),
-    })
-
-    setSaving(false)
-    setSelectedUser(null)
-    await loadUsers(search || undefined)
-  }
-
-  function userHasAccessToReport(report: Report): boolean {
-    if (!report.tag_roles || report.tag_roles.length === 0) return false
-    return report.tag_roles.some((tr) => userRoles.includes(tr))
-  }
-
   function SortIcon({ column }: { column: SortKey }) {
     if (sortKey !== column) {
       return <ArrowUpDown className="ml-1 inline h-3 w-3 opacity-40" />
@@ -235,7 +161,7 @@ export default function AdminUsersPage() {
 
       <p className="text-sm text-[#6B7280]">
         Users are automatically synced from the People Management app daily at
-        2:00 AM CST. Click a user name to assign Tag Roles and manage report
+        2:00 AM CST. Click a user name to manage their Tag Roles and report
         access.
       </p>
 
@@ -253,118 +179,6 @@ export default function AdminUsersPage() {
           Search
         </Button>
       </form>
-
-      {/* User Detail Dialog */}
-      <Dialog
-        open={!!selectedUser}
-        onOpenChange={(open) => !open && setSelectedUser(null)}
-      >
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-lg">
-              {selectedUser?.name ?? selectedUser?.email}
-            </DialogTitle>
-            <p className="text-sm text-[#6B7280]">
-              {selectedUser?.email} — {selectedUser?.department ?? "No dept"} —{" "}
-              {selectedUser?.job_title ?? "No title"}
-            </p>
-          </DialogHeader>
-
-          <div className="space-y-5">
-            {/* TagRole assignment */}
-            <div>
-              <h3 className="mb-2 text-sm font-semibold text-[#374151]">
-                Assign Tag Roles
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {allRoles
-                  .filter((r) => r.name !== "admin")
-                  .map((role) => (
-                    <label
-                      key={role.id}
-                      className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                        userRoles.includes(role.name)
-                          ? "border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]"
-                          : "border-[#E5E7EB] text-[#6B7280] hover:border-[#9CA3AF]"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={userRoles.includes(role.name)}
-                        onChange={() => toggleUserRole(role.name)}
-                      />
-                      {role.name}
-                    </label>
-                  ))}
-              </div>
-            </div>
-
-            {/* Reports access preview */}
-            <div>
-              <h3 className="mb-2 text-sm font-semibold text-[#374151]">
-                Report Access ({allReports.filter((r) => r.is_active && userHasAccessToReport(r)).length}{" "}
-                of {allReports.filter((r) => r.is_active).length} reports)
-              </h3>
-              <div className="max-h-[40vh] space-y-1 overflow-y-auto rounded-lg border p-2">
-                {allReports
-                  .filter((r) => r.is_active)
-                  .map((report) => {
-                    const hasAccess = userHasAccessToReport(report)
-                    return (
-                      <div
-                        key={report.id}
-                        className={`flex items-center justify-between rounded px-3 py-2 text-sm ${
-                          hasAccess ? "bg-[#F0FDF4]" : "bg-[#FEF2F2]"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {hasAccess ? (
-                            <Check className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <X className="h-4 w-4 text-red-400" />
-                          )}
-                          <span
-                            className={
-                              hasAccess
-                                ? "text-[#111827]"
-                                : "text-[#9CA3AF]"
-                            }
-                          >
-                            {report.title}
-                          </span>
-                        </div>
-                        <div className="flex gap-1">
-                          {(report.tag_roles ?? []).map((tr) => (
-                            <Badge
-                              key={tr}
-                              variant="secondary"
-                              className={`text-xs ${
-                                userRoles.includes(tr)
-                                  ? "border-green-300 bg-green-100 text-green-700"
-                                  : ""
-                              }`}
-                            >
-                              {tr}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  })}
-              </div>
-            </div>
-
-            <Button
-              onClick={handleSaveUserRoles}
-              disabled={saving}
-              className="w-full bg-[#2563EB]"
-            >
-              {saving ? "Saving..." : "Save Tag Roles"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <div className="rounded-lg border">
         <table className="w-full text-sm">
@@ -388,7 +202,7 @@ export default function AdminUsersPage() {
                 <td className="px-4 py-3">
                   <button
                     className="font-medium text-[#2563EB] hover:underline"
-                    onClick={() => openUserDetail(user)}
+                    onClick={() => router.push(`/admin/users/${user.id}`)}
                   >
                     {user.name ?? "—"}
                   </button>

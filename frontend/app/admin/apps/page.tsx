@@ -356,7 +356,7 @@ export default function AdminAppsPage() {
                   colSpan={5}
                   className="px-4 py-8 text-center text-[#9CA3AF]"
                 >
-                  No apps yet. Click "Add App" to create one.
+                  No apps yet. Click &ldquo;Add App&rdquo; to create one.
                 </td>
               </tr>
             )}
