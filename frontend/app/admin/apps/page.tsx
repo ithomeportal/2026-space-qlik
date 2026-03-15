@@ -11,7 +11,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Plus, Trash2, Pencil, ExternalLink } from "lucide-react"
+import { Plus, Trash2, Pencil, ExternalLink, RefreshCw } from "lucide-react"
 
 interface App {
   id: string
@@ -78,6 +78,11 @@ export default function AdminAppsPage() {
 
   async function handleDelete(id: string) {
     await fetch(`/api/proxy/admin/apps/${id}`, { method: "DELETE" })
+    loadApps()
+  }
+
+  async function handleRefreshIcon(id: string) {
+    await fetch(`/api/proxy/admin/apps/${id}/refresh-icon`, { method: "POST" })
     loadApps()
   }
 
@@ -330,6 +335,14 @@ export default function AdminAppsPage() {
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRefreshIcon(app.id)}
+                      title="Refresh Icon"
+                    >
+                      <RefreshCw className="h-4 w-4 text-[#6B7280]" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

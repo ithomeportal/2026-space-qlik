@@ -401,8 +401,9 @@ async def _fetch_favicon(url: str) -> str | None:
         )
         async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
             resp = await client.get(favicon_url)
-            if resp.status_code == 200 and len(resp.content) > 100:
-                content_type = resp.headers.get("content-type", "image/png")
+            # Google returns an image even on 404 (default globe icon)
+            content_type = resp.headers.get("content-type", "")
+            if "image" in content_type and len(resp.content) > 50:
                 b64 = base64.b64encode(resp.content).decode()
                 return f"data:{content_type};base64,{b64}"
     except Exception:
@@ -546,6 +547,24 @@ async def admin_update_app_roles(
             app_id,
         )
     return {"success": True, "data": {"updated": True}}
+
+
+@router.post("/apps/{app_id}/refresh-icon")
+async def admin_refresh_app_icon(
+    app_id: UUID,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    """Re-fetch favicon for an app."""
+    pool = get_pool(request)
+    row = await pool.fetchrow("SELECT url FROM apps WHERE id = $1", app_id)
+    if not row:
+        return {"success": False, "error": "App not found"}
+    icon_data = await _fetch_favicon(row["url"])
+    await pool.execute(
+        "UPDATE apps SET icon_data = $1 WHERE id = $2", icon_data, app_id
+    )
+    return {"success": True, "data": {"refreshed": True, "has_icon": icon_data is not None}}
 
 
 @router.delete("/apps/{app_id}")
