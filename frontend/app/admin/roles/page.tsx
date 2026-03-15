@@ -58,12 +58,12 @@ export default function AdminRolesPage() {
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger>
             <Button className="bg-[#2563EB]">
-              <Plus className="mr-2 h-4 w-4" /> Add Role
+              <Plus className="mr-2 h-4 w-4" /> Add TagRole
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create Role</DialogTitle>
+              <DialogTitle>Create TagRole</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleCreate} className="space-y-3">
               <Input
@@ -78,7 +78,7 @@ export default function AdminRolesPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
               <Button type="submit" className="w-full bg-[#2563EB]">
-                Create Role
+                Create TagRole
               </Button>
             </form>
           </DialogContent>
