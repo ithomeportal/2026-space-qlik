@@ -97,10 +97,14 @@ export default function AdminUsersPage() {
       const json = await res.json()
       if (json.success) {
         const d = json.data
-        setLastSync(
-          `Synced ${d.synced} users (${d.new_users} new, ${d.deactivated} deactivated)`
-        )
-        await loadUsers(search || undefined)
+        if (d.error) {
+          setLastSync(`Sync failed: ${d.error}`)
+        } else {
+          setLastSync(
+            `Synced ${d.synced} users (${d.new_users} new, ${d.deactivated} deactivated)`
+          )
+          await loadUsers(search || undefined)
+        }
       }
     } finally {
       setSyncing(false)
