@@ -77,10 +77,9 @@ export default function AdminUsersPage() {
   }
 
   async function loadUsers(query?: string) {
-    const url = query
-      ? `/api/proxy/admin/users?search=${encodeURIComponent(query)}`
-      : "/api/proxy/admin/users"
-    const res = await fetch(url)
+    const params = new URLSearchParams({ limit: "200" })
+    if (query) params.set("search", query)
+    const res = await fetch(`/api/proxy/admin/users?${params}`)
     const json = await res.json()
     if (json.success) setUsers(json.data)
   }
