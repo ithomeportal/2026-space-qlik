@@ -3,30 +3,16 @@
 Runs daily at 2am CST to keep the analytics hub user list in sync:
 - Upserts active employees (name, email, department, job_title, company)
 - Deactivates users no longer active in the time-off system
-- Auto-assigns roles based on department keywords
-- Promotes OWNER/DIRECTOR level employees to executive role
+- Does NOT auto-assign TagRoles — admins assign TagRoles manually
 """
 
 import logging
-from uuid import UUID
 
 import asyncpg
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-DEPT_ROLE_MAP = {
-    "Sales": "sales",
-    "Finance": "finance",
-    "Accounting": "finance",
-    "HR": "hr",
-    "Human": "hr",
-    "IT": "it",
-    "Tech": "it",
-    "Operations": "operations",
-    "Ops": "operations",
-}
 
 ADMIN_EMAILS = [
     "dfrodriguez@unilinktransportation.com",
@@ -64,15 +50,11 @@ async def sync_users() -> dict:
         employees = await timeoff_pool.fetch(
             """
             SELECT "email", "name", "firstName", "lastName", "department",
-                   "jobTitle", "companyName", "role", "roleLevel"
+                   "jobTitle", "companyName"
             FROM users
             WHERE "isActive" = true
             """
         )
-
-        # Load role IDs from analytics hub
-        role_rows = await pool.fetch("SELECT id, name FROM roles")
-        role_ids: dict[str, UUID] = {r["name"]: r["id"] for r in role_rows}
 
         active_emails: set[str] = set()
         synced = 0
@@ -114,52 +96,29 @@ async def sync_users() -> dict:
                 company,
             )
 
-            user_id = result["id"]
             if result["is_new"]:
                 new_users += 1
             synced += 1
 
-            # Auto-assign roles based on department
-            dept = department or ""
-            for keyword, role_name in DEPT_ROLE_MAP.items():
-                if keyword.lower() in dept.lower() and role_name in role_ids:
+        # Keep admin users with admin role
+        role_row = await pool.fetchrow(
+            "SELECT id FROM roles WHERE name = 'admin'"
+        )
+        if role_row:
+            admin_role_id = role_row["id"]
+            for admin_email in ADMIN_EMAILS:
+                user_row = await pool.fetchrow(
+                    "SELECT id FROM users WHERE email = $1", admin_email
+                )
+                if user_row:
                     await pool.execute(
                         """
                         INSERT INTO user_roles (user_id, role_id)
                         VALUES ($1, $2) ON CONFLICT DO NOTHING
                         """,
-                        user_id,
-                        role_ids[role_name],
+                        user_row["id"],
+                        admin_role_id,
                     )
-
-            # Directors/Owners get executive role
-            role_level = emp["roleLevel"] or ""
-            if role_level.upper() in ("OWNER", "DIRECTOR") and "executive" in role_ids:
-                await pool.execute(
-                    """
-                    INSERT INTO user_roles (user_id, role_id)
-                    VALUES ($1, $2) ON CONFLICT DO NOTHING
-                    """,
-                    user_id,
-                    role_ids["executive"],
-                )
-
-        # Assign admin + executive roles to admin users
-        for admin_email in ADMIN_EMAILS:
-            user_row = await pool.fetchrow(
-                "SELECT id FROM users WHERE email = $1", admin_email
-            )
-            if user_row:
-                for role_name in ("admin", "executive"):
-                    if role_name in role_ids:
-                        await pool.execute(
-                            """
-                            INSERT INTO user_roles (user_id, role_id)
-                            VALUES ($1, $2) ON CONFLICT DO NOTHING
-                            """,
-                            user_row["id"],
-                            role_ids[role_name],
-                        )
 
         # Deactivate users no longer active in time-off system
         deactivated_result = await pool.execute(
