@@ -1,12 +1,11 @@
 "use client"
 
-import { usePreferences, useReports, useToggleFavorite } from "@/lib/api"
+import { usePreferences, useReports } from "@/lib/api"
 import { ReportCard } from "./ReportCard"
 
 export function PinnedRow() {
   const { data: prefsRes } = usePreferences()
   const { data: reportsRes } = useReports()
-  const toggleFavorite = useToggleFavorite()
 
   const pinnedIds = prefsRes?.data?.pinned_reports ?? []
   const allReports = reportsRes?.data ?? []
@@ -21,11 +20,7 @@ export function PinnedRow() {
       <div className="flex gap-6 overflow-x-auto pb-2">
         {pinnedReports.slice(0, 6).map((report) => (
           <div key={report.id} className="w-[280px] shrink-0">
-            <ReportCard
-              report={report}
-              isFavorited
-              onToggleFavorite={(id) => toggleFavorite.mutate(id)}
-            />
+            <ReportCard report={report} />
           </div>
         ))}
       </div>

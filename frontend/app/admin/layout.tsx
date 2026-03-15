@@ -8,6 +8,7 @@ import type { ReactNode } from "react"
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/reports", label: "Reports" },
+  { href: "/admin/apps", label: "Apps" },
   { href: "/admin/roles", label: "Tag Roles" },
   { href: "/admin/users", label: "Users" },
 ]

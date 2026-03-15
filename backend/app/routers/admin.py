@@ -385,6 +385,151 @@ async def admin_update_user_roles(
     return {"success": True, "data": {"updated": True}}
 
 
+# --- Apps CRUD ---
+
+
+class AppCreate(BaseModel):
+    title: str
+    url: str
+    description: str | None = None
+    role_names: list[str] | None = None
+
+
+class AppUpdate(BaseModel):
+    title: str | None = None
+    url: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+
+
+class AppRolesUpdate(BaseModel):
+    role_names: list[str]
+
+
+@router.get("/apps")
+async def admin_list_apps(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    pool = get_pool(request)
+    rows = await pool.fetch(
+        """
+        SELECT a.*,
+               ARRAY(
+                 SELECT ro.name FROM roles ro
+                 JOIN app_role_access ara ON ara.role_id = ro.id
+                 WHERE ara.app_id = a.id
+                 ORDER BY ro.name
+               ) AS tag_roles
+        FROM apps a
+        ORDER BY a.title
+        """
+    )
+    return {"success": True, "data": [dict(r) for r in rows]}
+
+
+@router.post("/apps")
+async def admin_create_app(
+    body: AppCreate,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    pool = get_pool(request)
+    row = await pool.fetchrow(
+        """
+        INSERT INTO apps (title, url, description)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        """,
+        body.title,
+        body.url,
+        body.description,
+    )
+
+    if body.role_names:
+        app_id = row["id"]
+        for role_name in body.role_names:
+            await pool.execute(
+                """
+                INSERT INTO app_role_access (role_id, app_id)
+                SELECT id, $2 FROM roles WHERE name = $1
+                ON CONFLICT DO NOTHING
+                """,
+                role_name,
+                app_id,
+            )
+
+    return {"success": True, "data": dict(row)}
+
+
+@router.patch("/apps/{app_id}")
+async def admin_update_app(
+    app_id: UUID,
+    body: AppUpdate,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    pool = get_pool(request)
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        return {"success": False, "error": "No fields to update"}
+
+    set_clauses = []
+    values = []
+    for i, (key, val) in enumerate(updates.items(), start=2):
+        set_clauses.append(f"{key} = ${i}")
+        values.append(val)
+
+    query = f"""
+        UPDATE apps SET {', '.join(set_clauses)}, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+    """
+    row = await pool.fetchrow(query, app_id, *values)
+    if not row:
+        return {"success": False, "error": "App not found"}
+    return {"success": True, "data": dict(row)}
+
+
+@router.patch("/apps/{app_id}/roles")
+async def admin_update_app_roles(
+    app_id: UUID,
+    body: AppRolesUpdate,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    """Replace tag roles for an app."""
+    pool = get_pool(request)
+    await pool.execute(
+        "DELETE FROM app_role_access WHERE app_id = $1", app_id
+    )
+    for role_name in body.role_names:
+        await pool.execute(
+            """
+            INSERT INTO app_role_access (role_id, app_id)
+            SELECT id, $2 FROM roles WHERE name = $1
+            ON CONFLICT DO NOTHING
+            """,
+            role_name,
+            app_id,
+        )
+    return {"success": True, "data": {"updated": True}}
+
+
+@router.delete("/apps/{app_id}")
+async def admin_delete_app(
+    app_id: UUID,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+):
+    pool = get_pool(request)
+    await pool.execute(
+        "UPDATE apps SET is_active = FALSE, updated_at = NOW() WHERE id = $1",
+        app_id,
+    )
+    return {"success": True, "data": {"deleted": True}}
+
+
 # --- Seed ---
 
 

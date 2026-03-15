@@ -410,6 +410,32 @@ async def seed_all():
             """
         )
 
+        # Create apps table if it doesn't exist
+        await pool.execute(
+            """
+            CREATE TABLE IF NOT EXISTS apps (
+              id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              title       TEXT NOT NULL,
+              url         TEXT NOT NULL,
+              description TEXT,
+              is_active   BOOLEAN DEFAULT TRUE,
+              created_at  TIMESTAMPTZ DEFAULT NOW(),
+              updated_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+
+        # Create app_role_access junction table if it doesn't exist
+        await pool.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_role_access (
+              role_id  UUID REFERENCES roles(id) ON DELETE CASCADE,
+              app_id   UUID REFERENCES apps(id) ON DELETE CASCADE,
+              PRIMARY KEY (role_id, app_id)
+            )
+            """
+        )
+
         # 1. Seed roles
         role_ids = {}
         for name, description in DEFAULT_ROLES:

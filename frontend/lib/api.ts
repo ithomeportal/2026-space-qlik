@@ -74,6 +74,21 @@ export function useSearchReports(query: string) {
   })
 }
 
+export interface AppItem {
+  id: string
+  title: string
+  url: string
+  description: string | null
+  is_active: boolean
+}
+
+export function useApps() {
+  return useQuery({
+    queryKey: ["apps"],
+    queryFn: () => apiFetch<AppItem[]>("apps"),
+  })
+}
+
 export function useQlikToken() {
   return useQuery({
     queryKey: ["qlik-token"],

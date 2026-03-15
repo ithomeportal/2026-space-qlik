@@ -139,3 +139,31 @@ async def get_report(
     )
 
     return {"success": True, "data": dict(row)}
+
+
+@router.get("/apps")
+async def list_apps(
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    """List apps accessible to the current user based on TagRoles."""
+    pool = get_pool(request)
+    user_id = UUID(user["sub"])
+
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT a.id, a.title, a.url, a.description,
+               a.is_active, a.created_at
+        FROM apps a
+        JOIN app_role_access ara ON ara.app_id = a.id
+        JOIN user_roles ur ON ur.role_id = ara.role_id AND ur.user_id = $1
+        WHERE a.is_active = TRUE
+        ORDER BY a.title
+        """,
+        user_id,
+    )
+
+    return {
+        "success": True,
+        "data": [dict(r) for r in rows],
+    }
