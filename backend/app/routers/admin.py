@@ -30,6 +30,7 @@ class ReportCreate(BaseModel):
     qlik_space_id: str | None = None
     title: str
     description: str | None = None
+    note: str | None = None
     category: str | None = None
     tags: list[str] | None = None
     owner_name: str | None = None
@@ -44,6 +45,7 @@ class ReportRolesUpdate(BaseModel):
 class ReportUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
+    note: str | None = None
     category: str | None = None
     tags: list[str] | None = None
     owner_name: str | None = None
@@ -103,8 +105,8 @@ async def admin_create_report(
     row = await pool.fetchrow(
         """
         INSERT INTO reports (qlik_app_id, qlik_sheet_id, qlik_space_id, title,
-                             description, category, tags, owner_name, data_sources)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                             description, note, category, tags, owner_name, data_sources)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *
         """,
         body.qlik_app_id,
@@ -112,6 +114,7 @@ async def admin_create_report(
         body.qlik_space_id,
         body.title,
         body.description,
+        body.note,
         body.category,
         body.tags or [],
         body.owner_name,

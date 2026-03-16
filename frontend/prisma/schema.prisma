@@ -14,6 +14,7 @@ model Report {
   qlikSpaceId  String?  @map("qlik_space_id")
   title        String
   description  String?
+  note         String?
   category     String?
   tags         String[]
   ownerName    String?  @map("owner_name")

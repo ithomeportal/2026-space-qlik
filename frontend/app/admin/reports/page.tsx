@@ -11,11 +11,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Plus, Trash2, Pencil } from "lucide-react"
+import { Plus, Trash2, Pencil, FileEdit } from "lucide-react"
 
 interface Report {
   id: string
   title: string
+  description: string | null
+  note: string | null
   qlik_app_id: string
   qlik_sheet_id: string | null
   is_active: boolean
@@ -34,9 +36,12 @@ export default function AdminReportsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [editingReport, setEditingReport] = useState<Report | null>(null)
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
+  const [editReport, setEditReport] = useState<Report | null>(null)
+  const [editForm, setEditForm] = useState({ title: "", description: "", note: "" })
   const [form, setForm] = useState({
     title: "",
     description: "",
+    note: "",
     qlik_app_id: "",
     qlik_sheet_id: "",
     owner_name: "",
@@ -79,6 +84,7 @@ export default function AdminReportsPage() {
     setForm({
       title: "",
       description: "",
+      note: "",
       qlik_app_id: "",
       qlik_sheet_id: "",
       owner_name: "",
@@ -90,6 +96,30 @@ export default function AdminReportsPage() {
 
   async function handleDelete(id: string) {
     await fetch(`/api/proxy/admin/reports/${id}`, { method: "DELETE" })
+    loadReports()
+  }
+
+  function openEditReport(report: Report) {
+    setEditReport(report)
+    setEditForm({
+      title: report.title,
+      description: report.description ?? "",
+      note: report.note ?? "",
+    })
+  }
+
+  async function handleSaveEdit() {
+    if (!editReport) return
+    await fetch(`/api/proxy/admin/reports/${editReport.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: editForm.title || undefined,
+        description: editForm.description || undefined,
+        note: editForm.note || undefined,
+      }),
+    })
+    setEditReport(null)
     loadReports()
   }
 
@@ -176,6 +206,15 @@ export default function AdminReportsPage() {
                   setForm({ ...form, description: e.target.value })
                 }
               />
+              <textarea
+                placeholder="Note — additional details about what this report contains"
+                value={form.note}
+                onChange={(e) =>
+                  setForm({ ...form, note: e.target.value })
+                }
+                rows={3}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
               <Input
                 placeholder="Qlik App ID"
                 value={form.qlik_app_id}
@@ -253,6 +292,56 @@ export default function AdminReportsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit Report Dialog */}
+      <Dialog
+        open={!!editReport}
+        onOpenChange={(open) => !open && setEditReport(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Edit Report — {editReport?.title}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Title"
+              value={editForm.title}
+              onChange={(e) =>
+                setEditForm({ ...editForm, title: e.target.value })
+              }
+            />
+            <Input
+              placeholder="Description"
+              value={editForm.description}
+              onChange={(e) =>
+                setEditForm({ ...editForm, description: e.target.value })
+              }
+            />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#374151]">
+                Note
+              </label>
+              <textarea
+                placeholder="Additional details about what this report contains"
+                value={editForm.note}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, note: e.target.value })
+                }
+                rows={4}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <Button
+              onClick={handleSaveEdit}
+              className="w-full bg-[#2563EB]"
+            >
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="rounded-lg border">
         <table className="w-full text-sm">
           <thead>
@@ -298,6 +387,14 @@ export default function AdminReportsPage() {
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditReport(report)}
+                      title="Edit Report"
+                    >
+                      <FileEdit className="h-4 w-4 text-[#2563EB]" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

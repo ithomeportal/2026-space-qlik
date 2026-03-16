@@ -30,6 +30,7 @@ export interface Report {
   qlik_sheet_id: string | null
   title: string
   description: string | null
+  note: string | null
   category: string | null
   tags: string[]
   owner_name: string | null

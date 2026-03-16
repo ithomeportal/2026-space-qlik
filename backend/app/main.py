@@ -65,6 +65,10 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(
                 "ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_data TEXT"
             )
+            # Add note column to reports if missing
+            await app.state.pool.execute(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS note TEXT"
+            )
 
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
