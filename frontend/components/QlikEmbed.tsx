@@ -49,10 +49,19 @@ async function establishQlikSession(): Promise<void> {
     )
     if (resp.ok) {
       sessionEstablished = true
+    } else {
+      console.warn(
+        `[QlikEmbed] Session exchange returned ${resp.status} — verify Web Integration allowed origins include ${window.location.origin}`
+      )
     }
-  } catch {
+  } catch (err) {
     // If the direct exchange fails (CORS or cookie blocking),
-    // fall back to getAccessToken approach below
+    // fall back to getAccessToken approach below.
+    // Common cause: Web Integration allowed origins missing the current domain.
+    console.warn(
+      "[QlikEmbed] Session exchange failed — check Web Integration allowed origins in Qlik Cloud Console.",
+      err
+    )
   }
 }
 
