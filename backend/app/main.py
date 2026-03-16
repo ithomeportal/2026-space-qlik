@@ -75,6 +75,30 @@ async def lifespan(app: FastAPI):
                 from app.services.seed import seed_all
 
                 await seed_all()
+
+            # Backfill favicons for apps missing icon_data
+            apps_without_icons = await app.state.pool.fetch(
+                "SELECT id, url FROM apps WHERE icon_data IS NULL AND is_active = TRUE"
+            )
+            if apps_without_icons:
+                logger.info(
+                    f"Backfilling favicons for {len(apps_without_icons)} apps..."
+                )
+                from app.routers.admin import _fetch_favicon
+
+                for row in apps_without_icons:
+                    icon_data = await _fetch_favicon(row["url"])
+                    if icon_data:
+                        await app.state.pool.execute(
+                            "UPDATE apps SET icon_data = $1 WHERE id = $2",
+                            icon_data,
+                            row["id"],
+                        )
+                        logger.info(f"Favicon backfilled for app {row['id']}")
+                    else:
+                        logger.warning(
+                            f"Could not fetch favicon for {row['url']}"
+                        )
         except Exception as e:
             logger.warning(f"Database startup error: {e}. Running without DB.")
             app.state.pool = None
