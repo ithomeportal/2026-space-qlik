@@ -389,21 +389,87 @@ async def admin_update_user_roles(
 
 
 async def _fetch_favicon(url: str) -> str | None:
-    """Fetch favicon for a URL and return as base64 data URI."""
+    """Fetch favicon for a URL and return as base64 data URI.
+
+    Tries multiple sources in order:
+    1. /icon.svg (Next.js app router convention)
+    2. /favicon.svg
+    3. /favicon.ico
+    4. Google's favicon API (fallback)
+    """
     import base64
+    import re
 
     import httpx
 
     try:
         domain = url.split("//")[-1].split("/")[0]
-        favicon_url = (
-            f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
-        )
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        base_url = f"https://{domain}"
+        # Google default globe is ~726 bytes PNG — fingerprint to detect it
+        GOOGLE_GLOBE_SIZES = {726, 362}
+
+        async with httpx.AsyncClient(
+            follow_redirects=True, timeout=10
+        ) as client:
+            # Try direct favicon paths first
+            for path in ["/icon.svg", "/favicon.svg", "/favicon.ico"]:
+                try:
+                    resp = await client.get(f"{base_url}{path}")
+                    if resp.status_code == 200:
+                        content_type = resp.headers.get("content-type", "")
+                        if "svg" in content_type or path.endswith(".svg"):
+                            content_type = "image/svg+xml"
+                        if (
+                            ("image" in content_type or "svg" in content_type)
+                            and len(resp.content) > 50
+                        ):
+                            b64 = base64.b64encode(resp.content).decode()
+                            return f"data:{content_type};base64,{b64}"
+                except Exception:
+                    continue
+
+            # Try parsing HTML <link rel="icon"> from the page
+            try:
+                page_resp = await client.get(base_url)
+                if page_resp.status_code == 200:
+                    html = page_resp.text[:8000]
+                    match = re.search(
+                        r'<link[^>]*rel=["\'](?:shortcut )?icon["\'][^>]*href=["\']([^"\']+)',
+                        html,
+                        re.IGNORECASE,
+                    )
+                    if match:
+                        href = match.group(1)
+                        if href.startswith("/"):
+                            href = f"{base_url}{href}"
+                        elif not href.startswith("http"):
+                            href = f"{base_url}/{href}"
+                        icon_resp = await client.get(href)
+                        if icon_resp.status_code == 200:
+                            ct = icon_resp.headers.get("content-type", "")
+                            if "svg" in href:
+                                ct = "image/svg+xml"
+                            if ("image" in ct or "svg" in ct) and len(
+                                icon_resp.content
+                            ) > 50:
+                                b64 = base64.b64encode(
+                                    icon_resp.content
+                                ).decode()
+                                return f"data:{ct};base64,{b64}"
+            except Exception:
+                pass
+
+            # Fallback: Google's favicon API
+            favicon_url = (
+                f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
+            )
             resp = await client.get(favicon_url)
-            # Google returns an image even on 404 (default globe icon)
             content_type = resp.headers.get("content-type", "")
-            if "image" in content_type and len(resp.content) > 50:
+            if (
+                "image" in content_type
+                and len(resp.content) > 50
+                and len(resp.content) not in GOOGLE_GLOBE_SIZES
+            ):
                 b64 = base64.b64encode(resp.content).decode()
                 return f"data:{content_type};base64,{b64}"
     except Exception:

@@ -76,9 +76,12 @@ async def lifespan(app: FastAPI):
 
                 await seed_all()
 
-            # Backfill favicons for apps missing icon_data
+            # Backfill favicons for apps missing or with Google globe placeholder
             apps_without_icons = await app.state.pool.fetch(
-                "SELECT id, url FROM apps WHERE icon_data IS NULL AND is_active = TRUE"
+                """SELECT id, url FROM apps
+                   WHERE is_active = TRUE
+                     AND (icon_data IS NULL
+                          OR icon_data LIKE 'data:image/png;base64,%')"""
             )
             if apps_without_icons:
                 logger.info(
