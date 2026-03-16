@@ -24,20 +24,30 @@ async def list_reports(
     rows = await pool.fetch(
         """
         SELECT DISTINCT r.id, r.qlik_app_id, r.qlik_sheet_id, r.title,
-               r.description, r.category, r.tags, r.owner_name,
+               r.description, r.note, r.category, r.tags, r.owner_name,
                r.data_sources, r.last_reload, r.is_active, r.created_at,
                COALESCE(r.is_mobile, FALSE) AS is_mobile,
                EXISTS(
                  SELECT 1 FROM user_preferences up
                  WHERE up.user_id = $1 AND r.id = ANY(up.pinned_reports)
-               ) AS is_favorited
+               ) AS is_favorited,
+               ARRAY(
+                 SELECT ro.name FROM roles ro
+                 JOIN role_report_access rra2 ON rra2.role_id = ro.id
+                 WHERE rra2.report_id = r.id
+                 ORDER BY ro.name
+               ) AS tag_roles,
+               COALESCE(
+                 (SELECT COUNT(*) FROM access_log al WHERE al.report_id = r.id
+                  AND al.accessed_at > NOW() - INTERVAL '30 days'), 0
+               ) AS view_count
         FROM reports r
         JOIN role_report_access rra ON rra.report_id = r.id
         JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
         WHERE r.is_active = TRUE
           AND COALESCE(r.is_mobile, FALSE) = $2
           AND ($3::text IS NULL OR r.category = $3)
-        ORDER BY r.category, r.title
+        ORDER BY view_count DESC, r.title
         LIMIT $4 OFFSET $5
         """,
         user_id,
@@ -146,19 +156,46 @@ async def list_apps(
     request: Request,
     user: dict = Depends(require_user),
 ):
-    """List apps accessible to the current user based on TagRoles."""
+    """List ALL active apps — apps are visible to all authenticated users."""
     pool = get_pool(request)
-    user_id = UUID(user["sub"])
 
     rows = await pool.fetch(
         """
-        SELECT DISTINCT a.id, a.title, a.url, a.description,
+        SELECT a.id, a.title, a.url, a.description,
                a.icon_data, a.is_active, a.created_at
         FROM apps a
-        JOIN app_role_access ara ON ara.app_id = a.id
-        JOIN user_roles ur ON ur.role_id = ara.role_id AND ur.user_id = $1
         WHERE a.is_active = TRUE
         ORDER BY a.title
+        """
+    )
+
+    return {
+        "success": True,
+        "data": [dict(r) for r in rows],
+    }
+
+
+@router.get("/user/tag-roles")
+async def list_user_tag_roles(
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    """Return TagRoles assigned to the current user, with report count per role."""
+    pool = get_pool(request)
+    user_id = user["sub"]
+
+    rows = await pool.fetch(
+        """
+        SELECT r.id, r.name, r.description,
+               (SELECT COUNT(DISTINCT rra.report_id)
+                FROM role_report_access rra
+                JOIN reports rep ON rep.id = rra.report_id AND rep.is_active = TRUE
+                WHERE rra.role_id = r.id
+               ) AS report_count
+        FROM roles r
+        JOIN user_roles ur ON ur.role_id = r.id AND ur.user_id = $1
+        WHERE r.name != 'admin'
+        ORDER BY report_count DESC, r.name
         """,
         user_id,
     )

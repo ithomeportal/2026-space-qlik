@@ -6,15 +6,6 @@ import { ExternalLink } from "lucide-react"
 import type { Report, AppItem } from "@/lib/api"
 import { getReportIcon } from "./ReportIcons"
 
-function formatTimeAgo(date: string | null): string {
-  if (!date) return "Unknown"
-  const diff = Date.now() - new Date(date).getTime()
-  const hours = Math.floor(diff / (1000 * 60 * 60))
-  if (hours < 1) return "Just now"
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
-}
 
 interface ReportCardProps {
   report: Report
@@ -46,7 +37,7 @@ function TileView({ report }: ReportCardProps) {
   )
 }
 
-/** List view — row with icon, title, category, owner, date */
+/** List view — row with icon, title, and note */
 function ListView({ report }: ReportCardProps) {
   const { icon: Icon, bg } = getReportIcon(report.title, report.category)
 
@@ -68,18 +59,8 @@ function ListView({ report }: ReportCardProps) {
             </p>
           )}
         </div>
-        <div className="hidden w-28 shrink-0 sm:block">
-          {report.category && (
-            <span className="rounded-full bg-[#F3F4F6] px-2.5 py-1 text-xs font-medium text-[#374151]">
-              {report.category}
-            </span>
-          )}
-        </div>
-        <div className="hidden w-24 shrink-0 text-xs text-[#6B7280] md:block">
-          {report.owner_name ?? "—"}
-        </div>
-        <div className="hidden w-24 shrink-0 text-right text-xs text-[#6B7280] lg:block">
-          {formatTimeAgo(report.last_reload)}
+        <div className="hidden min-w-0 flex-1 text-xs text-[#6B7280] sm:block">
+          {report.note ?? ""}
         </div>
       </div>
     </Link>

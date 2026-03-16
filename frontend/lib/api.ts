@@ -33,11 +33,20 @@ export interface Report {
   note: string | null
   category: string | null
   tags: string[]
+  tag_roles: string[]
   owner_name: string | null
   data_sources: string[]
   last_reload: string | null
   is_active: boolean
   is_favorited?: boolean
+  view_count?: number
+}
+
+export interface TagRole {
+  id: string
+  name: string
+  description: string | null
+  report_count: number
 }
 
 export function useReports(category?: string, mobile?: boolean) {
@@ -88,6 +97,13 @@ export function useApps() {
   return useQuery({
     queryKey: ["apps"],
     queryFn: () => apiFetch<AppItem[]>("apps"),
+  })
+}
+
+export function useUserTagRoles() {
+  return useQuery({
+    queryKey: ["user-tag-roles"],
+    queryFn: () => apiFetch<TagRole[]>("user/tag-roles"),
   })
 }
 

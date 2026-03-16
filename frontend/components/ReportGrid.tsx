@@ -1,12 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { LayoutGrid, List, ExternalLink } from "lucide-react"
-import { useReports, useApps, type Report } from "@/lib/api"
+import { LayoutGrid, List, ExternalLink, Tag } from "lucide-react"
+import { useReports, useApps, useUserTagRoles, type Report } from "@/lib/api"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { ReportCard, AppCard } from "./ReportCard"
 import { ReportGridSkeleton } from "./skeletons/ReportGridSkeleton"
-import { CATEGORY_COLORS } from "./ReportIcons"
 
 type ViewMode = "tiles" | "list"
 
@@ -45,8 +44,63 @@ function ViewToggle({
   )
 }
 
+function TagRoleSidebar({
+  activeRole,
+  onSelect,
+}: {
+  activeRole: string | null
+  onSelect: (role: string | null) => void
+}) {
+  const { data: rolesRes } = useUserTagRoles()
+  const roles = rolesRes?.data ?? []
+
+  if (roles.length === 0) return null
+
+  return (
+    <div className="space-y-1.5">
+      <div className="mb-3 flex items-center gap-2">
+        <Tag className="h-4 w-4 text-[#6B7280]" />
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+          Filters
+        </h3>
+      </div>
+      <button
+        onClick={() => onSelect(null)}
+        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+          activeRole === null
+            ? "bg-[#1B3A5C] text-white"
+            : "text-[#374151] hover:bg-[#F3F4F6]"
+        }`}
+      >
+        <span>All</span>
+      </button>
+      {roles.map((role) => (
+        <button
+          key={role.id}
+          onClick={() => onSelect(activeRole === role.name ? null : role.name)}
+          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+            activeRole === role.name
+              ? "bg-[#1B3A5C] text-white"
+              : "text-[#374151] hover:bg-[#F3F4F6]"
+          }`}
+        >
+          <span className="truncate">{role.name}</span>
+          <span
+            className={`ml-2 shrink-0 text-xs ${
+              activeRole === role.name ? "text-white/70" : "text-[#9CA3AF]"
+            }`}
+          >
+            {role.report_count}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function ReportGrid() {
   const [view, setView] = useState<ViewMode>("tiles")
+  const [activeRole, setActiveRole] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const { data: reportsRes, isLoading, isError, refetch } = useReports(undefined, isMobile)
   const { data: appsRes } = useApps()
@@ -72,55 +126,36 @@ export function ReportGrid() {
     )
   }
 
-  const reports = reportsRes?.data ?? []
+  const allReports = reportsRes?.data ?? []
   const apps = appsRes?.data ?? []
 
-  // Group reports by category
-  const grouped = reports.reduce<Record<string, Report[]>>((acc, report) => {
-    const cat = report.category ?? "Other"
-    return { ...acc, [cat]: [...(acc[cat] ?? []), report] }
-  }, {})
+  // Filter reports by selected TagRole
+  const reports = activeRole
+    ? allReports.filter((r) => (r.tag_roles ?? []).includes(activeRole))
+    : allReports
 
-  const categoryOrder = [
-    "Executive",
-    "Finance",
-    "Operations",
-    "Sales",
-    "HR",
-    "IT",
-  ]
-  const sortedCategories = Object.keys(grouped).sort(
-    (a, b) =>
-      (categoryOrder.indexOf(a) === -1 ? 99 : categoryOrder.indexOf(a)) -
-      (categoryOrder.indexOf(b) === -1 ? 99 : categoryOrder.indexOf(b))
-  )
+  if (view === "list") {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-[#6B7280]">
+            {reports.length} reports{apps.length > 0 ? ` · ${apps.length} apps` : ""}
+          </p>
+          <ViewToggle view={view} onChange={setView} />
+        </div>
 
-  return (
-    <div className="space-y-8">
-      {/* View toggle */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[#6B7280]">
-          {reports.length} reports{apps.length > 0 ? ` · ${apps.length} apps` : ""}
-        </p>
-        <ViewToggle view={view} onChange={setView} />
-      </div>
+        {/* TagRole filter pills for list view */}
+        <TagRoleFilterPills activeRole={activeRole} onSelect={setActiveRole} />
 
-      {/* Apps section */}
-      {apps.length > 0 && (
-        <section>
-          <div className="mb-4 flex items-center gap-2">
-            <ExternalLink className="h-4 w-4 text-[#2563EB]" />
-            <h2 className="text-lg font-semibold text-[#1B3A5C]">Apps</h2>
-            <span className="text-xs text-[#9CA3AF]">{apps.length}</span>
-          </div>
-
-          {view === "tiles" ? (
-            <div className="flex flex-wrap gap-8">
-              {apps.map((app) => (
-                <AppCard key={app.id} app={app} view="tiles" />
-              ))}
+        {/* Apps section */}
+        {apps.length > 0 && (
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <ExternalLink className="h-4 w-4 text-[#2563EB]" />
+              <h2 className="text-lg font-semibold text-[#1B3A5C]">Apps</h2>
+              <span className="text-xs text-[#9CA3AF]">{apps.length}</span>
             </div>
-          ) : (
             <div className="rounded-lg border border-[#E5E7EB] bg-white">
               <div className="flex items-center gap-4 border-b border-[#E5E7EB] px-4 py-2 text-xs font-medium text-[#6B7280]">
                 <div className="w-10 shrink-0" />
@@ -133,53 +168,108 @@ export function ReportGrid() {
                 ))}
               </div>
             </div>
-          )}
-        </section>
-      )}
+          </section>
+        )}
 
-      {/* Report categories */}
-      {sortedCategories.map((category) => (
-        <section key={category}>
-          <div className="mb-4 flex items-center gap-2">
-            <div
-              className={`h-2 w-2 rounded-full ${CATEGORY_COLORS[category] ?? "bg-gray-400"}`}
-            />
-            <h2 className="text-lg font-semibold text-[#1B3A5C]">
-              {category}
-            </h2>
-            <span className="text-xs text-[#9CA3AF]">
-              {grouped[category].length}
-            </span>
-          </div>
-
-          {view === "tiles" ? (
-            <div className="flex flex-wrap gap-8">
-              {grouped[category].map((report) => (
-                <ReportCard key={report.id} report={report} view="tiles" />
-              ))}
+        {/* Reports list */}
+        {reports.length > 0 && (
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-[#1B3A5C]">Reports</h2>
+              <span className="text-xs text-[#9CA3AF]">{reports.length}</span>
             </div>
-          ) : (
             <div className="rounded-lg border border-[#E5E7EB] bg-white">
               <div className="flex items-center gap-4 border-b border-[#E5E7EB] px-4 py-2 text-xs font-medium text-[#6B7280]">
                 <div className="w-10 shrink-0" />
                 <div className="min-w-0 flex-1">Name</div>
-                <div className="hidden w-28 shrink-0 sm:block">Category</div>
-                <div className="hidden w-24 shrink-0 md:block">Owner</div>
-                <div className="hidden w-24 shrink-0 text-right lg:block">
-                  Updated
-                </div>
+                <div className="hidden min-w-0 flex-1 sm:block">Note</div>
               </div>
               <div className="divide-y divide-[#F3F4F6]">
-                {grouped[category].map((report) => (
+                {reports.map((report) => (
                   <ReportCard key={report.id} report={report} view="list" />
                 ))}
               </div>
             </div>
-          )}
-        </section>
-      ))}
+          </section>
+        )}
 
-      {reports.length === 0 && apps.length === 0 && !isLoading && (
+        {reports.length === 0 && apps.length === 0 && (
+          <div className="py-16 text-center text-[#6B7280]">
+            <p className="text-lg">No reports or apps available</p>
+            <p className="mt-1 text-sm">
+              Contact your admin to get access to reports.
+            </p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Tiles view — 3-column layout
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[#6B7280]">
+          {reports.length} reports{apps.length > 0 ? ` · ${apps.length} apps` : ""}
+        </p>
+        <ViewToggle view={view} onChange={setView} />
+      </div>
+
+      {/* 3-column layout: TagRoles (1/5) | Reports (3/5) | Apps (1/5) */}
+      <div className="flex gap-6">
+        {/* Left column — TagRole filters */}
+        <div className="w-1/5 shrink-0">
+          <TagRoleSidebar activeRole={activeRole} onSelect={setActiveRole} />
+        </div>
+
+        {/* Center column — Reports matrix */}
+        <div className="w-3/5">
+          {reports.length > 0 ? (
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280]">
+                  Reports
+                </h2>
+                <span className="text-xs text-[#9CA3AF]">{reports.length}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-6 min-[1200px]:grid-cols-4 min-[1600px]:grid-cols-5 min-[1920px]:grid-cols-6">
+                {reports.map((report) => (
+                  <ReportCard key={report.id} report={report} view="tiles" />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-40 items-center justify-center text-sm text-[#6B7280]">
+              {activeRole
+                ? `No reports for "${activeRole}"`
+                : "No reports available"}
+            </div>
+          )}
+        </div>
+
+        {/* Right column — Apps */}
+        <div className="w-1/5 shrink-0">
+          {apps.length > 0 && (
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <ExternalLink className="h-4 w-4 text-[#2563EB]" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280]">
+                  Apps
+                </h2>
+                <span className="text-xs text-[#9CA3AF]">{apps.length}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {apps.map((app) => (
+                  <AppCard key={app.id} app={app} view="tiles" />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {reports.length === 0 && apps.length === 0 && (
         <div className="py-16 text-center text-[#6B7280]">
           <p className="text-lg">No reports or apps available</p>
           <p className="mt-1 text-sm">
@@ -187,6 +277,49 @@ export function ReportGrid() {
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Horizontal filter pills for list view */
+function TagRoleFilterPills({
+  activeRole,
+  onSelect,
+}: {
+  activeRole: string | null
+  onSelect: (role: string | null) => void
+}) {
+  const { data: rolesRes } = useUserTagRoles()
+  const roles = rolesRes?.data ?? []
+
+  if (roles.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button
+        onClick={() => onSelect(null)}
+        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+          activeRole === null
+            ? "bg-[#1B3A5C] text-white"
+            : "bg-[#F3F4F6] text-[#374151] hover:bg-[#E5E7EB]"
+        }`}
+      >
+        All
+      </button>
+      {roles.map((role) => (
+        <button
+          key={role.id}
+          onClick={() => onSelect(activeRole === role.name ? null : role.name)}
+          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+            activeRole === role.name
+              ? "bg-[#1B3A5C] text-white"
+              : "bg-[#F3F4F6] text-[#374151] hover:bg-[#E5E7EB]"
+          }`}
+        >
+          {role.name}
+          <span className="ml-1 opacity-60">{role.report_count}</span>
+        </button>
+      ))}
     </div>
   )
 }
