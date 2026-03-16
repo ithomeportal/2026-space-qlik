@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { LayoutGrid, List, ExternalLink, Tag } from "lucide-react"
-import { useReports, useApps, useUserTagRoles, type Report } from "@/lib/api"
+import { useReports, useApps, useUserTagRoles } from "@/lib/api"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { ReportCard, AppCard } from "./ReportCard"
 import { ReportGridSkeleton } from "./skeletons/ReportGridSkeleton"
