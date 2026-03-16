@@ -22,7 +22,7 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com`
+- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com` + `*.launchdarkly.com` + `api.qlikdataengineering.com`
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 - Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
@@ -42,7 +42,7 @@
 ### Code Style
 - Immutable updates only (spread operator, no mutation)
 - Files < 400 lines (800 max), functions < 50 lines
-- No `console.log` in production
+- No `console.log` in production (console.warn allowed for diagnostics)
 - ONLY light mode — block dark mode
 
 ### Qlik Embedding
@@ -52,8 +52,10 @@
 - JWT required claims: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud`
 - `nbf` (not-before) is MANDATORY — omitting it causes silent 400 on `/login/jwt-session`
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
+- Web Integration allowed origins MUST include deployment domain (e.g. `https://space.unilinkportal.com`)
 - JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
+- QlikEmbed.tsx logs diagnostic warnings when session exchange fails — check console for origin mismatch
 
 ### Responsive Mobile
 - Below 1920px viewport = mobile mode → show only `(Mob)` prefixed Qlik reports
@@ -95,16 +97,18 @@
 ## Features
 
 1. **Email Code Auth** — 8-digit code via Resend, NextAuth session, admin role management
-2. **Search-First Home** — Centered search bar (cmdk), iPad-style tile icons with list view toggle
-3. **TagRole-Based Access** — Users see only reports/apps with matching TagRoles (assigned by admin)
-4. **Responsive Mobile** — <1920px shows (Mob) Qlik apps optimized for small screens
-5. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
-6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
-7. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
-8. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view, usage analytics
-9. **Apps (External Links)** — External links with favicon icons, TagRole access, open in new tab
-10. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
-11. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
+2. **3-Column Home Layout** — TagRole filters (1/5) | Reports matrix (3/5) | Apps (1/5), sorted by usage desc
+3. **TagRole-Based Access** — Users see only reports with matching TagRoles; Apps visible to ALL users
+4. **TagRole Filters** — Sidebar buttons (tiles) / pills (list) filter reports by TagRole; "All" shows everything
+5. **Responsive Mobile** — <1920px shows (Mob) Qlik apps optimized for small screens
+6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
+7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
+8. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
+9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view
+10. **Apps (External Links)** — External links with favicon icons, visible to all authenticated users
+11. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
+12. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
+13. **List View** — Shows report name + Note column (no Category/Owner/Updated)
 
 ---
 
@@ -131,7 +135,7 @@
 frontend/
   app/
     layout.tsx              # Root layout: providers, auth, header
-    page.tsx                # Home: search bar + report grid + apps (responsive)
+    page.tsx                # Home: search bar + 3-column report grid (no title)
     reports/[id]/page.tsx   # Full-screen Qlik embed viewer
     admin/
       layout.tsx            # Admin sidebar (Dashboard, Reports, Apps, Tag Roles, Users)
@@ -146,14 +150,14 @@ frontend/
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
   components/
     SearchBar.tsx           # cmdk command palette
-    ReportGrid.tsx          # View toggle + categorized grid/list + apps section
-    ReportCard.tsx          # Report tile/list + App tile/list (favicon from URL)
-    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange)
+    ReportGrid.tsx          # 3-column layout: TagRole sidebar | Reports matrix | Apps column
+    ReportCard.tsx          # Report tile/list (Note in list view) + App tile/list (favicon)
+    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange + diagnostics)
   lib/
     auth.ts                 # NextAuth config
-    api.ts                  # React Query hooks + API fetch wrapper (reports, apps, prefs)
+    api.ts                  # React Query hooks (reports, apps, tag-roles, prefs)
     use-is-mobile.ts        # Viewport detection hook (<1920px = mobile)
-  next.config.mjs           # CSP headers (Qlik + Google favicons)
+  next.config.mjs           # CSP headers (Qlik + telemetry domains)
 
 backend/
   app/
@@ -161,7 +165,7 @@ backend/
     config.py               # Pydantic Settings (incl SEED_SECRET, TIMEOFF_DATABASE_URL)
     routers/
       deps.py               # require_user (JSON parse), require_admin
-      reports.py            # GET /api/reports, GET /api/apps (both role-filtered)
+      reports.py            # GET /api/reports (with tag_roles, view_count), GET /api/apps (all users), GET /api/user/tag-roles
       qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
@@ -205,10 +209,10 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 ## TagRole Access Model
 
 - **TagRoles** are created/edited by admins at `/admin/roles`
-- **Reports** are assigned TagRoles at `/admin/reports` (pencil icon per report)
-- **Apps** are assigned TagRoles at `/admin/apps` ("All TagRoles" toggle or select individual)
+- **Reports** are assigned TagRoles at `/admin/reports` — users see reports only if they share a TagRole
+- **Apps** are visible to ALL authenticated users (no TagRole restriction)
 - **Users** are assigned TagRoles at `/admin/users/[id]` (full-page matrix view)
-- **Access rule**: User sees a report/app only if they share at least one TagRole with it
+- **Home page filters**: TagRoles act as filter buttons on home page (not access control)
 - **No auto-assign**: TagRoles are 100% manually assigned by admins
 - Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned)
 
@@ -221,6 +225,7 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 - **JWT IdP**: Configured (ID: `69b30b03dbb54989a11adb6b`)
 - **Viewers Group**: ID `69b4c6eec98c45424617135b` — "consumer" on all shared spaces
 - **19 desktop + 12 mobile apps** across 7 spaces (see docs/SPEC-QLIK-INVENTORY.md)
+- **Web Integration**: ID `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit` — allowed origins must match deployment domain
 
 ---
 
@@ -240,7 +245,7 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 | File | Contents |
 |------|----------|
 | `docs/SPEC-AUTH.md` | Auth flow, email code, NextAuth, roles, user seeding |
-| `docs/SPEC-UI.md` | Design system, colors, typography, components |
+| `docs/SPEC-UI.md` | Design system, colors, typography, components, 3-column layout |
 | `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup, auth-type gotchas, lessons learned |
 | `docs/SPEC-QLIK-INVENTORY.md` | Full app inventory with IDs, sheets, categories |
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints, Typesense index |
