@@ -56,7 +56,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   callbacks: {
     async signIn({ user }) {
-      return user.email?.endsWith("@unilinktransportation.com") ?? false
+      const allowed = user.email?.endsWith("@unilinktransportation.com") ?? false
+      if (!allowed) {
+        console.warn(`[auth] signIn rejected: ${user.email ?? "no email"}`)
+      }
+      return allowed
     },
     async session({ session, token }) {
       if (token.sub) {

@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 
+export const maxDuration = 60
+
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000"
 
 async function proxyRequest(
@@ -47,7 +49,13 @@ async function proxyRequest(
   }
 
   try {
-    const res = await fetch(backendUrl.toString(), fetchOptions)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 45000)
+    const res = await fetch(backendUrl.toString(), {
+      ...fetchOptions,
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
     const data = await res.json()
     return NextResponse.json(data, { status: res.status })
   } catch {

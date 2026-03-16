@@ -48,10 +48,29 @@ function ViewToggle({
 export function ReportGrid() {
   const [view, setView] = useState<ViewMode>("tiles")
   const isMobile = useIsMobile()
-  const { data: reportsRes, isLoading } = useReports(undefined, isMobile)
+  const { data: reportsRes, isLoading, isError, refetch } = useReports(undefined, isMobile)
   const { data: appsRes } = useApps()
 
   if (isLoading) return <ReportGridSkeleton />
+
+  if (isError) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-lg font-medium text-[#1B3A5C]">
+          Loading reports...
+        </p>
+        <p className="mt-2 text-sm text-[#6B7280]">
+          The server is waking up. This may take up to 30 seconds on first load.
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="mt-4 rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-medium text-white hover:bg-[#1D4ED8]"
+        >
+          Retry now
+        </button>
+      </div>
+    )
+  }
 
   const reports = reportsRes?.data ?? []
   const apps = appsRes?.data ?? []
