@@ -22,10 +22,10 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP `img-src`: includes `https://www.google.com` for app favicon loading
 - CSP: allow `mb01txe2h9rovgh.us.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com`
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
+- Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
 
 ### Vercel Env Var Management (Critical)
 - ALWAYS run `vercel env` commands from `frontend/` directory (correct `.vercel/project.json`)
@@ -76,6 +76,19 @@
 - Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
 - Auto-seed on startup if `role_report_access` table is empty
 - Apps tables (`apps`, `app_role_access`) created on startup AND in seed — must exist before API use
+- New columns added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at startup (no migrations needed)
+
+### Render Cold Starts
+- Render free tier spins down after inactivity — cold starts take 30-60s
+- Proxy route has `maxDuration=60` and 45s fetch timeout to survive cold starts
+- React Query retries 3x with exponential backoff (2s, 4s, 8s)
+- ReportGrid shows friendly "server waking up" message with retry button on error
+
+### App Favicons
+- Favicons fetched from app URL directly: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
+- Google favicon API is last resort; default globe icon (726/362 bytes) is rejected
+- Stored as base64 data URIs in `icon_data` column — no external CSP needed
+- Auto-backfill on startup for apps with null or PNG placeholder icons
 
 ---
 
@@ -88,7 +101,7 @@
 5. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
 6. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
 7. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
-8. **Admin Console** — Reports/Apps CRUD, TagRole manager, user management with matrix view, usage analytics
+8. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view, usage analytics
 9. **Apps (External Links)** — External links with favicon icons, TagRole access, open in new tab
 10. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
 11. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
