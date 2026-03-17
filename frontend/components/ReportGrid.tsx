@@ -78,7 +78,7 @@ function TagRoleSidebar({
         <button
           key={role.id}
           onClick={() => onSelect(activeRole === role.name ? null : role.name)}
-          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+          className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
             activeRole === role.name
               ? "bg-[#1B3A5C] text-white"
               : "text-[#374151] hover:bg-[#F3F4F6]"
@@ -86,11 +86,11 @@ function TagRoleSidebar({
         >
           <span className="truncate">{role.name}</span>
           <span
-            className={`ml-2 shrink-0 text-xs ${
+            className={`ml-1 shrink-0 text-xs ${
               activeRole === role.name ? "text-white/70" : "text-[#9CA3AF]"
             }`}
           >
-            {role.report_count}
+            ({role.report_count})
           </span>
         </button>
       ))}
@@ -259,7 +259,7 @@ export function ReportGrid() {
                 </h2>
                 <span className="text-xs text-[#9CA3AF]">{apps.length}</span>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-2">
                 {apps.map((app) => (
                   <AppCard key={app.id} app={app} view="tiles" />
                 ))}

@@ -91,22 +91,22 @@ function AppTileView({ app }: AppCardProps) {
         className="block"
       >
         <div className="group flex cursor-pointer flex-col items-center text-center">
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-[22px] bg-white shadow-md ring-1 ring-[#E5E7EB] transition-shadow group-hover:shadow-xl">
+          <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-md ring-1 ring-[#E5E7EB] transition-shadow group-hover:shadow-xl">
             {app.icon_data ? (
               <img
                 src={app.icon_data}
                 alt={app.title}
-                className="h-10 w-10 rounded-md"
+                className="h-7 w-7 rounded-md"
               />
             ) : (
-              <ExternalLink className="h-9 w-9 text-[#2563EB]" />
+              <ExternalLink className="h-6 w-6 text-[#2563EB]" />
             )}
             {/* External link badge */}
-            <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#2563EB] shadow-sm">
-              <ExternalLink className="h-2.5 w-2.5 text-white" />
+            <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#2563EB] shadow-sm">
+              <ExternalLink className="h-2 w-2 text-white" />
             </div>
           </div>
-          <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
+          <p className="mt-1.5 line-clamp-2 max-w-[80px] text-[11px] font-medium text-[#111827]">
             {app.title}
           </p>
         </div>
