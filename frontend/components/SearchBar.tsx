@@ -15,184 +15,168 @@ const CATEGORY_COLORS: Record<string, string> = {
 }
 
 export function SearchBar() {
-  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
+  const [focused, setFocused] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
   const { data: searchResults } = useSearch(query)
   const { data: trendingResults } = useTrending()
 
-  // Cmd+K / Ctrl+K shortcut
+  // Cmd+K / Ctrl+K shortcut to focus
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault()
-        setOpen((prev) => !prev)
+        inputRef.current?.focus()
       }
-      if (e.key === "Escape" && open) {
-        setOpen(false)
+      if (e.key === "Escape" && focused) {
+        inputRef.current?.blur()
+        setFocused(false)
       }
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [open])
+  }, [focused])
 
-  // Focus input when opening
+  // Close dropdown when clicking outside
   useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 50)
-    } else {
-      setQuery("")
-    }
-  }, [open])
-
-  // Close when clicking outside
-  useEffect(() => {
-    if (!open) return
+    if (!focused) return
     function onClickOutside(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false)
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setFocused(false)
       }
     }
     document.addEventListener("mousedown", onClickOutside)
     return () => document.removeEventListener("mousedown", onClickOutside)
-  }, [open])
+  }, [focused])
 
   const handleSelectReport = useCallback(
     (reportId: string) => {
-      setOpen(false)
       setQuery("")
+      setFocused(false)
+      inputRef.current?.blur()
       router.push(`/reports/${reportId}`)
     },
     [router],
   )
 
   const handleSelectApp = useCallback((url: string) => {
-    setOpen(false)
     setQuery("")
+    setFocused(false)
+    inputRef.current?.blur()
     window.open(url, "_blank", "noopener,noreferrer")
   }, [])
 
-  // Split search results into reports and apps
+  // Split search results
   const searchHits = searchResults?.data ?? []
   const searchReports = searchHits.filter((r) => r.result_type === "report")
   const searchApps = searchHits.filter((r) => r.result_type === "app")
-
-  // Trending (reports only)
   const trending = trendingResults?.data ?? []
 
+  const showDropdown = focused
   const hasResults = query.length > 0
     ? searchReports.length > 0 || searchApps.length > 0
     : trending.length > 0
 
   return (
-    <>
-      {/* Search trigger button */}
-      <button
-        onClick={() => setOpen(true)}
-        className="mx-auto flex h-[52px] w-full max-w-[640px] items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-white px-5 text-[#6B7280] shadow-sm transition-shadow hover:shadow-md"
+    <div ref={wrapperRef} className="relative mx-auto w-full max-w-[640px]">
+      {/* Inline search input — type directly like Google */}
+      <div
+        className={`flex h-[52px] items-center gap-3 rounded-2xl border bg-white px-5 shadow-sm transition-all ${
+          focused
+            ? "border-[#2563EB] ring-2 ring-[#2563EB]/20 shadow-md"
+            : "border-[#E5E7EB] hover:shadow-md"
+        }`}
       >
-        <Search className="h-5 w-5" />
-        <span className="flex-1 text-left text-[15px]">
-          Search reports, KPIs, departments...
-        </span>
-        <kbd className="hidden rounded-md border border-[#E5E7EB] px-2 py-0.5 text-xs text-[#6B7280] sm:inline">
+        <Search className="h-5 w-5 shrink-0 text-[#9CA3AF]" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setFocused(true)}
+          placeholder="Search reports, apps, notes..."
+          className="w-full bg-transparent text-[15px] text-[#111827] outline-none placeholder:text-[#9CA3AF]"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            className="shrink-0 text-[#9CA3AF] hover:text-[#6B7280]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+        <kbd className="hidden shrink-0 rounded-md border border-[#E5E7EB] px-2 py-0.5 text-xs text-[#9CA3AF] sm:inline">
           ⌘K
         </kbd>
-      </button>
+      </div>
 
-      {/* Search overlay */}
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/10 pt-[20vh] backdrop-blur-xs">
-          <div
-            ref={panelRef}
-            className="w-full max-w-lg animate-in fade-in-0 zoom-in-95 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]"
-          >
-            {/* Search input */}
-            <div className="flex items-center gap-3 border-b border-[#E5E7EB] px-4 py-3">
-              <Search className="h-4 w-4 shrink-0 text-[#9CA3AF]" />
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search reports, apps, notes..."
-                className="w-full bg-transparent text-sm outline-none placeholder:text-[#9CA3AF]"
-              />
-              {query && (
-                <button
-                  onClick={() => setQuery("")}
-                  className="shrink-0 text-[#9CA3AF] hover:text-[#6B7280]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-
-            {/* Results */}
-            <div className="max-h-72 overflow-y-auto p-1">
-              {hasResults ? (
-                <>
-                  {/* Search mode: show reports */}
-                  {query.length > 0 && searchReports.length > 0 && (
-                    <div>
-                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
-                        Reports
-                      </p>
-                      {searchReports.map((r) => (
-                        <ReportRow
-                          key={r.id}
-                          report={r}
-                          onSelect={handleSelectReport}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Search mode: show apps */}
-                  {query.length > 0 && searchApps.length > 0 && (
-                    <div>
-                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
-                        Apps
-                      </p>
-                      {searchApps.map((r) => (
-                        <AppRow
-                          key={r.id}
-                          app={r}
-                          onSelect={handleSelectApp}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Idle mode: show trending */}
-                  {query.length === 0 && trending.length > 0 && (
-                    <div>
-                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
-                        Trending this week
-                      </p>
-                      {trending.map((report) => (
-                        <ReportRow
-                          key={report.id}
-                          report={report}
-                          onSelect={handleSelectReport}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : query.length > 0 ? (
-                <p className="py-6 text-center text-sm text-[#6B7280]">
-                  No results found.
+      {/* Dropdown results — appears below the search bar */}
+      {showDropdown && hasResults && (
+        <div className="absolute left-0 right-0 top-[58px] z-50 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]">
+          <div className="max-h-72 overflow-y-auto p-1">
+            {/* Search mode: reports */}
+            {query.length > 0 && searchReports.length > 0 && (
+              <div>
+                <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                  Reports
                 </p>
-              ) : null}
-            </div>
+                {searchReports.map((r) => (
+                  <ReportRow
+                    key={r.id}
+                    report={r}
+                    onSelect={handleSelectReport}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Search mode: apps */}
+            {query.length > 0 && searchApps.length > 0 && (
+              <div>
+                <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                  Apps
+                </p>
+                {searchApps.map((r) => (
+                  <AppRow
+                    key={r.id}
+                    app={r}
+                    onSelect={handleSelectApp}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Idle: trending */}
+            {query.length === 0 && trending.length > 0 && (
+              <div>
+                <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                  Trending this week
+                </p>
+                {trending.map((report) => (
+                  <ReportRow
+                    key={report.id}
+                    report={report}
+                    onSelect={handleSelectReport}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
-    </>
+
+      {/* No results message */}
+      {showDropdown && query.length > 0 && !hasResults && (
+        <div className="absolute left-0 right-0 top-[58px] z-50 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]">
+          <p className="py-6 text-center text-sm text-[#6B7280]">
+            No results found.
+          </p>
+        </div>
+      )}
+    </div>
   )
 }
 
