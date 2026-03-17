@@ -1,17 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
 import { useSearchReports, useTrending, type Report } from "@/lib/api"
-import { Search } from "lucide-react"
+import { Search, X } from "lucide-react"
 
 const CATEGORY_COLORS: Record<string, string> = {
   Executive: "bg-[#1B3A5C]",
@@ -25,6 +17,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 export function SearchBar() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
   const { data: searchResults } = useSearchReports(query)
@@ -37,10 +31,34 @@ export function SearchBar() {
         e.preventDefault()
         setOpen((prev) => !prev)
       }
+      if (e.key === "Escape" && open) {
+        setOpen(false)
+      }
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [])
+  }, [open])
+
+  // Focus input when opening
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 50)
+    } else {
+      setQuery("")
+    }
+  }, [open])
+
+  // Close when clicking outside
+  useEffect(() => {
+    if (!open) return
+    function onClickOutside(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside)
+    return () => document.removeEventListener("mousedown", onClickOutside)
+  }, [open])
 
   const handleSelect = useCallback(
     (reportId: string) => {
@@ -51,38 +69,10 @@ export function SearchBar() {
     [router],
   )
 
-  function renderReport(report: Report) {
-    return (
-      <CommandItem
-        key={report.id}
-        value={report.title}
-        onSelect={() => handleSelect(report.id)}
-        className="flex items-center gap-3 py-3"
-      >
-        <div
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${
-            CATEGORY_COLORS[report.category ?? ""] ?? "bg-gray-500"
-          }`}
-        >
-          {report.title.slice(0, 2).toUpperCase()}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{report.title}</p>
-          {report.description && (
-            <p className="truncate text-xs text-[#6B7280]">{report.description}</p>
-          )}
-        </div>
-        {report.category && (
-          <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
-            {report.category}
-          </span>
-        )}
-      </CommandItem>
-    )
-  }
-
   const searchHits = searchResults?.data ?? []
   const trending = trendingResults?.data ?? []
+  const results = query.length > 0 ? searchHits : trending
+  const heading = query.length > 0 ? "Results" : "Trending this week"
 
   return (
     <>
@@ -100,29 +90,96 @@ export function SearchBar() {
         </kbd>
       </button>
 
-      {/* Command dialog */}
-      <CommandDialog open={open} onOpenChange={setOpen}>
-        <CommandInput
-          placeholder="Search reports, KPIs, departments..."
-          value={query}
-          onValueChange={setQuery}
-        />
-        <CommandList>
-          <CommandEmpty>No reports found.</CommandEmpty>
+      {/* Search overlay */}
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/10 pt-[20vh] backdrop-blur-xs">
+          <div
+            ref={panelRef}
+            className="w-full max-w-lg animate-in fade-in-0 zoom-in-95 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]"
+          >
+            {/* Search input */}
+            <div className="flex items-center gap-3 border-b border-[#E5E7EB] px-4 py-3">
+              <Search className="h-4 w-4 shrink-0 text-[#9CA3AF]" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search reports, KPIs, departments..."
+                className="w-full bg-transparent text-sm outline-none placeholder:text-[#9CA3AF]"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="shrink-0 text-[#9CA3AF] hover:text-[#6B7280]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
 
-          {query.length > 0 && searchHits.length > 0 && (
-            <CommandGroup heading="Results">
-              {searchHits.map(renderReport)}
-            </CommandGroup>
-          )}
-
-          {query.length === 0 && trending.length > 0 && (
-            <CommandGroup heading="Trending this week">
-              {trending.map(renderReport)}
-            </CommandGroup>
-          )}
-        </CommandList>
-      </CommandDialog>
+            {/* Results */}
+            <div className="max-h-72 overflow-y-auto p-1">
+              {results.length > 0 ? (
+                <div>
+                  <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                    {heading}
+                  </p>
+                  {results.map((report) => (
+                    <ReportRow
+                      key={report.id}
+                      report={report}
+                      onSelect={handleSelect}
+                    />
+                  ))}
+                </div>
+              ) : query.length > 0 ? (
+                <p className="py-6 text-center text-sm text-[#6B7280]">
+                  No reports found.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+function ReportRow({
+  report,
+  onSelect,
+}: {
+  report: Report
+  onSelect: (id: string) => void
+}) {
+  return (
+    <button
+      onClick={() => onSelect(report.id)}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-[#F3F4F6]"
+    >
+      <div
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${
+          CATEGORY_COLORS[report.category ?? ""] ?? "bg-gray-500"
+        }`}
+      >
+        {report.title.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-[#111827]">
+          {report.title}
+        </p>
+        {report.description && (
+          <p className="truncate text-xs text-[#6B7280]">
+            {report.description}
+          </p>
+        )}
+      </div>
+      {report.category && (
+        <span className="shrink-0 rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[10px] font-medium text-[#6B7280]">
+          {report.category}
+        </span>
+      )}
+    </button>
   )
 }
