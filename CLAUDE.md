@@ -44,6 +44,7 @@
 - Files < 400 lines (800 max), functions < 50 lines
 - No `console.log` in production (console.warn allowed for diagnostics)
 - ONLY light mode — block dark mode
+- shadcn/ui Dialog uses `@base-ui/react` (React 19) — for React 18 components (e.g. cmdk CommandDialog), use `@radix-ui/react-dialog` instead
 
 ### Qlik Embedding
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
@@ -78,6 +79,7 @@
 - Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
 - Auto-seed on startup if `role_report_access` table is empty
 - Apps tables (`apps`, `app_role_access`) created on startup AND in seed — must exist before API use
+- `access_log` table created on startup — used by trending, reports listing, and view tracking
 - New columns added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at startup (no migrations needed)
 
 ### Render Cold Starts
@@ -149,7 +151,7 @@ frontend/
     api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
   components/
-    SearchBar.tsx           # cmdk command palette
+    SearchBar.tsx           # cmdk command palette (uses Radix Dialog, not Base UI)
     ReportGrid.tsx          # 3-column layout: TagRole sidebar | Reports matrix | Apps column
     ReportCard.tsx          # Report tile/list (Note in list view) + App tile/list (favicon)
     QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange + diagnostics)
