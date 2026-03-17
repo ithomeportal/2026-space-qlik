@@ -2,15 +2,9 @@
 
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
+import * as RadixDialog from "@radix-ui/react-dialog"
 
 import { cn } from "@/lib/utils"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   InputGroup,
   InputGroupAddon,
@@ -38,31 +32,32 @@ function CommandDialog({
   description = "Search for a command to run...",
   children,
   className,
-  showCloseButton = false,
-  ...props
-}: Omit<React.ComponentProps<typeof Dialog>, "children"> & {
+  open,
+  onOpenChange,
+}: {
   title?: string
   description?: string
   className?: string
-  showCloseButton?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   children: React.ReactNode
 }) {
   return (
-    <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
-      <DialogContent
-        className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
-          className
-        )}
-        showCloseButton={showCloseButton}
-      >
-        {children}
-      </DialogContent>
-    </Dialog>
+    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/10 backdrop-blur-xs data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+        <RadixDialog.Content
+          className={cn(
+            "fixed left-1/2 top-1/3 z-50 w-full max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl bg-background p-0 text-sm ring-1 ring-foreground/10 outline-none sm:max-w-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+            className
+          )}
+        >
+          <RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>
+          <RadixDialog.Description className="sr-only">{description}</RadixDialog.Description>
+          {children}
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   )
 }
 
