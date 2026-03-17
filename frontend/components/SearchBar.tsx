@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useSearchReports, useTrending, type Report } from "@/lib/api"
-import { Search, X } from "lucide-react"
+import { useSearch, useTrending, type SearchResult, type Report } from "@/lib/api"
+import { Search, X, ExternalLink } from "lucide-react"
 
 const CATEGORY_COLORS: Record<string, string> = {
   Executive: "bg-[#1B3A5C]",
@@ -21,7 +21,7 @@ export function SearchBar() {
   const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
-  const { data: searchResults } = useSearchReports(query)
+  const { data: searchResults } = useSearch(query)
   const { data: trendingResults } = useTrending()
 
   // Cmd+K / Ctrl+K shortcut
@@ -60,7 +60,7 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onClickOutside)
   }, [open])
 
-  const handleSelect = useCallback(
+  const handleSelectReport = useCallback(
     (reportId: string) => {
       setOpen(false)
       setQuery("")
@@ -69,10 +69,23 @@ export function SearchBar() {
     [router],
   )
 
+  const handleSelectApp = useCallback((url: string) => {
+    setOpen(false)
+    setQuery("")
+    window.open(url, "_blank", "noopener,noreferrer")
+  }, [])
+
+  // Split search results into reports and apps
   const searchHits = searchResults?.data ?? []
+  const searchReports = searchHits.filter((r) => r.result_type === "report")
+  const searchApps = searchHits.filter((r) => r.result_type === "app")
+
+  // Trending (reports only)
   const trending = trendingResults?.data ?? []
-  const results = query.length > 0 ? searchHits : trending
-  const heading = query.length > 0 ? "Results" : "Trending this week"
+
+  const hasResults = query.length > 0
+    ? searchReports.length > 0 || searchApps.length > 0
+    : trending.length > 0
 
   return (
     <>
@@ -105,7 +118,7 @@ export function SearchBar() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search reports, KPIs, departments..."
+                placeholder="Search reports, apps, notes..."
                 className="w-full bg-transparent text-sm outline-none placeholder:text-[#9CA3AF]"
               />
               {query && (
@@ -120,22 +133,59 @@ export function SearchBar() {
 
             {/* Results */}
             <div className="max-h-72 overflow-y-auto p-1">
-              {results.length > 0 ? (
-                <div>
-                  <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
-                    {heading}
-                  </p>
-                  {results.map((report) => (
-                    <ReportRow
-                      key={report.id}
-                      report={report}
-                      onSelect={handleSelect}
-                    />
-                  ))}
-                </div>
+              {hasResults ? (
+                <>
+                  {/* Search mode: show reports */}
+                  {query.length > 0 && searchReports.length > 0 && (
+                    <div>
+                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                        Reports
+                      </p>
+                      {searchReports.map((r) => (
+                        <ReportRow
+                          key={r.id}
+                          report={r}
+                          onSelect={handleSelectReport}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Search mode: show apps */}
+                  {query.length > 0 && searchApps.length > 0 && (
+                    <div>
+                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                        Apps
+                      </p>
+                      {searchApps.map((r) => (
+                        <AppRow
+                          key={r.id}
+                          app={r}
+                          onSelect={handleSelectApp}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Idle mode: show trending */}
+                  {query.length === 0 && trending.length > 0 && (
+                    <div>
+                      <p className="px-3 py-1.5 text-xs font-medium text-[#9CA3AF]">
+                        Trending this week
+                      </p>
+                      {trending.map((report) => (
+                        <ReportRow
+                          key={report.id}
+                          report={report}
+                          onSelect={handleSelectReport}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : query.length > 0 ? (
                 <p className="py-6 text-center text-sm text-[#6B7280]">
-                  No reports found.
+                  No results found.
                 </p>
               ) : null}
             </div>
@@ -150,9 +200,11 @@ function ReportRow({
   report,
   onSelect,
 }: {
-  report: Report
+  report: SearchResult | Report
   onSelect: (id: string) => void
 }) {
+  const category = "category" in report ? report.category : null
+
   return (
     <button
       onClick={() => onSelect(report.id)}
@@ -160,7 +212,7 @@ function ReportRow({
     >
       <div
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${
-          CATEGORY_COLORS[report.category ?? ""] ?? "bg-gray-500"
+          CATEGORY_COLORS[category ?? ""] ?? "bg-gray-500"
         }`}
       >
         {report.title.slice(0, 2).toUpperCase()}
@@ -175,11 +227,47 @@ function ReportRow({
           </p>
         )}
       </div>
-      {report.category && (
+      {category && (
         <span className="shrink-0 rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[10px] font-medium text-[#6B7280]">
-          {report.category}
+          {category}
         </span>
       )}
+    </button>
+  )
+}
+
+function AppRow({
+  app,
+  onSelect,
+}: {
+  app: SearchResult
+  onSelect: (url: string) => void
+}) {
+  return (
+    <button
+      onClick={() => onSelect(app.url ?? "")}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-[#F3F4F6]"
+    >
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#EFF6FF]">
+        {app.icon_data ? (
+          <img src={app.icon_data} alt={app.title} className="h-5 w-5 rounded" />
+        ) : (
+          <ExternalLink className="h-4 w-4 text-[#2563EB]" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-[#111827]">
+          {app.title}
+        </p>
+        {app.description && (
+          <p className="truncate text-xs text-[#6B7280]">
+            {app.description}
+          </p>
+        )}
+      </div>
+      <span className="shrink-0 rounded-full bg-[#EFF6FF] px-2 py-0.5 text-[10px] font-medium text-[#2563EB]">
+        App
+      </span>
     </button>
   )
 }

@@ -76,10 +76,21 @@ export function useTrending(mobile?: boolean) {
   })
 }
 
-export function useSearchReports(query: string) {
+export interface SearchResult {
+  id: string
+  title: string
+  description: string | null
+  category?: string | null
+  note?: string | null
+  url?: string
+  icon_data?: string | null
+  result_type: "report" | "app"
+}
+
+export function useSearch(query: string) {
   return useQuery({
     queryKey: ["search", query],
-    queryFn: () => apiFetch<Report[]>(`reports/search?q=${encodeURIComponent(query)}`),
+    queryFn: () => apiFetch<SearchResult[]>(`reports/search?q=${encodeURIComponent(query)}`),
     enabled: query.length > 0,
   })
 }
