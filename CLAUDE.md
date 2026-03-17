@@ -22,7 +22,7 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com` + `*.launchdarkly.com` + `api.qlikdataengineering.com`
+- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com` + `*.launchdarkly.com` + `api.qlikdataengineering.com` + `sqs.us-east-1.amazonaws.com` (Qlik telemetry)
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 - Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
@@ -44,7 +44,8 @@
 - Files < 400 lines (800 max), functions < 50 lines
 - No `console.log` in production (console.warn allowed for diagnostics)
 - ONLY light mode — block dark mode
-- shadcn/ui Dialog uses `@base-ui/react` (React 19) — for React 18 components (e.g. cmdk CommandDialog), use `@radix-ui/react-dialog` instead
+- shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18 (causes `subscribe` TypeError)
+- Search bar is pure React/HTML — no cmdk, no Base UI, no Radix (removed to fix React 18 compatibility)
 
 ### Qlik Embedding
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
@@ -79,8 +80,9 @@
 - Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
 - Auto-seed on startup if `role_report_access` table is empty
 - Apps tables (`apps`, `app_role_access`) created on startup AND in seed — must exist before API use
-- `access_log` table created on startup — used by trending, reports listing, and view tracking
+- `access_log` table + indexes created on startup — used by trending, reports listing, and view tracking
 - New columns added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at startup (no migrations needed)
+- FastAPI router order matters: search router MUST be registered before reports router (`/reports/search` vs `/reports/{report_id}`)
 
 ### Render Cold Starts
 - Render free tier spins down after inactivity — cold starts take 30-60s
@@ -102,10 +104,10 @@
 2. **3-Column Home Layout** — TagRole filters (1/5) | Reports matrix (3/5) | Apps (1/5), sorted by usage desc
 3. **TagRole-Based Access** — Users see only reports with matching TagRoles; Apps visible to ALL users
 4. **TagRole Filters** — Sidebar buttons (tiles) / pills (list) filter reports by TagRole; "All" shows everything
-5. **Responsive Mobile** — <1920px shows (Mob) Qlik apps optimized for small screens
+5. **Responsive Mobile** — <1920px forces list view (no tiles toggle), shows (Mob) Qlik apps
 6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
 7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
-8. **Smart Search** — Full-text via Typesense, filter chips (category, tags)
+8. **Inline Search** — Direct-type search bar (like Google), DB-powered, searches reports (title/description/note/tags) + apps (title/description), 300ms debounce
 9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view
 10. **Apps (External Links)** — External links with favicon icons, visible to all authenticated users
 11. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
@@ -126,7 +128,7 @@
 | Scheduler | APScheduler (daily user sync) |
 | Qlik Embed | `@qlik/embed-web-components` with cookie auth |
 | Database | PostgreSQL (Aiven) |
-| Search | Typesense |
+| Search | PostgreSQL ILIKE (direct DB, no Typesense) |
 | Email | Resend |
 
 ---
@@ -151,14 +153,15 @@ frontend/
     api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
   components/
-    SearchBar.tsx           # cmdk command palette (uses Radix Dialog, not Base UI)
+    SearchBar.tsx           # Inline search bar with dropdown (pure React, no cmdk/Base UI)
     ReportGrid.tsx          # 3-column layout: TagRole sidebar | Reports matrix | Apps column
     ReportCard.tsx          # Report tile/list (Note in list view) + App tile/list (favicon)
     QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange + diagnostics)
   lib/
     auth.ts                 # NextAuth config
-    api.ts                  # React Query hooks (reports, apps, tag-roles, prefs)
+    api.ts                  # React Query hooks (reports, apps, search, tag-roles, prefs)
     use-is-mobile.ts        # Viewport detection hook (<1920px = mobile)
+    use-debounce.ts         # Debounce hook for search input (300ms)
   next.config.mjs           # CSP headers (Qlik + telemetry domains)
 
 backend/
