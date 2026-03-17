@@ -156,9 +156,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(qlik.router, prefix="/api")
-app.include_router(search.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 
