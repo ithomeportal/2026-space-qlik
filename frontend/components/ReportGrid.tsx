@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { LayoutGrid, List, ExternalLink, Tag } from "lucide-react"
 import { useReports, useApps, useUserTagRoles } from "@/lib/api"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -99,9 +99,14 @@ function TagRoleSidebar({
 }
 
 export function ReportGrid() {
-  const [view, setView] = useState<ViewMode>("tiles")
-  const [activeRole, setActiveRole] = useState<string | null>(null)
   const isMobile = useIsMobile()
+  const [view, setView] = useState<ViewMode>(isMobile ? "list" : "tiles")
+  const [activeRole, setActiveRole] = useState<string | null>(null)
+
+  // Force list view on mobile (no tiles option)
+  useEffect(() => {
+    if (isMobile) setView("list")
+  }, [isMobile])
   const { data: reportsRes, isLoading, isError, refetch } = useReports(undefined, isMobile)
   const { data: appsRes } = useApps()
 
@@ -142,7 +147,7 @@ export function ReportGrid() {
           <p className="text-sm text-[#6B7280]">
             {reports.length} reports{apps.length > 0 ? ` · ${apps.length} apps` : ""}
           </p>
-          <ViewToggle view={view} onChange={setView} />
+          {!isMobile && <ViewToggle view={view} onChange={setView} />}
         </div>
 
         {/* TagRole filter pills for list view */}
