@@ -69,6 +69,17 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(
                 "ALTER TABLE reports ADD COLUMN IF NOT EXISTS note TEXT"
             )
+            # Ensure access_log table exists (for trending & usage tracking)
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS access_log (
+                  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id     TEXT NOT NULL,
+                  report_id   UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+                  accessed_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
 
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
