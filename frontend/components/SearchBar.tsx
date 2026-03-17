@@ -11,7 +11,6 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { useSearchReports, useTrending, type Report } from "@/lib/api"
-import { Badge } from "@/components/ui/badge"
 import { Search } from "lucide-react"
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -74,9 +73,9 @@ export function SearchBar() {
           )}
         </div>
         {report.category && (
-          <Badge variant="secondary" className="shrink-0 text-[10px]">
+          <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
             {report.category}
-          </Badge>
+          </span>
         )}
       </CommandItem>
     )
