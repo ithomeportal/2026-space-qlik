@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useSearch, useTrending, type SearchResult, type Report } from "@/lib/api"
+import { useDebounce } from "@/lib/use-debounce"
 import { Search, X, ExternalLink } from "lucide-react"
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -21,7 +22,8 @@ export function SearchBar() {
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
-  const { data: searchResults } = useSearch(query)
+  const debouncedQuery = useDebounce(query, 300)
+  const { data: searchResults, isError: searchError } = useSearch(debouncedQuery)
   const { data: trendingResults } = useTrending()
 
   // Cmd+K / Ctrl+K shortcut to focus
@@ -168,8 +170,17 @@ export function SearchBar() {
         </div>
       )}
 
+      {/* Error message */}
+      {showDropdown && query.length >= 2 && searchError && (
+        <div className="absolute left-0 right-0 top-[58px] z-50 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]">
+          <p className="py-6 text-center text-sm text-[#6B7280]">
+            Search unavailable — server may be waking up. Try again shortly.
+          </p>
+        </div>
+      )}
+
       {/* No results message */}
-      {showDropdown && query.length > 0 && !hasResults && (
+      {showDropdown && query.length >= 2 && !searchError && !hasResults && (
         <div className="absolute left-0 right-0 top-[58px] z-50 rounded-xl bg-white shadow-2xl ring-1 ring-[#E5E7EB]">
           <p className="py-6 text-center text-sm text-[#6B7280]">
             No results found.

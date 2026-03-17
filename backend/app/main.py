@@ -80,6 +80,12 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_access_log_report_date ON access_log(report_id, accessed_at DESC)"
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id, accessed_at DESC)"
+            )
 
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
