@@ -108,7 +108,7 @@
 6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
 7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
 8. **Inline Search** — Direct-type search bar (like Google), DB-powered, searches reports (title/description/note/tags) + apps (title/description), 300ms debounce
-9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view
+9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view. Admins can edit Qlik App/Sheet IDs on reports
 10. **Apps (External Links)** — External links with favicon icons, visible to all authenticated users
 11. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
 12. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
@@ -220,6 +220,7 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 - **Home page filters**: TagRoles act as filter buttons on home page (not access control)
 - **No auto-assign**: TagRoles are 100% manually assigned by admins
 - Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned)
+- **Admin** (`admin` role): can edit Qlik App ID and Sheet ID on reports (for v1→v2 migrations)
 
 ---
 

@@ -33,7 +33,7 @@ interface Role {
 
 export default function AdminReportsPage() {
   const { data: session } = useSession()
-  const isSuperAdmin = (session?.user?.roles ?? []).includes("super_admin")
+  const canEditQlikIds = (session?.user?.roles ?? []).includes("admin")
   const [reports, setReports] = useState<Report[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [showCreate, setShowCreate] = useState(false)
@@ -120,7 +120,7 @@ export default function AdminReportsPage() {
       description: editForm.description || undefined,
       note: editForm.note || undefined,
     }
-    if (isSuperAdmin) {
+    if (canEditQlikIds) {
       payload.qlik_app_id = editForm.qlik_app_id || undefined
       payload.qlik_sheet_id = editForm.qlik_sheet_id || undefined
     }
@@ -342,7 +342,7 @@ export default function AdminReportsPage() {
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
-            {isSuperAdmin && (
+            {canEditQlikIds && (
               <>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#374151]">
