@@ -58,6 +58,7 @@
 - JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
 - QlikEmbed.tsx logs diagnostic warnings when session exchange fails — check console for origin mismatch
+- **Classic Embed Mode**: Dashboard Bundle objects (Date Picker, Variable Input, Animator, Multi KPI) render as "Unknown chart" in `analytics/sheet` mode (nebula.js limitation). Reports with these objects need `use_classic=true` to switch to `classic/app` mode. Toggle via Admin > Reports > Edit > "Classic Embed Mode"
 
 ### Responsive Mobile
 - Below 1920px viewport = mobile mode → show only `(Mob)` prefixed Qlik reports
@@ -105,14 +106,15 @@
 3. **TagRole-Based Access** — Users see only reports with matching TagRoles; Apps visible to ALL users
 4. **TagRole Filters** — Sidebar buttons (tiles) / pills (list) filter reports by TagRole; "All" shows everything
 5. **Responsive Mobile** — <1920px forces list view (no tiles toggle), shows (Mob) Qlik apps
-6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group
-7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh
+6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group; `classic/app` for Dashboard Bundle reports
+7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh, auto-selects classic/analytics mode per `use_classic` flag
 8. **Inline Search** — Direct-type search bar (like Google), DB-powered, searches reports (title/description/note/tags) + apps (title/description), 300ms debounce
 9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view. Admins can edit Qlik App/Sheet IDs on reports
 10. **Apps (External Links)** — External links with favicon icons, visible to all authenticated users
 11. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
 12. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
 13. **List View** — Shows report name + Note column (no Category/Owner/Updated)
+14. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle objects (Date Picker etc.) that need `classic/app` rendering
 
 ---
 
