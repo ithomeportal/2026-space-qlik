@@ -53,6 +53,7 @@ class ReportUpdate(BaseModel):
     qlik_app_id: str | None = None
     qlik_sheet_id: str | None = None
     is_active: bool | None = None
+    use_classic: bool | None = None
 
 
 @router.get("/reports")
@@ -67,7 +68,7 @@ async def admin_list_reports(
 
     rows = await pool.fetch(
         """
-        SELECT r.*,
+        SELECT r.*, COALESCE(r.use_classic, FALSE) AS use_classic,
                COALESCE(
                  (SELECT COUNT(*) FROM access_log al WHERE al.report_id = r.id
                   AND al.accessed_at > NOW() - INTERVAL '30 days'), 0

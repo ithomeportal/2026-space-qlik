@@ -22,6 +22,7 @@ interface Report {
   qlik_app_id: string
   qlik_sheet_id: string | null
   is_active: boolean
+  use_classic: boolean
   views_30d: number
   tag_roles: string[]
 }
@@ -40,7 +41,7 @@ export default function AdminReportsPage() {
   const [editingReport, setEditingReport] = useState<Report | null>(null)
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
   const [editReport, setEditReport] = useState<Report | null>(null)
-  const [editForm, setEditForm] = useState({ title: "", description: "", note: "", qlik_app_id: "", qlik_sheet_id: "" })
+  const [editForm, setEditForm] = useState({ title: "", description: "", note: "", qlik_app_id: "", qlik_sheet_id: "", use_classic: false })
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -110,15 +111,17 @@ export default function AdminReportsPage() {
       note: report.note ?? "",
       qlik_app_id: report.qlik_app_id ?? "",
       qlik_sheet_id: report.qlik_sheet_id ?? "",
+      use_classic: report.use_classic ?? false,
     })
   }
 
   async function handleSaveEdit() {
     if (!editReport) return
-    const payload: Record<string, string | undefined> = {
+    const payload: Record<string, string | boolean | undefined> = {
       title: editForm.title || undefined,
       description: editForm.description || undefined,
       note: editForm.note || undefined,
+      use_classic: editForm.use_classic,
     }
     if (canEditQlikIds) {
       payload.qlik_app_id = editForm.qlik_app_id || undefined
@@ -370,6 +373,25 @@ export default function AdminReportsPage() {
                 </div>
               </>
             )}
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={editForm.use_classic}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, use_classic: e.target.checked })
+                  }
+                />
+                <div className="h-5 w-9 rounded-full bg-[#D1D5DB] after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-[#2563EB] peer-checked:after:translate-x-full" />
+              </label>
+              <div>
+                <p className="text-sm font-medium text-[#374151]">Classic Embed Mode</p>
+                <p className="text-xs text-[#6B7280]">
+                  Enable for reports with Date Picker or other Dashboard Bundle objects
+                </p>
+              </div>
+            </div>
             <Button
               onClick={handleSaveEdit}
               className="w-full bg-[#2563EB]"
@@ -417,11 +439,18 @@ export default function AdminReportsPage() {
                 </td>
                 <td className="px-4 py-3 text-right">{report.views_30d}</td>
                 <td className="px-4 py-3">
-                  <Badge
-                    variant={report.is_active ? "default" : "secondary"}
-                  >
-                    {report.is_active ? "Active" : "Inactive"}
-                  </Badge>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge
+                      variant={report.is_active ? "default" : "secondary"}
+                    >
+                      {report.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                    {report.use_classic && (
+                      <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">
+                        Classic
+                      </Badge>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-1">

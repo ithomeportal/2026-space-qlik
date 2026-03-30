@@ -40,6 +40,7 @@ export interface Report {
   is_active: boolean
   is_favorited?: boolean
   view_count?: number
+  use_classic?: boolean
 }
 
 export interface TagRole {

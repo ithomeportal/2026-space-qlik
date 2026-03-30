@@ -27,6 +27,7 @@ async def list_reports(
                r.description, r.note, r.category, r.tags, r.owner_name,
                r.data_sources, r.last_reload, r.is_active, r.created_at,
                COALESCE(r.is_mobile, FALSE) AS is_mobile,
+               COALESCE(r.use_classic, FALSE) AS use_classic,
                EXISTS(
                  SELECT 1 FROM user_preferences up
                  WHERE up.user_id = $1 AND r.id = ANY(up.pinned_reports)

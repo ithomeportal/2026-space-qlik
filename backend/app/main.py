@@ -69,6 +69,11 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(
                 "ALTER TABLE reports ADD COLUMN IF NOT EXISTS note TEXT"
             )
+            # Add use_classic column for reports with Dashboard Bundle objects
+            # (e.g. qlik-date-picker) that need classic/app embed mode
+            await app.state.pool.execute(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS use_classic BOOLEAN DEFAULT FALSE"
+            )
             # Ensure access_log table exists (for trending & usage tracking)
             await app.state.pool.execute(
                 """

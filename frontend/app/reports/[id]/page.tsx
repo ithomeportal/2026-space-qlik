@@ -65,6 +65,7 @@ export default function ReportViewerPage() {
         <QlikEmbed
           appId={report.qlik_app_id}
           sheetId={report.qlik_sheet_id}
+          useClassic={report.use_classic}
         />
       </div>
     </div>

@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 interface QlikEmbedProps {
   appId: string
   sheetId?: string | null
+  useClassic?: boolean
 }
 
 const TENANT = process.env.NEXT_PUBLIC_QLIK_TENANT ?? "mb01txe2h9rovgh.us.qlikcloud.com"
@@ -65,7 +66,7 @@ async function establishQlikSession(): Promise<void> {
   }
 }
 
-export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
+export function QlikEmbed({ appId, sheetId, useClassic }: QlikEmbedProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -88,11 +89,16 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
         // 3. Create qlik-embed element — viewer-only mode
         const embed = document.createElement("qlik-embed")
 
-        if (sheetId) {
+        if (useClassic || !sheetId) {
+          // Use classic/app for reports with Dashboard Bundle objects
+          // (e.g. qlik-date-picker) that are unsupported in analytics/sheet
+          embed.setAttribute("ui", "classic/app")
+          if (sheetId) {
+            embed.setAttribute("sheet-id", sheetId)
+          }
+        } else {
           embed.setAttribute("ui", "analytics/sheet")
           embed.setAttribute("sheet-id", sheetId)
-        } else {
-          embed.setAttribute("ui", "classic/app")
         }
 
         embed.setAttribute("app-id", appId)
@@ -130,7 +136,7 @@ export function QlikEmbed({ appId, sheetId }: QlikEmbedProps) {
     return () => {
       mounted = false
     }
-  }, [appId, sheetId])
+  }, [appId, sheetId, useClassic])
 
   if (error) {
     return (
