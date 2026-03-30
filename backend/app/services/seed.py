@@ -11,7 +11,7 @@ import asyncpg
 
 from app.config import settings
 
-# 9 default roles
+# 10 default roles
 DEFAULT_ROLES = [
     ("admin", "Full access to all reports and admin console"),
     ("super_admin", "Admin with ability to edit report IDs and advanced settings"),
