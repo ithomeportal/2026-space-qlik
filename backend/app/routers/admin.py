@@ -50,6 +50,7 @@ class ReportUpdate(BaseModel):
     tags: list[str] | None = None
     owner_name: str | None = None
     data_sources: list[str] | None = None
+    qlik_app_id: str | None = None
     qlik_sheet_id: str | None = None
     is_active: bool | None = None
 

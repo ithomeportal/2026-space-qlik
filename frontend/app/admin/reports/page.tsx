@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -31,13 +32,15 @@ interface Role {
 }
 
 export default function AdminReportsPage() {
+  const { data: session } = useSession()
+  const isSuperAdmin = (session?.user?.roles ?? []).includes("super_admin")
   const [reports, setReports] = useState<Report[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [editingReport, setEditingReport] = useState<Report | null>(null)
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
   const [editReport, setEditReport] = useState<Report | null>(null)
-  const [editForm, setEditForm] = useState({ title: "", description: "", note: "" })
+  const [editForm, setEditForm] = useState({ title: "", description: "", note: "", qlik_app_id: "", qlik_sheet_id: "" })
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -105,19 +108,26 @@ export default function AdminReportsPage() {
       title: report.title,
       description: report.description ?? "",
       note: report.note ?? "",
+      qlik_app_id: report.qlik_app_id ?? "",
+      qlik_sheet_id: report.qlik_sheet_id ?? "",
     })
   }
 
   async function handleSaveEdit() {
     if (!editReport) return
+    const payload: Record<string, string | undefined> = {
+      title: editForm.title || undefined,
+      description: editForm.description || undefined,
+      note: editForm.note || undefined,
+    }
+    if (isSuperAdmin) {
+      payload.qlik_app_id = editForm.qlik_app_id || undefined
+      payload.qlik_sheet_id = editForm.qlik_sheet_id || undefined
+    }
     await fetch(`/api/proxy/admin/reports/${editReport.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: editForm.title || undefined,
-        description: editForm.description || undefined,
-        note: editForm.note || undefined,
-      }),
+      body: JSON.stringify(payload),
     })
     setEditReport(null)
     loadReports()
@@ -332,6 +342,34 @@ export default function AdminReportsPage() {
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
+            {isSuperAdmin && (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#374151]">
+                    Qlik App ID
+                  </label>
+                  <Input
+                    placeholder="Qlik App ID"
+                    value={editForm.qlik_app_id}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, qlik_app_id: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#374151]">
+                    Qlik Sheet ID
+                  </label>
+                  <Input
+                    placeholder="Qlik Sheet ID"
+                    value={editForm.qlik_sheet_id}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, qlik_sheet_id: e.target.value })
+                    }
+                  />
+                </div>
+              </>
+            )}
             <Button
               onClick={handleSaveEdit}
               className="w-full bg-[#2563EB]"

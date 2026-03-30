@@ -14,6 +14,7 @@ from app.config import settings
 # 9 default roles
 DEFAULT_ROLES = [
     ("admin", "Full access to all reports and admin console"),
+    ("super_admin", "Admin with ability to edit report IDs and advanced settings"),
     ("executive", "Access to all reports across divisions"),
     ("finance", "Finance and budget reports"),
     ("operations", "Operations, carrier, and scorecard reports"),
