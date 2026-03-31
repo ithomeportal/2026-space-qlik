@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "http://localhost:3000"
     TIMEOFF_DATABASE_URL: str = ""
     SEED_SECRET: str = "change-me-in-production"
+    TV_SECRET: str = "change-me-in-production"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

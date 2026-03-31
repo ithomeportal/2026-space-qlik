@@ -72,6 +72,33 @@ async def get_viewer_token(
     return {"success": True, "data": {"token": _viewer_token}}
 
 
+@router.post("/qlik/tv-token")
+@limiter.limit("10/minute")
+async def get_tv_token(
+    request: Request,
+    secret: str = "",
+):
+    """Return a viewer JWT for unattended TV displays.
+
+    Authenticated via a shared secret instead of NextAuth session.
+    Used by /dfw-podium and similar kiosk/TV pages.
+    """
+    if not secret or secret != settings.TV_SECRET:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid TV secret")
+
+    global _viewer_token, _viewer_token_expires
+
+    now = time.time()
+    if _viewer_token and _viewer_token_expires - now > 600:
+        return {"success": True, "data": {"token": _viewer_token}}
+
+    _viewer_token = _generate_viewer_jwt()
+    _viewer_token_expires = now + 3600
+
+    return {"success": True, "data": {"token": _viewer_token}}
+
+
 # Keep legacy endpoint for backward compatibility
 @router.post("/qlik/token")
 @limiter.limit("10/minute")
