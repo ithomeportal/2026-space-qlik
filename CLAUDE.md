@@ -22,7 +22,7 @@
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `login.qlik.com` + `*.launchdarkly.com` + `api.qlikdataengineering.com` + `sqs.us-east-1.amazonaws.com` (Qlik telemetry)
+- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `cdn.jsdelivr.net` + `login.qlik.com` + `*.launchdarkly.com` + `events.launchdarkly.com` + `api.qlikdataengineering.com` + `sqs.us-east-1.amazonaws.com` + `two026-space-qlik-back.onrender.com` (Qlik telemetry + TV display)
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
 - Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
