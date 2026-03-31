@@ -60,6 +60,16 @@
 - QlikEmbed.tsx logs diagnostic warnings when session exchange fails — check console for origin mismatch
 - **Classic Embed Mode**: Dashboard Bundle objects (Date Picker, Variable Input, Animator, Multi KPI) render as "Unknown chart" in `analytics/sheet` mode (nebula.js limitation). Reports with these objects need `use_classic=true` to switch to `classic/app` mode. Toggle via Admin > Reports > Edit > "Classic Embed Mode"
 
+### TV Display (RiseVision)
+- `/dfw-podium` is a standalone route handler (not a React page) — serves raw HTML
+- Uses JWT→cookie auth via `/api/qlik/tv-token` (secret-based, no NextAuth)
+- `TV_SECRET` must match on both Vercel and Render
+- OAuth2 client `019d446c6b163a8dfc7c1b72220d5833` is configured in Qlik Cloud but NOT used (JWT→cookie is used instead)
+- Auto-refreshes every hour via `<meta http-equiv="refresh">`; retries on error after 30s
+- CSP includes `cdn.jsdelivr.net` for the qlik-embed web component script
+- RiseVision URL: `https://space.unilinkportal.com/dfw-podium`
+- Qlik app: `87278082-0346-4d41-8b2c-ac658a8d5a1f`, sheet: `f56141e7-004e-42cb-8507-57196cb77d13`
+
 ### Responsive Mobile
 - Below 1920px viewport = mobile mode → show only `(Mob)` prefixed Qlik reports
 - Desktop (>=1920px) → show regular reports (no `(Mob)` prefix)
@@ -115,6 +125,7 @@
 12. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
 13. **List View** — Shows report name + Note column (no Category/Owner/Updated)
 14. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle objects (Date Picker etc.) that need `classic/app` rendering
+15. **TV Display (RiseVision)** — `/dfw-podium` serves a standalone fullscreen Qlik embed for unattended TV displays via RiseVision, using JWT→cookie auth with `TV_SECRET`
 
 ---
 
@@ -151,6 +162,7 @@ frontend/
       roles/page.tsx        # TagRole CRUD (create, edit name/description, delete)
       users/page.tsx        # User list with sortable columns
       users/[id]/page.tsx   # User detail: TagRole assignment + report access matrix
+    dfw-podium/route.ts     # TV display: standalone Qlik embed (JWT→cookie, no NextAuth)
     api/auth/[...nextauth]/ # NextAuth handlers
     api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
     (auth)/login/page.tsx   # Login page (redirects if authenticated)
@@ -173,7 +185,7 @@ backend/
     routers/
       deps.py               # require_user (JSON parse), require_admin
       reports.py            # GET /api/reports (with tag_roles, view_count), GET /api/apps (all users), GET /api/user/tag-roles
-      qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT)
+      qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT), POST /api/qlik/tv-token (TV display, secret-auth)
       search.py             # GET /api/reports/search
       preferences.py        # GET/PATCH /api/user/preferences
       admin.py              # Admin CRUD: reports, apps, roles, users, seed, sync
@@ -197,6 +209,7 @@ DATABASE_URL=<from-env> (must start with postgresql://)
 RESEND_API_KEY=<from-env>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
 NEXT_PUBLIC_QLIK_TENANT=mb01txe2h9rovgh.us.qlikcloud.com
+TV_SECRET=<from-env> (shared secret for /dfw-podium TV display auth)
 ```
 
 ### Backend (Render)
@@ -208,6 +221,7 @@ QLIK_ISSUER=https://analytics-hub.unilinkportal.com
 QLIK_KEY_ID=analytics-hub-key-1
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app
 SEED_SECRET=<from-env>
+TV_SECRET=<from-env> (must match frontend TV_SECRET — used by /api/qlik/tv-token)
 TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 ```
 
