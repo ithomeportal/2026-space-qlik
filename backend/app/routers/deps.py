@@ -1,5 +1,5 @@
 import asyncpg
-from fastapi import Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request
 
 
 def get_pool(request: Request) -> asyncpg.Pool:
@@ -34,7 +34,7 @@ async def require_user(authorization: str = Header(...)) -> dict:
     return payload
 
 
-async def require_admin(user: dict = None) -> dict:
+async def require_admin(user: dict = Depends(require_user)) -> dict:
     """Verify user has admin role."""
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

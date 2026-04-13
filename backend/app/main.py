@@ -28,6 +28,36 @@ async def _scheduled_user_sync():
         logger.error(f"Scheduled user sync failed: {e}")
 
 
+async def _backfill_favicons(pool: asyncpg.Pool):
+    """Background task: backfill missing favicons without blocking startup."""
+    try:
+        apps_without_icons = await pool.fetch(
+            """SELECT id, url FROM apps
+               WHERE is_active = TRUE
+                 AND (icon_data IS NULL
+                      OR icon_data LIKE 'data:image/png;base64,%')"""
+        )
+        if not apps_without_icons:
+            return
+        logger.info(f"Backfilling favicons for {len(apps_without_icons)} apps (background)...")
+        from app.routers.admin import _fetch_favicon
+
+        for row in apps_without_icons:
+            try:
+                icon_data = await _fetch_favicon(row["url"])
+                if icon_data:
+                    await pool.execute(
+                        "UPDATE apps SET icon_data = $1 WHERE id = $2",
+                        icon_data,
+                        row["id"],
+                    )
+                    logger.info(f"Favicon backfilled for app {row['id']}")
+            except Exception as e:
+                logger.warning(f"Favicon backfill failed for {row['url']}: {e}")
+    except Exception as e:
+        logger.error(f"Favicon backfill task failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
@@ -102,32 +132,8 @@ async def lifespan(app: FastAPI):
 
                 await seed_all()
 
-            # Backfill favicons for apps missing or with Google globe placeholder
-            apps_without_icons = await app.state.pool.fetch(
-                """SELECT id, url FROM apps
-                   WHERE is_active = TRUE
-                     AND (icon_data IS NULL
-                          OR icon_data LIKE 'data:image/png;base64,%')"""
-            )
-            if apps_without_icons:
-                logger.info(
-                    f"Backfilling favicons for {len(apps_without_icons)} apps..."
-                )
-                from app.routers.admin import _fetch_favicon
-
-                for row in apps_without_icons:
-                    icon_data = await _fetch_favicon(row["url"])
-                    if icon_data:
-                        await app.state.pool.execute(
-                            "UPDATE apps SET icon_data = $1 WHERE id = $2",
-                            icon_data,
-                            row["id"],
-                        )
-                        logger.info(f"Favicon backfilled for app {row['id']}")
-                    else:
-                        logger.warning(
-                            f"Could not fetch favicon for {row['url']}"
-                        )
+            # Schedule favicon backfill as background task (not blocking startup)
+            asyncio.create_task(_backfill_favicons(app.state.pool))
         except Exception as e:
             logger.warning(f"Database startup error: {e}. Running without DB.")
             app.state.pool = None

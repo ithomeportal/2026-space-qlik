@@ -24,46 +24,61 @@ async function fetchViewerToken(): Promise<string> {
 }
 
 let currentToken: string | null = null
-let sessionEstablished = false
+let sessionPromise: Promise<void> | null = null
 
 async function establishQlikSession(): Promise<void> {
-  if (sessionEstablished) return
+  // Use a Promise singleton to prevent race conditions when multiple
+  // QlikEmbed components mount simultaneously
+  if (sessionPromise) return sessionPromise
 
-  // 1. Get a JWT for the universal portal viewer (now includes nbf claim)
+  sessionPromise = _doEstablishSession()
+  try {
+    await sessionPromise
+  } catch {
+    // Reset so next attempt can retry
+    sessionPromise = null
+    throw new Error("Qlik session establishment failed")
+  }
+}
+
+async function _doEstablishSession(): Promise<void> {
+  // 1. Get a JWT for the universal portal viewer
   currentToken = await fetchViewerToken()
 
-  // 2. Exchange the JWT for a Qlik session cookie
-  // This call goes to Qlik Cloud directly — the browser stores the session cookie.
-  // The JWT now includes the required `nbf` claim that was previously missing,
-  // which caused a silent 400 error and the AUTHORIZE button fallback.
-  try {
-    const resp = await fetch(
-      `${TENANT_URL}/login/jwt-session?qlik-web-integration-id=${WEB_INTEGRATION_ID}`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Authorization": `Bearer ${currentToken}`,
-          "qlik-web-integration-id": WEB_INTEGRATION_ID,
-        },
+  // 2. Exchange the JWT for a Qlik session cookie with retry
+  const maxRetries = 2
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetch(
+        `${TENANT_URL}/login/jwt-session?qlik-web-integration-id=${WEB_INTEGRATION_ID}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Authorization": `Bearer ${currentToken}`,
+            "qlik-web-integration-id": WEB_INTEGRATION_ID,
+          },
+        }
+      )
+      if (resp.ok) {
+        return // Session established successfully
       }
-    )
-    if (resp.ok) {
-      sessionEstablished = true
-    } else {
       console.warn(
-        `[QlikEmbed] Session exchange returned ${resp.status} — verify Web Integration allowed origins include ${window.location.origin}`
+        `[QlikEmbed] Session exchange returned ${resp.status} (attempt ${attempt + 1}/${maxRetries + 1}) — verify Web Integration allowed origins include ${window.location.origin}`
+      )
+    } catch (err) {
+      console.warn(
+        `[QlikEmbed] Session exchange failed (attempt ${attempt + 1}/${maxRetries + 1})`,
+        err
       )
     }
-  } catch (err) {
-    // If the direct exchange fails (CORS or cookie blocking),
-    // fall back to getAccessToken approach below.
-    // Common cause: Web Integration allowed origins missing the current domain.
-    console.warn(
-      "[QlikEmbed] Session exchange failed — check Web Integration allowed origins in Qlik Cloud Console.",
-      err
-    )
+    // Wait before retry (1s, then 2s)
+    if (attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+    }
   }
+  // All retries failed — component will still render with getAccessToken fallback
+  console.warn("[QlikEmbed] All session exchange attempts failed — falling back to getAccessToken")
 }
 
 export function QlikEmbed({ appId, sheetId, useClassic }: QlikEmbedProps) {
@@ -108,11 +123,16 @@ export function QlikEmbed({ appId, sheetId, useClassic }: QlikEmbedProps) {
         embed.setAttribute("toolbar", "false")
 
         // Provide getAccessToken as fallback — if the session cookie
-        // was blocked, qlik-embed's service worker will use this JWT
+        // was blocked, qlik-embed's service worker will use this JWT.
+        // Always fetch a fresh token to handle cases where the initial
+        // session exchange failed due to backend cold start.
         const embedEl = embed as unknown as Record<string, unknown>
         embedEl.getAccessToken = async (): Promise<string> => {
-          if (!currentToken) {
+          try {
             currentToken = await fetchViewerToken()
+          } catch {
+            if (currentToken) return currentToken
+            throw new Error("Failed to fetch Qlik access token")
           }
           return currentToken
         }

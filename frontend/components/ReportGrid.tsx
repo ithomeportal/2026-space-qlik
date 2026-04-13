@@ -116,10 +116,10 @@ export function ReportGrid() {
     return (
       <div className="py-16 text-center">
         <p className="text-lg font-medium text-[#1B3A5C]">
-          Loading reports...
+          Could not load reports
         </p>
         <p className="mt-2 text-sm text-[#6B7280]">
-          The server is waking up. This may take up to 30 seconds on first load.
+          The server may be waking up. Please wait a moment and try again.
         </p>
         <button
           onClick={() => refetch()}
