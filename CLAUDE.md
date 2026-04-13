@@ -51,6 +51,9 @@
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
 - Universal Viewer: ALL portal users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
 - Session pre-exchange: Frontend calls `POST /login/jwt-session` to exchange JWT for cookie BEFORE rendering
+- Session exchange uses Promise singleton to prevent race conditions when multiple QlikEmbed components mount
+- Session exchange retries up to 3 times with backoff (1s, 2s) before falling back to `getAccessToken`
+- `getAccessToken` fallback always fetches a fresh token (handles cold start scenarios)
 - JWT required claims: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud`
 - `nbf` (not-before) is MANDATORY — omitting it causes silent 400 on `/login/jwt-session`
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
@@ -99,13 +102,14 @@
 - Render free tier spins down after inactivity — cold starts take 30-60s
 - Proxy route has `maxDuration=60` and 45s fetch timeout to survive cold starts
 - React Query retries 3x with exponential backoff (2s, 4s, 8s)
-- ReportGrid shows friendly "server waking up" message with retry button on error
+- ReportGrid shows "Could not load reports" error with retry button (not misleading "Loading..." text)
 
 ### App Favicons
 - Favicons fetched from app URL directly: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
 - Google favicon API is last resort; default globe icon (726/362 bytes) is rejected
 - Stored as base64 data URIs in `icon_data` column — no external CSP needed
-- Auto-backfill on startup for apps with null or PNG placeholder icons
+- Auto-backfill runs as background task (`asyncio.create_task`) — does NOT block startup
+- Previously backfill was synchronous in lifespan, causing ~10 min cold starts when fetching many URLs
 
 ---
 
@@ -170,7 +174,7 @@ frontend/
     SearchBar.tsx           # Inline search bar with dropdown (pure React, no cmdk/Base UI)
     ReportGrid.tsx          # 3-column layout: TagRole sidebar | Reports matrix | Apps column
     ReportCard.tsx          # Report tile/list (Note in list view) + App tile/list (favicon)
-    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange + diagnostics)
+    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange with retry + Promise singleton)
   lib/
     auth.ts                 # NextAuth config
     api.ts                  # React Query hooks (reports, apps, search, tag-roles, prefs)
@@ -180,10 +184,10 @@ frontend/
 
 backend/
   app/
-    main.py                 # FastAPI app, CORS, health check, auto-seed, apps tables, APScheduler
+    main.py                 # FastAPI app, CORS, health check, auto-seed, apps tables, APScheduler, background favicon backfill
     config.py               # Pydantic Settings (incl SEED_SECRET, TIMEOFF_DATABASE_URL)
     routers/
-      deps.py               # require_user (JSON parse), require_admin
+      deps.py               # require_user (JSON parse), require_admin (Depends(require_user))
       reports.py            # GET /api/reports (with tag_roles, view_count), GET /api/apps (all users), GET /api/user/tag-roles
       qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT), POST /api/qlik/tv-token (TV display, secret-auth)
       search.py             # GET /api/reports/search
