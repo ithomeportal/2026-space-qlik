@@ -5,6 +5,13 @@ export const maxDuration = 60
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000"
 
+const RETRYABLE_STATUS = new Set([502, 503, 504])
+const RETRY_DELAYS_MS = [5000, 10000]
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function proxyRequest(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
@@ -15,9 +22,9 @@ async function proxyRequest(
   }
 
   const { path } = await params
-  const backendUrl = new URL(`/api/${path.join("/")}`, BACKEND_URL)
+  const pathStr = path.join("/")
+  const backendUrl = new URL(`/api/${pathStr}`, BACKEND_URL)
 
-  // Forward query params
   req.nextUrl.searchParams.forEach((value, key) => {
     backendUrl.searchParams.set(key, value)
   })
@@ -34,36 +41,81 @@ async function proxyRequest(
     })}`,
   }
 
-  const fetchOptions: RequestInit = {
-    method: req.method,
-    headers,
-  }
-
+  let body: string | undefined
   if (req.method !== "GET" && req.method !== "HEAD") {
     try {
-      const body = await req.text()
-      if (body) fetchOptions.body = body
+      const raw = await req.text()
+      if (raw) body = raw
     } catch {
       // No body
     }
   }
 
-  try {
+  const maxAttempts = req.method === "GET" ? RETRY_DELAYS_MS.length + 1 : 1
+  const started = Date.now()
+  let lastStatus = 0
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 45000)
-    const res = await fetch(backendUrl.toString(), {
-      ...fetchOptions,
-      signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const data = await res.json()
-    return NextResponse.json(data, { status: res.status })
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "Backend unavailable" },
-      { status: 502 },
-    )
+    try {
+      const res = await fetch(backendUrl.toString(), {
+        method: req.method,
+        headers,
+        body,
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+      lastStatus = res.status
+
+      if (RETRYABLE_STATUS.has(res.status) && attempt < maxAttempts - 1) {
+        console.warn(
+          `[proxy] ${req.method} ${pathStr} → ${res.status} attempt ${attempt + 1}/${maxAttempts}, retrying in ${RETRY_DELAYS_MS[attempt]}ms`,
+        )
+        await sleep(RETRY_DELAYS_MS[attempt])
+        continue
+      }
+
+      const data = await res.json().catch(() => ({
+        success: false,
+        error: `Backend responded ${res.status}`,
+      }))
+
+      if (!res.ok) {
+        const duration = Date.now() - started
+        console.warn(
+          `[proxy] ${req.method} ${pathStr} → ${res.status} after ${duration}ms (attempts=${attempt + 1})`,
+        )
+      }
+
+      const response = NextResponse.json(data, { status: res.status })
+      if (res.status === 503) response.headers.set("Retry-After", "30")
+      return response
+    } catch (err) {
+      clearTimeout(timeout)
+      const isAbort = err instanceof Error && err.name === "AbortError"
+      if (attempt < maxAttempts - 1) {
+        console.warn(
+          `[proxy] ${req.method} ${pathStr} network error (${isAbort ? "timeout" : "fetch"}) attempt ${attempt + 1}, retrying`,
+        )
+        await sleep(RETRY_DELAYS_MS[attempt])
+        continue
+      }
+      const duration = Date.now() - started
+      console.warn(
+        `[proxy] ${req.method} ${pathStr} → unreachable after ${duration}ms (lastStatus=${lastStatus})`,
+      )
+      return NextResponse.json(
+        { success: false, error: "Backend unavailable — please retry shortly" },
+        { status: 503, headers: { "Retry-After": "30" } },
+      )
+    }
   }
+
+  return NextResponse.json(
+    { success: false, error: "Backend unavailable — please retry shortly" },
+    { status: 503, headers: { "Retry-After": "30" } },
+  )
 }
 
 export const GET = proxyRequest

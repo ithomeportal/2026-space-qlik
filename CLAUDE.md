@@ -100,9 +100,14 @@
 
 ### Render Cold Starts
 - Render free tier spins down after inactivity — cold starts take 30-60s
-- Proxy route has `maxDuration=60` and 45s fetch timeout to survive cold starts
-- React Query retries 3x with exponential backoff (2s, 4s, 8s)
+- Proxy route has `maxDuration=60` and 45s fetch timeout per attempt
+- Proxy retries GET requests server-side up to 3x on 502/503/504 (5s, 10s delays) — passes backend wake-up silently
+- Proxy sets `Retry-After: 30` on 503 responses so clients back off appropriately
+- Non-GET methods are NOT retried (avoid duplicate mutations)
+- React Query retries up to 5x with exponential backoff (2s, 4s, 8s, 16s, 30s) — never retries 401/403
+- Vercel cron `/api/cron/keepalive` pings backend `/api/health` every 10 min to prevent spin-down (see `vercel.json`)
 - ReportGrid shows "Could not load reports" error with retry button (not misleading "Loading..." text)
+- Proxy logs non-2xx responses with path + status + duration for cold-start observability (search Vercel logs for `[proxy]` / `[keepalive]`)
 
 ### App Favicons
 - Favicons fetched from app URL directly: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
