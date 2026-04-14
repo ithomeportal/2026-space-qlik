@@ -1,40 +1,44 @@
 # UNILINK Space (Analytics Hub) — Role-Based Qlik Dashboard Portal
 
-> For detailed specs, see `docs/SPEC-*.md`
+> For detailed specs see `docs/SPEC-*.md` (local only, not in git).
+
+---
 
 ## Critical Rules
 
 ### Git & Docs
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
 - Never commit secrets (.env, credentials, API keys)
-- Never commit docs/ — all documentation is local-only (.gitignore excludes docs/)
-- Push to GitHub directly; Vercel/Render auto-deploy from repo
-- No author/co-author names in commits or LICENSE
+- `docs/` is fully gitignored — ALL documentation is local-only, no exceptions
+- Push to GitHub directly via CLI; Vercel/Render auto-deploy from the repo
+- Never include author / co-author names in commits or LICENSE
 
 ### Server Actions & API Patterns
 - All mutations via Next.js Server Actions (not API routes) except auth
-- FastAPI backend: JWT generation, report catalog CRUD, search index, usage analytics
+- FastAPI backend: JWT generation, report catalog CRUD, search, usage analytics
 - API envelope: `{ success: boolean, data?: T, error?: string, meta?: { total, page, limit } }`
 - Validate inputs with Zod (frontend) and Pydantic (backend)
 - Next.js proxy sends user info as JSON in Authorization header (NOT a JWT) — backend parses with `json.loads`
+- Proxy retries GET on 502/503/504 up to 3× (5s, 10s); mutations never retry; returns 503+`Retry-After:30` on total failure
+- See `docs/SPEC-RELIABILITY.md` for full cold-start + retry strategy
 
 ### Security (Non-Negotiable)
 - NO hardcoded secrets — all via environment variables
 - Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP: allow `*.qlikcloud.com` + `cdn.qlikcloud.com` + `cdn.jsdelivr.net` + `login.qlik.com` + `*.launchdarkly.com` + `events.launchdarkly.com` + `api.qlikdataengineering.com` + `sqs.us-east-1.amazonaws.com` + `two026-space-qlik-back.onrender.com` (Qlik telemetry + TV display)
+- CSP allows: `*.qlikcloud.com`, `cdn.qlikcloud.com`, `cdn.jsdelivr.net`, `login.qlik.com`, `*.launchdarkly.com`, `events.launchdarkly.com`, `api.qlikdataengineering.com`, `sqs.us-east-1.amazonaws.com`, `two026-space-qlik-back.onrender.com`
 - CORS: restrict to Vercel deployment origin only
-- Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: "resend", NOT "email")
+- Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: `"resend"`, NOT `"email"`)
 - Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
 
-### Vercel Env Var Management (Critical)
-- ALWAYS run `vercel env` commands from `frontend/` directory (correct `.vercel/project.json`)
+### Vercel Env Var Management
+- ALWAYS run `vercel env` commands from `frontend/` directory
 - Use `printf 'value' | npx vercel env add NAME production` — NOT `echo` (adds newline)
 - Never run `vercel --prod` from repo root — use git push for auto-deploy
-- After changing env vars, push empty commit to trigger redeploy with new values
+- After changing env vars, push empty commit to trigger redeploy
 
 ### NextAuth v5 Gotchas
-- Provider ID is `"resend"` not `"email"` — affects signIn() and callback URLs
+- Provider ID is `"resend"` not `"email"` — affects `signIn()` and callback URLs
 - Requires `AUTH_SECRET` (not just `NEXTAUTH_SECRET`) + `AUTH_TRUST_HOST=true`
 - Tokens are hashed before DB storage — code verification uses `email_codes` table, NOT `verification_tokens`
 - Login page must check session and redirect authenticated users to `/`
@@ -42,99 +46,71 @@
 ### Code Style
 - Immutable updates only (spread operator, no mutation)
 - Files < 400 lines (800 max), functions < 50 lines
-- No `console.log` in production (console.warn allowed for diagnostics)
+- No `console.log` in production (`console.warn` allowed for diagnostics)
 - ONLY light mode — block dark mode
-- shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18 (causes `subscribe` TypeError)
-- Search bar is pure React/HTML — no cmdk, no Base UI, no Radix (removed to fix React 18 compatibility)
+- shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18
+- Search bar is pure React/HTML (no cmdk / Base UI / Radix)
 
-### Qlik Embedding
-- Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `auth-type="jwt"` (invalid)
+### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
+- Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `"jwt"` (invalid)
 - Universal Viewer: ALL portal users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
-- Session pre-exchange: Frontend calls `POST /login/jwt-session` to exchange JWT for cookie BEFORE rendering
-- Session exchange uses Promise singleton to prevent race conditions when multiple QlikEmbed components mount
-- Session exchange retries up to 3 times with backoff (1s, 2s) before falling back to `getAccessToken`
-- `getAccessToken` fallback always fetches a fresh token (handles cold start scenarios)
-- JWT required claims: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud`
-- `nbf` (not-before) is MANDATORY — omitting it causes silent 400 on `/login/jwt-session`
+- Session pre-exchange: `POST /login/jwt-session` BEFORE rendering; Promise singleton prevents races; 3 retries with backoff
+- JWT required claims: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud` — `nbf` is MANDATORY
 - Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
-- Web Integration allowed origins MUST include deployment domain (e.g. `https://space.unilinkportal.com`)
-- JWT IdP: issuer `https://analytics-hub.unilinkportal.com`, key `analytics-hub-key-1`
 - Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
-- QlikEmbed.tsx logs diagnostic warnings when session exchange fails — check console for origin mismatch
-- **Classic Embed Mode**: Dashboard Bundle objects (Date Picker, Variable Input, Animator, Multi KPI) render as "Unknown chart" in `analytics/sheet` mode (nebula.js limitation). Reports with these objects need `use_classic=true` to switch to `classic/app` mode. Toggle via Admin > Reports > Edit > "Classic Embed Mode"
+- Classic Embed Mode toggle for Dashboard Bundle objects (Date Picker, Variable Input, etc.)
 
-### TV Display (RiseVision)
-- `/dfw-podium` is a standalone route handler (not a React page) — serves raw HTML
-- Uses JWT→cookie auth via `/api/qlik/tv-token` (secret-based, no NextAuth)
-- `TV_SECRET` must match on both Vercel and Render
-- OAuth2 client `019d446c6b163a8dfc7c1b72220d5833` is configured in Qlik Cloud but NOT used (JWT→cookie is used instead)
-- Auto-refreshes every hour via `<meta http-equiv="refresh">`; retries on error after 30s
-- CSP includes `cdn.jsdelivr.net` for the qlik-embed web component script
+### TV Display (`/dfw-podium` — see `docs/SPEC-QLIK.md`)
+- Standalone route handler (not React page), serves raw HTML
+- JWT→cookie via `/api/qlik/tv-token` with `TV_SECRET` (must match on Vercel + Render)
+- Auto-refresh hourly; retry after 30s on error
 - RiseVision URL: `https://space.unilinkportal.com/dfw-podium`
-- Qlik app: `87278082-0346-4d41-8b2c-ac658a8d5a1f`, sheet: `f56141e7-004e-42cb-8507-57196cb77d13`
 
 ### Responsive Mobile
-- Below 1920px viewport = mobile mode → show only `(Mob)` prefixed Qlik reports
-- Desktop (>=1920px) → show regular reports (no `(Mob)` prefix)
-- Reports table has `is_mobile` boolean column; `useIsMobile()` hook detects viewport
+- <1920px viewport = mobile mode → only `(Mob)` prefixed Qlik reports
+- Reports table has `is_mobile` column; `useIsMobile()` hook detects viewport
 
-### User Sync & TagRoles
-- Users synced daily at 2:00 AM CST from People Management app (`/BOT/time-off`) via APScheduler
-- Sync pulls: name, email, department, job_title (Role Name), company
-- Sync deactivates offboarded users (no longer `isActive` in time-off DB)
-- TagRoles are NOT auto-assigned — admins assign manually per user via admin console
-- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) auto-get admin role only
-- `TIMEOFF_DATABASE_URL` must be set on Render for sync to work
+### User Sync & TagRoles (see `docs/SPEC-ADMIN.md`)
+- Daily sync at 2 AM CST from People Management app via APScheduler
+- TagRoles NOT auto-assigned — admins assign manually per user
+- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) auto-get admin role
 - Use `emp["name"]` (bracket access) for asyncpg Records, NOT `.get("name")`
-- Time-off DB `name` field is primary; `firstName`/`lastName` are fallback (23 users have null firstName)
 
-### Database & Seeding
-- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent, no duplicates
-- Never use `dict.pop()` on module-level constants — use `dict.get()` to avoid mutation
-- Seed endpoint: `POST /api/admin/seed?secret=<SEED_SECRET>`
-- Auto-seed on startup if `role_report_access` table is empty
-- Apps tables (`apps`, `app_role_access`) created on startup AND in seed — must exist before API use
-- `access_log` table + indexes created on startup — used by trending, reports listing, and view tracking
-- New columns added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at startup (no migrations needed)
-- FastAPI router order matters: search router MUST be registered before reports router (`/reports/search` vs `/reports/{report_id}`)
+### Database & Seeding (see `docs/SPEC-DATA.md`)
+- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent
+- Never `dict.pop()` on module-level constants — use `.get()`
+- Auto-seed on startup if `role_report_access` is empty
+- FastAPI router order matters: search router BEFORE reports router
 
-### Render Cold Starts
-- Render free tier spins down after inactivity — cold starts take 30-60s
-- Proxy route has `maxDuration=60` and 45s fetch timeout per attempt
-- Proxy retries GET requests server-side up to 3x on 502/503/504 (5s, 10s delays) — passes backend wake-up silently
-- Proxy sets `Retry-After: 30` on 503 responses so clients back off appropriately
-- Non-GET methods are NOT retried (avoid duplicate mutations)
-- React Query retries up to 5x with exponential backoff (2s, 4s, 8s, 16s, 30s) — never retries 401/403
-- Vercel cron `/api/cron/keepalive` pings backend `/api/health` every 10 min to prevent spin-down (see `vercel.json`)
-- ReportGrid shows "Could not load reports" error with retry button (not misleading "Loading..." text)
-- Proxy logs non-2xx responses with path + status + duration for cold-start observability (search Vercel logs for `[proxy]` / `[keepalive]`)
+### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
+- Free tier spins down after ~15 min inactivity — cold starts 30–60s
+- Vercel cron `/api/cron/keepalive` pings `/api/health` every 10 min
+- Proxy retries GET on 5xx 3× (5s, 10s); React Query 5× (2s→30s); skip 401/403
+- Favicon backfill MUST run as background `asyncio.create_task` — never block lifespan
 
 ### App Favicons
-- Favicons fetched from app URL directly: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
-- Google favicon API is last resort; default globe icon (726/362 bytes) is rejected
-- Stored as base64 data URIs in `icon_data` column — no external CSP needed
-- Auto-backfill runs as background task (`asyncio.create_task`) — does NOT block startup
-- Previously backfill was synchronous in lifespan, causing ~10 min cold starts when fetching many URLs
+- Fetched from app URL: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
+- Google favicon API is last resort; default globe (726/362 bytes) is rejected
+- Stored as base64 data URIs in `icon_data` (no CSP needed)
 
 ---
 
-## Features
+## Features (1-line each — see spec files for details)
 
-1. **Email Code Auth** — 8-digit code via Resend, NextAuth session, admin role management
-2. **3-Column Home Layout** — TagRole filters (1/5) | Reports matrix (3/5) | Apps (1/5), sorted by usage desc
-3. **TagRole-Based Access** — Users see only reports with matching TagRoles; Apps visible to ALL users
-4. **TagRole Filters** — Sidebar buttons (tiles) / pills (list) filter reports by TagRole; "All" shows everything
-5. **Responsive Mobile** — <1920px forces list view (no tiles toggle), shows (Mob) Qlik apps
-6. **Viewer-Only Embed** — `analytics/sheet` with `toolbar=false`, JWT "Viewers" group; `classic/app` for Dashboard Bundle reports
-7. **Full-Page Embed** — `/reports/[id]` with `<qlik-embed>` at 100vh, auto-selects classic/analytics mode per `use_classic` flag
-8. **Inline Search** — Direct-type search bar (like Google), DB-powered, searches reports (title/description/note/tags) + apps (title/description), 300ms debounce
-9. **Admin Console** — Reports/Apps CRUD (with Note field), TagRole manager, user management with matrix view. Admins can edit Qlik App/Sheet IDs on reports
-10. **Apps (External Links)** — External links with favicon icons, visible to all authenticated users
-11. **Daily User Sync** — APScheduler syncs users from People Management app at 2am CST
-12. **User Access Matrix** — Full-page `/admin/users/[id]` with report×TagRole matrix view
-13. **List View** — Shows report name + Note column (no Category/Owner/Updated)
-14. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle objects (Date Picker etc.) that need `classic/app` rendering
-15. **TV Display (RiseVision)** — `/dfw-podium` serves a standalone fullscreen Qlik embed for unattended TV displays via RiseVision, using JWT→cookie auth with `TV_SECRET`
+1. **Email Code Auth** — 8-digit code via Resend, NextAuth session
+2. **3-Column Home** — TagRole filters | Reports | Apps, sorted by usage
+3. **TagRole-Based Access** — Reports filtered by TagRole; Apps visible to all
+4. **Responsive Mobile** — <1920px forces list view + `(Mob)` reports
+5. **Viewer-Only Embed** — `analytics/sheet` with toolbar off, Viewers group JWT
+6. **Full-Page Embed** — `/reports/[id]` 100vh, auto-picks classic vs analytics
+7. **Inline Search** — DB-backed, title/description/note/tags, 300ms debounce
+8. **Admin Console** — Reports/Apps/TagRoles/Users CRUD + matrix view
+9. **Apps (External Links)** — Favicon-iconed links, visible to all users
+10. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
+11. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
+12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
+13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
+14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
 
 ---
 
@@ -146,11 +122,11 @@
 | Styling | Tailwind CSS + shadcn/ui |
 | State | React Query (TanStack) |
 | Backend | FastAPI (Python) on Render |
-| Auth | NextAuth.js v5 beta-30 (Resend provider, JWT strategy) |
-| Scheduler | APScheduler (daily user sync) |
+| Auth | NextAuth.js v5 beta-30 (Resend, JWT strategy) |
+| Scheduler | APScheduler (daily user sync) + Vercel Cron (keep-alive) |
 | Qlik Embed | `@qlik/embed-web-components` with cookie auth |
 | Database | PostgreSQL (Aiven) |
-| Search | PostgreSQL ILIKE (direct DB, no Typesense) |
+| Search | PostgreSQL ILIKE |
 | Email | Resend |
 
 ---
@@ -160,92 +136,94 @@
 ```
 frontend/
   app/
-    layout.tsx              # Root layout: providers, auth, header
-    page.tsx                # Home: search bar + 3-column report grid (no title)
-    reports/[id]/page.tsx   # Full-screen Qlik embed viewer
+    layout.tsx
+    page.tsx                     # Home: search + 3-column grid
+    reports/[id]/page.tsx        # Full-screen Qlik embed
     admin/
-      layout.tsx            # Admin sidebar (Dashboard, Reports, Apps, Tag Roles, Users)
-      page.tsx              # Usage analytics dashboard
-      reports/page.tsx      # Report CRUD + TagRole assignment per report
-      apps/page.tsx         # App CRUD (external links) + TagRole assignment
-      roles/page.tsx        # TagRole CRUD (create, edit name/description, delete)
-      users/page.tsx        # User list with sortable columns
-      users/[id]/page.tsx   # User detail: TagRole assignment + report access matrix
-    dfw-podium/route.ts     # TV display: standalone Qlik embed (JWT→cookie, no NextAuth)
-    api/auth/[...nextauth]/ # NextAuth handlers
-    api/proxy/[...path]/    # Backend proxy (sends JSON auth, not JWT)
-    (auth)/login/page.tsx   # Login page (redirects if authenticated)
+      layout.tsx                 # Admin sidebar
+      page.tsx                   # Usage analytics
+      reports/page.tsx           # Report CRUD + TagRole assignment
+      apps/page.tsx              # App CRUD
+      roles/page.tsx             # TagRole CRUD
+      users/page.tsx             # User list
+      users/[id]/page.tsx        # User detail + access matrix
+    dfw-podium/route.ts          # TV display (JWT→cookie)
+    api/auth/[...nextauth]/      # NextAuth handlers
+    api/proxy/[...path]/route.ts # Backend proxy w/ retry logic
+    api/cron/keepalive/route.ts  # Vercel cron → backend /api/health
+    (auth)/login/page.tsx
   components/
-    SearchBar.tsx           # Inline search bar with dropdown (pure React, no cmdk/Base UI)
-    ReportGrid.tsx          # 3-column layout: TagRole sidebar | Reports matrix | Apps column
-    ReportCard.tsx          # Report tile/list (Note in list view) + App tile/list (favicon)
-    QlikEmbed.tsx           # <qlik-embed> wrapper (universal viewer + session pre-exchange with retry + Promise singleton)
+    SearchBar.tsx
+    ReportGrid.tsx
+    ReportCard.tsx
+    QlikEmbed.tsx                # Session exchange + retry + singleton
+    Providers.tsx                # React Query w/ 5× retry, skip 401/403
   lib/
-    auth.ts                 # NextAuth config
-    api.ts                  # React Query hooks (reports, apps, search, tag-roles, prefs)
-    use-is-mobile.ts        # Viewport detection hook (<1920px = mobile)
-    use-debounce.ts         # Debounce hook for search input (300ms)
-  next.config.mjs           # CSP headers (Qlik + telemetry domains)
+    auth.ts
+    api.ts
+    use-is-mobile.ts
+    use-debounce.ts
+  next.config.mjs                # CSP headers
+  vercel.json                    # Cron schedule
 
 backend/
   app/
-    main.py                 # FastAPI app, CORS, health check, auto-seed, apps tables, APScheduler, background favicon backfill
-    config.py               # Pydantic Settings (incl SEED_SECRET, TIMEOFF_DATABASE_URL)
+    main.py                      # FastAPI, CORS, lifespan, APScheduler
+    config.py                    # Pydantic Settings
     routers/
-      deps.py               # require_user (JSON parse), require_admin (Depends(require_user))
-      reports.py            # GET /api/reports (with tag_roles, view_count), GET /api/apps (all users), GET /api/user/tag-roles
-      qlik.py               # POST /api/qlik/viewer-token (universal viewer JWT), POST /api/qlik/tv-token (TV display, secret-auth)
-      search.py             # GET /api/reports/search
-      preferences.py        # GET/PATCH /api/user/preferences
-      admin.py              # Admin CRUD: reports, apps, roles, users, seed, sync
+      deps.py                    # require_user / require_admin
+      reports.py                 # /api/reports, /api/apps
+      qlik.py                    # Viewer + TV token endpoints
+      search.py                  # /api/reports/search
+      preferences.py             # /api/user/preferences
+      admin.py                   # Admin CRUD + seed + sync
     services/
-      seed.py               # Idempotent seeding: reports, roles, apps tables
-      sync_users.py         # Daily user sync from time-off DB (no auto-assign)
+      seed.py                    # Idempotent seeding
+      sync_users.py              # Daily user sync
 ```
 
 ---
 
 ## Environment Variables
 
-### Frontend (Vercel) — project: `2026-space-qlik-front`
+### Frontend (Vercel — `2026-space-qlik-front`)
 ```
 AUTH_URL=https://space.unilinkportal.com
-AUTH_SECRET=<from-env>
+AUTH_SECRET=<secret>
 AUTH_TRUST_HOST=true
 NEXTAUTH_URL=https://space.unilinkportal.com
-NEXTAUTH_SECRET=<from-env>
-DATABASE_URL=<from-env> (must start with postgresql://)
-RESEND_API_KEY=<from-env>
+NEXTAUTH_SECRET=<secret>
+DATABASE_URL=postgresql://...
+RESEND_API_KEY=<secret>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
 NEXT_PUBLIC_QLIK_TENANT=mb01txe2h9rovgh.us.qlikcloud.com
-TV_SECRET=<from-env> (shared secret for /dfw-podium TV display auth)
+TV_SECRET=<shared with backend>
 ```
 
 ### Backend (Render)
 ```
-DATABASE_URL=<from-env>
+DATABASE_URL=<Aiven Postgres URL>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
-QLIK_PRIVATE_KEY=<from-env>
+QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
 QLIK_KEY_ID=analytics-hub-key-1
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app
-SEED_SECRET=<from-env>
-TV_SECRET=<from-env> (must match frontend TV_SECRET — used by /api/qlik/tv-token)
-TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
+SEED_SECRET=<secret>
+TV_SECRET=<shared with frontend>
+TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 ```
 
 ---
 
-## TagRole Access Model
+## Role Access Summary
 
-- **TagRoles** are created/edited by admins at `/admin/roles`
-- **Reports** are assigned TagRoles at `/admin/reports` — users see reports only if they share a TagRole
-- **Apps** are visible to ALL authenticated users (no TagRole restriction)
-- **Users** are assigned TagRoles at `/admin/users/[id]` (full-page matrix view)
-- **Home page filters**: TagRoles act as filter buttons on home page (not access control)
-- **No auto-assign**: TagRoles are 100% manually assigned by admins
-- Admin users: dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned)
-- **Admin** (`admin` role): can edit Qlik App ID and Sheet ID on reports (for v1→v2 migrations)
+- **TagRoles** — created/edited by admins at `/admin/roles`
+- **Reports** — assigned TagRoles at `/admin/reports`; users see a report only if they share a TagRole
+- **Apps** — visible to ALL authenticated users (no TagRole restriction)
+- **Users** — TagRoles assigned at `/admin/users/[id]` matrix
+- **Home filters** — TagRoles act as filter buttons (not access control)
+- **No auto-assign** — TagRoles are 100% manual
+- **Admins** — dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned); can edit Qlik App/Sheet IDs
 
 ---
 
@@ -253,10 +231,10 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 
 - **Tenant**: `mb01txe2h9rovgh.us.qlikcloud.com`
 - **Tenant ID**: `ZC6dict00GLAZhISVRVWKm4d-l105j0n`
-- **JWT IdP**: Configured (ID: `69b30b03dbb54989a11adb6b`)
-- **Viewers Group**: ID `69b4c6eec98c45424617135b` — "consumer" on all shared spaces
-- **19 desktop + 12 mobile apps** across 7 spaces (see docs/SPEC-QLIK-INVENTORY.md)
-- **Web Integration**: ID `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit` — allowed origins must match deployment domain
+- **JWT IdP ID**: `69b30b03dbb54989a11adb6b`
+- **Viewers Group ID**: `69b4c6eec98c45424617135b` (consumer on all shared spaces)
+- **Web Integration ID**: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
+- 19 desktop + 12 mobile apps across 7 spaces (see `docs/SPEC-QLIK-INVENTORY.md`)
 
 ---
 
@@ -264,22 +242,23 @@ TIMEOFF_DATABASE_URL=<from-env> (time-off DB for daily user sync)
 
 | Service | URL |
 |---------|-----|
-| Frontend | https://space.unilinkportal.com (also: 2026-space-qlik-front.vercel.app) |
+| Frontend | https://space.unilinkportal.com (alt: `2026-space-qlik-front.vercel.app`) |
 | Backend | https://two026-space-qlik-back.onrender.com |
 | Database | Aiven PostgreSQL (`analytics_hub`) |
 | Repo | https://github.com/ithomeportal/2026-space-qlik |
 
 ---
 
-## Spec Files (local only, not in git)
+## Spec Files (local only — `docs/`, gitignored)
 
 | File | Contents |
 |------|----------|
 | `docs/SPEC-AUTH.md` | Auth flow, email code, NextAuth, roles, user seeding |
-| `docs/SPEC-UI.md` | Design system, colors, typography, components, 3-column layout |
-| `docs/SPEC-QLIK.md` | Qlik embed, JWT flow, IdP setup, auth-type gotchas, lessons learned |
+| `docs/SPEC-UI.md` | Design system, colors, typography, 3-column layout |
+| `docs/SPEC-QLIK.md` | Qlik embed, JWT, IdP setup, TV display, lessons learned |
 | `docs/SPEC-QLIK-INVENTORY.md` | Full app inventory with IDs, sheets, categories |
-| `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints, Typesense index |
-| `docs/SPEC-SEARCH.md` | Search engine, Typesense, cmdk |
+| `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints |
+| `docs/SPEC-SEARCH.md` | Search engine, PostgreSQL ILIKE |
+| `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
+| `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, incidents, lessons |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
-| `docs/SPEC-ADMIN.md` | Admin console, TagRole model, user sync, apps, lessons learned |
