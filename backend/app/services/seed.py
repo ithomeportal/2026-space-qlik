@@ -41,6 +41,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO", "Executive", "Procurement", "Finance", "CORP"],
     },
+    {
+        "key": "budget-followup-2026",  # -> /reports/budget-followup-2026
+        "title": "2026 Official Budget Follow Up",
+        "description": "2026 actuals vs budget — loads, revenue, profit, margin by customer and team",
+        "note": "Scope: full year 2026 · Teams TEAM1–TEAM5 · source: daily_production_budget_report",
+        "category": "Operations",
+        "tags": ["budget", "production", "actuals", "variance", "ops"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "Operations", "Finance", "CORP", "DFW"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports

@@ -9,15 +9,19 @@ def get_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
-def get_savings_pool(request: Request) -> asyncpg.Pool:
-    """Pool for aivn_datalake_gold (carrier savings source)."""
+def get_datalake_gold_pool(request: Request) -> asyncpg.Pool:
+    """Pool for aivn_datalake_gold (carriers_savings, daily_production_budget_report, etc.)."""
     pool = getattr(request.app.state, "savings_pool", None)
     if pool is None:
         raise HTTPException(
             status_code=503,
-            detail="Savings data source not configured",
+            detail="Datalake (gold) data source not configured",
         )
     return pool
+
+
+# Backward-compatible alias — carriers_savings router still imports this name.
+get_savings_pool = get_datalake_gold_pool
 
 
 def require_tag_role(*allowed: str):

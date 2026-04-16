@@ -259,6 +259,147 @@ export function useSavingsLanes(filters: SavingsLanesFilters) {
   })
 }
 
+// === 2026 Official Budget Follow Up ===
+
+export interface BudgetFilterOptions {
+  teams: string[]
+  customers: string[]
+  year_start: string
+  year_end: string
+}
+
+export interface BudgetSummary {
+  loads_actual: number
+  loads_budget: number
+  loads_variance: number
+  loads_achievement_pct: number
+  revenue_actual: number
+  revenue_budget: number
+  revenue_variance: number
+  revenue_achievement_pct: number
+  profit_actual: number
+  profit_budget: number
+  profit_variance: number
+  profit_achievement_pct: number
+  margin_actual_pct: number
+  margin_budget_pct: number
+  margin_variance_pct: number
+  active_customers: number
+  total_customers: number
+  active_days: number
+  total_days: number
+  days_elapsed: number
+  days_remaining: number
+  start_date: string
+  end_date: string
+}
+
+export interface BudgetCustomerRow {
+  customer_name: string
+  loads_actual: number
+  loads_budget: number
+  loads_variance: number
+  revenue_actual: number
+  revenue_budget: number
+  revenue_variance: number
+  profit_actual: number
+  profit_budget: number
+  profit_variance: number
+  margin_actual_pct: number
+  margin_budget_pct: number
+}
+
+export interface BudgetTeamRow {
+  team_id: string
+  loads_actual: number
+  loads_budget: number
+  revenue_actual: number
+  revenue_budget: number
+  profit_actual: number
+  profit_budget: number
+}
+
+export interface BudgetMonthPoint {
+  month_date: string
+  loads_actual: number
+  loads_budget: number
+  revenue_actual: number
+  revenue_budget: number
+  profit_actual: number
+  profit_budget: number
+}
+
+export interface BudgetFilters {
+  startDate?: string
+  endDate?: string
+  teams?: string[]
+  customer?: string
+}
+
+function budgetQs(filters: BudgetFilters, extra?: Record<string, string>) {
+  const qs = new URLSearchParams()
+  if (filters.startDate) qs.set("start_date", filters.startDate)
+  if (filters.endDate) qs.set("end_date", filters.endDate)
+  if (filters.teams && filters.teams.length) qs.set("teams", filters.teams.join(","))
+  if (filters.customer) qs.set("customer", filters.customer)
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) qs.set(k, v)
+  }
+  const s = qs.toString()
+  return s ? `?${s}` : ""
+}
+
+export function useBudgetFilters() {
+  return useQuery({
+    queryKey: ["budget", "filters"],
+    queryFn: () => apiFetch<BudgetFilterOptions>("custom/budget-followup/filters"),
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
+export function useBudgetSummary(filters: BudgetFilters) {
+  return useQuery({
+    queryKey: ["budget", "summary", filters],
+    queryFn: () => apiFetch<BudgetSummary>(`custom/budget-followup/summary${budgetQs(filters)}`),
+  })
+}
+
+export function useBudgetByCustomer(
+  filters: BudgetFilters,
+  sort: string,
+  page: number,
+  limit = 100,
+) {
+  return useQuery({
+    queryKey: ["budget", "by-customer", filters, sort, page, limit],
+    queryFn: () =>
+      apiFetch<BudgetCustomerRow[]>(
+        `custom/budget-followup/by-customer${budgetQs(filters, {
+          sort,
+          page: String(page),
+          limit: String(limit),
+        })}`,
+      ),
+  })
+}
+
+export function useBudgetByTeam(filters: BudgetFilters) {
+  // Team filter intentionally excluded — we always want all teams in this roll-up.
+  const { teams: _teams, ...rest } = filters
+  return useQuery({
+    queryKey: ["budget", "by-team", rest],
+    queryFn: () => apiFetch<BudgetTeamRow[]>(`custom/budget-followup/by-team${budgetQs(rest)}`),
+  })
+}
+
+export function useBudgetMonthly(filters: BudgetFilters) {
+  return useQuery({
+    queryKey: ["budget", "monthly", filters],
+    queryFn: () =>
+      apiFetch<BudgetMonthPoint[]>(`custom/budget-followup/monthly${budgetQs(filters)}`),
+  })
+}
+
 export function useToggleFavorite() {
   const queryClient = useQueryClient()
   const { data: prefs } = usePreferences()

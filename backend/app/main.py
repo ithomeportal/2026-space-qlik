@@ -12,7 +12,15 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import settings
-from app.routers import admin, carriers_savings, preferences, qlik, reports, search
+from app.routers import (
+    admin,
+    budget_followup,
+    carriers_savings,
+    preferences,
+    qlik,
+    reports,
+    search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +165,14 @@ async def lifespan(app: FastAPI):
             app.state.savings_pool = await asyncpg.create_pool(
                 settings.SAVINGS_DATABASE_URL, min_size=1, max_size=4
             )
-            logger.info("Carrier savings pool connected (aivn_datalake_gold)")
+            logger.info(
+                "Datalake (gold) pool connected — powers eSavings & Budget Follow Up"
+            )
         except Exception as e:
-            logger.warning(f"Savings DB connect failed: {e}. eSavings report will 503.")
+            logger.warning(
+                f"Datalake (gold) DB connect failed: {e}. "
+                "eSavings & Budget Follow Up will 503."
+            )
             app.state.savings_pool = None
     else:
         app.state.savings_pool = None
@@ -205,6 +218,7 @@ app.include_router(qlik.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
+app.include_router(budget_followup.router, prefix="/api")
 
 
 @app.get("/api/health")
