@@ -86,9 +86,16 @@
 - `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route)
 - `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
 - External data sources get their own `asyncpg` pool + env var (`SAVINGS_DATABASE_URL`, etc.)
-- Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses)
-- Current: **eSavings from Carriers** (`/reports/esavings-carriers`, roles: ceo, executive, procurement, finance, corp)
+- Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses, case-insensitive)
+- Current: **eSavings from Carriers** (`/reports/esavings-carriers`, roles: CEO, Executive, Procurement, Finance, CORP)
 - Source: `aivn_datalake_gold.carriers_savings_results_report` (populated by n8n `PdZIaBQPGSLD4VWB`)
+- Default month = current calendar month when data exists, else latest
+
+### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
+- Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
+- `admin` and `super_admin` stay lowercase (singletons)
+- Seed uses `role_ids_ci` (lowercased-key dict) for case-insensitive lookup
+- `POST /api/admin/dedupe-roles?secret=<SEED_SECRET>` merges case duplicates and migrates all refs
 
 ### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
 - Free tier spins down after ~15 min inactivity — cold starts 30–60s
