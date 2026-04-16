@@ -1,6 +1,7 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { useEffect } from "react"
+import { useParams, useRouter } from "next/navigation"
 import { useReport } from "@/lib/api"
 import { QlikEmbed } from "@/components/QlikEmbed"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,7 +10,16 @@ import Link from "next/link"
 
 export default function ReportViewerPage() {
   const { id } = useParams<{ id: string }>()
+  const router = useRouter()
   const { data: reportRes, isLoading } = useReport(id)
+
+  // Code-made reports bypass the Qlik embed and redirect to their custom Next.js route.
+  const report = reportRes?.data
+  useEffect(() => {
+    if (report?.report_type === "custom" && report.custom_path) {
+      router.replace(report.custom_path)
+    }
+  }, [report, router])
 
   if (isLoading) {
     return (
@@ -22,7 +32,6 @@ export default function ReportViewerPage() {
     )
   }
 
-  const report = reportRes?.data
   if (!report) {
     return (
       <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center">
@@ -36,6 +45,24 @@ export default function ReportViewerPage() {
         >
           Back to home
         </Link>
+      </div>
+    )
+  }
+
+  // Custom reports — show a lightweight placeholder while the useEffect redirect kicks in.
+  if (report.report_type === "custom") {
+    return (
+      <div className="flex h-[calc(100vh-64px)] items-center justify-center">
+        <Skeleton className="h-8 w-64" />
+      </div>
+    )
+  }
+
+  if (!report.qlik_app_id) {
+    return (
+      <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center">
+        <h2 className="text-xl font-semibold text-[#1B3A5C]">Report misconfigured</h2>
+        <p className="mt-2 text-[#6B7280]">This report has no embed target.</p>
       </div>
     )
   }

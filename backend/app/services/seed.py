@@ -11,11 +11,13 @@ import asyncpg
 
 from app.config import settings
 
-# 10 default roles
+# 12 default roles
 DEFAULT_ROLES = [
     ("admin", "Full access to all reports and admin console"),
     ("super_admin", "Admin with ability to edit report IDs and advanced settings"),
+    ("ceo", "Chief Executive Officer"),
     ("executive", "Access to all reports across divisions"),
+    ("procurement", "Procurement and carrier-sourcing reports"),
     ("finance", "Finance and budget reports"),
     ("operations", "Operations, carrier, and scorecard reports"),
     ("sales", "Sales, attrition, and awards reports"),
@@ -23,6 +25,20 @@ DEFAULT_ROLES = [
     ("it", "IT, VoIP, and managed services reports"),
     ("dfw", "DFW division reports"),
     ("corp", "CORP division reports"),
+]
+
+# Code-made reports (not Qlik-embedded). Access granted via `roles` just like Qlik reports.
+CUSTOM_REPORTS = [
+    {
+        "key": "esavings-carriers",  # stable identifier; becomes custom_path /reports/esavings-carriers
+        "title": "eSavings from Carriers",
+        "description": "Carrier savings vs Q1-2026 baseline — loads, savings, overpay, net variance",
+        "note": "Quarterly rolling base (Q1-2026 avg for Q2 months)",
+        "category": "Operations",
+        "tags": ["savings", "carrier", "procurement", "variance"],
+        "owner_name": "Diego",
+        "roles": ["ceo", "executive", "procurement", "finance", "corp"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
@@ -396,11 +412,29 @@ async def seed_all():
             """
         )
 
-        # Ensure unique constraint exists for idempotent seeding
+        # Ensure unique constraints exist for idempotent seeding
         await pool.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS reports_qlik_app_id_key
             ON reports (qlik_app_id)
+            WHERE qlik_app_id IS NOT NULL
+            """
+        )
+        # Make sure custom_path exists before we try to index it
+        await pool.execute(
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_type TEXT DEFAULT 'qlik'"
+        )
+        await pool.execute(
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_path TEXT"
+        )
+        await pool.execute(
+            "ALTER TABLE reports ALTER COLUMN qlik_app_id DROP NOT NULL"
+        )
+        await pool.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS reports_custom_path_key
+            ON reports (custom_path)
+            WHERE custom_path IS NOT NULL
             """
         )
 
@@ -493,6 +527,44 @@ async def seed_all():
                             """,
                             role_ids[role_name],
                             report_id,
+                        )
+
+        # 2b. Seed code-made (custom) reports. Keyed by custom_path so they're idempotent.
+        for custom in CUSTOM_REPORTS:
+            custom_path = f"/reports/{custom['key']}"
+            row = await pool.fetchrow(
+                """
+                INSERT INTO reports (title, description, note, category, tags,
+                                     owner_name, is_mobile, report_type, custom_path)
+                VALUES ($1, $2, $3, $4, $5, $6, FALSE, 'custom', $7)
+                ON CONFLICT (custom_path) DO UPDATE SET
+                  title = EXCLUDED.title,
+                  description = EXCLUDED.description,
+                  note = EXCLUDED.note,
+                  category = EXCLUDED.category,
+                  tags = EXCLUDED.tags,
+                  owner_name = EXCLUDED.owner_name,
+                  report_type = 'custom'
+                RETURNING id
+                """,
+                custom["title"],
+                custom.get("description"),
+                custom.get("note"),
+                custom.get("category"),
+                custom.get("tags", []),
+                custom.get("owner_name"),
+                custom_path,
+            )
+            if row:
+                for role_name in custom.get("roles", []):
+                    if role_name in role_ids:
+                        await pool.execute(
+                            """
+                            INSERT INTO role_report_access (role_id, report_id)
+                            VALUES ($1, $2) ON CONFLICT DO NOTHING
+                            """,
+                            role_ids[role_name],
+                            row["id"],
                         )
 
         # 3. Seed users from time-off DB (if available)

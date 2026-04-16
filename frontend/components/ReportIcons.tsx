@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   DoorOpen,
   Headphones,
+  PiggyBank,
 } from "lucide-react"
 import type { ComponentType } from "react"
 
@@ -41,6 +42,7 @@ const REPORT_ICON_MAP: Record<string, IconConfig> = {
   "Budget - Sales": { icon: PieChart, bg: "from-[#059669] to-[#6EE7B7]", fg: "text-white" },
   "Customer Scorecard": { icon: ClipboardList, bg: "from-[#D97706] to-[#FBBF24]", fg: "text-white" },
   "Carrier Savings Dashboard": { icon: Truck, bg: "from-[#EA580C] to-[#FB923C]", fg: "text-white" },
+  "eSavings from Carriers": { icon: PiggyBank, bg: "from-[#065F46] to-[#10B981]", fg: "text-white" },
   "Available": { icon: Boxes, bg: "from-[#B45309] to-[#FCD34D]", fg: "text-white" },
   "Customer Attrition Detail": { icon: UserMinus, bg: "from-[#DC2626] to-[#F87171]", fg: "text-white" },
   "Spot Details by Express Module": { icon: FileSpreadsheet, bg: "from-[#C2410C] to-[#FB923C]", fg: "text-white" },

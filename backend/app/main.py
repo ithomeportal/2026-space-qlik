@@ -12,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import settings
-from app.routers import admin, preferences, qlik, reports, search
+from app.routers import admin, carriers_savings, preferences, qlik, reports, search
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,17 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(
                 "ALTER TABLE reports ADD COLUMN IF NOT EXISTS use_classic BOOLEAN DEFAULT FALSE"
             )
+            # Code-made reports (not embedded from Qlik) — report_type='custom'
+            # + custom_path points to a Next.js route (e.g. /reports/esavings-carriers)
+            await app.state.pool.execute(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_type TEXT DEFAULT 'qlik'"
+            )
+            await app.state.pool.execute(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_path TEXT"
+            )
+            await app.state.pool.execute(
+                "ALTER TABLE reports ALTER COLUMN qlik_app_id DROP NOT NULL"
+            )
             # Ensure access_log table exists (for trending & usage tracking)
             await app.state.pool.execute(
                 """
@@ -140,6 +151,19 @@ async def lifespan(app: FastAPI):
     else:
         app.state.pool = None
 
+    # Second pool for the aivn_datalake_gold DB (carrier savings source)
+    if settings.SAVINGS_DATABASE_URL:
+        try:
+            app.state.savings_pool = await asyncpg.create_pool(
+                settings.SAVINGS_DATABASE_URL, min_size=1, max_size=4
+            )
+            logger.info("Carrier savings pool connected (aivn_datalake_gold)")
+        except Exception as e:
+            logger.warning(f"Savings DB connect failed: {e}. eSavings report will 503.")
+            app.state.savings_pool = None
+    else:
+        app.state.savings_pool = None
+
     # Schedule daily user sync at 2:00 AM CST (America/Chicago)
     if settings.TIMEOFF_DATABASE_URL:
         scheduler.add_job(
@@ -157,6 +181,8 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown(wait=False)
     if app.state.pool:
         await app.state.pool.close()
+    if getattr(app.state, "savings_pool", None):
+        await app.state.savings_pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -178,6 +204,7 @@ app.include_router(reports.router, prefix="/api")
 app.include_router(qlik.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
+app.include_router(carriers_savings.router, prefix="/api")
 
 
 @app.get("/api/health")

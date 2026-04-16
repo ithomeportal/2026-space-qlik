@@ -26,7 +26,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<ApiResp
 
 export interface Report {
   id: string
-  qlik_app_id: string
+  qlik_app_id: string | null
   qlik_sheet_id: string | null
   title: string
   description: string | null
@@ -41,6 +41,8 @@ export interface Report {
   is_favorited?: boolean
   view_count?: number
   use_classic?: boolean
+  report_type?: "qlik" | "custom"
+  custom_path?: string | null
 }
 
 export interface TagRole {
@@ -152,6 +154,108 @@ export function useUpdatePreferences() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["preferences"] })
     },
+  })
+}
+
+// ─── Carrier Savings (code-made report) ──────────────────────────────────────
+
+export interface SavingsMonth {
+  month_date: string
+  type_month_description: string
+  base_month: string | null
+}
+
+export interface SavingsSummary {
+  total_loads: number
+  total_cost: number
+  total_savings: number
+  total_overpay: number
+  net_variance: number
+  high_vol_lanes: number
+  low_vol_lanes: number
+  high_vol_savings_lanes: number
+  low_vol_savings_lanes: number
+  base_month: string | null
+  avg_base_lane: number | null
+  month_date: string | null
+}
+
+export interface SavingsByCustomer {
+  customer_id: string
+  customer_name: string
+  lane_count: number
+  loads: number
+  cost: number
+  savings: number | null
+  overpay: number | null
+  net_variance: number
+}
+
+export interface SavingsLane {
+  customer_id: string
+  customer_name: string
+  origin_name: string
+  dest_name: string
+  cost_monthly_usd: number
+  number_monthly_loads: number
+  avg_monthly_usd: number
+  variance: number
+  base_lane: number
+  base_month: string
+  type_month_description: string
+  month_date: string
+}
+
+export function useSavingsMonths() {
+  return useQuery({
+    queryKey: ["savings", "months"],
+    queryFn: () => apiFetch<SavingsMonth[]>("custom/carriers-savings/months"),
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
+export function useSavingsSummary(month?: string, customerId?: string) {
+  const qs = new URLSearchParams()
+  if (month) qs.set("month", month)
+  if (customerId) qs.set("customer_id", customerId)
+  const suffix = qs.toString() ? `?${qs}` : ""
+  return useQuery({
+    queryKey: ["savings", "summary", month, customerId],
+    queryFn: () => apiFetch<SavingsSummary>(`custom/carriers-savings/summary${suffix}`),
+  })
+}
+
+export function useSavingsByCustomer(month?: string, limit = 50) {
+  const qs = new URLSearchParams({ limit: String(limit) })
+  if (month) qs.set("month", month)
+  return useQuery({
+    queryKey: ["savings", "by-customer", month, limit],
+    queryFn: () => apiFetch<SavingsByCustomer[]>(`custom/carriers-savings/by-customer?${qs}`),
+  })
+}
+
+export interface SavingsLanesFilters {
+  month?: string
+  customerId?: string
+  origin?: string
+  dest?: string
+  sort?: string
+  page?: number
+  limit?: number
+}
+
+export function useSavingsLanes(filters: SavingsLanesFilters) {
+  const qs = new URLSearchParams()
+  if (filters.month) qs.set("month", filters.month)
+  if (filters.customerId) qs.set("customer_id", filters.customerId)
+  if (filters.origin) qs.set("origin", filters.origin)
+  if (filters.dest) qs.set("dest", filters.dest)
+  if (filters.sort) qs.set("sort", filters.sort)
+  qs.set("page", String(filters.page ?? 1))
+  qs.set("limit", String(filters.limit ?? 100))
+  return useQuery({
+    queryKey: ["savings", "lanes", filters],
+    queryFn: () => apiFetch<SavingsLane[]>(`custom/carriers-savings/lanes?${qs}`),
   })
 }
 
