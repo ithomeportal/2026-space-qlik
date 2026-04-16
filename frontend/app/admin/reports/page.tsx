@@ -19,7 +19,7 @@ interface Report {
   title: string
   description: string | null
   note: string | null
-  qlik_app_id: string
+  qlik_app_id: string | null
   qlik_sheet_id: string | null
   is_active: boolean
   use_classic: boolean
@@ -435,7 +435,9 @@ export default function AdminReportsPage() {
                   </div>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-[#6B7280]">
-                  {report.qlik_app_id.slice(0, 8)}...
+                  {report.qlik_app_id
+                    ? `${report.qlik_app_id.slice(0, 8)}...`
+                    : <span className="text-[#9CA3AF] italic">custom</span>}
                 </td>
                 <td className="px-4 py-3 text-right">{report.views_30d}</td>
                 <td className="px-4 py-3">
