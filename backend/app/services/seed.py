@@ -537,7 +537,7 @@ async def seed_all():
                 INSERT INTO reports (title, description, note, category, tags,
                                      owner_name, is_mobile, report_type, custom_path)
                 VALUES ($1, $2, $3, $4, $5, $6, FALSE, 'custom', $7)
-                ON CONFLICT (custom_path) DO UPDATE SET
+                ON CONFLICT (custom_path) WHERE custom_path IS NOT NULL DO UPDATE SET
                   title = EXCLUDED.title,
                   description = EXCLUDED.description,
                   note = EXCLUDED.note,
