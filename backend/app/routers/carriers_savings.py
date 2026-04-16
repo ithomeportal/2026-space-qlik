@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.routers.deps import get_savings_pool, require_tag_role
 
-# TagRoles that can view eSavings from Carriers (admin bypasses)
-SAVINGS_ROLES = ("ceo", "executive", "procurement", "finance", "corp")
+# TagRoles that can view eSavings from Carriers (admin bypasses).
+# Matches the Title-Case names as stored in the roles table;
+# `require_tag_role` compares case-insensitively for safety.
+SAVINGS_ROLES = ("CEO", "Executive", "Procurement", "Finance", "CORP")
 
 router = APIRouter(tags=["carriers-savings"], prefix="/custom/carriers-savings")
 
@@ -210,7 +212,12 @@ async def lanes(
 
 
 async def _resolve_month(pool, requested: Optional[date]) -> Optional[date]:
-    """Return the requested month if it has data, otherwise the latest month with data."""
+    """Pick the month to display:
+      1. Explicit request wins — if it has data, use it.
+      2. Otherwise prefer the current calendar month when it has data
+         (this keeps the dashboard on "today's month" by default).
+      3. Fall back to the latest month with data.
+    """
     if requested is not None:
         exists = await pool.fetchval(
             "SELECT 1 FROM public.carriers_savings_results_report WHERE month_date = $1 LIMIT 1",
@@ -218,6 +225,15 @@ async def _resolve_month(pool, requested: Optional[date]) -> Optional[date]:
         )
         if exists:
             return requested
+    current = await pool.fetchval(
+        """
+        SELECT month_date FROM public.carriers_savings_results_report
+        WHERE month_date = date_trunc('month', CURRENT_DATE)::date
+        LIMIT 1
+        """
+    )
+    if current:
+        return current
     return await pool.fetchval(
         "SELECT MAX(month_date) FROM public.carriers_savings_results_report"
     )

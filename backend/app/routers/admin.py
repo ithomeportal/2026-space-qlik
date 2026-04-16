@@ -655,6 +655,26 @@ async def admin_delete_app(
 # --- Seed ---
 
 
+@router.post("/dedupe-roles")
+async def admin_dedupe_roles(request: Request, secret: str = Query(...)):
+    """Merge case-duplicate rows in `roles` (e.g. `ceo` + `CEO`) into one.
+
+    Keeps the Title-Case row, migrates `user_roles` / `role_report_access` /
+    `app_role_access` references over, then deletes the lowercase loser.
+    Protected by SEED_SECRET.
+    """
+    if secret != settings.SEED_SECRET:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from app.services.seed import dedupe_roles
+
+    pool = get_pool(request)
+    merged = await dedupe_roles(pool)
+    return {"success": True, "data": {"merged": merged, "count": len(merged)}}
+
+
 @router.post("/seed")
 async def admin_seed(request: Request, secret: str = Query(...)):
     """Trigger database seed. Protected by secret query param."""

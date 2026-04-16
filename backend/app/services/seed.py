@@ -11,20 +11,22 @@ import asyncpg
 
 from app.config import settings
 
-# 12 default roles
+# Default roles. Admins pre-existed with Title-Case names (CEO, Executive, CORP, …)
+# so we seed Title-Case to avoid case-duplicate rows in the `roles` table.
+# `admin` and `super_admin` are kept lowercase (singleton, no duplicates).
 DEFAULT_ROLES = [
     ("admin", "Full access to all reports and admin console"),
     ("super_admin", "Admin with ability to edit report IDs and advanced settings"),
-    ("ceo", "Chief Executive Officer"),
-    ("executive", "Access to all reports across divisions"),
-    ("procurement", "Procurement and carrier-sourcing reports"),
-    ("finance", "Finance and budget reports"),
-    ("operations", "Operations, carrier, and scorecard reports"),
-    ("sales", "Sales, attrition, and awards reports"),
-    ("hr", "HR reports"),
-    ("it", "IT, VoIP, and managed services reports"),
-    ("dfw", "DFW division reports"),
-    ("corp", "CORP division reports"),
+    ("CEO", "Chief Executive Officer"),
+    ("Executive", "Access to all reports across divisions"),
+    ("Procurement", "Procurement and carrier-sourcing reports"),
+    ("Finance", "Finance and budget reports"),
+    ("Operations", "Operations, carrier, and scorecard reports"),
+    ("Sales", "Sales, attrition, and awards reports"),
+    ("HR", "HR reports"),
+    ("IT", "IT, VoIP, and managed services reports"),
+    ("DFW", "DFW division reports"),
+    ("CORP", "CORP division reports"),
 ]
 
 # Code-made reports (not Qlik-embedded). Access granted via `roles` just like Qlik reports.
@@ -37,7 +39,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["savings", "carrier", "procurement", "variance"],
         "owner_name": "Diego",
-        "roles": ["ceo", "executive", "procurement", "finance", "corp"],
+        "roles": ["CEO", "Executive", "Procurement", "Finance", "CORP"],
     },
 ]
 
@@ -396,10 +398,89 @@ DEPT_ROLE_MAP = {
 }
 
 
+async def dedupe_roles(pool) -> list[dict]:
+    """Merge case-insensitive duplicate rows in `roles` into a single canonical row.
+
+    Keeps Title-Case over lowercase (the Title-Case row was created first by admins
+    via /admin/roles; the lowercase duplicates came from an earlier seed pass).
+    Re-assigns every `user_roles` and `role_report_access` reference from the loser
+    onto the keeper before deleting the loser row.
+
+    Returns a list of {kept, removed} records for auditing.
+    """
+    dupes = await pool.fetch(
+        """
+        SELECT LOWER(name) AS lname
+        FROM roles
+        GROUP BY LOWER(name)
+        HAVING COUNT(*) > 1
+        """
+    )
+    merged = []
+    for d in dupes:
+        variants = await pool.fetch(
+            """
+            SELECT id, name
+            FROM roles
+            WHERE LOWER(name) = $1
+            ORDER BY (name != LOWER(name)) DESC, name ASC
+            """,
+            d["lname"],
+        )
+        # variants[0] is the keeper (Title-Case sorts first)
+        keeper = variants[0]
+        for loser in variants[1:]:
+            await pool.execute(
+                """
+                INSERT INTO role_report_access (role_id, report_id)
+                SELECT $1, report_id FROM role_report_access WHERE role_id = $2
+                ON CONFLICT DO NOTHING
+                """,
+                keeper["id"],
+                loser["id"],
+            )
+            await pool.execute(
+                """
+                INSERT INTO user_roles (user_id, role_id)
+                SELECT user_id, $1 FROM user_roles WHERE role_id = $2
+                ON CONFLICT DO NOTHING
+                """,
+                keeper["id"],
+                loser["id"],
+            )
+            # app_role_access too (if the app grants the role)
+            await pool.execute(
+                """
+                INSERT INTO app_role_access (role_id, app_id)
+                SELECT $1, app_id FROM app_role_access WHERE role_id = $2
+                ON CONFLICT DO NOTHING
+                """,
+                keeper["id"],
+                loser["id"],
+            )
+            # Drop loser refs, then loser row. ON DELETE CASCADE would also work
+            # but being explicit avoids surprises if constraints change.
+            await pool.execute(
+                "DELETE FROM role_report_access WHERE role_id = $1", loser["id"]
+            )
+            await pool.execute(
+                "DELETE FROM user_roles WHERE role_id = $1", loser["id"]
+            )
+            await pool.execute(
+                "DELETE FROM app_role_access WHERE role_id = $1", loser["id"]
+            )
+            await pool.execute("DELETE FROM roles WHERE id = $1", loser["id"])
+            merged.append({"kept": keeper["name"], "removed": loser["name"]})
+    return merged
+
+
 async def seed_all():
     pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=1, max_size=3)
 
     try:
+        # 0a. Merge any case-duplicate roles before we touch role_report_access
+        await dedupe_roles(pool)
+
         # 0. Remove duplicate reports (keep oldest by created_at)
         await pool.execute(
             """
@@ -486,6 +567,10 @@ async def seed_all():
             )
             role_ids[name] = row["id"]
 
+        # Case-insensitive lookup — existing REPORTS dicts still use lowercase keys
+        # (e.g. "executive", "dfw") while role_ids now stores Title-Case keys.
+        role_ids_ci = {k.lower(): v for k, v in role_ids.items()}
+
         # 2. Seed reports and role-report mappings (desktop + mobile)
         all_reports = REPORTS + MOBILE_REPORTS
         for report in all_reports:
@@ -519,13 +604,14 @@ async def seed_all():
             if row:
                 report_id = row["id"]
                 for role_name in roles:
-                    if role_name in role_ids:
+                    role_id = role_ids_ci.get(role_name.lower())
+                    if role_id:
                         await pool.execute(
                             """
                             INSERT INTO role_report_access (role_id, report_id)
                             VALUES ($1, $2) ON CONFLICT DO NOTHING
                             """,
-                            role_ids[role_name],
+                            role_id,
                             report_id,
                         )
 
@@ -557,19 +643,20 @@ async def seed_all():
             )
             if row:
                 for role_name in custom.get("roles", []):
-                    if role_name in role_ids:
+                    role_id = role_ids_ci.get(role_name.lower())
+                    if role_id:
                         await pool.execute(
                             """
                             INSERT INTO role_report_access (role_id, report_id)
                             VALUES ($1, $2) ON CONFLICT DO NOTHING
                             """,
-                            role_ids[role_name],
+                            role_id,
                             row["id"],
                         )
 
         # 3. Seed users from time-off DB (if available)
         if settings.TIMEOFF_DATABASE_URL:
-            await _seed_users_from_timeoff(pool, role_ids)
+            await _seed_users_from_timeoff(pool, role_ids_ci)
 
         # 4. Assign admin + executive roles to admin users
         for admin_email in ADMIN_EMAILS:
@@ -578,22 +665,25 @@ async def seed_all():
             )
             if user_row:
                 for role_name in ("admin", "executive"):
-                    if role_name in role_ids:
+                    role_id = role_ids_ci.get(role_name)
+                    if role_id:
                         await pool.execute(
                             """
                             INSERT INTO user_roles (user_id, role_id)
                             VALUES ($1, $2) ON CONFLICT DO NOTHING
                             """,
                             user_row["id"],
-                            role_ids[role_name],
+                            role_id,
                         )
 
     finally:
         await pool.close()
 
 
-async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
-    """Seed users from the time-off system database."""
+async def _seed_users_from_timeoff(pool, role_ids_ci: dict[str, UUID]):
+    """Seed users from the time-off system database. `role_ids_ci` is a
+    case-insensitive dict (lowercased keys) so lookups work regardless of
+    whether a role was created lowercase or Title-Case."""
     timeoff_pool = await asyncpg.create_pool(
         settings.TIMEOFF_DATABASE_URL, min_size=1, max_size=2
     )
@@ -639,28 +729,30 @@ async def _seed_users_from_timeoff(pool, role_ids: dict[str, UUID]):
             user_id = user_row["id"]
             dept = emp["department"] or ""
 
-            # Auto-assign roles based on department
+            # Auto-assign roles based on department (case-insensitive lookup)
             for keyword, role_name in DEPT_ROLE_MAP.items():
-                if keyword.lower() in dept.lower() and role_name in role_ids:
+                role_id = role_ids_ci.get(role_name.lower())
+                if keyword.lower() in dept.lower() and role_id:
                     await pool.execute(
                         """
                         INSERT INTO user_roles (user_id, role_id)
                         VALUES ($1, $2) ON CONFLICT DO NOTHING
                         """,
                         user_id,
-                        role_ids[role_name],
+                        role_id,
                     )
 
             # Directors/Owners also get executive role
             role_level = emp["roleLevel"] or ""
-            if role_level.upper() in ("OWNER", "DIRECTOR") and "executive" in role_ids:
+            exec_id = role_ids_ci.get("executive")
+            if role_level.upper() in ("OWNER", "DIRECTOR") and exec_id:
                 await pool.execute(
                     """
                     INSERT INTO user_roles (user_id, role_id)
                     VALUES ($1, $2) ON CONFLICT DO NOTHING
                     """,
                     user_id,
-                    role_ids["executive"],
+                    exec_id,
                 )
 
     finally:

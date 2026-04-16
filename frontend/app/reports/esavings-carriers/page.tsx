@@ -55,7 +55,17 @@ export default function ESavingsFromCarriersPage() {
 
   const { data: monthsRes, isLoading: loadingMonths } = useSavingsMonths()
   const months = monthsRes?.data ?? []
-  const effectiveMonth = month ?? months[0]?.month_date
+
+  // Default to the current calendar month when it has data; otherwise the
+  // latest month returned by the API.
+  const currentMonthIso = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+  }, [])
+  const effectiveMonth =
+    month ??
+    months.find((m) => m.month_date === currentMonthIso)?.month_date ??
+    months[0]?.month_date
 
   const { data: summaryRes, isLoading: loadingSummary } = useSavingsSummary(
     effectiveMonth,
