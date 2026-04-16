@@ -3,9 +3,11 @@
 Reads from aivn_datalake_gold.carriers_savings_results_report (populated daily by the
 'Carriers Savings Update - 4 AM CST' n8n workflow, PdZIaBQPGSLD4VWB).
 
-The n8n workflow already uses the quarterly rolling base logic (as of 2026-04-06):
-Q2 2026 months use the simple avg of Q1 2026 monthly avgs as the base, stored as
-`base_month = 'Q1-2026'` in the report table. No on-the-fly recalculation needed.
+Base-lane rules (set 2026-04-16, nothing else):
+  - Jul 2025 - Mar 2026 -> first month the lane had loads (e.g. base_month='2025-07')
+  - Apr - Dec 2026      -> simple avg of non-zero Q1 2026 monthly avgs (base_month='Q1-2026')
+
+This router reads `base_lane` / `base_month` / `variance` as-is; no recomputation.
 """
 
 from datetime import date

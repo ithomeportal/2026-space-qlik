@@ -34,8 +34,8 @@ CUSTOM_REPORTS = [
     {
         "key": "esavings-carriers",  # stable identifier; becomes custom_path /reports/esavings-carriers
         "title": "eSavings from Carriers",
-        "description": "Carrier savings vs Q1-2026 baseline — loads, savings, overpay, net variance",
-        "note": "Quarterly rolling base (Q1-2026 avg for Q2 months)",
+        "description": "Carrier savings vs baseline — loads, savings, overpay, net variance",
+        "note": "Base: first-month-with-loads (Jul 2025–Mar 2026) · Q1-2026 avg (Apr–Dec 2026)",
         "category": "Operations",
         "tags": ["savings", "carrier", "procurement", "variance"],
         "owner_name": "Diego",
