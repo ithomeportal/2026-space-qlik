@@ -3,9 +3,16 @@
 Reads from aivn_datalake_gold.public.daily_production_budget_report (refreshed every
 6 hours by the n8n workflow 'CORP Update Production vs Goals Follow Up' — SQi0VmZS1nYmo7Kt).
 
-Scope: Date BETWEEN 2026-01-01 AND 2026-12-31. Team IDs TEAM1-TEAM5.
-UI filters narrow within this window. Does not recompute actuals/budgets — the workflow
-owns that math; this router just aggregates per filter.
+Team ID comes from the McLeod source of truth (public.mcleod_gld_budget_report_v4) joined
+on customer name — not from the stored "Team ID" column in daily_production_budget_report,
+which has edge cases (budget-only rows get forced to a fallback team, CORP/DFW workflows
+disagree, etc.). Each customer is mapped to ONE canonical team (the team with the most
+loads in McLeod), whitelisted to TEAM1–TEAM5 + TEAM-DFW. Customers not on an allowed
+team — or not present in McLeod — are excluded.
+
+Scope: Date BETWEEN 2026-01-01 AND 2026-12-31. UI filters narrow within this window.
+Does not recompute actuals/budgets — the workflow owns that math; this router just
+aggregates per filter.
 """
 
 from datetime import date
@@ -20,6 +27,29 @@ BUDGET_ROLES = ("CEO", "Executive", "Operations", "Finance", "CORP", "DFW")
 # Scope of this report.
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
+
+# Teams we surface — anything else in McLeod is ignored here.
+ALLOWED_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
+
+# Per-customer canonical team, derived from McLeod. One row per customer: the team with
+# the most loads (tiebreak alphabetical). Prepend with `WITH ` when embedding in a query.
+CUSTOMER_TEAM_CTE = f"""
+customer_team AS (
+    SELECT customer_name, team_id FROM (
+        SELECT
+            TRIM(customer_name) AS customer_name,
+            TRIM(team_id)       AS team_id,
+            ROW_NUMBER() OVER (
+                PARTITION BY TRIM(customer_name)
+                ORDER BY COUNT(*) DESC, TRIM(team_id)
+            ) AS rn
+        FROM public.mcleod_gld_budget_report_v4
+        WHERE TRIM(team_id) IN {ALLOWED_TEAMS!r}
+        GROUP BY TRIM(customer_name), TRIM(team_id)
+    ) ranked
+    WHERE rn = 1
+)
+"""
 
 router = APIRouter(tags=["budget-followup"], prefix="/custom/budget-followup")
 
@@ -48,15 +78,15 @@ def _where_and_params(
 ) -> tuple[str, list]:
     s = _clamp(start_date, YEAR_START)
     e = _clamp(end_date, YEAR_END)
-    parts = ['"Date" BETWEEN $1 AND $2']
+    parts = ['budget."Date" BETWEEN $1 AND $2']
     params: list = [s, e]
     team_list = _parse_teams(teams)
     if team_list:
         params.append(team_list)
-        parts.append(f'"Team ID" = ANY(${len(params)})')
+        parts.append(f"ct.team_id = ANY(${len(params)})")
     if customer:
         params.append(customer)
-        parts.append(f'"Customer Name" = ${len(params)}')
+        parts.append(f'budget."Customer Name" = ${len(params)}')
     return " AND ".join(parts), params
 
 
@@ -68,20 +98,24 @@ async def filters(
     """Distinct teams and customers in the 2026 window — powers the dropdowns."""
     pool = get_datalake_gold_pool(request)
     teams = await pool.fetch(
-        """
-        SELECT DISTINCT "Team ID" AS team_id
-        FROM public.daily_production_budget_report
-        WHERE "Date" BETWEEN $1 AND $2 AND "Team ID" IS NOT NULL
+        f"""
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT DISTINCT ct.team_id AS team_id
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE budget."Date" BETWEEN $1 AND $2
         ORDER BY team_id
         """,
         YEAR_START,
         YEAR_END,
     )
     customers = await pool.fetch(
-        """
-        SELECT DISTINCT "Customer Name" AS customer_name
-        FROM public.daily_production_budget_report
-        WHERE "Date" BETWEEN $1 AND $2 AND "Customer Name" IS NOT NULL
+        f"""
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT DISTINCT budget."Customer Name" AS customer_name
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE budget."Date" BETWEEN $1 AND $2 AND budget."Customer Name" IS NOT NULL
         ORDER BY customer_name
         """,
         YEAR_START,
@@ -113,17 +147,19 @@ async def summary(
 
     row = await pool.fetchrow(
         f"""
+        WITH {CUSTOMER_TEAM_CTE}
         SELECT
-            COALESCE(SUM("Loads Actual"),    0)::numeric  AS loads_actual,
-            COALESCE(SUM("Loads Budget"),    0)::numeric  AS loads_budget,
-            COALESCE(SUM("Revenue Actual"),  0)::numeric  AS revenue_actual,
-            COALESCE(SUM("Revenue Budget"),  0)::numeric  AS revenue_budget,
-            COALESCE(SUM("Profit Actual"),   0)::numeric  AS profit_actual,
-            COALESCE(SUM("Profit Budget"),   0)::numeric  AS profit_budget,
-            COUNT(DISTINCT "Customer Name") FILTER (WHERE "Loads Actual" > 0)       AS active_customers,
-            COUNT(DISTINCT "Customer Name")                                           AS total_customers,
-            COUNT(DISTINCT "Date") FILTER (WHERE "Loads Actual" > 0 OR "Loads Budget" > 0) AS active_days
-        FROM public.daily_production_budget_report
+            COALESCE(SUM(budget."Loads Actual"),    0)::numeric  AS loads_actual,
+            COALESCE(SUM(budget."Loads Budget"),    0)::numeric  AS loads_budget,
+            COALESCE(SUM(budget."Revenue Actual"),  0)::numeric  AS revenue_actual,
+            COALESCE(SUM(budget."Revenue Budget"),  0)::numeric  AS revenue_budget,
+            COALESCE(SUM(budget."Profit Actual"),   0)::numeric  AS profit_actual,
+            COALESCE(SUM(budget."Profit Budget"),   0)::numeric  AS profit_budget,
+            COUNT(DISTINCT budget."Customer Name") FILTER (WHERE budget."Loads Actual" > 0)                                   AS active_customers,
+            COUNT(DISTINCT budget."Customer Name")                                                                            AS total_customers,
+            COUNT(DISTINCT budget."Date") FILTER (WHERE budget."Loads Actual" > 0 OR budget."Loads Budget" > 0)               AS active_days
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         """,
         *params,
@@ -188,28 +224,32 @@ async def by_customer(
         "profit_actual_desc": "profit_actual DESC NULLS LAST",
         "profit_variance_desc": "profit_variance DESC NULLS LAST",
         "loads_actual_desc": "loads_actual DESC NULLS LAST",
-        "customer": 'customer_name ASC',
+        "customer": "customer_name ASC",
     }.get(sort, "revenue_actual DESC NULLS LAST")
 
     offset = (page - 1) * limit
 
     rows = await pool.fetch(
         f"""
-        WITH base AS (
+        WITH {CUSTOMER_TEAM_CTE},
+        base AS (
             SELECT
-                "Customer Name" AS customer_name,
-                SUM("Loads Actual")   AS loads_actual,
-                SUM("Loads Budget")   AS loads_budget,
-                SUM("Revenue Actual") AS revenue_actual,
-                SUM("Revenue Budget") AS revenue_budget,
-                SUM("Profit Actual")  AS profit_actual,
-                SUM("Profit Budget")  AS profit_budget
-            FROM public.daily_production_budget_report
+                budget."Customer Name" AS customer_name,
+                ct.team_id             AS team_id,
+                SUM(budget."Loads Actual")   AS loads_actual,
+                SUM(budget."Loads Budget")   AS loads_budget,
+                SUM(budget."Revenue Actual") AS revenue_actual,
+                SUM(budget."Revenue Budget") AS revenue_budget,
+                SUM(budget."Profit Actual")  AS profit_actual,
+                SUM(budget."Profit Budget")  AS profit_budget
+            FROM public.daily_production_budget_report budget
+            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
             WHERE {where}
-            GROUP BY "Customer Name"
+            GROUP BY budget."Customer Name", ct.team_id
         )
         SELECT
             customer_name,
+            team_id,
             loads_actual, loads_budget,
             (loads_actual - loads_budget) AS loads_variance,
             revenue_actual, revenue_budget,
@@ -226,8 +266,10 @@ async def by_customer(
     )
     total = await pool.fetchval(
         f"""
-        SELECT COUNT(DISTINCT "Customer Name")
-        FROM public.daily_production_budget_report
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT COUNT(DISTINCT budget."Customer Name")
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         """,
         *params,
@@ -247,23 +289,25 @@ async def by_team(
     customer: Optional[str] = Query(None),
     _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
 ):
-    """Rollup per Team ID in the window (no teams filter — we want all 5 cards)."""
+    """Rollup per Team ID in the window (no teams filter — we want all team cards)."""
     pool = get_datalake_gold_pool(request)
     where, params = _where_and_params(start_date, end_date, None, customer)
 
     rows = await pool.fetch(
         f"""
+        WITH {CUSTOMER_TEAM_CTE}
         SELECT
-            "Team ID" AS team_id,
-            SUM("Loads Actual")    AS loads_actual,
-            SUM("Loads Budget")    AS loads_budget,
-            SUM("Revenue Actual")  AS revenue_actual,
-            SUM("Revenue Budget")  AS revenue_budget,
-            SUM("Profit Actual")   AS profit_actual,
-            SUM("Profit Budget")   AS profit_budget
-        FROM public.daily_production_budget_report
+            ct.team_id AS team_id,
+            SUM(budget."Loads Actual")    AS loads_actual,
+            SUM(budget."Loads Budget")    AS loads_budget,
+            SUM(budget."Revenue Actual")  AS revenue_actual,
+            SUM(budget."Revenue Budget")  AS revenue_budget,
+            SUM(budget."Profit Actual")   AS profit_actual,
+            SUM(budget."Profit Budget")   AS profit_budget
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
-        GROUP BY "Team ID"
+        GROUP BY ct.team_id
         ORDER BY team_id
         """,
         *params,
@@ -286,15 +330,17 @@ async def monthly(
 
     rows = await pool.fetch(
         f"""
+        WITH {CUSTOMER_TEAM_CTE}
         SELECT
-            DATE_TRUNC('month', "Date")::date AS month_date,
-            SUM("Loads Actual")    AS loads_actual,
-            SUM("Loads Budget")    AS loads_budget,
-            SUM("Revenue Actual")  AS revenue_actual,
-            SUM("Revenue Budget")  AS revenue_budget,
-            SUM("Profit Actual")   AS profit_actual,
-            SUM("Profit Budget")   AS profit_budget
-        FROM public.daily_production_budget_report
+            DATE_TRUNC('month', budget."Date")::date AS month_date,
+            SUM(budget."Loads Actual")    AS loads_actual,
+            SUM(budget."Loads Budget")    AS loads_budget,
+            SUM(budget."Revenue Actual")  AS revenue_actual,
+            SUM(budget."Revenue Budget")  AS revenue_budget,
+            SUM(budget."Profit Actual")   AS profit_actual,
+            SUM(budget."Profit Budget")   AS profit_budget
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         GROUP BY 1
         ORDER BY 1

@@ -90,7 +90,7 @@
 - Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses, case-insensitive)
 - Current catalog:
   - **eSavings from Carriers** — `/reports/esavings-carriers` · roles: CEO, Executive, Procurement, Finance, CORP · source `aivn_datalake_gold.carriers_savings_results_report` · populated by n8n `PdZIaBQPGSLD4VWB`
-  - **2026 Official Budget Follow Up** — `/reports/budget-followup-2026` · roles: CEO, Executive, Operations, Finance, CORP, DFW · source `aivn_datalake_gold.daily_production_budget_report` · populated every 6h by n8n `SQi0VmZS1nYmo7Kt`
+  - **2026 Official Budget Follow Up** — `/reports/budget-followup-2026` · roles: CEO, Executive, Operations, Finance, CORP, DFW · source `aivn_datalake_gold.daily_production_budget_report` · populated every 6h by n8n `SQi0VmZS1nYmo7Kt` · `team_id` resolved at query time by joining `mcleod_gld_budget_report_v4` on customer name (dominant-team per customer, whitelisted to `TEAM1..TEAM5, TEAM-DFW`) — the stored `"Team ID"` column is ignored
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
