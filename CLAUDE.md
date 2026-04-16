@@ -86,10 +86,11 @@
 - `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route)
 - `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
 - External data sources get their own `asyncpg` pool + env var (`SAVINGS_DATABASE_URL`, etc.)
+- Multiple reports can share one pool when they hit the same DB — use the generic `get_datalake_gold_pool` helper from `routers/deps.py` (old `get_savings_pool` kept as alias)
 - Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses, case-insensitive)
-- Current: **eSavings from Carriers** (`/reports/esavings-carriers`, roles: CEO, Executive, Procurement, Finance, CORP)
-- Source: `aivn_datalake_gold.carriers_savings_results_report` (populated by n8n `PdZIaBQPGSLD4VWB`)
-- Default month = current calendar month when data exists, else latest
+- Current catalog:
+  - **eSavings from Carriers** — `/reports/esavings-carriers` · roles: CEO, Executive, Procurement, Finance, CORP · source `aivn_datalake_gold.carriers_savings_results_report` · populated by n8n `PdZIaBQPGSLD4VWB`
+  - **2026 Official Budget Follow Up** — `/reports/budget-followup-2026` · roles: CEO, Executive, Operations, Finance, CORP, DFW · source `aivn_datalake_gold.daily_production_budget_report` · populated every 6h by n8n `SQi0VmZS1nYmo7Kt`
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -126,7 +127,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; first one: eSavings from Carriers
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up
 
 ---
 
@@ -219,7 +220,7 @@ TV_SECRET=<shared with backend>
 ### Backend (Render)
 ```
 DATABASE_URL=<Aiven Postgres URL>
-SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers eSavings from Carriers>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers eSavings from Carriers AND 2026 Official Budget Follow Up>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com

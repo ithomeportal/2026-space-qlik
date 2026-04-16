@@ -385,7 +385,11 @@ export function useBudgetByCustomer(
 
 export function useBudgetByTeam(filters: BudgetFilters) {
   // Team filter intentionally excluded — we always want all teams in this roll-up.
-  const { teams: _teams, ...rest } = filters
+  const rest: BudgetFilters = {
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    customer: filters.customer,
+  }
   return useQuery({
     queryKey: ["budget", "by-team", rest],
     queryFn: () => apiFetch<BudgetTeamRow[]>(`custom/budget-followup/by-team${budgetQs(rest)}`),

@@ -8,7 +8,6 @@ import {
   Loader2,
   Percent,
   Target,
-  TrendingDown,
   TrendingUp,
   Truck,
 } from "lucide-react"
