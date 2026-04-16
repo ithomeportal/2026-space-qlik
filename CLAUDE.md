@@ -77,10 +77,18 @@
 - Use `emp["name"]` (bracket access) for asyncpg Records, NOT `.get("name")`
 
 ### Database & Seeding (see `docs/SPEC-DATA.md`)
-- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent
+- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent (partial index on `qlik_app_id IS NOT NULL`)
 - Never `dict.pop()` on module-level constants — use `.get()`
 - Auto-seed on startup if `role_report_access` is empty
 - FastAPI router order matters: search router BEFORE reports router
+
+### Code-Made Reports (see `docs/SPEC-CUSTOM-REPORTS.md`)
+- `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route)
+- `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
+- External data sources get their own `asyncpg` pool + env var (`SAVINGS_DATABASE_URL`, etc.)
+- Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses)
+- Current: **eSavings from Carriers** (`/reports/esavings-carriers`, roles: ceo, executive, procurement, finance, corp)
+- Source: `aivn_datalake_gold.carriers_savings_results_report` (populated by n8n `PdZIaBQPGSLD4VWB`)
 
 ### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
 - Free tier spins down after ~15 min inactivity — cold starts 30–60s
@@ -111,6 +119,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; first one: eSavings from Carriers
 
 ---
 
@@ -203,6 +212,7 @@ TV_SECRET=<shared with backend>
 ### Backend (Render)
 ```
 DATABASE_URL=<Aiven Postgres URL>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers eSavings from Carriers>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
@@ -262,3 +272,4 @@ TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 | `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
 | `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, incidents, lessons |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
+| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec |
