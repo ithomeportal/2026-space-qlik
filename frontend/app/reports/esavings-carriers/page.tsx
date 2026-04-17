@@ -15,7 +15,17 @@ import {
   useSavingsLanes,
   useSavingsMonths,
   useSavingsSummary,
+  type SavingsCorpTeam,
+  type SavingsDivision,
 } from "@/lib/api"
+
+const CORP_TEAMS: readonly SavingsCorpTeam[] = [
+  "TEAM1",
+  "TEAM2",
+  "TEAM3",
+  "TEAM4",
+  "TEAM5",
+] as const
 
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -49,6 +59,8 @@ export default function ESavingsFromCarriersPage() {
   const [origin, setOrigin] = useState("")
   const [dest, setDest] = useState("")
   const [customerId, setCustomerId] = useState<string | undefined>(undefined)
+  const [division, setDivision] = useState<SavingsDivision | undefined>(undefined)
+  const [team, setTeam] = useState<SavingsCorpTeam | undefined>(undefined)
   const [sort, setSort] = useState("variance_desc")
   const [page, setPage] = useState(1)
   const limit = 100
@@ -70,14 +82,31 @@ export default function ESavingsFromCarriersPage() {
   const { data: summaryRes, isLoading: loadingSummary } = useSavingsSummary(
     effectiveMonth,
     customerId,
+    division,
+    team,
   )
   const summary = summaryRes?.data
-  const { data: byCustomerRes } = useSavingsByCustomer(effectiveMonth, 25)
+  const { data: byCustomerRes } = useSavingsByCustomer(
+    effectiveMonth,
+    25,
+    division,
+    team,
+  )
   const customers = byCustomerRes?.data ?? []
 
   const lanesFilters = useMemo(
-    () => ({ month: effectiveMonth, customerId, origin, dest, sort, page, limit }),
-    [effectiveMonth, customerId, origin, dest, sort, page],
+    () => ({
+      month: effectiveMonth,
+      customerId,
+      origin,
+      dest,
+      sort,
+      page,
+      limit,
+      division,
+      team,
+    }),
+    [effectiveMonth, customerId, origin, dest, sort, page, division, team],
   )
   const { data: lanesRes, isLoading: loadingLanes } = useSavingsLanes(lanesFilters)
   const lanes = lanesRes?.data ?? []
@@ -113,7 +142,7 @@ export default function ESavingsFromCarriersPage() {
       </div>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-6 px-6 py-6">
-        {/* Month selector */}
+        {/* Month / Division / Corp Team selectors */}
         <section className="flex flex-wrap items-center gap-3">
           <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
             Month
@@ -137,6 +166,48 @@ export default function ESavingsFromCarriersPage() {
               ))}
             </select>
           )}
+
+          <span className="h-5 w-px bg-[#E5E7EB]" aria-hidden />
+
+          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Division
+          </label>
+          <select
+            value={division ?? ""}
+            onChange={(e) => {
+              const next = (e.target.value || undefined) as SavingsDivision | undefined
+              setDivision(next)
+              // Reset CORP team when leaving CORP (DFW has no team sub-filter).
+              if (next !== "CORP") setTeam(undefined)
+              setPage(1)
+            }}
+            className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none"
+          >
+            <option value="">All</option>
+            <option value="CORP">CORP</option>
+            <option value="DFW">DFW</option>
+          </select>
+
+          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Corp Team
+          </label>
+          <select
+            value={team ?? ""}
+            disabled={division !== "CORP"}
+            onChange={(e) => {
+              setTeam((e.target.value || undefined) as SavingsCorpTeam | undefined)
+              setPage(1)
+            }}
+            className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none disabled:cursor-not-allowed disabled:bg-[#F9FAFB] disabled:text-[#9CA3AF]"
+            title={division !== "CORP" ? "Select Division = CORP to filter by team" : undefined}
+          >
+            <option value="">All</option>
+            {CORP_TEAMS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
 
           {customerId && (
             <button

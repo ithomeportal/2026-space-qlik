@@ -214,22 +214,39 @@ export function useSavingsMonths() {
   })
 }
 
-export function useSavingsSummary(month?: string, customerId?: string) {
+export type SavingsDivision = "CORP" | "DFW"
+export type SavingsCorpTeam = "TEAM1" | "TEAM2" | "TEAM3" | "TEAM4" | "TEAM5"
+
+export function useSavingsSummary(
+  month?: string,
+  customerId?: string,
+  division?: SavingsDivision,
+  team?: SavingsCorpTeam,
+) {
   const qs = new URLSearchParams()
   if (month) qs.set("month", month)
   if (customerId) qs.set("customer_id", customerId)
+  if (division) qs.set("division", division)
+  if (team) qs.set("team", team)
   const suffix = qs.toString() ? `?${qs}` : ""
   return useQuery({
-    queryKey: ["savings", "summary", month, customerId],
+    queryKey: ["savings", "summary", month, customerId, division, team],
     queryFn: () => apiFetch<SavingsSummary>(`custom/carriers-savings/summary${suffix}`),
   })
 }
 
-export function useSavingsByCustomer(month?: string, limit = 50) {
+export function useSavingsByCustomer(
+  month?: string,
+  limit = 50,
+  division?: SavingsDivision,
+  team?: SavingsCorpTeam,
+) {
   const qs = new URLSearchParams({ limit: String(limit) })
   if (month) qs.set("month", month)
+  if (division) qs.set("division", division)
+  if (team) qs.set("team", team)
   return useQuery({
-    queryKey: ["savings", "by-customer", month, limit],
+    queryKey: ["savings", "by-customer", month, limit, division, team],
     queryFn: () => apiFetch<SavingsByCustomer[]>(`custom/carriers-savings/by-customer?${qs}`),
   })
 }
@@ -242,6 +259,8 @@ export interface SavingsLanesFilters {
   sort?: string
   page?: number
   limit?: number
+  division?: SavingsDivision
+  team?: SavingsCorpTeam
 }
 
 export function useSavingsLanes(filters: SavingsLanesFilters) {
@@ -251,6 +270,8 @@ export function useSavingsLanes(filters: SavingsLanesFilters) {
   if (filters.origin) qs.set("origin", filters.origin)
   if (filters.dest) qs.set("dest", filters.dest)
   if (filters.sort) qs.set("sort", filters.sort)
+  if (filters.division) qs.set("division", filters.division)
+  if (filters.team) qs.set("team", filters.team)
   qs.set("page", String(filters.page ?? 1))
   qs.set("limit", String(filters.limit ?? 100))
   return useQuery({
