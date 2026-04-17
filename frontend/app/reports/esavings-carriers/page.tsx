@@ -301,12 +301,12 @@ export default function ESavingsFromCarriersPage() {
           <MiniKpi label="LV + Savings" value={fmtCount(summary?.low_vol_savings_lanes)} />
         </section>
 
-        {/* Team Summary + Monthly trend */}
+        {/* Team Summary (~35%) + Monthly trend (~65%) */}
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-          <section className="xl:col-span-7">
+          <section className="xl:col-span-4">
             <TeamSummaryTable rows={teamRows} loading={loadingByTeam} />
           </section>
-          <section className="xl:col-span-5">
+          <section className="xl:col-span-8">
             <MonthlyTotalsChart rows={monthlyRows} loading={loadingMonthly} />
           </section>
         </div>

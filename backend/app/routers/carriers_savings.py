@@ -450,11 +450,14 @@ async def monthly_totals(
     cte_bodies: list[str] = []
     if team_cte:
         cte_bodies.append(team_cte.removeprefix("WITH").strip())
+    # Exclude future months so the chart never extends past the current calendar
+    # month even when the source table has pre-seeded rows for upcoming months.
     cte_bodies.append(
         f"""recent_months AS (
             SELECT DISTINCT month_date
             FROM public.carriers_savings_results_report
             WHERE month_date IS NOT NULL
+              AND month_date <= date_trunc('month', CURRENT_DATE)::date
             ORDER BY month_date DESC
             LIMIT {window_placeholder}
         )"""

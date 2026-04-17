@@ -44,43 +44,43 @@ export function TeamSummaryTable({ rows, loading }: TeamSummaryTableProps) {
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
-      <div className="border-b border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2 text-sm font-semibold text-[#1B3A5C]">
+      <div className="border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5 text-xs font-semibold text-[#1B3A5C]">
         Team Summary
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-[#F9FAFB] text-xs uppercase tracking-wider text-[#6B7280]">
+        <table className="w-full text-[11px]">
+          <thead className="bg-[#F9FAFB] text-[9px] uppercase tracking-wider text-[#6B7280]">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">Division</th>
-              <th className="px-3 py-2 text-left font-medium">Team</th>
-              <th className="px-3 py-2 text-right font-medium">Total Savings</th>
-              <th className="px-3 py-2 text-right font-medium">% Savings</th>
-              <th className="px-3 py-2 text-right font-medium">Avg Saving × Load</th>
-              <th className="px-3 py-2 text-right font-medium">Total Overpay</th>
-              <th className="px-3 py-2 text-right font-medium">% Overpay</th>
-              <th className="px-3 py-2 text-right font-medium">Net Variance</th>
+              <th className="px-2 py-1.5 text-left font-medium">Div</th>
+              <th className="px-2 py-1.5 text-left font-medium">Team</th>
+              <th className="px-2 py-1.5 text-right font-medium">Savings</th>
+              <th className="px-2 py-1.5 text-right font-medium">% Sav</th>
+              <th className="px-2 py-1.5 text-right font-medium">$/Load</th>
+              <th className="px-2 py-1.5 text-right font-medium">Overpay</th>
+              <th className="px-2 py-1.5 text-right font-medium">% Ovp</th>
+              <th className="px-2 py-1.5 text-right font-medium">Net Var</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F3F4F6]">
             {/* Sticky-ish total row on top */}
             <tr className="bg-[#F3F4F6] font-semibold text-[#111827]">
-              <td className="px-3 py-2">Total</td>
-              <td className="px-3 py-2 text-[#6B7280]"></td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              <td className="px-2 py-1.5">Total</td>
+              <td className="px-2 py-1.5 text-[#6B7280]"></td>
+              <td className="px-2 py-1.5 text-right tabular-nums">
                 {fmtCurrency(totals.total_savings)}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums">100.0%</td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              <td className="px-2 py-1.5 text-right tabular-nums">100%</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">
                 {totals.loads > 0
-                  ? fmtCurrency(totals.total_savings / totals.loads).replace("$", "$")
+                  ? `$${DECIMAL1.format(totals.total_savings / totals.loads)}`
                   : "—"}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums text-[#DC2626]">
+              <td className="px-2 py-1.5 text-right tabular-nums text-[#DC2626]">
                 {fmtCurrency(totals.total_overpay)}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums">100.0%</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">100%</td>
               <td
-                className={`px-3 py-2 text-right tabular-nums ${
+                className={`px-2 py-1.5 text-right tabular-nums ${
                   totals.net_variance >= 0 ? "text-[#059669]" : "text-[#DC2626]"
                 }`}
               >
@@ -90,7 +90,7 @@ export function TeamSummaryTable({ rows, loading }: TeamSummaryTableProps) {
 
             {loading && rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center">
+                <td colSpan={8} className="px-2 py-6 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-[#6B7280]" />
                 </td>
               </tr>
@@ -98,7 +98,7 @@ export function TeamSummaryTable({ rows, loading }: TeamSummaryTableProps) {
 
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={8} className="px-2 py-4 text-center text-[10px] text-[#9CA3AF]">
                   No teams match the current filters
                 </td>
               </tr>
@@ -110,25 +110,25 @@ export function TeamSummaryTable({ rows, loading }: TeamSummaryTableProps) {
               const avgPerLoad = r.loads > 0 ? r.total_savings / r.loads : 0
               return (
                 <tr key={`${r.division}-${r.team_id}`} className="hover:bg-[#F9FAFB]">
-                  <td className="px-3 py-2 text-[#374151]">{r.division}</td>
-                  <td className="px-3 py-2 font-medium text-[#111827]">{r.team_id}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-2 py-1.5 text-[#374151]">{r.division}</td>
+                  <td className="px-2 py-1.5 font-medium text-[#111827]">{r.team_id}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
                     {fmtCurrency(r.total_savings)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                  <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">
                     {fmtPct(pctSavings)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                  <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">
                     {r.loads > 0 ? `$${DECIMAL1.format(avgPerLoad)}` : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#DC2626]">
+                  <td className="px-2 py-1.5 text-right tabular-nums text-[#DC2626]">
                     {fmtCurrency(r.total_overpay)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                  <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">
                     {fmtPct(pctOverpay)}
                   </td>
                   <td
-                    className={`px-3 py-2 text-right tabular-nums font-medium ${
+                    className={`px-2 py-1.5 text-right tabular-nums font-medium ${
                       r.net_variance >= 0 ? "text-[#059669]" : "text-[#DC2626]"
                     }`}
                   >
