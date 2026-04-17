@@ -27,6 +27,11 @@ const CORP_TEAMS: readonly SavingsCorpTeam[] = [
   "TEAM5",
 ] as const
 
+// Business target: $55,000 savings per division per month (CORP, DFW).
+// When no division filter is applied, we show the combined target so the
+// progress bar reflects "both divisions together".
+const MONTHLY_SAVINGS_GOAL_PER_DIVISION = 55_000
+
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -234,6 +239,21 @@ export default function ESavingsFromCarriersPage() {
             icon={<TrendingUp className="h-5 w-5" />}
             tone="positive"
             loading={loadingSummary}
+            goal={{
+              amount:
+                division === "CORP" || division === "DFW"
+                  ? MONTHLY_SAVINGS_GOAL_PER_DIVISION
+                  : MONTHLY_SAVINGS_GOAL_PER_DIVISION * 2,
+              actual: Number(summary?.total_savings ?? 0),
+              scopeLabel:
+                division === "CORP"
+                  ? team
+                    ? `${team} · CORP goal`
+                    : "CORP goal"
+                  : division === "DFW"
+                    ? "DFW goal"
+                    : "CORP + DFW goal",
+            }}
           />
           <KpiCard
             label="Total Overpay"
@@ -483,14 +503,28 @@ interface KpiCardProps {
   icon: React.ReactNode
   tone: "neutral" | "positive" | "negative"
   loading?: boolean
+  goal?: {
+    amount: number
+    actual: number
+    scopeLabel: string
+  }
 }
 
-function KpiCard({ label, value, icon, tone, loading }: KpiCardProps) {
+function KpiCard({ label, value, icon, tone, loading, goal }: KpiCardProps) {
   const toneClasses = {
     neutral: "bg-gradient-to-br from-[#1B3A5C] to-[#2563EB]",
     positive: "bg-gradient-to-br from-[#065F46] to-[#10B981]",
     negative: "bg-gradient-to-br from-[#991B1B] to-[#EF4444]",
   }[tone]
+
+  const rawPct = goal && goal.amount > 0 ? (goal.actual / goal.amount) * 100 : 0
+  const barPct = Math.max(0, Math.min(100, rawPct))
+  const barColor =
+    rawPct >= 100
+      ? "bg-[#059669]"
+      : rawPct >= 50
+        ? "bg-[#2563EB]"
+        : "bg-[#F59E0B]"
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
@@ -511,6 +545,27 @@ function KpiCard({ label, value, icon, tone, loading }: KpiCardProps) {
           value
         )}
       </div>
+      {goal && !loading && (
+        <div className="mt-3">
+          <div className="flex items-baseline justify-between gap-2 text-xs">
+            <span className="font-medium text-[#374151] tabular-nums">
+              {Math.round(rawPct)}%
+              <span className="ml-1 font-normal text-[#6B7280]">
+                of {fmtCurrency(goal.amount)}
+              </span>
+            </span>
+            <span className="text-[10px] uppercase tracking-wider text-[#9CA3AF]">
+              {goal.scopeLabel}
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#F3F4F6]">
+            <div
+              className={`h-full rounded-full transition-[width] duration-500 ${barColor}`}
+              style={{ width: `${barPct}%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
