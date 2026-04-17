@@ -32,8 +32,10 @@ const MARGIN = { top: 14, right: 56, bottom: 26, left: 56 }
 const INNER_WIDTH = WIDTH - MARGIN.left - MARGIN.right
 const INNER_HEIGHT = HEIGHT - MARGIN.top - MARGIN.bottom
 
-const FS_TICK = 9
-const FS_TOOLTIP = 9
+// All SVG labels share the same size so the chart reads at one density.
+const FS_TICK = 7.5
+const FS_TOOLTIP = 7.5
+const FS_POINT = 7.5
 
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -175,7 +177,7 @@ export function MonthlyTotalsChart({ rows, loading }: MonthlyTotalsChartProps) {
         )}
         {hasData && (
           <>
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] text-[#374151]">
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[9px] text-[#374151]">
               {SERIES.map((s) => (
                 <div key={`lg-${s.key}`} className="flex items-center gap-1">
                   <span
@@ -189,7 +191,7 @@ export function MonthlyTotalsChart({ rows, loading }: MonthlyTotalsChartProps) {
                   <span>
                     {s.label}
                     {s.axis === "right" && (
-                      <span className="ml-0.5 text-[9px] text-[#9CA3AF]">(right)</span>
+                      <span className="ml-0.5 text-[8px] text-[#9CA3AF]">(right)</span>
                     )}
                   </span>
                 </div>
@@ -337,7 +339,7 @@ export function MonthlyTotalsChart({ rows, loading }: MonthlyTotalsChartProps) {
                         x={x}
                         y={labelY}
                         textAnchor="middle"
-                        fontSize={7.5}
+                        fontSize={FS_POINT}
                         fontWeight={500}
                         fill={s.color}
                       >
