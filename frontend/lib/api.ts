@@ -263,6 +263,58 @@ export interface SavingsLanesFilters {
   team?: SavingsCorpTeam
 }
 
+export interface SavingsTeamRow {
+  division: "CORP" | "DFW"
+  team_id: string
+  loads: number
+  total_savings: number
+  total_overpay: number
+  net_variance: number
+}
+
+export function useSavingsByTeam(
+  month?: string,
+  customerId?: string,
+  division?: SavingsDivision,
+  team?: SavingsCorpTeam,
+) {
+  const qs = new URLSearchParams()
+  if (month) qs.set("month", month)
+  if (customerId) qs.set("customer_id", customerId)
+  if (division) qs.set("division", division)
+  if (team) qs.set("team", team)
+  const suffix = qs.toString() ? `?${qs}` : ""
+  return useQuery({
+    queryKey: ["savings", "by-team", month, customerId, division, team],
+    queryFn: () => apiFetch<SavingsTeamRow[]>(`custom/carriers-savings/by-team${suffix}`),
+  })
+}
+
+export interface SavingsMonthlyTotals {
+  month_date: string
+  volume: number
+  total_savings: number
+  total_overpay: number
+  net_variance: number
+}
+
+export function useSavingsMonthlyTotals(
+  customerId?: string,
+  division?: SavingsDivision,
+  team?: SavingsCorpTeam,
+  windowMonths = 9,
+) {
+  const qs = new URLSearchParams({ window: String(windowMonths) })
+  if (customerId) qs.set("customer_id", customerId)
+  if (division) qs.set("division", division)
+  if (team) qs.set("team", team)
+  return useQuery({
+    queryKey: ["savings", "monthly-totals", customerId, division, team, windowMonths],
+    queryFn: () =>
+      apiFetch<SavingsMonthlyTotals[]>(`custom/carriers-savings/monthly-totals?${qs}`),
+  })
+}
+
 export function useSavingsLanes(filters: SavingsLanesFilters) {
   const qs = new URLSearchParams()
   if (filters.month) qs.set("month", filters.month)

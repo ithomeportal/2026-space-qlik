@@ -328,6 +328,171 @@ async def lanes(
     }
 
 
+@router.get("/by-team")
+async def by_team(
+    request: Request,
+    month: Optional[date] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+):
+    """One row per (division, team_id) for the selected month.
+
+    Always uses the McLeod customer→team join — the point of this breakdown IS
+    the per-team split. Customers missing from McLeod never appear here, even
+    when no division/team filter is applied. When a filter IS applied, rows
+    are narrowed accordingly.
+
+    Ordering: CORP teams first (team_id ASC), then DFW.
+    """
+    pool = get_savings_pool(request)
+    target_month = await _resolve_month(pool, month)
+
+    where_parts = ["report.month_date = $1"]
+    params: list = [target_month]
+
+    if customer_id:
+        params.append(customer_id)
+        where_parts.append(f"report.customer_id = ${len(params)}")
+
+    # Resolve which team_ids to include. When no filter is set, we still want
+    # the full breakdown — so default to every allowed team.
+    team_ids = _resolve_team_filter(division, team)
+    if team_ids is None:
+        scoped_teams = list(ALL_ALLOWED_TEAMS)
+    else:
+        scoped_teams = team_ids
+
+    if not scoped_teams:
+        return {
+            "success": True,
+            "data": [],
+            "meta": {"month_date": target_month.isoformat() if target_month else None},
+        }
+
+    params.append(scoped_teams)
+    where_parts.append(f"ct.team_id = ANY(${len(params)})")
+
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT
+            CASE WHEN ct.team_id = 'TEAM-DFW' THEN 'DFW' ELSE 'CORP' END      AS division,
+            ct.team_id                                                        AS team_id,
+            COALESCE(SUM(report.number_monthly_loads), 0)::numeric            AS loads,
+            COALESCE(SUM(CASE WHEN report.variance > 0 THEN report.variance END), 0)::numeric AS total_savings,
+            COALESCE(SUM(CASE WHEN report.variance < 0 THEN report.variance END), 0)::numeric AS total_overpay,
+            COALESCE(SUM(report.variance), 0)::numeric                        AS net_variance
+        FROM public.carriers_savings_results_report report
+        JOIN customer_team ct ON TRIM(report.customer_name) = ct.customer_name
+        WHERE {' AND '.join(where_parts)}
+        GROUP BY ct.team_id
+        ORDER BY
+            CASE WHEN ct.team_id = 'TEAM-DFW' THEN 2 ELSE 1 END,
+            ct.team_id
+        """,
+        *params,
+    )
+    return {
+        "success": True,
+        "data": [
+            {
+                "division": r["division"],
+                "team_id": r["team_id"],
+                "loads": float(r["loads"] or 0),
+                "total_savings": float(r["total_savings"] or 0),
+                "total_overpay": float(r["total_overpay"] or 0),
+                "net_variance": float(r["net_variance"] or 0),
+            }
+            for r in rows
+        ],
+        "meta": {"month_date": target_month.isoformat() if target_month else None},
+    }
+
+
+@router.get("/monthly-totals")
+async def monthly_totals(
+    request: Request,
+    customer_id: Optional[str] = Query(None),
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
+    months_window: int = Query(9, ge=1, le=36, alias="window"),
+    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+):
+    """Rolling time series for the trend chart. Ignores the month picker.
+
+    Returns one row per month for the N most-recent months with data
+    (default 9). Respects division/team/customer filters.
+    """
+    pool = get_savings_pool(request)
+
+    where_parts = ["report.month_date IN (SELECT month_date FROM recent_months)"]
+    params: list = []
+
+    if customer_id:
+        params.append(customer_id)
+        where_parts.append(f"report.customer_id = ${len(params)}")
+
+    team_ids = _resolve_team_filter(division, team)
+    team_cte, join_sql, where_extra, extra_params = _build_team_clauses(
+        team_ids, next_param_index=len(params) + 1
+    )
+    params.extend(extra_params)
+    if where_extra:
+        where_parts.append(where_extra.lstrip().removeprefix("AND ").strip())
+
+    params.append(months_window)
+    window_placeholder = f"${len(params)}"
+
+    # Compose CTEs: recent_months is always needed; customer_team only when a
+    # team filter is active.
+    cte_bodies: list[str] = []
+    if team_cte:
+        cte_bodies.append(team_cte.removeprefix("WITH").strip())
+    cte_bodies.append(
+        f"""recent_months AS (
+            SELECT DISTINCT month_date
+            FROM public.carriers_savings_results_report
+            WHERE month_date IS NOT NULL
+            ORDER BY month_date DESC
+            LIMIT {window_placeholder}
+        )"""
+    )
+    full_cte = "WITH " + ",\n".join(cte_bodies)
+
+    rows = await pool.fetch(
+        f"""
+        {full_cte}
+        SELECT
+            report.month_date::text                                           AS month_date,
+            COALESCE(SUM(report.number_monthly_loads), 0)::numeric            AS volume,
+            COALESCE(SUM(CASE WHEN report.variance > 0 THEN report.variance END), 0)::numeric AS total_savings,
+            COALESCE(SUM(CASE WHEN report.variance < 0 THEN report.variance END), 0)::numeric AS total_overpay,
+            COALESCE(SUM(report.variance), 0)::numeric                        AS net_variance
+        FROM public.carriers_savings_results_report report
+        {join_sql}
+        WHERE {' AND '.join(where_parts)}
+        GROUP BY report.month_date
+        ORDER BY report.month_date ASC
+        """,
+        *params,
+    )
+    return {
+        "success": True,
+        "data": [
+            {
+                "month_date": r["month_date"],
+                "volume": float(r["volume"] or 0),
+                "total_savings": float(r["total_savings"] or 0),
+                "total_overpay": float(r["total_overpay"] or 0),
+                "net_variance": float(r["net_variance"] or 0),
+            }
+            for r in rows
+        ],
+    }
+
+
 async def _resolve_month(pool, requested: Optional[date]) -> Optional[date]:
     """Pick the month to display:
       1. Explicit request wins — if it has data, use it.

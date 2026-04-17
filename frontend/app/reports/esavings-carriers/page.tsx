@@ -12,12 +12,16 @@ import {
 } from "lucide-react"
 import {
   useSavingsByCustomer,
+  useSavingsByTeam,
   useSavingsLanes,
+  useSavingsMonthlyTotals,
   useSavingsMonths,
   useSavingsSummary,
   type SavingsCorpTeam,
   type SavingsDivision,
 } from "@/lib/api"
+import { TeamSummaryTable } from "./TeamSummaryTable"
+import { MonthlyTotalsChart } from "./MonthlyTotalsChart"
 
 const CORP_TEAMS: readonly SavingsCorpTeam[] = [
   "TEAM1",
@@ -98,6 +102,22 @@ export default function ESavingsFromCarriersPage() {
     team,
   )
   const customers = byCustomerRes?.data ?? []
+
+  const { data: byTeamRes, isLoading: loadingByTeam } = useSavingsByTeam(
+    effectiveMonth,
+    customerId,
+    division,
+    team,
+  )
+  const teamRows = byTeamRes?.data ?? []
+
+  const { data: monthlyRes, isLoading: loadingMonthly } = useSavingsMonthlyTotals(
+    customerId,
+    division,
+    team,
+    9,
+  )
+  const monthlyRows = monthlyRes?.data ?? []
 
   const lanesFilters = useMemo(
     () => ({
@@ -280,6 +300,16 @@ export default function ESavingsFromCarriersPage() {
           <MiniKpi label="Low-Vol Lanes (1–7)" value={fmtCount(summary?.low_vol_lanes)} />
           <MiniKpi label="LV + Savings" value={fmtCount(summary?.low_vol_savings_lanes)} />
         </section>
+
+        {/* Team Summary + Monthly trend */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+          <section className="xl:col-span-7">
+            <TeamSummaryTable rows={teamRows} loading={loadingByTeam} />
+          </section>
+          <section className="xl:col-span-5">
+            <MonthlyTotalsChart rows={monthlyRows} loading={loadingMonthly} />
+          </section>
+        </div>
 
         {/* Customer summary + Lane detail */}
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
