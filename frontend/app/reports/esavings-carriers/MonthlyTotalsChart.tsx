@@ -24,10 +24,10 @@ const SERIES: Series[] = [
   { key: "volume", label: "Volume", color: "#06B6D4", axis: "right" },
 ]
 
-// SVG geometry.
-const WIDTH = 640
-const HEIGHT = 320
-const MARGIN = { top: 24, right: 118, bottom: 40, left: 64 }
+// SVG geometry — legend lives as HTML below the plot so we can keep the plot flat.
+const WIDTH = 720
+const HEIGHT = 200
+const MARGIN = { top: 16, right: 56, bottom: 28, left: 60 }
 const INNER_WIDTH = WIDTH - MARGIN.left - MARGIN.right
 const INNER_HEIGHT = HEIGHT - MARGIN.top - MARGIN.bottom
 
@@ -142,11 +142,32 @@ export function MonthlyTotalsChart({ rows, loading }: MonthlyTotalsChartProps) {
           </div>
         )}
         {!loading && !hasData && (
-          <div className="flex h-[260px] items-center justify-center text-xs text-[#9CA3AF]">
+          <div className="flex h-[160px] items-center justify-center text-xs text-[#9CA3AF]">
             No trend data for the current filters
           </div>
         )}
         {hasData && (
+          <>
+            <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[#374151]">
+              {SERIES.map((s) => (
+                <div key={`lg-${s.key}`} className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block h-[2px] w-4 rounded-full"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full border"
+                    style={{ borderColor: s.color, backgroundColor: "#FFFFFF" }}
+                  />
+                  <span>
+                    {s.label}
+                    {s.axis === "right" && (
+                      <span className="ml-0.5 text-[9px] text-[#9CA3AF]">(right)</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
           <svg
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
             role="img"
@@ -273,63 +294,8 @@ export function MonthlyTotalsChart({ rows, loading }: MonthlyTotalsChartProps) {
               }),
             )}
 
-            {/* Legend on the right */}
-            {SERIES.map((s, i) => {
-              const legendX = WIDTH - MARGIN.right + 28
-              const legendY = MARGIN.top + 8 + i * 18
-              return (
-                <g key={`legend-${s.key}`}>
-                  <line
-                    x1={legendX}
-                    x2={legendX + 18}
-                    y1={legendY}
-                    y2={legendY}
-                    stroke={s.color}
-                    strokeWidth={2}
-                  />
-                  <circle
-                    cx={legendX + 9}
-                    cy={legendY}
-                    r={3}
-                    fill="#FFFFFF"
-                    stroke={s.color}
-                    strokeWidth={1.5}
-                  />
-                  <text
-                    x={legendX + 24}
-                    y={legendY}
-                    dominantBaseline="central"
-                    fontSize={10}
-                    fill="#374151"
-                  >
-                    {s.label}
-                  </text>
-                </g>
-              )
-            })}
-
-            {/* Axis titles */}
-            <text
-              transform={`rotate(-90)`}
-              x={-(MARGIN.top + INNER_HEIGHT / 2)}
-              y={14}
-              textAnchor="middle"
-              fontSize={10}
-              fill="#6B7280"
-            >
-              USD
-            </text>
-            <text
-              transform={`rotate(-90)`}
-              x={-(MARGIN.top + INNER_HEIGHT / 2)}
-              y={WIDTH - 4}
-              textAnchor="middle"
-              fontSize={10}
-              fill="#06B6D4"
-            >
-              Volume (loads)
-            </text>
           </svg>
+          </>
         )}
       </div>
     </div>
