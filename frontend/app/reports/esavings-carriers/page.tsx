@@ -20,6 +20,7 @@ import {
   type SavingsCorpTeam,
   type SavingsDivision,
 } from "@/lib/api"
+import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
 import { MonthlyTotalsChart } from "./MonthlyTotalsChart"
 
@@ -88,11 +89,17 @@ export default function ESavingsFromCarriersPage() {
     months.find((m) => m.month_date === currentMonthIso)?.month_date ??
     months[0]?.month_date
 
+  // Debounce Origin/Destination so every keystroke doesn't refire the 5 queries.
+  const debouncedOrigin = useDebounce(origin.trim(), 300)
+  const debouncedDest = useDebounce(dest.trim(), 300)
+
   const { data: summaryRes, isLoading: loadingSummary } = useSavingsSummary(
     effectiveMonth,
     customerId,
     division,
     team,
+    debouncedOrigin || undefined,
+    debouncedDest || undefined,
   )
   const summary = summaryRes?.data
   const { data: byCustomerRes } = useSavingsByCustomer(
@@ -100,6 +107,8 @@ export default function ESavingsFromCarriersPage() {
     25,
     division,
     team,
+    debouncedOrigin || undefined,
+    debouncedDest || undefined,
   )
   const customers = byCustomerRes?.data ?? []
 
@@ -108,6 +117,8 @@ export default function ESavingsFromCarriersPage() {
     customerId,
     division,
     team,
+    debouncedOrigin || undefined,
+    debouncedDest || undefined,
   )
   const teamRows = byTeamRes?.data ?? []
 
@@ -116,6 +127,8 @@ export default function ESavingsFromCarriersPage() {
     division,
     team,
     9,
+    debouncedOrigin || undefined,
+    debouncedDest || undefined,
   )
   const monthlyRows = monthlyRes?.data ?? []
 
@@ -123,15 +136,24 @@ export default function ESavingsFromCarriersPage() {
     () => ({
       month: effectiveMonth,
       customerId,
-      origin,
-      dest,
+      origin: debouncedOrigin || undefined,
+      dest: debouncedDest || undefined,
       sort,
       page,
       limit,
       division,
       team,
     }),
-    [effectiveMonth, customerId, origin, dest, sort, page, division, team],
+    [
+      effectiveMonth,
+      customerId,
+      debouncedOrigin,
+      debouncedDest,
+      sort,
+      page,
+      division,
+      team,
+    ],
   )
   const { data: lanesRes, isLoading: loadingLanes } = useSavingsLanes(lanesFilters)
   const lanes = lanesRes?.data ?? []
@@ -233,6 +255,47 @@ export default function ESavingsFromCarriersPage() {
               </option>
             ))}
           </select>
+
+          <span className="h-5 w-px bg-[#E5E7EB]" aria-hidden />
+
+          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Origin
+          </label>
+          <input
+            value={origin}
+            onChange={(e) => {
+              setOrigin(e.target.value)
+              setPage(1)
+            }}
+            placeholder="e.g. Waco, TX"
+            className="w-48 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none"
+          />
+
+          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Destination
+          </label>
+          <input
+            value={dest}
+            onChange={(e) => {
+              setDest(e.target.value)
+              setPage(1)
+            }}
+            placeholder="e.g. Laredo, TX"
+            className="w-48 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none"
+          />
+
+          {(origin || dest) && (
+            <button
+              onClick={() => {
+                setOrigin("")
+                setDest("")
+                setPage(1)
+              }}
+              className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+            >
+              Clear lanes
+            </button>
+          )}
 
           {customerId && (
             <button
@@ -383,24 +446,6 @@ export default function ESavingsFromCarriersPage() {
                 Lanes ({fmtCount(totalLanes)})
               </h2>
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  value={origin}
-                  onChange={(e) => {
-                    setOrigin(e.target.value)
-                    setPage(1)
-                  }}
-                  placeholder="Origin contains…"
-                  className="w-40 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-xs focus:border-[#1B3A5C] focus:outline-none"
-                />
-                <input
-                  value={dest}
-                  onChange={(e) => {
-                    setDest(e.target.value)
-                    setPage(1)
-                  }}
-                  placeholder="Destination contains…"
-                  className="w-40 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-xs focus:border-[#1B3A5C] focus:outline-none"
-                />
                 <select
                   value={sort}
                   onChange={(e) => {

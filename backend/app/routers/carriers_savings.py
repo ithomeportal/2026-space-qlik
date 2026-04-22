@@ -82,6 +82,25 @@ def _resolve_team_filter(
     return None
 
 
+def _collect_lane_filters(
+    params: list, origin: Optional[str], dest: Optional[str]
+) -> list[str]:
+    """Append origin/dest ILIKE values to `params` in place.
+
+    Returns the WHERE fragments (without leading AND). Caller joins them.
+    Origin/dest come from the Lanes filter but apply to every endpoint so
+    the whole report (KPIs, teams, trend) respects the user's lane scope.
+    """
+    parts: list[str] = []
+    if origin:
+        params.append(f"%{origin}%")
+        parts.append(f"report.origin_name ILIKE ${len(params)}")
+    if dest:
+        params.append(f"%{dest}%")
+        parts.append(f"report.dest_name ILIKE ${len(params)}")
+    return parts
+
+
 def _build_team_clauses(
     team_ids: Optional[list[str]], next_param_index: int
 ) -> tuple[str, str, str, list]:
@@ -131,6 +150,8 @@ async def summary(
     customer_id: Optional[str] = Query(None),
     division: Optional[str] = Query(None, description="CORP | DFW"),
     team: Optional[str] = Query(None, description="TEAM1..TEAM5 | TEAM-DFW"),
+    origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
+    dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
 ):
     """4 main KPIs for a given month: loads, savings, overpay, net variance.
@@ -146,8 +167,11 @@ async def summary(
 
     target_month = await _resolve_month(pool, month)
 
-    team_ids = _resolve_team_filter(division, team)
     params: list = [target_month, customer_id]
+    lane_parts = _collect_lane_filters(params, origin, dest)
+    lane_extra = ("".join(f" AND {p}" for p in lane_parts))
+
+    team_ids = _resolve_team_filter(division, team)
     cte, join_sql, where_extra, extra_params = _build_team_clauses(
         team_ids, next_param_index=len(params) + 1
     )
@@ -174,6 +198,7 @@ async def summary(
         {join_sql}
         WHERE report.month_date = $1
           AND ($2::text IS NULL OR report.customer_id = $2)
+          {lane_extra}
           {where_extra}
         """,
         *params,
@@ -190,6 +215,8 @@ async def by_customer(
     month: Optional[date] = Query(None),
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
+    origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
+    dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
     limit: int = Query(50, ge=1, le=500),
 ):
@@ -197,8 +224,11 @@ async def by_customer(
     pool = get_savings_pool(request)
     target_month = await _resolve_month(pool, month)
 
-    team_ids = _resolve_team_filter(division, team)
     params: list = [target_month]
+    lane_parts = _collect_lane_filters(params, origin, dest)
+    lane_extra = "".join(f" AND {p}" for p in lane_parts)
+
+    team_ids = _resolve_team_filter(division, team)
     cte, join_sql, where_extra, extra_params = _build_team_clauses(
         team_ids, next_param_index=len(params) + 1
     )
@@ -221,6 +251,7 @@ async def by_customer(
         FROM public.carriers_savings_results_report report
         {join_sql}
         WHERE report.month_date = $1
+          {lane_extra}
           {where_extra}
         GROUP BY report.customer_id, report.customer_name
         HAVING SUM(report.number_monthly_loads) > 0
@@ -335,6 +366,8 @@ async def by_team(
     customer_id: Optional[str] = Query(None),
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
+    origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
+    dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
 ):
     """One row per (division, team_id) for the selected month.
@@ -355,6 +388,8 @@ async def by_team(
     if customer_id:
         params.append(customer_id)
         where_parts.append(f"report.customer_id = ${len(params)}")
+
+    where_parts.extend(_collect_lane_filters(params, origin, dest))
 
     # Resolve which team_ids to include. When no filter is set, we still want
     # the full breakdown — so default to every allowed team.
@@ -417,6 +452,8 @@ async def monthly_totals(
     customer_id: Optional[str] = Query(None),
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
+    origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
+    dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     months_window: int = Query(9, ge=1, le=36, alias="window"),
     _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
 ):
@@ -433,6 +470,8 @@ async def monthly_totals(
     if customer_id:
         params.append(customer_id)
         where_parts.append(f"report.customer_id = ${len(params)}")
+
+    where_parts.extend(_collect_lane_filters(params, origin, dest))
 
     team_ids = _resolve_team_filter(division, team)
     team_cte, join_sql, where_extra, extra_params = _build_team_clauses(

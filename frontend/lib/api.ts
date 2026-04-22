@@ -222,15 +222,19 @@ export function useSavingsSummary(
   customerId?: string,
   division?: SavingsDivision,
   team?: SavingsCorpTeam,
+  origin?: string,
+  dest?: string,
 ) {
   const qs = new URLSearchParams()
   if (month) qs.set("month", month)
   if (customerId) qs.set("customer_id", customerId)
   if (division) qs.set("division", division)
   if (team) qs.set("team", team)
+  if (origin) qs.set("origin", origin)
+  if (dest) qs.set("dest", dest)
   const suffix = qs.toString() ? `?${qs}` : ""
   return useQuery({
-    queryKey: ["savings", "summary", month, customerId, division, team],
+    queryKey: ["savings", "summary", month, customerId, division, team, origin, dest],
     queryFn: () => apiFetch<SavingsSummary>(`custom/carriers-savings/summary${suffix}`),
   })
 }
@@ -240,13 +244,17 @@ export function useSavingsByCustomer(
   limit = 50,
   division?: SavingsDivision,
   team?: SavingsCorpTeam,
+  origin?: string,
+  dest?: string,
 ) {
   const qs = new URLSearchParams({ limit: String(limit) })
   if (month) qs.set("month", month)
   if (division) qs.set("division", division)
   if (team) qs.set("team", team)
+  if (origin) qs.set("origin", origin)
+  if (dest) qs.set("dest", dest)
   return useQuery({
-    queryKey: ["savings", "by-customer", month, limit, division, team],
+    queryKey: ["savings", "by-customer", month, limit, division, team, origin, dest],
     queryFn: () => apiFetch<SavingsByCustomer[]>(`custom/carriers-savings/by-customer?${qs}`),
   })
 }
@@ -277,15 +285,19 @@ export function useSavingsByTeam(
   customerId?: string,
   division?: SavingsDivision,
   team?: SavingsCorpTeam,
+  origin?: string,
+  dest?: string,
 ) {
   const qs = new URLSearchParams()
   if (month) qs.set("month", month)
   if (customerId) qs.set("customer_id", customerId)
   if (division) qs.set("division", division)
   if (team) qs.set("team", team)
+  if (origin) qs.set("origin", origin)
+  if (dest) qs.set("dest", dest)
   const suffix = qs.toString() ? `?${qs}` : ""
   return useQuery({
-    queryKey: ["savings", "by-team", month, customerId, division, team],
+    queryKey: ["savings", "by-team", month, customerId, division, team, origin, dest],
     queryFn: () => apiFetch<SavingsTeamRow[]>(`custom/carriers-savings/by-team${suffix}`),
   })
 }
@@ -303,13 +315,17 @@ export function useSavingsMonthlyTotals(
   division?: SavingsDivision,
   team?: SavingsCorpTeam,
   windowMonths = 9,
+  origin?: string,
+  dest?: string,
 ) {
   const qs = new URLSearchParams({ window: String(windowMonths) })
   if (customerId) qs.set("customer_id", customerId)
   if (division) qs.set("division", division)
   if (team) qs.set("team", team)
+  if (origin) qs.set("origin", origin)
+  if (dest) qs.set("dest", dest)
   return useQuery({
-    queryKey: ["savings", "monthly-totals", customerId, division, team, windowMonths],
+    queryKey: ["savings", "monthly-totals", customerId, division, team, windowMonths, origin, dest],
     queryFn: () =>
       apiFetch<SavingsMonthlyTotals[]>(`custom/carriers-savings/monthly-totals?${qs}`),
   })
