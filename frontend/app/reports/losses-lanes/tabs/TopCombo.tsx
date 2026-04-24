@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, ExternalLink } from "lucide-react"
+import { Loader2, ListChecks, LineChart } from "lucide-react"
 import { useLossesTopLanesCombo, type LossesFilters } from "@/lib/losses-lanes-api"
 import { LossesErrorBanner } from "../ErrorBanner"
 
@@ -19,10 +19,11 @@ const fmtCount = (v: number | null | undefined) =>
 
 interface Props {
   filters: LossesFilters
-  onDrillLane: (lane: string) => void
+  onDrillOrders: (lane: string) => void
+  onShowTrend: (lane: string) => void
 }
 
-export function TopCombo({ filters, onDrillLane }: Props) {
+export function TopCombo({ filters, onDrillOrders, onShowTrend }: Props) {
   const [limit, setLimit] = useState(10)
   const { data, isLoading, error } = useLossesTopLanesCombo(filters, limit)
   const rows = data?.data ?? []
@@ -70,13 +71,29 @@ export function TopCombo({ filters, onDrillLane }: Props) {
             return (
               <div key={`${r.lane ?? ""}-${i}`} className="border-b border-[#F3F4F6] pb-2">
                 <div className="flex items-center justify-between text-xs">
-                  <button
-                    onClick={() => r.lane && onDrillLane(r.lane)}
-                    className="inline-flex items-center gap-1 text-left font-medium text-[#111827] hover:text-[#1B3A5C]"
-                  >
-                    {r.lane ?? "—"}
-                    {r.lane && <ExternalLink className="h-3 w-3 opacity-60" />}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-[#111827]">{r.lane ?? "—"}</span>
+                    {r.lane && (
+                      <>
+                        <button
+                          onClick={() => onShowTrend(r.lane!)}
+                          className="inline-flex items-center gap-1 rounded border border-[#E5E7EB] bg-white px-1.5 py-0.5 text-[10px] text-[#1B3A5C] hover:bg-[#F3F4F6]"
+                          title="60-day lane trend"
+                        >
+                          <LineChart className="h-3 w-3" />
+                          Trend
+                        </button>
+                        <button
+                          onClick={() => onDrillOrders(r.lane!)}
+                          className="inline-flex items-center gap-1 rounded border border-[#E5E7EB] bg-white px-1.5 py-0.5 text-[10px] text-[#1B3A5C] hover:bg-[#F3F4F6]"
+                          title="Drill into Order Details"
+                        >
+                          <ListChecks className="h-3 w-3" />
+                          Orders
+                        </button>
+                      </>
+                    )}
+                  </div>
                   <div className="flex items-center gap-4">
                     <span className="text-[#1B3A5C]">Rev {fmtUsd(r.revenue)}</span>
                     <span className="text-[#B91C1C]">Profit {fmtUsd(r.profit)}</span>

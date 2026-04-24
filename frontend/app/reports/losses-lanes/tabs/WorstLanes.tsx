@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, ArrowUpDown, ExternalLink } from "lucide-react"
+import { Loader2, ArrowUpDown, ListChecks, LineChart } from "lucide-react"
 import { useLossesByLane, type LossesFilters } from "@/lib/losses-lanes-api"
 import { LossesErrorBanner } from "../ErrorBanner"
 
@@ -24,15 +24,32 @@ const fmtPct = (v: number | null | undefined) =>
 
 interface Props {
   filters: LossesFilters
-  onDrillLane: (lane: string) => void
+  thresholds: [number, number, number]          // fraction form (0.15, 0.18, 0.20)
+  thresholdsPct: [number, number, number]       // percent form (15, 18, 20)
+  onChangeThresholdPct: (idx: 0 | 1 | 2, pct: number) => void
+  onDrillOrders: (lane: string) => void
+  onShowTrend: (lane: string) => void
 }
 
-export function WorstLanes({ filters, onDrillLane }: Props) {
+export function WorstLanes({
+  filters,
+  thresholds,
+  thresholdsPct,
+  onChangeThresholdPct,
+  onDrillOrders,
+  onShowTrend,
+}: Props) {
   const [sort, setSort] = useState<string>("profit_asc")
   const [page, setPage] = useState(1)
   const limit = 100
 
-  const { data, isLoading, error } = useLossesByLane(filters, sort, page, limit)
+  const { data, isLoading, error } = useLossesByLane(
+    filters,
+    sort,
+    page,
+    limit,
+    thresholds,
+  )
   const rows = data?.data ?? []
   const total = data?.meta?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / limit))
@@ -49,28 +66,50 @@ export function WorstLanes({ filters, onDrillLane }: Props) {
   return (
     <div className="space-y-3">
       <LossesErrorBanner errors={[error]} label="Worst Margins by Lane" />
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-[#6B7280]">
-          {total.toLocaleString()} lane rows · Click a row to drill into Order Details
+          {total.toLocaleString()} lane rows · Rows with &lt;−20% margin highlighted red
         </div>
-        {isLoading && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
+        <div className="flex items-center gap-2 text-xs text-[#6B7280]">
+          <span className="font-semibold uppercase tracking-wider">Target % sliders:</span>
+          {([0, 1, 2] as const).map((i) => (
+            <label key={i} className="flex items-center gap-1">
+              <span className="text-[#374151]">T{i + 1}</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Number.isFinite(thresholdsPct[i]) ? thresholdsPct[i] : ""}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  onChangeThresholdPct(i, n)
+                  setPage(1)
+                }}
+                className="w-14 rounded border border-[#E5E7EB] bg-white px-1 py-0.5 text-right"
+              />
+              <span>%</span>
+            </label>
+          ))}
+          {isLoading && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
+        </div>
       </div>
       <div className="overflow-auto rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-[#7F1D1D] text-white">
             <tr>
-              <SortableTh label="Customer" onClick={() => setSortKey("customer")} />
-              <SortableTh label="Lane" onClick={() => setSortKey("lane")} />
+              <Th label="Customer" onClick={() => setSortKey("customer")} />
+              <Th label="Lane" onClick={() => setSortKey("lane")} />
               <Th label="Revenue" onClick={() => setSortKey("revenue")} right />
               <Th label="$ Profit" onClick={() => setSortKey("profit")} right />
               <Th label="% Margin" onClick={() => setSortKey("margin")} right />
-              <th className="px-2 py-2 text-right font-semibold">15% Profit</th>
-              <th className="px-2 py-2 text-right font-semibold">15% Diff+</th>
-              <th className="px-2 py-2 text-right font-semibold">18% Profit</th>
-              <th className="px-2 py-2 text-right font-semibold">18% Diff+</th>
-              <th className="px-2 py-2 text-right font-semibold">20% Profit</th>
-              <th className="px-2 py-2 text-right font-semibold">20% Diff+</th>
-              <th className="px-2 py-2 text-right font-semibold"></th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[0]}% Profit</th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[0]}% Diff+</th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[1]}% Profit</th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[1]}% Diff+</th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[2]}% Profit</th>
+              <th className="px-2 py-2 text-right font-semibold">{thresholdsPct[2]}% Diff+</th>
+              <th className="px-2 py-2 text-right font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -100,27 +139,37 @@ export function WorstLanes({ filters, onDrillLane }: Props) {
                     {fmtPct(r.margin_pct)}
                   </td>
                   <td className="px-2 py-1.5 text-right text-[#6B7280]">
-                    {fmtUsd(r.profit_15)}
+                    {fmtUsd(r.profit_1)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_15)}</td>
+                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_1)}</td>
                   <td className="px-2 py-1.5 text-right text-[#6B7280]">
-                    {fmtUsd(r.profit_18)}
+                    {fmtUsd(r.profit_2)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_18)}</td>
+                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_2)}</td>
                   <td className="px-2 py-1.5 text-right text-[#6B7280]">
-                    {fmtUsd(r.profit_20)}
+                    {fmtUsd(r.profit_3)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_20)}</td>
+                  <td className="px-2 py-1.5 text-right text-[#047857]">{fmtUsd(r.diff_3)}</td>
                   <td className="px-2 py-1.5 text-right">
                     {r.lane && (
-                      <button
-                        onClick={() => onDrillLane(r.lane!)}
-                        className="inline-flex items-center gap-1 rounded border border-[#E5E7EB] bg-white px-2 py-0.5 text-[10px] text-[#1B3A5C] hover:bg-[#F3F4F6]"
-                        title="Drill to Order Details for this lane"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        Drill
-                      </button>
+                      <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => onShowTrend(r.lane!)}
+                          className="inline-flex items-center gap-1 rounded border border-[#E5E7EB] bg-white px-1.5 py-0.5 text-[10px] text-[#1B3A5C] hover:bg-[#F3F4F6]"
+                          title="60-day lane trend"
+                        >
+                          <LineChart className="h-3 w-3" />
+                          Trend
+                        </button>
+                        <button
+                          onClick={() => onDrillOrders(r.lane!)}
+                          className="inline-flex items-center gap-1 rounded border border-[#E5E7EB] bg-white px-1.5 py-0.5 text-[10px] text-[#1B3A5C] hover:bg-[#F3F4F6]"
+                          title="Drill into Order Details"
+                        >
+                          <ListChecks className="h-3 w-3" />
+                          Orders
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -176,8 +225,4 @@ function Th({
       </span>
     </th>
   )
-}
-
-function SortableTh(props: { label: string; onClick: () => void }) {
-  return <Th {...props} />
 }

@@ -88,12 +88,49 @@ export interface LossesLaneRow {
   revenue: number
   profit: number
   margin_pct: number | null
-  profit_15: number
-  diff_15: number
-  profit_18: number
-  diff_18: number
-  profit_20: number
-  diff_20: number
+  profit_1: number
+  diff_1: number
+  profit_2: number
+  diff_2: number
+  profit_3: number
+  diff_3: number
+}
+
+export interface LossesFreshness {
+  last_updated: string | null
+  last_created: string | null
+  rows_in_scope: number
+}
+
+export interface LossesLaneTrendPoint {
+  bucket: string
+  total_loads: number
+  loss_loads: number
+  total_revenue: number
+  total_profit: number
+  loss_revenue: number
+  loss_profit: number
+}
+
+export interface LossesWeeklyMoverRow {
+  customer: string | null
+  lane: string | null
+  this_rank: number | null
+  last_rank: number | null
+  this_profit: number | null
+  last_profit: number | null
+  this_revenue: number | null
+}
+
+export interface LossesWeeklyMovers {
+  new_entries: LossesWeeklyMoverRow[]
+  dropped: LossesWeeklyMoverRow[]
+  moved: LossesWeeklyMoverRow[]
+  window: {
+    this_week: { start: string; end: string }
+    last_week: { start: string; end: string }
+    top_n: number
+  }
 }
 
 export interface LossesCustomerRow {
@@ -157,15 +194,30 @@ export function useLossesByLane(
   sort: string,
   page: number,
   limit = 100,
+  thresholds?: [number, number, number],
 ) {
+  const t = thresholds ?? [0.15, 0.18, 0.20]
   return useQuery({
-    queryKey: ["losses", "by-lane", ...queryKeyFilters(filters), sort, page, limit],
+    queryKey: [
+      "losses",
+      "by-lane",
+      ...queryKeyFilters(filters),
+      sort,
+      page,
+      limit,
+      t[0],
+      t[1],
+      t[2],
+    ],
     queryFn: () =>
       apiFetch<LossesLaneRow[]>(
         `custom/losses-lanes/by-lane${lossesQs(filters, {
           sort,
           page: String(page),
           limit: String(limit),
+          threshold_1: String(t[0]),
+          threshold_2: String(t[1]),
+          threshold_3: String(t[2]),
         })}`,
       ),
     ...LOSSES_RETRY,
@@ -237,6 +289,70 @@ export function useLossesByMonth(teams: string[] | undefined, customer: string |
     queryFn: () =>
       apiFetch<LossesTrendPoint[]>(
         `custom/losses-lanes/by-month${s ? `?${s}` : ""}`,
+      ),
+    ...LOSSES_RETRY,
+  })
+}
+
+export function useLossesFreshness() {
+  return useQuery({
+    queryKey: ["losses", "freshness"],
+    queryFn: () => apiFetch<LossesFreshness>("custom/losses-lanes/freshness"),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+    ...LOSSES_RETRY,
+  })
+}
+
+export function useLossesLaneTrend(
+  lane: string | undefined,
+  teams: string[] | undefined,
+  customer: string | undefined,
+  days = 60,
+) {
+  const qs = new URLSearchParams()
+  if (lane) qs.set("lane", lane)
+  if (teams && teams.length) qs.set("teams", teams.join(","))
+  if (customer) qs.set("customer", customer)
+  qs.set("days", String(days))
+  return useQuery({
+    queryKey: [
+      "losses",
+      "lane-trend",
+      lane ?? "",
+      (teams ?? []).slice().sort().join(","),
+      customer ?? "",
+      days,
+    ],
+    queryFn: () =>
+      apiFetch<LossesLaneTrendPoint[]>(
+        `custom/losses-lanes/lane-trend?${qs.toString()}`,
+      ),
+    enabled: Boolean(lane),
+    ...LOSSES_RETRY,
+  })
+}
+
+export function useLossesWeeklyMovers(
+  teams: string[] | undefined,
+  customer: string | undefined,
+  topN = 10,
+) {
+  const qs = new URLSearchParams()
+  if (teams && teams.length) qs.set("teams", teams.join(","))
+  if (customer) qs.set("customer", customer)
+  qs.set("top_n", String(topN))
+  return useQuery({
+    queryKey: [
+      "losses",
+      "weekly-movers",
+      (teams ?? []).slice().sort().join(","),
+      customer ?? "",
+      topN,
+    ],
+    queryFn: () =>
+      apiFetch<LossesWeeklyMovers>(
+        `custom/losses-lanes/weekly-movers?${qs.toString()}`,
       ),
     ...LOSSES_RETRY,
   })

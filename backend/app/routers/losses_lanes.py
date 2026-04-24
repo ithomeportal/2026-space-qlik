@@ -25,7 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_admin, require_tag_role
 
 LOSSES_ROLES = ("CEO", "Executive", "CORP", "DFW", "Operations", "Finance")
 
@@ -250,6 +250,17 @@ async def summary(
 # ---------------------------------------------------------------------------
 
 
+def _clamp_threshold(value: float, default: float) -> float:
+    """Clamp margin threshold (fraction form, e.g. 0.15) to [0, 1]."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if v != v or v < 0 or v > 1:   # NaN or out of range
+        return default
+    return v
+
+
 @router.get("/by-lane")
 async def by_lane(
     request: Request,
@@ -261,6 +272,9 @@ async def by_lane(
     sort: str = Query("profit_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
+    threshold_1: float = Query(0.15, ge=0.0, le=1.0),
+    threshold_2: float = Query(0.18, ge=0.0, le=1.0),
+    threshold_3: float = Query(0.20, ge=0.0, le=1.0),
     _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
 ):
     """Per-customer + per-lane leak view.
@@ -268,11 +282,17 @@ async def by_lane(
     Every row has ``margin_amt < 0 AND total_charge <> 0`` applied at the
     load level, then grouped. So this shows the *loss portion* of each
     (customer, lane) pair, not its net result.
+
+    The three ``threshold_N`` params control the target-profit gap columns
+    (defaults 0.15 / 0.18 / 0.20 = Bruno's 15% / 18% / 20%).
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_list = _parse_teams(teams)
     offset = (page - 1) * limit
+    t1 = _clamp_threshold(threshold_1, 0.15)
+    t2 = _clamp_threshold(threshold_2, 0.18)
+    t3 = _clamp_threshold(threshold_3, 0.20)
 
     params: list = []
     where = _scope_where("br4", team_list, customer, params)
@@ -290,6 +310,9 @@ async def by_lane(
         "margin_desc": "margin_pct DESC NULLS LAST",
     }.get(sort, "profit ASC")
 
+    # Bind thresholds as parameters (safer than f-string interpolation).
+    params.extend([t1, t2, t3])
+    pt1, pt2, pt3 = len(params) - 2, len(params) - 1, len(params)
     params.extend([limit, offset])
     lim_p, off_p = len(params) - 1, len(params)
 
@@ -323,19 +346,19 @@ async def by_lane(
           revenue,
           profit,
           margin_pct,
-          -- Bruno's 15/18/20% profit targets & diff+ columns (verbatim).
-          CASE WHEN margin_pct > 0.15 THEN 0
-               ELSE revenue * 0.15 END AS profit_15,
-          CASE WHEN margin_pct < 0.15
-               THEN revenue * 0.15 - profit ELSE 0 END AS diff_15,
-          CASE WHEN margin_pct > 0.18 THEN 0
-               ELSE revenue * 0.18 END AS profit_18,
-          CASE WHEN margin_pct < 0.18
-               THEN revenue * 0.18 - profit ELSE 0 END AS diff_18,
-          CASE WHEN margin_pct > 0.20 THEN 0
-               ELSE revenue * 0.20 END AS profit_20,
-          CASE WHEN margin_pct < 0.20
-               THEN revenue * 0.20 - profit ELSE 0 END AS diff_20,
+          -- Bruno's X% profit targets & diff+ columns, parameterized.
+          CASE WHEN margin_pct > ${pt1} THEN 0
+               ELSE revenue * ${pt1} END AS profit_1,
+          CASE WHEN margin_pct < ${pt1}
+               THEN revenue * ${pt1} - profit ELSE 0 END AS diff_1,
+          CASE WHEN margin_pct > ${pt2} THEN 0
+               ELSE revenue * ${pt2} END AS profit_2,
+          CASE WHEN margin_pct < ${pt2}
+               THEN revenue * ${pt2} - profit ELSE 0 END AS diff_2,
+          CASE WHEN margin_pct > ${pt3} THEN 0
+               ELSE revenue * ${pt3} END AS profit_3,
+          CASE WHEN margin_pct < ${pt3}
+               THEN revenue * ${pt3} - profit ELSE 0 END AS diff_3,
           COUNT(*) OVER() AS total_count
         FROM agg
         ORDER BY {order_by}
@@ -352,19 +375,24 @@ async def by_lane(
             "revenue": float(r["revenue"] or 0),
             "profit": float(r["profit"] or 0),
             "margin_pct": float(r["margin_pct"]) * 100.0 if r["margin_pct"] is not None else None,
-            "profit_15": float(r["profit_15"] or 0),
-            "diff_15":   float(r["diff_15"] or 0),
-            "profit_18": float(r["profit_18"] or 0),
-            "diff_18":   float(r["diff_18"] or 0),
-            "profit_20": float(r["profit_20"] or 0),
-            "diff_20":   float(r["diff_20"] or 0),
+            "profit_1": float(r["profit_1"] or 0),
+            "diff_1":   float(r["diff_1"] or 0),
+            "profit_2": float(r["profit_2"] or 0),
+            "diff_2":   float(r["diff_2"] or 0),
+            "profit_3": float(r["profit_3"] or 0),
+            "diff_3":   float(r["diff_3"] or 0),
         }
         for r in rows
     ]
     return {
         "success": True,
         "data": data,
-        "meta": {"total": total, "page": page, "limit": limit},
+        "meta": {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "thresholds": [t1, t2, t3],
+        },
     }
 
 
@@ -778,4 +806,359 @@ async def orders(
         "success": True,
         "data": data,
         "meta": {"total": total, "page": page, "limit": limit},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Freshness — last-updated stamp + row count for the filtered window
+# ---------------------------------------------------------------------------
+
+
+@router.get("/freshness")
+async def freshness(
+    request: Request,
+    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+):
+    """Latest ``updated_dt`` and row count across the whole scope.
+
+    Not parameterized by the user's filters on purpose — this is a global
+    "how fresh is v4" stamp so the UI can tell users when the backing data
+    last refreshed. Cheap query (single MAX over an indexed column if one
+    exists, or a full scan guarded by the scope predicates).
+    """
+    pool = get_datalake_gold_pool(request)
+    row = await pool.fetchrow(
+        """
+        SELECT
+          MAX(updated_dt) AS last_updated,
+          MAX(created_dt) AS last_created,
+          COUNT(*)        AS rows_in_scope
+        FROM public.mcleod_gld_budget_report_v4
+        WHERE team_id    = ANY($1)
+          AND company_id = ANY($2)
+          AND status     = ANY($3)
+        """,
+        _pad_variants(ALL_TEAMS, width=8),
+        _pad_variants(COMPANIES, width=4),
+        _pad_variants(OPEN_STATUSES, width=1),
+    )
+    last_updated = row["last_updated"] if row else None
+    last_created = row["last_created"] if row else None
+    return {
+        "success": True,
+        "data": {
+            "last_updated": last_updated.isoformat() if last_updated else None,
+            "last_created": last_created.isoformat() if last_created else None,
+            "rows_in_scope": int(row["rows_in_scope"] or 0) if row else 0,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Lane Trend — 60-day daily series for a single lane (drill overlay)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lane-trend")
+async def lane_trend(
+    request: Request,
+    lane: str = Query(..., description="Canonical lane label: 'city,st,city,st'"),
+    days: int = Query(60, ge=7, le=365),
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+):
+    """Per-day totals for a single lane over the last ``days`` days.
+
+    Unlike the main by-day endpoint this is NOT filtered to
+    ``margin_amt < 0`` — we return both total and loss-portion so the
+    reader can see whether the lane's profitability is trending up or
+    down overall.
+    """
+    pool = get_datalake_gold_pool(request)
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+    team_list = _parse_teams(teams)
+
+    params: list = []
+    where = _scope_where("br4", team_list, customer, params)
+    params.extend([start, today, lane])
+    p_s, p_e, p_lane = len(params) - 2, len(params) - 1, len(params)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          br4.origin_actual_departure::date AS bucket,
+          COUNT(*)                          AS total_loads,
+          COUNT(*) FILTER (WHERE br4.margin_amt < 0) AS loss_loads,
+          COALESCE(SUM(br4.total_charge) FILTER (
+            WHERE br4.total_charge <> 0
+          ), 0)::numeric AS total_revenue,
+          COALESCE(SUM(br4.margin_amt) FILTER (
+            WHERE br4.total_charge <> 0
+          ), 0)::numeric AS total_profit,
+          COALESCE(SUM(br4.total_charge) FILTER (
+            WHERE br4.margin_amt < 0 AND br4.total_charge <> 0
+          ), 0)::numeric AS loss_revenue,
+          COALESCE(SUM(br4.margin_amt) FILTER (
+            WHERE br4.margin_amt < 0 AND br4.total_charge <> 0
+          ), 0)::numeric AS loss_profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+          AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+          AND {_lane_expr("br4")} = ${p_lane}
+        GROUP BY br4.origin_actual_departure::date
+        ORDER BY bucket
+        """,
+        *params,
+    )
+
+    return {
+        "success": True,
+        "data": [
+            {
+                "bucket": r["bucket"].isoformat(),
+                "total_loads": int(r["total_loads"] or 0),
+                "loss_loads":  int(r["loss_loads"] or 0),
+                "total_revenue": float(r["total_revenue"] or 0),
+                "total_profit":  float(r["total_profit"] or 0),
+                "loss_revenue":  float(r["loss_revenue"] or 0),
+                "loss_profit":   float(r["loss_profit"] or 0),
+            }
+            for r in rows
+        ],
+        "meta": {
+            "lane": lane,
+            "days": days,
+            "start": start.isoformat(),
+            "end": today.isoformat(),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Weekly Movers — this week's top-10 losses vs last week (ranked deltas)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/weekly-movers")
+async def weekly_movers(
+    request: Request,
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    top_n: int = Query(10, ge=3, le=50),
+    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+):
+    """Customer+Lane pairs whose rank in top-N losses changed week-over-week.
+
+    Both weeks use Mon–Sun (DATE_TRUNC('week', …)).  Returns:
+    - ``new_entries``: pairs in this week's top-N but NOT in last week's top-N
+    - ``dropped``:     pairs in last week's top-N but NOT in this week's top-N
+    - ``moved``:       pairs in both weeks' top-N with a rank delta
+
+    Intended as the data surface for a future n8n / email alert workflow;
+    no delivery mechanism wired yet (see docs/SPEC-CUSTOM-REPORTS.md §14).
+    """
+    pool = get_datalake_gold_pool(request)
+    today = date.today()
+    this_mon = today - timedelta(days=today.weekday())
+    last_mon = this_mon - timedelta(days=7)
+    this_sun = this_mon + timedelta(days=6)
+    last_sun = last_mon + timedelta(days=6)
+    team_list = _parse_teams(teams)
+
+    params: list = []
+    where = _scope_where("br4", team_list, customer, params)
+    # Unique param placeholders for both week bounds
+    params.extend([last_mon, last_sun, this_mon, this_sun, top_n])
+    p_lms, p_lme, p_tms, p_tme, p_top = (
+        len(params) - 4,
+        len(params) - 3,
+        len(params) - 2,
+        len(params) - 1,
+        len(params),
+    )
+
+    rows = await pool.fetch(
+        f"""
+        WITH this_week AS (
+          SELECT TRIM(br4.customer_id) AS customer,
+                 {_lane_expr("br4")}    AS lane,
+                 SUM(br4.margin_amt)::numeric   AS profit,
+                 SUM(br4.total_charge)::numeric AS revenue
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {where}
+            AND br4.origin_actual_departure::date BETWEEN ${p_tms} AND ${p_tme}
+            AND br4.margin_amt < 0 AND br4.total_charge <> 0
+          GROUP BY TRIM(br4.customer_id), {_lane_expr("br4")}
+        ),
+        this_ranked AS (
+          SELECT *, RANK() OVER (ORDER BY profit ASC) AS rk FROM this_week
+        ),
+        last_week AS (
+          SELECT TRIM(br4.customer_id) AS customer,
+                 {_lane_expr("br4")}    AS lane,
+                 SUM(br4.margin_amt)::numeric   AS profit
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {where}
+            AND br4.origin_actual_departure::date BETWEEN ${p_lms} AND ${p_lme}
+            AND br4.margin_amt < 0 AND br4.total_charge <> 0
+          GROUP BY TRIM(br4.customer_id), {_lane_expr("br4")}
+        ),
+        last_ranked AS (
+          SELECT *, RANK() OVER (ORDER BY profit ASC) AS rk FROM last_week
+        )
+        SELECT
+          COALESCE(t.customer, l.customer) AS customer,
+          COALESCE(t.lane, l.lane)         AS lane,
+          t.rk      AS this_rank,
+          l.rk      AS last_rank,
+          t.profit  AS this_profit,
+          l.profit  AS last_profit,
+          t.revenue AS this_revenue
+        FROM this_ranked t
+        FULL OUTER JOIN last_ranked l
+          ON t.customer = l.customer AND t.lane = l.lane
+        WHERE (t.rk IS NOT NULL AND t.rk <= ${p_top})
+           OR (l.rk IS NOT NULL AND l.rk <= ${p_top})
+        ORDER BY COALESCE(t.rk, 999), COALESCE(l.rk, 999)
+        """,
+        *params,
+    )
+
+    new_entries, dropped, moved = [], [], []
+    for r in rows:
+        this_rk = int(r["this_rank"]) if r["this_rank"] is not None else None
+        last_rk = int(r["last_rank"]) if r["last_rank"] is not None else None
+        entry = {
+            "customer": r["customer"],
+            "lane": r["lane"],
+            "this_rank": this_rk,
+            "last_rank": last_rk,
+            "this_profit": float(r["this_profit"]) if r["this_profit"] is not None else None,
+            "last_profit": float(r["last_profit"]) if r["last_profit"] is not None else None,
+            "this_revenue": float(r["this_revenue"]) if r["this_revenue"] is not None else None,
+        }
+        in_this = this_rk is not None and this_rk <= top_n
+        in_last = last_rk is not None and last_rk <= top_n
+        if in_this and not in_last:
+            new_entries.append(entry)
+        elif in_last and not in_this:
+            dropped.append(entry)
+        elif in_this and in_last and this_rk != last_rk:
+            moved.append(entry)
+
+    return {
+        "success": True,
+        "data": {
+            "new_entries": new_entries,
+            "dropped": dropped,
+            "moved": moved,
+            "window": {
+                "this_week": {"start": this_mon.isoformat(), "end": this_sun.isoformat()},
+                "last_week": {"start": last_mon.isoformat(), "end": last_sun.isoformat()},
+                "top_n": top_n,
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# EXPLAIN — admin-only perf audit tool
+# ---------------------------------------------------------------------------
+
+
+@router.get("/explain")
+async def explain(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_admin),
+):
+    """Return EXPLAIN ANALYZE plans for the 3 heaviest queries.
+
+    Admin-only (bypasses TagRole guard). Run this when ops wants to spot
+    index opportunities on ``mcleod_gld_budget_report_v4``. Results are
+    returned as a list of plan-text lines per query.
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    team_list = _parse_teams(teams)
+
+    async def _explain(sql: str, params: list) -> list[str]:
+        rows = await pool.fetch(
+            f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {sql}", *params
+        )
+        return [r["QUERY PLAN"] for r in rows]
+
+    # Query 1 — by-lane aggregate
+    p1: list = []
+    where1 = _scope_where("br4", team_list, customer, p1)
+    p1.extend([s, e])
+    d1 = f"br4.origin_actual_departure::date BETWEEN ${len(p1) - 1} AND ${len(p1)}"
+    sql1 = f"""
+      SELECT TRIM(br4.customer_id) AS customer,
+             {_lane_expr("br4")}    AS lane,
+             SUM(br4.total_charge)::numeric AS revenue,
+             SUM(br4.margin_amt)::numeric   AS profit
+      FROM public.mcleod_gld_budget_report_v4 br4
+      WHERE {where1} AND {d1}
+        AND br4.margin_amt < 0 AND br4.total_charge <> 0
+      GROUP BY TRIM(br4.customer_id), {_lane_expr("br4")}
+    """
+
+    # Query 2 — by-customer aggregate
+    p2: list = []
+    where2 = _scope_where("br4", team_list, customer, p2)
+    p2.extend([s, e])
+    d2 = f"br4.origin_actual_departure::date BETWEEN ${len(p2) - 1} AND ${len(p2)}"
+    sql2 = f"""
+      SELECT TRIM(br4.customer_id) AS customer,
+             COUNT(*)::int AS loads,
+             SUM(br4.total_charge)::numeric AS revenue,
+             SUM(br4.margin_amt)::numeric   AS profit
+      FROM public.mcleod_gld_budget_report_v4 br4
+      WHERE {where2} AND {d2}
+        AND br4.margin_amt < 0 AND br4.total_charge <> 0
+      GROUP BY TRIM(br4.customer_id)
+    """
+
+    # Query 3 — orders scan
+    p3: list = []
+    where3 = _scope_where("br4", team_list, customer, p3)
+    p3.extend([s, e])
+    d3 = f"br4.origin_actual_departure::date BETWEEN ${len(p3) - 1} AND ${len(p3)}"
+    sql3 = f"""
+      SELECT br4.id, br4.total_charge, br4.margin_amt
+      FROM public.mcleod_gld_budget_report_v4 br4
+      WHERE {where3} AND {d3}
+        AND br4.margin_amt < 0 AND br4.total_charge <> 0
+      ORDER BY br4.origin_actual_departure::date DESC
+      LIMIT 100
+    """
+
+    plan1, plan2, plan3 = await _explain(sql1, p1), await _explain(sql2, p2), await _explain(sql3, p3)
+
+    return {
+        "success": True,
+        "data": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "plans": {
+                "by_lane":     plan1,
+                "by_customer": plan2,
+                "orders":      plan3,
+            },
+            "suggested_indexes": [
+                "CREATE INDEX IF NOT EXISTS idx_v4_scope_dep_date "
+                "ON public.mcleod_gld_budget_report_v4 "
+                "(team_id, company_id, status, (origin_actual_departure::date))",
+                "CREATE INDEX IF NOT EXISTS idx_v4_scope_margin "
+                "ON public.mcleod_gld_budget_report_v4 "
+                "(team_id, company_id, status) "
+                "WHERE margin_amt < 0 AND total_charge <> 0",
+            ],
+        },
     }
