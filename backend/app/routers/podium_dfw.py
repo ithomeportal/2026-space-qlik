@@ -40,6 +40,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
 # --------------------------------------------------------------------------
@@ -51,27 +52,6 @@ PODIUM_ROLES = ("DFW",)
 # Scope
 # --------------------------------------------------------------------------
 PODIUM_TEAMS = ("TEAM-DFW",)
-
-
-def _pad_variants(values, *, width: int) -> list[str]:
-    """Expand each value into (unpadded, right-padded-to-column-width) twins.
-
-    McLeod datalake text columns arrive unpadded or right-padded to the column's
-    declared varchar(N) width. 'TEAM-DFW' fits varchar(8) exactly, but if this
-    helper is ever reused for shorter values (like 'DFW') the padding matters.
-    Callers must pass the declared width.
-
-    See CLAUDE.md "Sargability rule" and the 2026-04-24 XRay CORP Mng
-    "Only TEAM3 shows" postmortem for why a constant-space pad is wrong.
-    """
-    seen: set[str] = set()
-    out: list[str] = []
-    for v in values:
-        for cand in (v, v.ljust(width)):
-            if cand not in seen:
-                seen.add(cand)
-                out.append(cand)
-    return out
 
 
 # --------------------------------------------------------------------------

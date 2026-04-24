@@ -56,6 +56,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
 # Roles allowed. Admin is always bypassed by require_tag_role.
@@ -106,26 +107,6 @@ def _resolve_range(
             s, e = e, s
         return s, e
     return YEAR_START, YEAR_END
-
-
-def _pad_variants(values, *, width: int) -> list[str]:
-    """Expand each value into (unpadded, right-padded-to-column-width) twins.
-
-    Datalake text columns arrive inconsistently: some unpadded (`'TEAM1'`),
-    some right-padded to the declared varchar(N) width (`'TEAM1   '` for
-    varchar(8), `'TMS '` for varchar(4)). The padding amount depends on the
-    COLUMN width, not a constant — so callers must pass the column's declared
-    `character_maximum_length` as `width`. See CLAUDE.md "Sargability rule"
-    and the 2026-04-24 XRay CORP Mng "Only TEAM3 shows" postmortem.
-    """
-    seen: set[str] = set()
-    out: list[str] = []
-    for v in values:
-        for cand in (v, v.ljust(width)):
-            if cand not in seen:
-                seen.add(cand)
-                out.append(cand)
-    return out
 
 
 def _scope_where(

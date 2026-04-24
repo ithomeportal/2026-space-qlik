@@ -31,6 +31,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
 XRAY_ROLES = ("CEO", "Executive", "CORP", "Operations", "Finance")
@@ -97,30 +98,6 @@ def _resolve_range(
         return s, e
     # default: full year
     return YEAR_START, YEAR_END
-
-
-def _pad_variants(values, *, width: int) -> list[str]:
-    """Expand each value into (unpadded, right-padded-to-column-width) twins.
-
-    mcleod_gld_scorecard and mcleod_gld_budget_report_v4 store text columns
-    inconsistently: some arrive unpadded (`'TEAM1'`), some arrive right-padded
-    to the declared varchar(N) width (`'TEAM1   '` for varchar(8), `'TMS '`
-    for varchar(4)). The padding amount depends on the COLUMN width, not a
-    constant — so callers must pass the column's declared `character_maximum_
-    length` as `width`.
-
-    Covering both forms in the WHERE clause lets PostgreSQL use a plain btree
-    index on the column (no expression indexes needed) — which is the
-    difference between a ~200ms seek and a multi-minute full-table scan.
-    """
-    seen: set[str] = set()
-    out: list[str] = []
-    for v in values:
-        for cand in (v, v.ljust(width)):
-            if cand not in seen:
-                seen.add(cand)
-                out.append(cand)
-    return out
 
 
 def _scope_where(
