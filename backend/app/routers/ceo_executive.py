@@ -1,15 +1,22 @@
-"""Code-made report: CEO Executive — 6-tab executive view across CORP teams.
+"""Code-made report: CEO Executive — 6-tab executive view across CORP + DFW.
 
 Mirrors Bruno's "Executive Report" Qlik app
 (8a36f235-d077-4ab0-85ae-ba3732fd36c3) as a portal custom report. Scope:
-TEAM1-5, company TMS/TMS3, status D/P, excluding OILTEX and
+CORP (team_id TEAM1-5) + DFW (team_id TEAM-DFW, sub-teams TM1-TM4 via
+v4.team column), company TMS/TMS3, status D/P, excluding OILTEX and
 UNILINK customers.
+
+Divisions:
+- CORP: team_id ∈ {TEAM1, TEAM2, TEAM3, TEAM4, TEAM5} — "team" label = team_id
+- DFW : team_id = 'TEAM-DFW'                         — "team" label = v4.team
+        (sub-team) with values TM1, TM2, TM3, TM4
 
 Data sources:
 - Overview tab roll-ups (KPIs, Summary by Team, All Teams Performance,
   Profit-TM gauge) all read from public.daily_production_budget_report,
-  joined to a customer→team mapping derived from
-  public.mcleod_gld_budget_report_v4. This is the same source that powers
+  joined to a customer→division_team mapping derived from
+  public.mcleod_gld_budget_report_v4. division_team = team_id for CORP
+  rows, TRIM(team) for DFW rows. This is the same source that powers
   the 2026 Official Budget Follow Up report and the Profit-TM gauge, and
   it is refreshed every 6h by n8n (SQi0VmZS1nYmo7Kt). Using v4 directly
   for these panels used to produce $0 for teams with no April production
@@ -22,14 +29,12 @@ Data sources:
 
 The v4-based panels LEFT JOIN public.mcleod_gld_movement for carrier name.
 
-TEAM-DFW is intentionally excluded — neither a filter button nor included
-in any aggregate.
-
 Filter contract:
-- range   : "mtd" | "ytd" | "full" | "custom"  (default mtd)
+- range    : "mtd" | "ytd" | "full" | "custom"  (default mtd)
 - start_date / end_date : ISO dates (used when range="custom")
-- team    : "TEAM1".."TEAM5" | "" (all)
-- customer: single customer name | "" (all)
+- division : "CORP" | "DFW" | "" (all)
+- team     : one of CORP_TEAMS ∪ DFW_SUB_TEAMS | "" (all)
+- customer : single customer name | "" (all)
 
 Per PDF spec, panels fall into three groups:
 - SCOPED: respect range + team + customer (KPIs, Summary by Team, Profit by
@@ -65,9 +70,15 @@ CEO_ROLES = ("CEO",)
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
 
-# CORP scope only. TEAM-DFW is deliberately excluded from filters, aggregates,
-# and team listings — per 2026-04-24 product decision.
-ALLOWED_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5")
+# Division universe — CORP team_ids + the single DFW team_id.
+CORP_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5")
+DFW_TEAM_ID = "TEAM-DFW"
+# Sub-teams that live UNDER TEAM-DFW (stored in v4.team, not v4.team_id).
+DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
+# team_id universe: what v4.team_id is allowed to be across the whole report.
+ALLOWED_TEAMS = (*CORP_TEAMS, DFW_TEAM_ID)
+# Unified "team" filter values shown in the UI pills (CORP divisions + DFW sub-teams).
+ALL_DIVISION_TEAMS = (*CORP_TEAMS, *DFW_SUB_TEAMS)
 ALLOWED_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
@@ -109,21 +120,37 @@ def _resolve_range(
     return YEAR_START, YEAR_END
 
 
+def _division_team_ids(division: Optional[str]) -> tuple[str, ...]:
+    """team_id values that satisfy the division filter.
+
+    None/""/unknown -> full universe (CORP + DFW).
+    """
+    if division == "CORP":
+        return CORP_TEAMS
+    if division == "DFW":
+        return (DFW_TEAM_ID,)
+    return ALLOWED_TEAMS
+
+
 def _scope_where(
     alias: str,
     team: Optional[str],
     customer: Optional[str],
     params: list,
     include_unilink_filter: bool = True,
+    division: Optional[str] = None,
 ) -> str:
     """Sargable WHERE fragment shared by every scoped query.
 
     Pushes $-placeholders onto `params` in order. Uses `= ANY($N)` with
     padded+unpadded literal variants so Postgres can use btree indexes on
-    team_id, company_id, status. No TRIM() in predicates.
+    team_id, company_id, status. No TRIM() in predicates for the wide
+    dimensions. DFW sub-team uses TRIM(team) only after the sargable
+    team_id filter has already pruned to a single division.
     """
     # v4 declared widths: team_id varchar(8), company_id varchar(4), status varchar(1).
-    params.append(_pad_variants(ALLOWED_TEAMS, width=8))
+    # Seed team_id universe narrowed by division (CORP, DFW, or both).
+    params.append(_pad_variants(_division_team_ids(division), width=8))
     p_teams = len(params)
     params.append(_pad_variants(ALLOWED_COMPANIES, width=4))
     p_comp = len(params)
@@ -141,8 +168,20 @@ def _scope_where(
             f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'"
         )
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"{alias}.team_id = ANY(${len(params)})")
+        if team in CORP_TEAMS:
+            params.append(_pad_variants([team], width=8))
+            parts.append(f"{alias}.team_id = ANY(${len(params)})")
+        elif team in DFW_SUB_TEAMS:
+            params.append(_pad_variants([DFW_TEAM_ID], width=8))
+            parts.append(f"{alias}.team_id = ANY(${len(params)})")
+            params.append(team)
+            # team column width is not documented; TRIM is safe here because
+            # team_id has already pruned to one division's rows (~1/6 scan).
+            parts.append(f"TRIM({alias}.team) = ${len(params)}")
+        else:
+            # Unknown value — fall back to literal team_id filter (defensive).
+            params.append(_pad_variants([team], width=8))
+            parts.append(f"{alias}.team_id = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"{alias}.customer_name = ${len(params)}")
@@ -150,8 +189,9 @@ def _scope_where(
 
 
 def _global_scope_where(alias: str) -> str:
-    """Scope fragment for GLOBAL panels — no team/customer/date filter, but
-    still restricted to the CORP+DFW universe. Safe literal-only SQL.
+    """Scope fragment for GLOBAL panels — no team/customer/date/division
+    filter, but still restricted to the CORP + DFW team_id universe. Safe
+    literal-only SQL.
     """
     def _lit(values, *, width: int) -> str:
         return ",".join(f"'{v}'" for v in _pad_variants(values, width=width))
@@ -188,30 +228,51 @@ def _week_start(d: date) -> date:
 
 
 def _customer_team_cte(teams_param_pos: int) -> str:
-    """Per-customer canonical team CTE, derived from v4.
+    """Per-customer canonical division_team CTE, derived from v4.
 
-    Emits `customer_team(customer_name, team_id)` where each customer is
-    mapped to the team with the most v4 rows (tiebreak by team_id). The
-    padded-variants list must be at $-placeholder position ``teams_param_pos``.
+    Emits ``customer_team(customer_name, division_team)`` where each customer
+    is mapped to the (team_id OR DFW sub-team) with the most v4 rows (tiebreak
+    by division_team). The padded-variants list must be at $-placeholder
+    position ``teams_param_pos``.
+
+    division_team is:
+      * ``TRIM(team_id)`` for CORP rows (TEAM1..TEAM5)
+      * ``TRIM(team)``    for DFW rows (TM1..TM4) — so DFW rolls up at the
+                          sub-team level, not as a single "TEAM-DFW" bucket.
 
     Used by every Overview panel that aggregates daily_production_budget_report
     by team — production actuals come from budget_report (6h n8n refresh),
     team assignment from v4. This matches the Profit-TM gauge logic and the
     2026 Official Budget Follow Up report.
+
+    A customer that ships across divisions is attributed to whichever
+    division_team holds the majority of their v4 rows — acceptable
+    simplification; budget_report is customer-keyed with no team column.
     """
     return f"""
     customer_team AS (
-        SELECT customer_name, team_id FROM (
+        SELECT customer_name, division_team FROM (
             SELECT
                 TRIM(customer_name) AS customer_name,
-                TRIM(team_id)       AS team_id,
+                CASE
+                  WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
+                  ELSE TRIM(team_id)
+                END AS division_team,
                 ROW_NUMBER() OVER (
                     PARTITION BY TRIM(customer_name)
-                    ORDER BY COUNT(*) DESC, TRIM(team_id)
+                    ORDER BY COUNT(*) DESC,
+                             CASE
+                               WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
+                               ELSE TRIM(team_id)
+                             END
                 ) AS rn
             FROM public.mcleod_gld_budget_report_v4
             WHERE team_id = ANY(${teams_param_pos})
-            GROUP BY TRIM(customer_name), TRIM(team_id)
+            GROUP BY TRIM(customer_name),
+                     CASE
+                       WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
+                       ELSE TRIM(team_id)
+                     END
         ) ranked
         WHERE rn = 1
     )
@@ -257,7 +318,12 @@ async def filters(
     return {
         "success": True,
         "data": {
-            "teams": list(ALLOWED_TEAMS),
+            "divisions": ["CORP", "DFW"],
+            "teams": list(ALL_DIVISION_TEAMS),
+            "teams_by_division": {
+                "CORP": list(CORP_TEAMS),
+                "DFW": list(DFW_SUB_TEAMS),
+            },
             "customers": [r["customer_name"] for r in rows],
             "year_start": YEAR_START.isoformat(),
             "year_end": YEAR_END.isoformat(),
@@ -280,6 +346,7 @@ async def overview(
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
@@ -290,18 +357,30 @@ async def overview(
     m_start = _month_start(today)
     m_end = _month_end(today)
 
-    allowed_teams_padded = _pad_variants(ALLOWED_TEAMS, width=8)
-    team_list_for_unnest = [team] if team else list(ALLOWED_TEAMS)
+    # division narrows the team_id universe that the customer_team CTE scans.
+    scoped_team_ids = _division_team_ids(division)
+    scoped_teams_padded = _pad_variants(scoped_team_ids, width=8)
+
+    # Row-list for Summary by Team / All Teams Performance "unnest" joins.
+    # One-row-per-team so teams with no production still appear.
+    if team:
+        team_list_for_unnest = [team]
+    elif division == "CORP":
+        team_list_for_unnest = list(CORP_TEAMS)
+    elif division == "DFW":
+        team_list_for_unnest = list(DFW_SUB_TEAMS)
+    else:
+        team_list_for_unnest = list(ALL_DIVISION_TEAMS)
 
     # ---- KPIs (scoped) --------------------------------------------------
     # Production actuals come from daily_production_budget_report so teams
     # with no April rows in v4 still show real numbers (matches Profit-TM
     # gauge). Team assignment comes from v4 via customer_team CTE.
-    kpi_params: list = [s, e, allowed_teams_padded]
+    kpi_params: list = [s, e, scoped_teams_padded]
     kpi_extra = ""
     if team:
         kpi_params.append(team)
-        kpi_extra += f" AND ct.team_id = ${len(kpi_params)}"
+        kpi_extra += f" AND ct.division_team = ${len(kpi_params)}"
     if customer:
         kpi_params.append(customer)
         kpi_extra += f' AND budget."Customer Name" = ${len(kpi_params)}'
@@ -334,13 +413,11 @@ async def overview(
     )
 
     # ---- Summary by Team (scoped) --------------------------------------
-    # Always emit one row per team in the effective list so teams with no
-    # production in the window still appear with zeros.
-    sbt_params: list = [s, e, allowed_teams_padded, team_list_for_unnest]
+    sbt_params: list = [s, e, scoped_teams_padded, team_list_for_unnest]
     sbt_extra = ""
     if team:
         sbt_params.append(team)
-        sbt_extra += f" AND ct.team_id = ${len(sbt_params)}"
+        sbt_extra += f" AND ct.division_team = ${len(sbt_params)}"
     if customer:
         sbt_params.append(customer)
         sbt_extra += f' AND budget."Customer Name" = ${len(sbt_params)}'
@@ -349,7 +426,7 @@ async def overview(
         WITH {_customer_team_cte(3)},
         agg AS (
           SELECT
-            ct.team_id AS team,
+            ct.division_team AS team,
             COUNT(DISTINCT budget."Customer Name") AS cust,
             COALESCE(SUM(budget."Loads Actual"),   0)::numeric AS loads,
             COALESCE(SUM(budget."Revenue Actual"), 0)::numeric AS revenue,
@@ -359,7 +436,7 @@ async def overview(
           WHERE budget."Date" BETWEEN $1 AND $2
           {_BUDGET_EXCLUDE_FRAG}
           {sbt_extra}
-          GROUP BY ct.team_id
+          GROUP BY ct.division_team
         )
         SELECT
           t.team,
@@ -374,12 +451,12 @@ async def overview(
         *sbt_params,
     )
 
-    # ---- Profit-TM (semi-scoped: current month, team+customer apply) ---
-    tm_params: list = [m_start, m_end, allowed_teams_padded]
+    # ---- Profit-TM (semi-scoped: current month, division+team+customer apply) ---
+    tm_params: list = [m_start, m_end, scoped_teams_padded]
     tm_extra = ""
     if team:
         tm_params.append(team)
-        tm_extra += f" AND ct.team_id = ${len(tm_params)}"
+        tm_extra += f" AND ct.division_team = ${len(tm_params)}"
     if customer:
         tm_params.append(customer)
         tm_extra += f' AND budget."Customer Name" = ${len(tm_params)}'
@@ -397,8 +474,11 @@ async def overview(
     )
 
     # ---- All Teams Performance (GLOBAL — Yd / Week / Month) -------------
-    # Ignores every filter. Always emits one row per ALLOWED_TEAMS member
-    # via unnest LEFT JOIN agg so teams with no production still appear.
+    # Ignores every filter. Always emits one row per ALL_DIVISION_TEAMS
+    # member via unnest LEFT JOIN agg so teams with no production still
+    # appear. $5 carries the full CORP+DFW team_id universe so the CTE can
+    # see rows from both divisions regardless of the currently-selected
+    # division filter.
     yesterday = today - timedelta(days=1)
     week_start = _week_start(today)
     atp_task = pool.fetch(
@@ -406,7 +486,7 @@ async def overview(
         WITH {_customer_team_cte(5)},
         agg AS (
           SELECT
-            ct.team_id AS team,
+            ct.division_team AS team,
             COALESCE(SUM(budget."Loads Actual")
               FILTER (WHERE budget."Date" = $1), 0)::numeric AS yd_loads,
             COALESCE(SUM(budget."Profit Actual")
@@ -452,7 +532,7 @@ async def overview(
           WHERE budget."Date" BETWEEN $4 AND $3
             AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
             AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%UNILINK%'
-          GROUP BY ct.team_id
+          GROUP BY ct.division_team
         )
         SELECT
           t.team,
@@ -470,7 +550,9 @@ async def overview(
         LEFT JOIN agg a ON a.team = t.team
         ORDER BY mo_profit DESC NULLS LAST, team
         """,
-        yesterday, week_start, today, m_start, allowed_teams_padded, list(ALLOWED_TEAMS),
+        yesterday, week_start, today, m_start,
+        _pad_variants(ALLOWED_TEAMS, width=8),
+        list(ALL_DIVISION_TEAMS),
     )
 
     kpi, sbt, profit_tm, atp = await asyncio.gather(
@@ -648,6 +730,7 @@ async def customers(
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
@@ -657,7 +740,7 @@ async def customers(
 
     # ---- Profit by Customer (scoped) ------------------------------------
     pc_params: list = []
-    pc_where = _scope_where("br4", team, customer, pc_params)
+    pc_where = _scope_where("br4", team, customer, pc_params, division=division)
     pc_params.extend([s, e])
     pc_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -694,7 +777,7 @@ async def customers(
 
     # ---- Worst Profit by Customer (scoped, reverse sort) ---------------
     wp_params: list = []
-    wp_where = _scope_where("br4", team, customer, wp_params)
+    wp_where = _scope_where("br4", team, customer, wp_params, division=division)
     wp_params.extend([s, e])
     wp_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -946,6 +1029,7 @@ async def risk(
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
@@ -955,7 +1039,7 @@ async def risk(
 
     # ---- Worst Margins by Lanes ----------------------------------------
     wm_params: list = []
-    wm_where = _scope_where("br4", team, customer, wm_params)
+    wm_where = _scope_where("br4", team, customer, wm_params, division=division)
     wm_params.extend([s, e])
     wm_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -992,7 +1076,7 @@ async def risk(
     # placeholders start at $2 and line up with the positional args below.
     # movement.company_id is varchar(4) — same width as v4.company_id.
     no_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
-    no_where = _scope_where("br4", team, customer, no_params)
+    no_where = _scope_where("br4", team, customer, no_params, division=division)
     no_params.extend([s, e])
     no_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -1041,7 +1125,7 @@ async def risk(
 
     # ---- Negative Loads by Customer ------------------------------------
     nc_params: list = []
-    nc_where = _scope_where("br4", team, customer, nc_params)
+    nc_where = _scope_where("br4", team, customer, nc_params, division=division)
     nc_params.extend([s, e])
     nc_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -1135,6 +1219,7 @@ async def orders(
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
@@ -1144,7 +1229,7 @@ async def orders(
 
     # ---- Lane Production Analysis --------------------------------------
     lpa_params: list = []
-    lpa_where = _scope_where("br4", team, customer, lpa_params)
+    lpa_where = _scope_where("br4", team, customer, lpa_params, division=division)
     lpa_params.extend([s, e])
     lpa_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -1184,7 +1269,7 @@ async def orders(
 
     # ---- All Orders (with carrier via LEFT JOIN movement) --------------
     ao_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
-    ao_where = _scope_where("br4", team, customer, ao_params)
+    ao_where = _scope_where("br4", team, customer, ao_params, division=division)
     ao_params.extend([s, e])
     ao_df = (
         f"br4.origin_actual_departure::date BETWEEN "
@@ -1200,7 +1285,8 @@ async def orders(
           WHERE company_id = ANY($1)
         )
         SELECT
-          TRIM(br4.team_id)       AS team,
+          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
+               ELSE TRIM(br4.team_id) END AS team,
           TRIM(br4.id)            AS id,
           TRIM(br4.customer_name) AS customer,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,

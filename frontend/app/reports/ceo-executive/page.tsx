@@ -3,7 +3,12 @@
 import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Crown, Loader2 } from "lucide-react"
-import { useCeoFilters, type CeoFilters, type CeoRange } from "@/lib/ceo-api"
+import {
+  useCeoFilters,
+  type CeoDivision,
+  type CeoFilters,
+  type CeoRange,
+} from "@/lib/ceo-api"
 import { Overview } from "./tabs/Overview"
 import { Trends } from "./tabs/Trends"
 import { Customers } from "./tabs/Customers"
@@ -13,6 +18,11 @@ import { Orders } from "./tabs/Orders"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
+
+// Fallback team lists used before /filters resolves, and to drop a team
+// selection that is incompatible with the current division.
+const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"] as const
+const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
 
 // Overview now bundles Overview + Trends + Customers content, stacked in that
 // order, so those two no longer get their own tabs.
@@ -46,12 +56,36 @@ export default function CeoExecutivePage() {
   const [range, setRange] = useState<CeoRange>("mtd")
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(clampToYear(todayIso()))
+  const [division, setDivision] = useState<CeoDivision | "">("") // "" = all
   const [team, setTeam] = useState<string>("") // "" = all
   const [customerInput, setCustomerInput] = useState<string>("")
   const [customer, setCustomer] = useState<string>("")
 
   const { data: filterRes, isLoading: loadingFilters } = useCeoFilters()
   const filterOptions = filterRes?.data
+
+  // Team pill list narrows with the selected division. Fall back to the
+  // hard-coded constants so the UI stays usable if /filters is still loading.
+  const teamOptions = useMemo<string[]>(() => {
+    const byDiv = filterOptions?.teams_by_division
+    if (division === "CORP") return byDiv?.CORP ?? [...CORP_TEAMS]
+    if (division === "DFW") return byDiv?.DFW ?? [...DFW_SUB_TEAMS]
+    return filterOptions?.teams ?? [...CORP_TEAMS, ...DFW_SUB_TEAMS]
+  }, [division, filterOptions])
+
+  // Drop a team selection that is incompatible with the new division.
+  function selectDivision(next: CeoDivision | "") {
+    setDivision(next)
+    if (!team) return
+    if (next === "CORP" && !CORP_TEAMS.includes(team as (typeof CORP_TEAMS)[number])) {
+      setTeam("")
+    } else if (
+      next === "DFW" &&
+      !DFW_SUB_TEAMS.includes(team as (typeof DFW_SUB_TEAMS)[number])
+    ) {
+      setTeam("")
+    }
+  }
 
   const appliedDates = useMemo(() => {
     if (range === "full") return { startDate: YEAR_START, endDate: YEAR_END }
@@ -67,10 +101,11 @@ export default function CeoExecutivePage() {
       range,
       startDate: appliedDates.startDate,
       endDate: appliedDates.endDate,
+      division: division || undefined,
       team: team || undefined,
       customer: customer || undefined,
     }),
-    [range, appliedDates, team, customer],
+    [range, appliedDates, division, team, customer],
   )
 
   const customerSuggestions = useMemo(() => {
@@ -94,6 +129,8 @@ export default function CeoExecutivePage() {
         </div>
         <div className="ml-auto text-xs text-[#6B7280]">
           {appliedDates.startDate} → {appliedDates.endDate}
+          {" · "}
+          Division: {division || "All"}
           {" · "}
           Team: {team || "All"}
           {" · "}
@@ -149,6 +186,29 @@ export default function CeoExecutivePage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Division</label>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { k: "" as const, label: "All" },
+                { k: "CORP" as const, label: "CORP" },
+                { k: "DFW" as const, label: "DFW" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => selectDivision(opt.k)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    division === opt.k
+                      ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
+                      : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Team</label>
             <div className="flex flex-wrap gap-1">
               <button
@@ -161,7 +221,7 @@ export default function CeoExecutivePage() {
               >
                 All
               </button>
-              {(filterOptions?.teams ?? []).map((t) => (
+              {teamOptions.map((t) => (
                 <button
                   key={t}
                   onClick={() => setTeam(t)}

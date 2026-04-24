@@ -30,11 +30,13 @@ const CEO_RETRY = {
 // ---------------------------------------------------------------------------
 
 export type CeoRange = "mtd" | "ytd" | "full" | "custom"
+export type CeoDivision = "CORP" | "DFW"
 
 export interface CeoFilters {
   range: CeoRange
   startDate?: string
   endDate?: string
+  division?: CeoDivision
   team?: string
   customer?: string
 }
@@ -44,6 +46,7 @@ function ceoQs(f: CeoFilters) {
   q.set("range", f.range)
   if (f.range === "custom" && f.startDate) q.set("start_date", f.startDate)
   if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
+  if (f.division) q.set("division", f.division)
   if (f.team) q.set("team", f.team)
   if (f.customer) q.set("customer", f.customer)
   return `?${q.toString()}`
@@ -54,7 +57,9 @@ function ceoQs(f: CeoFilters) {
 // ---------------------------------------------------------------------------
 
 export interface CeoFilterOptions {
+  divisions?: CeoDivision[]
   teams: string[]
+  teams_by_division?: Record<CeoDivision, string[]>
   customers: string[]
   year_start: string
   year_end: string
