@@ -68,15 +68,17 @@ _DEPARTMENT_NORMALIZED = """
 # IT department employees are excluded from this report (requested by HR — IT
 # staff keep irregular hours so their punches are noise in the on-time metric).
 # Applied inside the JOIN so every endpoint (filters, kpis, rows, trend,
-# by-department) drops them uniformly. Covers the two spellings seen in the
-# timeoff_employee Graph sync: "IT" and "Information Technology", plus any
-# "IT <something>" prefix (e.g. "IT Support"). NULL departments pass through.
+# by-department) drops them uniformly. The REPLACE strips periods so dot-style
+# spellings ("I.T.", "I.T") collapse to "IT". Covered variants:
+#   "IT", "I.T.", "I.T", "Information Technology", "IT Support" (any "IT "
+#   prefix). Case + trailing whitespace normalised via UPPER(TRIM(...)).
+# NULL departments pass through (Graph-sync drift safety).
 _EXCLUDE_IT_SQL = """
   AND (
     e.department IS NULL
     OR (
-      UPPER(TRIM(e.department)) NOT IN ('IT', 'INFORMATION TECHNOLOGY')
-      AND UPPER(TRIM(e.department)) NOT LIKE 'IT %'
+      UPPER(REPLACE(TRIM(e.department), '.', '')) NOT IN ('IT', 'INFORMATION TECHNOLOGY')
+      AND UPPER(REPLACE(TRIM(e.department), '.', '')) NOT LIKE 'IT %'
     )
   )
 """
