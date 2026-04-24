@@ -81,9 +81,12 @@ def _resolve_range(
     start_date: Optional[date],
     end_date: Optional[date],
 ) -> tuple[date, date]:
-    """Expand the 3-mode range selector into a concrete [start, end] pair."""
+    """Expand the 4-mode range selector into a concrete [start, end] pair."""
     today = date.today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
+    if rng == "mtd":
+        m_start = today_clamped.replace(day=1)
+        return m_start, today_clamped
     if rng == "ytd":
         return YEAR_START, today_clamped
     if rng == "custom":
@@ -379,8 +382,8 @@ async def kpis(
 
     # ---- Savings trio (default current month, honors RANGE) --------------
     # When range="ytd" / "custom" with a different window, use that instead of current month.
-    sav_start = s if range in ("ytd", "custom") else m_start
-    sav_end = e if range in ("ytd", "custom") else m_end
+    sav_start = s if range in ("mtd", "ytd", "custom") else m_start
+    sav_end = e if range in ("mtd", "ytd", "custom") else m_end
     sav_params: list = [sav_start, sav_end]
     sav_extra = " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
     if customer:

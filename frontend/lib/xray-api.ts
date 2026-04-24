@@ -32,7 +32,7 @@ const XRAY_RETRY = {
 // Shared filter contract for XRay CORP Mng
 // ---------------------------------------------------------------------------
 
-export type XrayRange = "full" | "ytd" | "custom"
+export type XrayRange = "mtd" | "ytd" | "full" | "custom"
 
 export interface XrayFilters {
   range: XrayRange

@@ -30,6 +30,11 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
 
+function monthStartIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+}
+
 function clampToYear(iso: string) {
   if (iso < YEAR_START) return YEAR_START
   if (iso > YEAR_END) return YEAR_END
@@ -38,7 +43,7 @@ function clampToYear(iso: string) {
 
 export default function XrayCorpPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview")
-  const [range, setRange] = useState<XrayRange>("ytd")
+  const [range, setRange] = useState<XrayRange>("mtd")
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(clampToYear(todayIso()))
   const [team, setTeam] = useState<string>("") // "" = all
@@ -51,6 +56,7 @@ export default function XrayCorpPage() {
   const appliedDates = useMemo(() => {
     if (range === "full") return { startDate: YEAR_START, endDate: YEAR_END }
     if (range === "ytd") return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
+    if (range === "mtd") return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
     return { startDate: clampToYear(startDate), endDate: clampToYear(endDate) }
   }, [range, startDate, endDate])
 
@@ -101,8 +107,9 @@ export default function XrayCorpPage() {
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
             <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
               {[
-                { k: "full" as const, label: "Full 2026" },
+                { k: "mtd" as const, label: "MTD" },
                 { k: "ytd" as const, label: "YTD" },
+                { k: "full" as const, label: "Full 2026" },
                 { k: "custom" as const, label: "Custom" },
               ].map((opt) => (
                 <button
