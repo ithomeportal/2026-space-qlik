@@ -81,6 +81,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO", "Executive", "HR", "IT"],
     },
+    {
+        "key": "podium-dfw",  # -> /reports/podium-dfw
+        "title": "Podium Set DFW",
+        "description": "Live DFW Rate-Conf Received podium: KPIs + today's bookings (Today / WTD / MTD)",
+        "note": "TEAM-DFW only · Rate Conf Received latest/order · source: order_post_hist + budget_report_v4",
+        "category": "Operations",
+        "tags": ["dfw", "podium", "rate-conf", "loads", "profit", "revenue", "daily", "live"],
+        "owner_name": "Diego",
+        "roles": ["DFW"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
