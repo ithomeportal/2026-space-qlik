@@ -21,6 +21,7 @@ import {
   useXrayLaneAnalysis,
   type XrayFilters,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
@@ -34,15 +35,16 @@ const fmtBucket = (s: string) => {
 
 export function ContractSpot({ filters }: Props) {
   const trioFilter = { team: filters.team, customer: filters.customer }
-  const { data: csRes, isLoading: loadingCs } = useXrayContractSpot(trioFilter)
-  const { data: ordersRes, isLoading: loadingOrd } = useXrayAllOrders(filters)
-  const { data: laRes, isLoading: loadingLa } = useXrayLaneAnalysis(filters)
+  const { data: csRes, isLoading: loadingCs, error: csErr } = useXrayContractSpot(trioFilter)
+  const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayAllOrders(filters)
+  const { data: laRes, isLoading: loadingLa, error: laErr } = useXrayLaneAnalysis(filters)
   const cs = csRes?.data
   const orders = ordersRes?.data ?? []
   const lanes = laRes?.data ?? []
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Contract vs Spot" errors={[csErr, ordErr, laErr]} />
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {/* Contract */}
         <ChartCard title="% Contract — Revenue vs Loads" subtitle="Last 9 weeks" loading={loadingCs}>

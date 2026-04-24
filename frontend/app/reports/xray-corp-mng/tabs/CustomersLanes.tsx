@@ -10,16 +10,17 @@ import {
   useXrayByLane,
   type XrayFilters,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
 }
 
 export function CustomersLanes({ filters }: Props) {
-  const { data: custRes, isLoading: loadingCust } = useXrayByCustomer(filters)
-  const { data: laneRes, isLoading: loadingLane } = useXrayByLane(filters)
+  const { data: custRes, isLoading: loadingCust, error: custErr } = useXrayByCustomer(filters)
+  const { data: laneRes, isLoading: loadingLane, error: laneErr } = useXrayByLane(filters)
   const trioFilter = { team: filters.team, customer: filters.customer }
-  const { data: attrRes, isLoading: loadingAttr } = useXrayAttrition(trioFilter)
+  const { data: attrRes, isLoading: loadingAttr, error: attrErr } = useXrayAttrition(trioFilter)
   const customers = custRes?.data ?? []
   const lanes = laneRes?.data ?? []
   const attrition = attrRes?.data ?? []
@@ -46,6 +47,7 @@ export function CustomersLanes({ filters }: Props) {
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Customers & Lanes" errors={[custErr, laneErr, attrErr]} />
       {/* Profit by Customer */}
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <div className="border-b border-[#E5E7EB] bg-[#F3F4F6] px-3 py-2 text-sm font-semibold text-[#111827]">

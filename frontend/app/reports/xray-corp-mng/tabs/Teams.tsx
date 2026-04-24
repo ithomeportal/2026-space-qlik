@@ -10,6 +10,7 @@ import {
   type XrayTeamBucket,
   type XrayTeamBreakdownRow,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
@@ -30,11 +31,12 @@ const COLS: { key: keyof Omit<XrayTeamBreakdownRow, "team">; label: string }[] =
 ]
 
 export function Teams({ filters }: Props) {
-  const { data, isLoading } = useXrayTeamsBreakdown({ customer: filters.customer })
+  const { data, isLoading, error } = useXrayTeamsBreakdown({ customer: filters.customer })
   const breakdown = data?.data
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Teams" errors={[error]} />
       <TeamTable title="Loads by Teams" tone="red" metric="loads" data={breakdown} loading={isLoading} />
       <TeamTable title="Profit by Teams" tone="yellow" metric="profit" data={breakdown} loading={isLoading} />
       <TeamTable title="Margin by Teams" tone="purple" metric="margin" data={breakdown} loading={isLoading} />

@@ -16,6 +16,18 @@ async function apiFetch<T>(path: string): Promise<ApiResponse<T>> {
   return res.json()
 }
 
+// Cap retries at 2 for every XRay hook so a failing endpoint surfaces an
+// error state within seconds instead of the Provider's default 5-retry +
+// exponential backoff (which silently hides failures for ~1 minute).
+const XRAY_RETRY = {
+  retry: (failureCount: number, error: unknown) => {
+    const msg = error instanceof Error ? error.message : ""
+    if (/\b401\b|\b403\b/.test(msg)) return false
+    return failureCount < 2
+  },
+  retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+}
+
 // ---------------------------------------------------------------------------
 // Shared filter contract for XRay CORP Mng
 // ---------------------------------------------------------------------------
@@ -290,6 +302,7 @@ export interface XrayLaneAnalysisRow {
 
 export function useXrayFilters() {
   return useQuery({
+    ...XRAY_RETRY,
     queryKey: ["xray", "filters"],
     queryFn: () => apiFetch<XrayFilterOptions>("custom/xray-corp/filters"),
     staleTime: 30 * 60 * 1000,
@@ -298,6 +311,7 @@ export function useXrayFilters() {
 
 export function useXrayKpis(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "kpis", f],
     queryFn: () => apiFetch<XrayKpis>(`custom/xray-corp/kpis${xrayQs(f)}`),
@@ -306,6 +320,7 @@ export function useXrayKpis(f: XrayFilters, enabled = true) {
 
 export function useXrayTrio(f: Pick<XrayFilters, "team" | "customer">, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "trio", f],
     queryFn: () =>
@@ -321,6 +336,7 @@ export function useXrayProjection(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "projection", f],
     queryFn: () =>
@@ -333,6 +349,7 @@ export function useXrayProjection(
 
 export function useXrayByCustomer(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "by-customer", f],
     queryFn: () => apiFetch<XrayCustomerRow[]>(`custom/xray-corp/by-customer${xrayQs(f)}`),
@@ -341,6 +358,7 @@ export function useXrayByCustomer(f: XrayFilters, enabled = true) {
 
 export function useXrayByLane(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "by-lane", f],
     queryFn: () => apiFetch<XrayLaneRow[]>(`custom/xray-corp/by-lane${xrayQs(f)}`),
@@ -352,6 +370,7 @@ export function useXrayAttrition(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "attrition", f],
     queryFn: () =>
@@ -366,6 +385,7 @@ export function useXrayTeamsBreakdown(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "teams-breakdown", f],
     queryFn: () =>
@@ -380,6 +400,7 @@ export function useXrayTrends(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "trends", f],
     queryFn: () =>
@@ -393,6 +414,7 @@ export function useXraySummaryTable(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "summary-table", f],
     queryFn: () =>
@@ -405,6 +427,7 @@ export function useXraySummaryTable(
 
 export function useXrayRisk(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "risk", f],
     queryFn: () => apiFetch<XrayRisk>(`custom/xray-corp/risk${xrayQs(f)}`),
@@ -416,6 +439,7 @@ export function useXrayContractSpot(
   enabled = true,
 ) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "contract-spot", f],
     queryFn: () =>
@@ -428,6 +452,7 @@ export function useXrayContractSpot(
 
 export function useXrayAllOrders(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "all-orders", f],
     queryFn: () => apiFetch<XrayAllOrder[]>(`custom/xray-corp/all-orders${xrayQs(f)}`),
@@ -436,6 +461,7 @@ export function useXrayAllOrders(f: XrayFilters, enabled = true) {
 
 export function useXrayLaneAnalysis(f: XrayFilters, enabled = true) {
   return useQuery({
+    ...XRAY_RETRY,
     enabled,
     queryKey: ["xray", "lane-analysis", f],
     queryFn: () => apiFetch<XrayLaneAnalysisRow[]>(`custom/xray-corp/lane-analysis${xrayQs(f)}`),

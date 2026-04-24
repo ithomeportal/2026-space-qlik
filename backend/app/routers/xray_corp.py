@@ -25,6 +25,7 @@ sticky window (yesterday, this/last week, this/last month, last N weeks, etc.).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -124,10 +125,33 @@ def _scope_where(
     return " AND ".join(parts)
 
 
+def _pad_variants(values) -> list[str]:
+    """Expand each value into unpadded + 3-space-padded twins.
+
+    mcleod_gld_scorecard stores text columns inconsistently: sometimes `'TEAM1'`,
+    sometimes `'TEAM1   '` (CHAR(8)-style padding). Covering both in the WHERE
+    clause lets PostgreSQL use a plain btree index on the column (no expression
+    indexes needed) — which is the difference between a ~200ms seek and a
+    multi-minute full-table sequential scan.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        for cand in (v, v + "   "):
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
 def _scorecard_cte(kind: str) -> str:
     """Return a CTE that rolls the scorecard table up into per-order OTP / OTD counts.
 
     `kind` is "otp" or "otd". Codes and stop_types differ between the two.
+    Every WHERE predicate uses direct equality (no TRIM) against both padded
+    and unpadded literal variants, so the planner can use any existing btree
+    index on `team_id`, `company_id`, `stop_type`, etc. TRIM is kept ONLY on
+    the GROUP BY output so downstream joins against `TRIM(br4.id)` still match.
     """
     if kind == "otp":
         codes = OTP_CODES
@@ -137,23 +161,27 @@ def _scorecard_cte(kind: str) -> str:
         codes = OTD_CODES
         stops = ("", "CO", "SO")
         out = "scorecard_count_otd"
-    # Embed as inline SQL literals (no user input here).
-    codes_sql = ",".join(f"'{c}'" for c in codes)
-    stops_sql = ",".join(f"'{s}'" for s in stops)
-    teams_sql = ",".join(f"'{t}'" for t in CORP_TEAMS)
-    companies_sql = ",".join(f"'{c}'" for c in CORP_COMPANIES)
+
+    def _lit(values) -> str:
+        return ",".join(f"'{v}'" for v in _pad_variants(values))
+
+    codes_sql = _lit(codes)
+    stops_sql = _lit(stops)
+    teams_sql = _lit(CORP_TEAMS)
+    companies_sql = _lit(CORP_COMPANIES)
+    statuses_sql = _lit(OPEN_STATUSES)
     return f"""
     SELECT
       TRIM(id)         AS id_key,
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard
-    WHERE TRIM(team_id)    IN ({teams_sql})
-      AND TRIM(company_id) IN ({companies_sql})
-      AND TRIM(status)     IN ('D','P')
-      AND TRIM(stop_type)  IN ({stops_sql})
+    WHERE team_id    IN ({teams_sql})
+      AND company_id IN ({companies_sql})
+      AND status     IN ({statuses_sql})
+      AND stop_type  IN ({stops_sql})
       AND total_charge IS NOT NULL AND total_charge <> 0
-      AND TRIM(edi_standard_code) IN ({codes_sql})
+      AND edi_standard_code IN ({codes_sql})
     GROUP BY TRIM(id), TRIM(company_id)
     """
 
@@ -275,7 +303,7 @@ async def kpis(
         f"br4.origin_actual_departure::date BETWEEN ${len(params) - 1} AND ${len(params)}"
     )
 
-    kpi_row = await pool.fetchrow(
+    kpi_task = pool.fetchrow(
         f"""
         WITH otp AS ({_scorecard_cte("otp")}),
              otd AS ({_scorecard_cte("otd")}),
@@ -323,7 +351,7 @@ async def kpis(
     if customer:
         tm_params.append(customer)
         tm_extra += f" AND budget.\"Customer Name\" = ${len(tm_params)}"
-    profit_tm = await pool.fetchval(
+    profit_tm_task = pool.fetchval(
         f"""
         WITH customer_team AS (
             SELECT customer_name, team_id FROM (
@@ -364,7 +392,7 @@ async def kpis(
     if team:
         sav_params.append(team)
         sav_team_filter = f" AND ct.team_id = ${len(sav_params)}"
-    sav_row = await pool.fetchrow(
+    sav_task = pool.fetchrow(
         f"""
         WITH customer_team AS (
             SELECT customer_name, team_id FROM (
@@ -393,6 +421,9 @@ async def kpis(
         """,
         *sav_params,
     )
+
+    # Run the three independent reads concurrently — saves ~2/3 of total latency.
+    kpi_row, profit_tm, sav_row = await asyncio.gather(kpi_task, profit_tm_task, sav_task)
 
     return {
         "success": True,
@@ -497,9 +528,11 @@ async def trio_tables(
                 teams_out.append(row_out)
         return {"totals": totals, "teams": teams_out}
 
-    yesterday_data = await _window(yesterday, yesterday, TU_DAY)
-    week_data = await _window(w_start, today, TU_WEEK)
-    month_data = await _window(m_start, today, TU_MONTH)
+    yesterday_data, week_data, month_data = await asyncio.gather(
+        _window(yesterday, yesterday, TU_DAY),
+        _window(w_start, today, TU_WEEK),
+        _window(m_start, today, TU_MONTH),
+    )
     return {
         "success": True,
         "data": {

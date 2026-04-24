@@ -19,13 +19,14 @@ import {
   useXrayRisk,
   type XrayFilters,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
 }
 
 export function Risk({ filters }: Props) {
-  const { data, isLoading } = useXrayRisk(filters)
+  const { data, isLoading, error } = useXrayRisk(filters)
   const r = data?.data
 
   const fmtBucket = (s: string) => {
@@ -36,6 +37,7 @@ export function Risk({ filters }: Props) {
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Risk" errors={[error]} />
       {/* Worst margins by lane */}
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <div className="border-b border-[#FCA5A5] bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">

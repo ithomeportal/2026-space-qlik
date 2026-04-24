@@ -11,6 +11,7 @@ import {
   type XrayFilters,
   type XrayTrioRow,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
@@ -19,11 +20,11 @@ interface Props {
 const PROFIT_GOAL_PER_TEAM = 55000
 
 export function Overview({ filters }: Props) {
-  const { data: kpiRes, isLoading: loadingKpis } = useXrayKpis(filters)
+  const { data: kpiRes, isLoading: loadingKpis, error: kpiErr } = useXrayKpis(filters)
   const k = kpiRes?.data
   const trioFilter = { team: filters.team, customer: filters.customer }
-  const { data: trioRes, isLoading: loadingTrio } = useXrayTrio(trioFilter)
-  const { data: projRes, isLoading: loadingProj } = useXrayProjection(trioFilter)
+  const { data: trioRes, isLoading: loadingTrio, error: trioErr } = useXrayTrio(trioFilter)
+  const { data: projRes, isLoading: loadingProj, error: projErr } = useXrayProjection(trioFilter)
   const p = projRes?.data
   const trio = trioRes?.data
 
@@ -33,6 +34,7 @@ export function Overview({ filters }: Props) {
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Overview" errors={[kpiErr, trioErr, projErr]} />
       {/* 6 Primary KPIs */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-6">
         <Kpi label="# Loads" value={fmtCount(k?.loads)} tone="red" loading={loadingKpis} />

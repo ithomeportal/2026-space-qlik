@@ -25,6 +25,7 @@ import {
   type XrayFilters,
   type XrayTrendPoint,
 } from "@/lib/xray-api"
+import { XrayErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayFilters
@@ -34,8 +35,8 @@ type Grain = "day" | "week" | "month"
 
 export function Trends({ filters }: Props) {
   const trioFilter = { team: filters.team, customer: filters.customer }
-  const { data: trendsRes, isLoading: loadingTrends } = useXrayTrends(trioFilter)
-  const { data: summRes, isLoading: loadingSumm } = useXraySummaryTable(trioFilter)
+  const { data: trendsRes, isLoading: loadingTrends, error: trendsErr } = useXrayTrends(trioFilter)
+  const { data: summRes, isLoading: loadingSumm, error: summErr } = useXraySummaryTable(trioFilter)
   const t = trendsRes?.data
   const summ = summRes?.data
 
@@ -52,6 +53,7 @@ export function Trends({ filters }: Props) {
 
   return (
     <div className="space-y-6">
+      <XrayErrorBanner label="Trends" errors={[trendsErr, summErr]} />
       {/* Rev-vs-CC per load (line chart, monthly or weekly) */}
       <ChartCard
         title="Revenue × Load vs Carrier Cost × Load"
