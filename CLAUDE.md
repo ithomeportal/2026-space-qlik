@@ -91,6 +91,7 @@
 - Current catalog:
   - **eSavings from Carriers** — `/reports/esavings-carriers` · roles: CEO, Executive, Procurement, Finance, CORP, DFW · source `aivn_datalake_gold.carriers_savings_results_report` (n8n `PdZIaBQPGSLD4VWB`) · top filter row: Month + Division (CORP/DFW) + Corp Team (TEAM1..TEAM5) + Origin + Destination — Division/Team resolved via McLeod join (skipped when no filter — unfiltered totals unchanged); Origin/Dest are ILIKE substrings (debounced 300ms) and scope EVERY panel (KPIs, Team Summary, trend chart, Top Customers, Lanes) · Total Savings card shows $55k/division monthly goal progress · Team Summary table + dual-axis 9-month trend chart · see `docs/SPEC-CUSTOM-REPORTS.md`
   - **2026 Official Budget Follow Up** — `/reports/budget-followup-2026` · roles: CEO, Executive, Operations, Finance, CORP, DFW · source `aivn_datalake_gold.daily_production_budget_report` · populated every 6h by n8n `SQi0VmZS1nYmo7Kt` · `team_id` resolved at query time by joining `mcleod_gld_budget_report_v4` on customer name (dominant-team per customer, whitelisted to `TEAM1..TEAM5, TEAM-DFW`) — the stored `"Team ID"` column is ignored
+  - **XRay CORP Mng** — `/reports/xray-corp-mng` · roles: CEO, Executive, CORP, Operations, Finance · 6 tabs (Overview, Customers & Lanes, Teams, Trends, Risk, Contract vs Spot) · scope: TEAM1–TEAM5, company TMS/TMS3, excludes OILTEX · sources: `mcleod_gld_budget_report_v4` (production), `mcleod_gld_scorecard` (OTP/OTD), `mcleod_gld_movement` (carrier, 45-day window, LEFT JOIN), `daily_production_budget_report` (Profit-TM), `carriers_savings_results_report` (savings trio) · filters: RANGE (Full 2026 / YTD / Custom) + single TEAM (or All) + single CUSTOMER (autosuggest) · TU goals: 25/125/500 per team day/week/month · tabs are lazy so only the active tab queries · panels marked "no date filter" on the PDF stay on their own windows
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -127,7 +128,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng
 
 ---
 
@@ -220,7 +221,7 @@ TV_SECRET=<shared with backend>
 ### Backend (Render)
 ```
 DATABASE_URL=<Aiven Postgres URL>
-SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers eSavings from Carriers AND 2026 Official Budget Follow Up>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers eSavings from Carriers, 2026 Official Budget Follow Up, AND XRay CORP Mng>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com

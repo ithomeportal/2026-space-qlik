@@ -1,0 +1,116 @@
+"use client"
+
+import { Loader2 } from "lucide-react"
+import {
+  fmtCount,
+  fmtPct,
+  fmtUsd,
+  useXrayTeamsBreakdown,
+  type XrayFilters,
+  type XrayTeamBucket,
+  type XrayTeamBreakdownRow,
+} from "@/lib/xray-api"
+
+interface Props {
+  filters: XrayFilters
+}
+
+type Metric = "loads" | "profit" | "margin"
+
+const COLS: { key: keyof Omit<XrayTeamBreakdownRow, "team">; label: string }[] = [
+  { key: "tm", label: "TM" },
+  { key: "tw", label: "TW" },
+  { key: "l1w", label: "LW" },
+  { key: "l2w", label: "L2W" },
+  { key: "l3w", label: "L3W" },
+  { key: "l4w", label: "L4W" },
+  { key: "l5w", label: "L5W" },
+  { key: "avg_l5w", label: "AVG L5W" },
+  { key: "avg_l5w_minus_lw", label: "AVG L5W − LW" },
+]
+
+export function Teams({ filters }: Props) {
+  const { data, isLoading } = useXrayTeamsBreakdown({ customer: filters.customer })
+  const breakdown = data?.data
+
+  return (
+    <div className="space-y-6">
+      <TeamTable title="Loads by Teams" tone="red" metric="loads" data={breakdown} loading={isLoading} />
+      <TeamTable title="Profit by Teams" tone="yellow" metric="profit" data={breakdown} loading={isLoading} />
+      <TeamTable title="Margin by Teams" tone="purple" metric="margin" data={breakdown} loading={isLoading} />
+    </div>
+  )
+}
+
+function TeamTable({
+  title,
+  tone,
+  metric,
+  data,
+  loading,
+}: {
+  title: string
+  tone: "red" | "yellow" | "purple"
+  metric: Metric
+  data:
+    | { teams: XrayTeamBreakdownRow[]; totals: Omit<XrayTeamBreakdownRow, "team"> }
+    | undefined
+  loading?: boolean
+}) {
+  const headerBg =
+    tone === "red" ? "bg-[#FEE2E2]" : tone === "yellow" ? "bg-[#FEF3C7]" : "bg-[#EDE9FE]"
+  const render = (b: XrayTeamBucket) => {
+    if (metric === "loads") return fmtCount(b.loads)
+    if (metric === "profit") return fmtUsd(b.profit)
+    return fmtPct(b.margin_pct)
+  }
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
+      <div className={`${headerBg} px-3 py-2 text-sm font-semibold text-[#111827]`}>{title}</div>
+      {loading ? (
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
+        </div>
+      ) : !data ? null : (
+        <div className="overflow-auto">
+          <table className="w-full text-xs tabular-nums">
+            <thead className={`${headerBg} text-[#6B7280]`}>
+              <tr>
+                <th className="px-3 py-1.5 text-left font-semibold">Team</th>
+                {COLS.map((c) => (
+                  <th key={c.key} className="px-2 py-1.5 text-right font-semibold">
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-[#E5E7EB] bg-[#F9FAFB] font-semibold">
+                <td className="px-3 py-1.5">Totals</td>
+                {COLS.map((c) => (
+                  <td key={c.key} className="px-2 py-1.5 text-right">
+                    {render(data.totals[c.key])}
+                  </td>
+                ))}
+              </tr>
+              {data.teams.map((r) => (
+                <tr key={r.team} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
+                  <td className="px-3 py-1.5">{r.team}</td>
+                  {COLS.map((c) => {
+                    const bucket = (r as XrayTeamBreakdownRow)[c.key] as XrayTeamBucket
+                    return (
+                      <td key={c.key} className="px-2 py-1.5 text-right">
+                        {render(bucket)}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}

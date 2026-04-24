@@ -51,6 +51,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO", "Executive", "Operations", "Finance", "CORP", "DFW"],
     },
+    {
+        "key": "xray-corp-mng",  # -> /reports/xray-corp-mng
+        "title": "XRay CORP Mng",
+        "description": "CORP management X-Ray — KPIs, teams, lanes, trends, risk and contract/spot split",
+        "note": "Scope: TEAM1–TEAM5 · company TMS/TMS3 · excludes OILTEX · 6 tabs",
+        "category": "Executive",
+        "tags": ["corp", "x-ray", "management", "kpi", "otp", "otd", "lanes", "teams"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "CORP", "Operations", "Finance"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports

@@ -20,6 +20,7 @@ from app.routers import (
     qlik,
     reports,
     search,
+    xray_corp,
 )
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ async def lifespan(app: FastAPI):
                 settings.SAVINGS_DATABASE_URL, min_size=1, max_size=4
             )
             logger.info(
-                "Datalake (gold) pool connected — powers eSavings & Budget Follow Up"
+                "Datalake (gold) pool connected — powers eSavings, Budget Follow Up & XRay CORP Mng"
             )
         except Exception as e:
             logger.warning(
@@ -219,6 +220,7 @@ app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")
+app.include_router(xray_corp.router, prefix="/api")
 
 
 @app.get("/api/health")
