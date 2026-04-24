@@ -98,6 +98,7 @@
 | 2026 Official Budget Follow Up | `/reports/budget-followup-2026` | CEO, Executive, Operations, Finance, CORP, DFW | `daily_production_budget_report` + v4 team map |
 | XRay CORP Mng | `/reports/xray-corp-mng` | CEO, Executive, CORP, Operations, Finance | v4 + scorecard + movement + budget_report + savings |
 | CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | Overview roll-ups: `daily_production_budget_report` + v4 team map; detail panels: v4 |
+| Podium Set DFW | `/reports/podium-dfw` | admin + DFW | `mcleod_gld_order_post_hist` (Rate Conf Received, latest/order) LEFT JOIN `mcleod_gld_budget_report_v4`; replaces Qlik `0a0c7a49-…`; 15-min auto-refresh; DB is already CST (no `AT TIME ZONE`) |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
