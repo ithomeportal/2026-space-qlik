@@ -941,35 +941,28 @@ async def lane_trend(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/weekly-movers")
-async def weekly_movers(
-    request: Request,
-    teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
-    top_n: int = Query(10, ge=3, le=50),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
-):
-    """Customer+Lane pairs whose rank in top-N losses changed week-over-week.
+async def compute_weekly_movers(
+    pool,
+    *,
+    teams: Optional[list[str]] = None,
+    customer: Optional[str] = None,
+    top_n: int = 10,
+) -> dict:
+    """Core query for the weekly-movers feature.
 
-    Both weeks use Mon–Sun (DATE_TRUNC('week', …)).  Returns:
-    - ``new_entries``: pairs in this week's top-N but NOT in last week's top-N
-    - ``dropped``:     pairs in last week's top-N but NOT in this week's top-N
-    - ``moved``:       pairs in both weeks' top-N with a rank delta
-
-    Intended as the data surface for a future n8n / email alert workflow;
-    no delivery mechanism wired yet (see docs/SPEC-CUSTOM-REPORTS.md §14).
+    Exposed as a module-level helper so both the HTTP endpoint and the
+    7 AM CST email scheduler can call it without going through FastAPI.
+    Returns the same ``data`` dict that /weekly-movers wraps.
     """
-    pool = get_datalake_gold_pool(request)
     today = date.today()
     this_mon = today - timedelta(days=today.weekday())
     last_mon = this_mon - timedelta(days=7)
     this_sun = this_mon + timedelta(days=6)
     last_sun = last_mon + timedelta(days=6)
-    team_list = _parse_teams(teams)
+    team_list = teams if teams else list(ALL_TEAMS)
 
     params: list = []
     where = _scope_where("br4", team_list, customer, params)
-    # Unique param placeholders for both week bounds
     params.extend([last_mon, last_sun, this_mon, this_sun, top_n])
     p_lms, p_lme, p_tms, p_tme, p_top = (
         len(params) - 4,
@@ -1049,18 +1042,41 @@ async def weekly_movers(
             moved.append(entry)
 
     return {
-        "success": True,
-        "data": {
-            "new_entries": new_entries,
-            "dropped": dropped,
-            "moved": moved,
-            "window": {
-                "this_week": {"start": this_mon.isoformat(), "end": this_sun.isoformat()},
-                "last_week": {"start": last_mon.isoformat(), "end": last_sun.isoformat()},
-                "top_n": top_n,
-            },
+        "new_entries": new_entries,
+        "dropped": dropped,
+        "moved": moved,
+        "window": {
+            "this_week": {"start": this_mon.isoformat(), "end": this_sun.isoformat()},
+            "last_week": {"start": last_mon.isoformat(), "end": last_sun.isoformat()},
+            "top_n": top_n,
         },
     }
+
+
+@router.get("/weekly-movers")
+async def weekly_movers(
+    request: Request,
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    top_n: int = Query(10, ge=3, le=50),
+    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+):
+    """Customer+Lane pairs whose rank in top-N losses changed week-over-week.
+
+    Both weeks use Mon–Sun.  Returns:
+    - ``new_entries``: pairs in this week's top-N but NOT in last week's top-N
+    - ``dropped``:     pairs in last week's top-N but NOT in this week's top-N
+    - ``moved``:       pairs in both weeks' top-N with a rank delta
+
+    Same data surface is consumed by the daily 7 AM CST email alert
+    (see ``app/services/losses_alerts.py`` and the APScheduler wiring
+    in ``main.py``).
+    """
+    pool = get_datalake_gold_pool(request)
+    data = await compute_weekly_movers(
+        pool, teams=_parse_teams(teams), customer=customer, top_n=top_n
+    )
+    return {"success": True, "data": data}
 
 
 # ---------------------------------------------------------------------------
@@ -1162,3 +1178,37 @@ async def explain(
             ],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Test-send — admin-only manual trigger for the daily email
+# ---------------------------------------------------------------------------
+
+
+@router.post("/send-test-email")
+async def send_test_email(
+    request: Request,
+    top_n: int = Query(10, ge=3, le=50),
+    override_to: Optional[str] = Query(
+        None,
+        description="Comma-separated recipients; defaults to production list",
+    ),
+    _user: dict = Depends(require_admin),
+):
+    """Fire the weekly-movers email immediately. Admin-only.
+
+    Useful to verify the daily 7 AM CST job's output without waiting for
+    the cron. With no args, sends to the production recipients
+    (msalazarm + dfrodriguez). Pass ``override_to=you@example.com`` to
+    redirect for a solo test.
+    """
+    pool = get_datalake_gold_pool(request)
+    from app.services.losses_alerts import RECIPIENTS, send_weekly_movers_email
+
+    if override_to:
+        recipients = [r.strip() for r in override_to.split(",") if r.strip()]
+    else:
+        recipients = list(RECIPIENTS)
+
+    result = await send_weekly_movers_email(pool, recipients=recipients, top_n=top_n)
+    return {"success": bool(result.get("sent")), "data": result}

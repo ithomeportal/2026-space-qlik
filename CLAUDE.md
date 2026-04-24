@@ -99,7 +99,7 @@
 | XRay CORP Mng | `/reports/xray-corp-mng` | CEO, Executive, CORP, Operations, Finance | v4 + scorecard + movement + budget_report + savings |
 | CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | Overview roll-ups: `daily_production_budget_report` + v4 team map; detail panels: v4 |
 | Podium Set DFW | `/reports/podium-dfw` | admin + DFW | `mcleod_gld_order_post_hist` (Rate Conf Received, latest/order) LEFT JOIN `mcleod_gld_budget_report_v4`; replaces Qlik `0a0c7a49-…`; 15-min auto-refresh; DB is already CST (no `AT TIME ZONE`) |
-| Top Losses Lanes | `/reports/losses-lanes` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_budget_report_v4`; scope TEAM1-5 + TEAM-DFW / TMS,TMS3 / status D,P; excludes UNILINK & OILTEX; `margin_amt<0` filter on every visual; mirrors Bruno's Qlik sheet `de4ecec0-…/GjMvAnC`; presets MTD/Last Month/This Year/Custom |
+| Top Losses Lanes | `/reports/losses-lanes` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_budget_report_v4`; scope TEAM1-5 + TEAM-DFW / TMS,TMS3 / status D,P; excludes UNILINK & OILTEX; `margin_amt<0` filter on every visual; mirrors Bruno's Qlik sheet `de4ecec0-…/GjMvAnC`; presets MTD/Last Month/This Year/Custom; daily 7 AM CST weekly-movers email to msalazarm + dfrodriguez (needs `RESEND_API_KEY` on Render) |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -238,6 +238,7 @@ ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.ve
 SEED_SECRET=<secret>
 TV_SECRET=<shared with frontend>
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
+RESEND_API_KEY=<shared with frontend — powers daily Losses Lanes weekly-movers email at 7 AM CST>
 ```
 
 ---

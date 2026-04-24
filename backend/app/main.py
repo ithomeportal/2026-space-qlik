@@ -42,6 +42,18 @@ async def _scheduled_user_sync():
         logger.error(f"Scheduled user sync failed: {e}")
 
 
+async def _scheduled_losses_alert():
+    """Background job: send daily 7 AM CST Losses Lanes weekly-movers email."""
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.losses_alerts import send_weekly_movers_email
+
+        result = await send_weekly_movers_email(pool)
+        logger.info(f"Scheduled losses alert complete: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled losses alert failed: {e}")
+
+
 async def _backfill_favicons(pool: asyncpg.Pool):
     """Background task: backfill missing favicons without blocking startup."""
     try:
@@ -230,8 +242,34 @@ async def lifespan(app: FastAPI):
             name="Sync users from time-off DB",
             replace_existing=True,
         )
+
+    # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
+    # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
+    # savings_pool (aivn_datalake_gold) + RESEND_API_KEY.
+    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+        scheduler.add_job(
+            _scheduled_losses_alert,
+            CronTrigger(hour=7, minute=0, timezone="America/Chicago"),
+            id="daily_losses_alert",
+            name="Send Losses Lanes weekly-movers email",
+            replace_existing=True,
+        )
+        logger.info(
+            "Scheduled daily Losses Lanes alert at 7:00 AM CST "
+            "(msalazarm + dfrodriguez)"
+        )
+    else:
+        missing = []
+        if not settings.SAVINGS_DATABASE_URL:
+            missing.append("SAVINGS_DATABASE_URL")
+        if not settings.RESEND_API_KEY:
+            missing.append("RESEND_API_KEY")
+        logger.warning(
+            "Losses alert NOT scheduled — missing env vars: %s", ", ".join(missing)
+        )
+
+    if scheduler.get_jobs():
         scheduler.start()
-        logger.info("Scheduled daily user sync at 2:00 AM CST")
 
     yield
 
