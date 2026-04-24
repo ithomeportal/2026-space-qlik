@@ -922,7 +922,9 @@ async def risk(
 
     # ---- Negative Loads by Order ---------------------------------------
     # JOIN movement for carrier name; keep orders with no movement via LEFT JOIN.
-    no_params: list = []
+    # Seed $1 with ALLOWED_COMPANIES for the CTE BEFORE _scope_where so its
+    # placeholders start at $2 and line up with the positional args below.
+    no_params: list = [_pad_variants(ALLOWED_COMPANIES)]
     no_where = _scope_where("br4", team, customer, no_params)
     no_params.extend([s, e])
     no_df = (
@@ -967,7 +969,6 @@ async def risk(
         ORDER BY br4.margin_amt ASC
         LIMIT 500
         """,
-        _pad_variants(ALLOWED_COMPANIES),
         *no_params,
     )
 
