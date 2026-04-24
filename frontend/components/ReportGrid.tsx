@@ -221,15 +221,15 @@ export function ReportGrid() {
         <ViewToggle view={view} onChange={setView} />
       </div>
 
-      {/* 3-column layout: TagRoles (1/5) | Reports (3/5) | Apps (1/5) */}
+      {/* 3-column layout: TagRoles (10%) | Reports (70%) | Apps (20%) */}
       <div className="flex gap-6">
         {/* Left column — TagRole filters */}
-        <div className="w-1/5 shrink-0">
+        <div className="w-[10%] shrink-0">
           <TagRoleSidebar activeRole={activeRole} onSelect={setActiveRole} />
         </div>
 
         {/* Center column — Reports matrix */}
-        <div className="w-3/5">
+        <div className="w-[70%]">
           {reports.length > 0 ? (
             <div>
               <div className="mb-3 flex items-center gap-2">
