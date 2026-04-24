@@ -108,17 +108,20 @@ def _resolve_range(
     return YEAR_START, YEAR_END
 
 
-def _pad_variants(values) -> list[str]:
-    """Expand each value into unpadded + 3-space-padded twins.
+def _pad_variants(values, *, width: int) -> list[str]:
+    """Expand each value into (unpadded, right-padded-to-column-width) twins.
 
-    Datalake text columns are stored inconsistently as 'TEAM1' and 'TEAM1   '.
-    Matching both literal variants keeps the btree index usable in WHERE.
-    See CLAUDE.md "Sargability rule".
+    Datalake text columns arrive inconsistently: some unpadded (`'TEAM1'`),
+    some right-padded to the declared varchar(N) width (`'TEAM1   '` for
+    varchar(8), `'TMS '` for varchar(4)). The padding amount depends on the
+    COLUMN width, not a constant — so callers must pass the column's declared
+    `character_maximum_length` as `width`. See CLAUDE.md "Sargability rule"
+    and the 2026-04-24 XRay CORP Mng "Only TEAM3 shows" postmortem.
     """
     seen: set[str] = set()
     out: list[str] = []
     for v in values:
-        for cand in (v, v + "   "):
+        for cand in (v, v.ljust(width)):
             if cand not in seen:
                 seen.add(cand)
                 out.append(cand)
@@ -138,11 +141,12 @@ def _scope_where(
     padded+unpadded literal variants so Postgres can use btree indexes on
     team_id, company_id, status. No TRIM() in predicates.
     """
-    params.append(_pad_variants(ALLOWED_TEAMS))
+    # v4 declared widths: team_id varchar(8), company_id varchar(4), status varchar(1).
+    params.append(_pad_variants(ALLOWED_TEAMS, width=8))
     p_teams = len(params)
-    params.append(_pad_variants(ALLOWED_COMPANIES))
+    params.append(_pad_variants(ALLOWED_COMPANIES, width=4))
     p_comp = len(params)
-    params.append(_pad_variants(OPEN_STATUSES))
+    params.append(_pad_variants(OPEN_STATUSES, width=1))
     p_stat = len(params)
 
     parts = [
@@ -156,7 +160,7 @@ def _scope_where(
             f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'"
         )
     if team:
-        params.append(_pad_variants([team]))
+        params.append(_pad_variants([team], width=8))
         parts.append(f"{alias}.team_id = ANY(${len(params)})")
     if customer:
         params.append(customer)
@@ -168,13 +172,13 @@ def _global_scope_where(alias: str) -> str:
     """Scope fragment for GLOBAL panels — no team/customer/date filter, but
     still restricted to the CORP+DFW universe. Safe literal-only SQL.
     """
-    def _lit(values) -> str:
-        return ",".join(f"'{v}'" for v in _pad_variants(values))
+    def _lit(values, *, width: int) -> str:
+        return ",".join(f"'{v}'" for v in _pad_variants(values, width=width))
 
     return (
-        f"{alias}.team_id    IN ({_lit(ALLOWED_TEAMS)}) AND "
-        f"{alias}.company_id IN ({_lit(ALLOWED_COMPANIES)}) AND "
-        f"{alias}.status     IN ({_lit(OPEN_STATUSES)}) AND "
+        f"{alias}.team_id    IN ({_lit(ALLOWED_TEAMS, width=8)}) AND "
+        f"{alias}.company_id IN ({_lit(ALLOWED_COMPANIES, width=4)}) AND "
+        f"{alias}.status     IN ({_lit(OPEN_STATUSES, width=1)}) AND "
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%' AND "
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'"
     )
@@ -264,9 +268,9 @@ async def filters(
           AND origin_actual_departure >= $4
         ORDER BY customer_name
         """,
-        _pad_variants(ALLOWED_TEAMS),
-        _pad_variants(ALLOWED_COMPANIES),
-        _pad_variants(OPEN_STATUSES),
+        _pad_variants(ALLOWED_TEAMS, width=8),
+        _pad_variants(ALLOWED_COMPANIES, width=4),
+        _pad_variants(OPEN_STATUSES, width=1),
         YEAR_START,
     )
     return {
@@ -305,7 +309,7 @@ async def overview(
     m_start = _month_start(today)
     m_end = _month_end(today)
 
-    allowed_teams_padded = _pad_variants(ALLOWED_TEAMS)
+    allowed_teams_padded = _pad_variants(ALLOWED_TEAMS, width=8)
     team_list_for_unnest = [team] if team else list(ALLOWED_TEAMS)
 
     # ---- KPIs (scoped) --------------------------------------------------
@@ -1005,7 +1009,8 @@ async def risk(
     # JOIN movement for carrier name; keep orders with no movement via LEFT JOIN.
     # Seed $1 with ALLOWED_COMPANIES for the CTE BEFORE _scope_where so its
     # placeholders start at $2 and line up with the positional args below.
-    no_params: list = [_pad_variants(ALLOWED_COMPANIES)]
+    # movement.company_id is varchar(4) — same width as v4.company_id.
+    no_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
     no_where = _scope_where("br4", team, customer, no_params)
     no_params.extend([s, e])
     no_df = (
@@ -1197,7 +1202,7 @@ async def orders(
     )
 
     # ---- All Orders (with carrier via LEFT JOIN movement) --------------
-    ao_params: list = [_pad_variants(ALLOWED_COMPANIES)]
+    ao_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
     ao_where = _scope_where("br4", team, customer, ao_params)
     ao_params.extend([s, e])
     ao_df = (

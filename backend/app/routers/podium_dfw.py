@@ -53,18 +53,21 @@ PODIUM_ROLES = ("DFW",)
 PODIUM_TEAMS = ("TEAM-DFW",)
 
 
-def _pad_variants(values) -> list[str]:
-    """Expand each value into unpadded + 3-space-padded twins.
+def _pad_variants(values, *, width: int) -> list[str]:
+    """Expand each value into (unpadded, right-padded-to-column-width) twins.
 
-    McLeod datalake text columns are stored inconsistently as 'TEAM-DFW' and
-    'TEAM-DFW   '. Matching both literal variants keeps the btree index on
-    team_id usable; TRIM() in a WHERE would force a full table scan.
-    See CLAUDE.md "Sargability rule".
+    McLeod datalake text columns arrive unpadded or right-padded to the column's
+    declared varchar(N) width. 'TEAM-DFW' fits varchar(8) exactly, but if this
+    helper is ever reused for shorter values (like 'DFW') the padding matters.
+    Callers must pass the declared width.
+
+    See CLAUDE.md "Sargability rule" and the 2026-04-24 XRay CORP Mng
+    "Only TEAM3 shows" postmortem for why a constant-space pad is wrong.
     """
     seen: set[str] = set()
     out: list[str] = []
     for v in values:
-        for cand in (v, v + "   "):
+        for cand in (v, v.ljust(width)):
             if cand not in seen:
                 seen.add(cand)
                 out.append(cand)
@@ -134,7 +137,8 @@ async def overview(
     pool = get_datalake_gold_pool(request)
     where = _RANGE_FILTERS[range]
 
-    params = [_pad_variants(list(PODIUM_TEAMS))]
+    # v4.team_id is varchar(8); 'TEAM-DFW' fits without padding.
+    params = [_pad_variants(list(PODIUM_TEAMS), width=8)]
 
     kpi_sql = f"""
     WITH {_RATE_CONF_CTE}
