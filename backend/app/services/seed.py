@@ -91,6 +91,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["DFW"],
     },
+    {
+        "key": "losses-lanes",  # -> /reports/losses-lanes
+        "title": "Top Losses Lanes",
+        "description": "Worst-margin lanes & customers: leak by lane, 15/18/20% target-profit gap, order detail",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · excludes UNILINK & OILTEX · source: mcleod_gld_budget_report_v4",
+        "category": "Executive",
+        "tags": ["losses", "margin", "lanes", "customers", "leak", "budget", "profit"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
