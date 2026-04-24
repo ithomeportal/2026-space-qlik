@@ -99,19 +99,24 @@ def _resolve_range(
     return YEAR_START, YEAR_END
 
 
-def _pad_variants(values) -> list[str]:
-    """Expand each value into unpadded + 3-space-padded twins.
+def _pad_variants(values, *, width: int) -> list[str]:
+    """Expand each value into (unpadded, right-padded-to-column-width) twins.
 
     mcleod_gld_scorecard and mcleod_gld_budget_report_v4 store text columns
-    inconsistently: sometimes `'TEAM1'`, sometimes `'TEAM1   '` (CHAR(8)-style
-    padding). Covering both in the WHERE clause lets PostgreSQL use a plain
-    btree index on the column (no expression indexes needed) — which is the
+    inconsistently: some arrive unpadded (`'TEAM1'`), some arrive right-padded
+    to the declared varchar(N) width (`'TEAM1   '` for varchar(8), `'TMS '`
+    for varchar(4)). The padding amount depends on the COLUMN width, not a
+    constant — so callers must pass the column's declared `character_maximum_
+    length` as `width`.
+
+    Covering both forms in the WHERE clause lets PostgreSQL use a plain btree
+    index on the column (no expression indexes needed) — which is the
     difference between a ~200ms seek and a multi-minute full-table scan.
     """
     seen: set[str] = set()
     out: list[str] = []
     for v in values:
-        for cand in (v, v + "   "):
+        for cand in (v, v.ljust(width)):
             if cand not in seen:
                 seen.add(cand)
                 out.append(cand)
@@ -131,9 +136,10 @@ def _scope_where(
     predicates with padded+unpadded variants (same pattern as `_scorecard_cte`)
     so btree indexes on `team_id`, `company_id`, `status` are usable.
     """
-    teams_param = _pad_variants(CORP_TEAMS)
-    companies_param = _pad_variants(CORP_COMPANIES)
-    statuses_param = _pad_variants(OPEN_STATUSES)
+    # Widths match v4 / scorecard declared varchar(N): team_id=8, company_id=4, status=1.
+    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    companies_param = _pad_variants(CORP_COMPANIES, width=4)
+    statuses_param = _pad_variants(OPEN_STATUSES, width=1)
 
     params.append(teams_param)
     p_teams = len(params)
@@ -149,7 +155,7 @@ def _scope_where(
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
-        params.append(_pad_variants([team]))
+        params.append(_pad_variants([team], width=8))
         parts.append(f"{alias}.team_id = ANY(${len(params)})")
     if customer:
         params.append(customer)
@@ -175,14 +181,19 @@ def _scorecard_cte(kind: str) -> str:
         stops = ("", "CO", "SO")
         out = "scorecard_count_otd"
 
-    def _lit(values) -> str:
-        return ",".join(f"'{v}'" for v in _pad_variants(values))
+    def _lit(values, *, width: int) -> str:
+        return ",".join(f"'{v}'" for v in _pad_variants(values, width=width))
 
-    codes_sql = _lit(codes)
-    stops_sql = _lit(stops)
-    teams_sql = _lit(CORP_TEAMS)
-    companies_sql = _lit(CORP_COMPANIES)
-    statuses_sql = _lit(OPEN_STATUSES)
+    # Widths match mcleod_gld_scorecard declared varchar(N):
+    #   team_id=8, company_id=4, status=1, stop_type=2, edi_standard_code=40.
+    # For edi codes and stops (values already fit the width), passing the full
+    # declared width is the safe bet: data arrives unpadded today but may be
+    # padded tomorrow. The unpadded variant is always included too.
+    codes_sql = _lit(codes, width=40)
+    stops_sql = _lit(stops, width=2)
+    teams_sql = _lit(CORP_TEAMS, width=8)
+    companies_sql = _lit(CORP_COMPANIES, width=4)
+    statuses_sql = _lit(OPEN_STATUSES, width=1)
     return f"""
     SELECT
       TRIM(id)         AS id_key,
@@ -325,8 +336,8 @@ async def kpis(
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
-                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
                   AND {date_fragment}
              )
@@ -495,8 +506,8 @@ async def trio_tables(
                            COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                            COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                     FROM public.mcleod_gld_budget_report_v4 br4
-                    LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                    LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                    LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                    LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                     WHERE {where} AND {date_frag}
                  )
             SELECT
@@ -700,8 +711,8 @@ async def by_customer(
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
-                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where} AND {date_frag}
              )
         SELECT
@@ -757,8 +768,8 @@ async def by_lane(
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
-                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where} AND {date_frag}
              )
         SELECT
@@ -811,8 +822,8 @@ async def attrition(
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
-                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
              )
         SELECT
@@ -1112,8 +1123,8 @@ async def summary_table(
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
-                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND br4.company_id=otp.company_id_key
-                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND br4.company_id=otd.company_id_key
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where} AND br4.origin_actual_departure::date >= ${len(params)}
              )
         SELECT
