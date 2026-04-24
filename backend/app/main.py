@@ -17,6 +17,7 @@ from app.routers import (
     admin,
     budget_followup,
     carriers_savings,
+    ceo_executive,
     preferences,
     qlik,
     reports,
@@ -242,6 +243,7 @@ app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")
 app.include_router(xray_corp.router, prefix="/api")
+app.include_router(ceo_executive.router, prefix="/api")
 
 
 @app.get("/api/health")

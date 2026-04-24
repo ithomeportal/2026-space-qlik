@@ -61,6 +61,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO", "Executive", "CORP", "Operations", "Finance"],
     },
+    {
+        "key": "ceo-executive",  # -> /reports/ceo-executive
+        "title": "CEO Executive",
+        "description": "Executive 6-tab view: KPIs, trends, customers, weekly, risk, orders",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · excludes OILTEX & UNILINK · admin + CEO only",
+        "category": "Executive",
+        "tags": ["ceo", "executive", "kpi", "customers", "lanes", "risk", "orders", "weekly"],
+        "owner_name": "Diego",
+        "roles": ["CEO"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports

@@ -1,0 +1,1202 @@
+"""Code-made report: CEO Executive — 6-tab executive view across CORP + DFW.
+
+Mirrors Bruno's "Executive Report" Qlik app
+(8a36f235-d077-4ab0-85ae-ba3732fd36c3) as a portal custom report. Scope:
+TEAM1-5 + TEAM-DFW, company TMS/TMS3, status D/P, excluding OILTEX and
+UNILINK customers. Source: public.mcleod_gld_budget_report_v4 with optional
+LEFT JOIN to public.mcleod_gld_movement for carrier name. Profit-TM gauge
+reads from public.daily_production_budget_report.
+
+Filter contract:
+- range   : "mtd" | "ytd" | "full" | "custom"  (default mtd)
+- start_date / end_date : ISO dates (used when range="custom")
+- team    : "TEAM1".."TEAM5" | "TEAM-DFW" | "" (all)
+- customer: single customer name | "" (all)
+
+Per PDF spec, panels fall into three groups:
+- SCOPED: respect range + team + customer (KPIs, Summary by Team, Profit by
+  Customer, Worst Profit by Customer, Worst Margins by Lanes, Negative Loads
+  by Order / Customer, Lane Production Analysis, All Orders).
+- GLOBAL: ignore ALL filters (All Teams Performance, Customer Count & Margin
+  last 15 months, Profit/Loads by Month last 15 months, Profit/Loads by Day
+  last 80 days, Customer Count & Margin by Day last 80 days, Loads vs
+  Revenue by Week last 10 weeks, Profit/%Margin by Week last 10 weeks,
+  Summary by Week, Top-5 Concentration by Revenue, Top-5 Concentration by
+  Profit).
+- SEMI-SCOPED: Profit-TM gauge respects team + customer but always uses the
+  current calendar month.
+
+Endpoints are organised one-per-tab so the UI can lazy-load. Each endpoint
+fires its independent panel reads in parallel via asyncio.gather.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request
+
+from app.routers.deps import get_datalake_gold_pool, require_tag_role
+
+# Roles allowed. Admin is always bypassed by require_tag_role.
+CEO_ROLES = ("CEO",)
+
+YEAR_START = date(2026, 1, 1)
+YEAR_END = date(2026, 12, 31)
+
+# CORP + DFW scope. TEAM-DFW is a valid filter value (6 buttons on the UI).
+ALLOWED_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
+ALLOWED_COMPANIES = ("TMS", "TMS3")
+OPEN_STATUSES = ("D", "P")
+
+router = APIRouter(tags=["ceo-executive"], prefix="/custom/ceo-executive")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _clamp(d: Optional[date], default: date) -> date:
+    if d is None:
+        return default
+    if d < YEAR_START:
+        return YEAR_START
+    if d > YEAR_END:
+        return YEAR_END
+    return d
+
+
+def _resolve_range(
+    rng: Optional[str],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> tuple[date, date]:
+    today = date.today()
+    today_clamped = max(YEAR_START, min(YEAR_END, today))
+    if rng == "mtd":
+        return today_clamped.replace(day=1), today_clamped
+    if rng == "ytd":
+        return YEAR_START, today_clamped
+    if rng == "custom":
+        s = _clamp(start_date, YEAR_START)
+        e = _clamp(end_date, YEAR_END)
+        if e < s:
+            s, e = e, s
+        return s, e
+    return YEAR_START, YEAR_END
+
+
+def _pad_variants(values) -> list[str]:
+    """Expand each value into unpadded + 3-space-padded twins.
+
+    Datalake text columns are stored inconsistently as 'TEAM1' and 'TEAM1   '.
+    Matching both literal variants keeps the btree index usable in WHERE.
+    See CLAUDE.md "Sargability rule".
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        for cand in (v, v + "   "):
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
+def _scope_where(
+    alias: str,
+    team: Optional[str],
+    customer: Optional[str],
+    params: list,
+    include_unilink_filter: bool = True,
+) -> str:
+    """Sargable WHERE fragment shared by every scoped query.
+
+    Pushes $-placeholders onto `params` in order. Uses `= ANY($N)` with
+    padded+unpadded literal variants so Postgres can use btree indexes on
+    team_id, company_id, status. No TRIM() in predicates.
+    """
+    params.append(_pad_variants(ALLOWED_TEAMS))
+    p_teams = len(params)
+    params.append(_pad_variants(ALLOWED_COMPANIES))
+    p_comp = len(params)
+    params.append(_pad_variants(OPEN_STATUSES))
+    p_stat = len(params)
+
+    parts = [
+        f"{alias}.team_id    = ANY(${p_teams})",
+        f"{alias}.company_id = ANY(${p_comp})",
+        f"{alias}.status     = ANY(${p_stat})",
+        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+    ]
+    if include_unilink_filter:
+        parts.append(
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'"
+        )
+    if team:
+        params.append(_pad_variants([team]))
+        parts.append(f"{alias}.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"{alias}.customer_name = ${len(params)}")
+    return " AND ".join(parts)
+
+
+def _global_scope_where(alias: str) -> str:
+    """Scope fragment for GLOBAL panels — no team/customer/date filter, but
+    still restricted to the CORP+DFW universe. Safe literal-only SQL.
+    """
+    def _lit(values) -> str:
+        return ",".join(f"'{v}'" for v in _pad_variants(values))
+
+    return (
+        f"{alias}.team_id    IN ({_lit(ALLOWED_TEAMS)}) AND "
+        f"{alias}.company_id IN ({_lit(ALLOWED_COMPANIES)}) AND "
+        f"{alias}.status     IN ({_lit(OPEN_STATUSES)}) AND "
+        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%' AND "
+        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'"
+    )
+
+
+def _month_start(d: date) -> date:
+    return d.replace(day=1)
+
+
+def _month_end(d: date) -> date:
+    if d.month == 12:
+        return d.replace(year=d.year + 1, month=1, day=1) - timedelta(days=1)
+    return d.replace(month=d.month + 1, day=1) - timedelta(days=1)
+
+
+def _shift_months(d: date, n: int) -> date:
+    """Return first-of-month shifted by n months (n may be negative)."""
+    y = d.year + (d.month - 1 + n) // 12
+    m = (d.month - 1 + n) % 12 + 1
+    return date(y, m, 1)
+
+
+def _week_start(d: date) -> date:
+    """Monday of the week containing d."""
+    return d - timedelta(days=d.weekday())
+
+
+# ---------------------------------------------------------------------------
+# /filters — teams + distinct customer list
+# ---------------------------------------------------------------------------
+
+
+@router.get("/filters")
+async def filters(
+    request: Request,
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT TRIM(customer_name) AS customer_name
+        FROM public.mcleod_gld_budget_report_v4
+        WHERE team_id    = ANY($1)
+          AND company_id = ANY($2)
+          AND status     = ANY($3)
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
+          AND customer_name IS NOT NULL
+          AND TRIM(customer_name) <> ''
+          AND origin_actual_departure >= $4
+        ORDER BY customer_name
+        """,
+        _pad_variants(ALLOWED_TEAMS),
+        _pad_variants(ALLOWED_COMPANIES),
+        _pad_variants(OPEN_STATUSES),
+        YEAR_START,
+    )
+    return {
+        "success": True,
+        "data": {
+            "teams": list(ALLOWED_TEAMS),
+            "customers": [r["customer_name"] for r in rows],
+            "year_start": YEAR_START.isoformat(),
+            "year_end": YEAR_END.isoformat(),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 1 — Overview
+#   * KPIs (scoped)
+#   * Profit-TM (semi-scoped: current month + team + customer)
+#   * Summary by Team (scoped)
+#   * All Teams Performance (global, Yd/Week/Month)
+# ---------------------------------------------------------------------------
+
+
+def _kpi_sql(where: str, date_frag: str) -> str:
+    return f"""
+    SELECT
+      COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+      COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+      COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
+      CASE WHEN SUM(br4.total_charge) > 0
+           THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+           ELSE 0 END AS margin_pct,
+      CASE WHEN COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) > 0
+           THEN SUM(br4.total_charge)::numeric
+                / COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0)
+           ELSE 0 END AS avg_r_per_l,
+      CASE WHEN COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) > 0
+           THEN SUM(br4.margin_amt)::numeric
+                / COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0)
+           ELSE 0 END AS avg_p_per_l
+    FROM public.mcleod_gld_budget_report_v4 br4
+    WHERE {where} AND {date_frag}
+    """
+
+
+def _summary_by_team_sql(where: str, date_frag: str) -> str:
+    return f"""
+    SELECT
+      TRIM(br4.team_id) AS team,
+      COUNT(DISTINCT br4.customer_name) AS cust,
+      COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+      COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+      COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
+    FROM public.mcleod_gld_budget_report_v4 br4
+    WHERE {where} AND {date_frag}
+    GROUP BY TRIM(br4.team_id)
+    ORDER BY profit DESC NULLS LAST
+    """
+
+
+@router.get("/overview")
+async def overview(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    today = date.today()
+    m_start = _month_start(today)
+    m_end = _month_end(today)
+
+    # ---- KPIs (scoped) --------------------------------------------------
+    kpi_params: list = []
+    kpi_where = _scope_where("br4", team, customer, kpi_params)
+    kpi_params.extend([s, e])
+    kpi_date_frag = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(kpi_params)-1} AND ${len(kpi_params)}"
+    )
+    kpi_task = pool.fetchrow(_kpi_sql(kpi_where, kpi_date_frag), *kpi_params)
+
+    # ---- Summary by Team (scoped) --------------------------------------
+    sbt_params: list = []
+    sbt_where = _scope_where("br4", team, customer, sbt_params)
+    sbt_params.extend([s, e])
+    sbt_date_frag = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(sbt_params)-1} AND ${len(sbt_params)}"
+    )
+    sbt_task = pool.fetch(_summary_by_team_sql(sbt_where, sbt_date_frag), *sbt_params)
+
+    # ---- Profit-TM (semi-scoped: current month, team+customer apply) ---
+    tm_params: list = [m_start, m_end, _pad_variants(ALLOWED_TEAMS)]
+    tm_extra = ""
+    if team:
+        tm_params.append(team)
+        tm_extra += f" AND ct.team_id = ${len(tm_params)}"
+    if customer:
+        tm_params.append(customer)
+        tm_extra += f' AND budget."Customer Name" = ${len(tm_params)}'
+    profit_tm_task = pool.fetchval(
+        f"""
+        WITH customer_team AS (
+            SELECT customer_name, team_id FROM (
+                SELECT
+                    TRIM(customer_name) AS customer_name,
+                    TRIM(team_id)       AS team_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY TRIM(customer_name)
+                        ORDER BY COUNT(*) DESC, TRIM(team_id)
+                    ) AS rn
+                FROM public.mcleod_gld_budget_report_v4
+                WHERE team_id = ANY($3)
+                GROUP BY TRIM(customer_name), TRIM(team_id)
+            ) ranked
+            WHERE rn = 1
+        )
+        SELECT COALESCE(SUM(budget."Profit Actual"), 0)::numeric
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE budget."Date" BETWEEN $1 AND $2
+        {tm_extra}
+        """,
+        *tm_params,
+    )
+
+    # ---- All Teams Performance (GLOBAL — Yd / Week / Month) -------------
+    yesterday = today - timedelta(days=1)
+    week_start = _week_start(today)
+    atp_scope = _global_scope_where("br4")
+    atp_task = pool.fetch(
+        f"""
+        SELECT
+          TRIM(br4.team_id) AS team,
+          COUNT(*) FILTER (
+            WHERE br4.origin_actual_departure::date = $1
+              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+          ) AS yd_loads,
+          COALESCE(SUM(br4.margin_amt) FILTER (
+            WHERE br4.origin_actual_departure::date = $1
+          ), 0)::numeric AS yd_profit,
+          CASE WHEN SUM(br4.total_charge) FILTER (
+              WHERE br4.origin_actual_departure::date = $1
+          ) > 0 THEN
+            SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date = $1)::numeric
+            / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date = $1)::numeric
+          ELSE 0 END AS yd_margin,
+          COUNT(*) FILTER (
+            WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
+              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+          ) AS wk_loads,
+          COALESCE(SUM(br4.margin_amt) FILTER (
+            WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
+          ), 0)::numeric AS wk_profit,
+          CASE WHEN SUM(br4.total_charge) FILTER (
+              WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
+          ) > 0 THEN
+            SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3)::numeric
+            / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3)::numeric
+          ELSE 0 END AS wk_margin,
+          COUNT(*) FILTER (
+            WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
+              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+          ) AS mo_loads,
+          COALESCE(SUM(br4.margin_amt) FILTER (
+            WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
+          ), 0)::numeric AS mo_profit,
+          CASE WHEN SUM(br4.total_charge) FILTER (
+              WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
+          ) > 0 THEN
+            SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
+            / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
+          ELSE 0 END AS mo_margin,
+          CASE WHEN COUNT(*) FILTER (
+              WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
+                AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+          ) > 0 THEN
+            SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
+            / COUNT(*) FILTER (
+                WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
+                  AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+            )
+          ELSE 0 END AS mo_p_per_l
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {atp_scope}
+          AND br4.origin_actual_departure::date BETWEEN $4 AND $3
+        GROUP BY TRIM(br4.team_id)
+        ORDER BY mo_profit DESC NULLS LAST
+        """,
+        yesterday, week_start, today, m_start, today,
+    )
+
+    kpi, sbt, profit_tm, atp = await asyncio.gather(
+        kpi_task, sbt_task, profit_tm_task, atp_task
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "kpis": {
+                "loads": int(kpi["loads"] or 0),
+                "revenue": float(kpi["revenue"] or 0),
+                "profit": float(kpi["profit"] or 0),
+                "margin_pct": float(kpi["margin_pct"] or 0) * 100.0,
+                "avg_r_per_l": float(kpi["avg_r_per_l"] or 0),
+                "avg_p_per_l": float(kpi["avg_p_per_l"] or 0),
+            },
+            "profit_tm": float(profit_tm or 0),
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "summary_by_team": [
+                {
+                    "team": r["team"],
+                    "cust": int(r["cust"] or 0),
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": (
+                        float(r["profit"]) / float(r["revenue"]) * 100.0
+                        if r["revenue"] else 0.0
+                    ),
+                    "avg_r_per_l": (
+                        float(r["revenue"]) / int(r["loads"])
+                        if r["loads"] else 0.0
+                    ),
+                    "avg_p_per_l": (
+                        float(r["profit"]) / int(r["loads"])
+                        if r["loads"] else 0.0
+                    ),
+                }
+                for r in sbt
+            ],
+            "all_teams_performance": [
+                {
+                    "team": r["team"],
+                    "yd_loads": int(r["yd_loads"] or 0),
+                    "yd_profit": float(r["yd_profit"] or 0),
+                    "yd_margin_pct": float(r["yd_margin"] or 0) * 100.0,
+                    "wk_loads": int(r["wk_loads"] or 0),
+                    "wk_profit": float(r["wk_profit"] or 0),
+                    "wk_margin_pct": float(r["wk_margin"] or 0) * 100.0,
+                    "mo_loads": int(r["mo_loads"] or 0),
+                    "mo_profit": float(r["mo_profit"] or 0),
+                    "mo_margin_pct": float(r["mo_margin"] or 0) * 100.0,
+                    "mo_p_per_l": float(r["mo_p_per_l"] or 0),
+                }
+                for r in atp
+            ],
+            "atp_window": {
+                "yesterday": yesterday.isoformat(),
+                "week_start": week_start.isoformat(),
+                "month_start": m_start.isoformat(),
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 2 — Trends  (ALL panels GLOBAL, ignore every filter)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/trends")
+async def trends(
+    request: Request,
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    today = date.today()
+    fifteen_months_start = _shift_months(_month_start(today), -14)
+    eighty_days_start = today - timedelta(days=79)
+
+    scope = _global_scope_where("br4")
+
+    # Monthly 15m: customer count + margin %, and profit + loads
+    monthly_task = pool.fetch(
+        f"""
+        SELECT
+          DATE_TRUNC('month', br4.origin_actual_departure)::date AS bucket,
+          COUNT(DISTINCT br4.customer_name) AS customers,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {scope}
+          AND br4.origin_actual_departure::date >= $1
+          AND br4.origin_actual_departure::date <= $2
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        fifteen_months_start, today,
+    )
+
+    # Daily 80d: customer count + margin %, and profit + loads
+    daily_task = pool.fetch(
+        f"""
+        SELECT
+          br4.origin_actual_departure::date AS bucket,
+          COUNT(DISTINCT br4.customer_name) AS customers,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {scope}
+          AND br4.origin_actual_departure::date >= $1
+          AND br4.origin_actual_departure::date <= $2
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        eighty_days_start, today,
+    )
+
+    monthly, daily = await asyncio.gather(monthly_task, daily_task)
+
+    return {
+        "success": True,
+        "data": {
+            "monthly": [
+                {
+                    "bucket": r["bucket"].isoformat(),
+                    "customers": int(r["customers"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "profit": float(r["profit"] or 0),
+                    "loads": int(r["loads"] or 0),
+                }
+                for r in monthly
+            ],
+            "daily": [
+                {
+                    "bucket": r["bucket"].isoformat(),
+                    "customers": int(r["customers"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "profit": float(r["profit"] or 0),
+                    "loads": int(r["loads"] or 0),
+                }
+                for r in daily
+            ],
+            "monthly_window": {
+                "start": fifteen_months_start.isoformat(),
+                "end": today.isoformat(),
+            },
+            "daily_window": {
+                "start": eighty_days_start.isoformat(),
+                "end": today.isoformat(),
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 3 — Customers
+#   * Profit by Customer (scoped, sorted by profit DESC)
+#   * Worst Profit by Customer (scoped, sorted by profit ASC)
+#   * Top-5 Concentration by Revenue (GLOBAL, + "Others")
+#   * Top-5 Concentration by Profit  (GLOBAL, + "Others")
+# ---------------------------------------------------------------------------
+
+
+@router.get("/customers")
+async def customers(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    # ---- Profit by Customer (scoped) ------------------------------------
+    pc_params: list = []
+    pc_where = _scope_where("br4", team, customer, pc_params)
+    pc_params.extend([s, e])
+    pc_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(pc_params)-1} AND ${len(pc_params)}"
+    )
+    pc_task = pool.fetch(
+        f"""
+        WITH tot AS (
+          SELECT
+            COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {pc_where} AND {pc_df}
+        )
+        SELECT
+          TRIM(br4.customer_name) AS customer,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          CASE WHEN (SELECT total_margin FROM tot) > 0
+               THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
+               ELSE 0 END AS conc_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {pc_where} AND {pc_df}
+          AND br4.customer_name IS NOT NULL
+        GROUP BY TRIM(br4.customer_name)
+        ORDER BY profit DESC NULLS LAST
+        LIMIT 200
+        """,
+        *pc_params,
+    )
+
+    # ---- Worst Profit by Customer (scoped, reverse sort) ---------------
+    wp_params: list = []
+    wp_where = _scope_where("br4", team, customer, wp_params)
+    wp_params.extend([s, e])
+    wp_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(wp_params)-1} AND ${len(wp_params)}"
+    )
+    wp_task = pool.fetch(
+        f"""
+        WITH tot AS (
+          SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {wp_where} AND {wp_df}
+        )
+        SELECT
+          TRIM(br4.customer_name) AS customer,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          CASE WHEN (SELECT total_margin FROM tot) > 0
+               THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
+               ELSE 0 END AS conc_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {wp_where} AND {wp_df}
+          AND br4.customer_name IS NOT NULL
+        GROUP BY TRIM(br4.customer_name)
+        ORDER BY profit ASC NULLS LAST
+        LIMIT 200
+        """,
+        *wp_params,
+    )
+
+    # ---- Top-5 Concentration by Revenue (GLOBAL) ------------------------
+    # Use full year to be stable. "Others" is rank 6+.
+    g_scope = _global_scope_where("br4")
+    top5_rev_task = pool.fetch(
+        f"""
+        WITH by_cust AS (
+          SELECT
+            TRIM(br4.customer_name) AS customer,
+            COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+            COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {g_scope}
+            AND br4.origin_actual_departure::date BETWEEN $1 AND $2
+            AND br4.customer_name IS NOT NULL
+          GROUP BY TRIM(br4.customer_name)
+        ),
+        ranked AS (
+          SELECT
+            customer, revenue, profit,
+            ROW_NUMBER() OVER (ORDER BY revenue DESC NULLS LAST) AS rn,
+            SUM(revenue) OVER () AS total_rev
+          FROM by_cust
+        )
+        SELECT
+          CASE WHEN rn <= 5 THEN customer ELSE 'Others' END AS customer,
+          SUM(revenue)::numeric AS revenue,
+          SUM(profit)::numeric  AS profit,
+          CASE WHEN MAX(total_rev) > 0
+               THEN SUM(revenue)::numeric / MAX(total_rev)
+               ELSE 0 END AS conc_pct,
+          MIN(rn) AS rank_min
+        FROM ranked
+        GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
+        ORDER BY rank_min
+        """,
+        YEAR_START, YEAR_END,
+    )
+
+    # ---- Top-5 Concentration by Profit (GLOBAL) -------------------------
+    top5_prof_task = pool.fetch(
+        f"""
+        WITH by_cust AS (
+          SELECT
+            TRIM(br4.customer_name) AS customer,
+            COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+            COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {g_scope}
+            AND br4.origin_actual_departure::date BETWEEN $1 AND $2
+            AND br4.customer_name IS NOT NULL
+          GROUP BY TRIM(br4.customer_name)
+        ),
+        ranked AS (
+          SELECT
+            customer, revenue, profit,
+            ROW_NUMBER() OVER (ORDER BY profit DESC NULLS LAST) AS rn,
+            SUM(profit) OVER () AS total_prof
+          FROM by_cust
+        )
+        SELECT
+          CASE WHEN rn <= 5 THEN customer ELSE 'Others' END AS customer,
+          SUM(revenue)::numeric AS revenue,
+          SUM(profit)::numeric  AS profit,
+          CASE WHEN MAX(total_prof) > 0
+               THEN SUM(profit)::numeric / MAX(total_prof)
+               ELSE 0 END AS conc_pct,
+          MIN(rn) AS rank_min
+        FROM ranked
+        GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
+        ORDER BY rank_min
+        """,
+        YEAR_START, YEAR_END,
+    )
+
+    pc, wp, t5r, t5p = await asyncio.gather(
+        pc_task, wp_task, top5_rev_task, top5_prof_task
+    )
+
+    def _map_cust(r):
+        return {
+            "customer": r["customer"],
+            "loads": int(r["loads"] or 0),
+            "revenue": float(r["revenue"] or 0),
+            "profit": float(r["profit"] or 0),
+            "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+            "conc_pct": float(r["conc_pct"] or 0) * 100.0,
+            "avg_p_per_l": (
+                float(r["profit"]) / int(r["loads"]) if r["loads"] else 0.0
+            ),
+        }
+
+    def _map_top5(r):
+        return {
+            "customer": r["customer"],
+            "revenue": float(r["revenue"] or 0),
+            "profit": float(r["profit"] or 0),
+            "conc_pct": float(r["conc_pct"] or 0) * 100.0,
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "by_customer": [_map_cust(r) for r in pc],
+            "worst_by_customer": [_map_cust(r) for r in wp],
+            "top5_revenue": [_map_top5(r) for r in t5r],
+            "top5_profit": [_map_top5(r) for r in t5p],
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Weekly  (ALL panels GLOBAL)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/weekly")
+async def weekly(
+    request: Request,
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    today = date.today()
+    this_week_mon = _week_start(today)
+    ten_weeks_start = this_week_mon - timedelta(weeks=9)
+    summary_start = today - timedelta(weeks=12)  # ~12 weeks for Summary by Week
+
+    scope = _global_scope_where("br4")
+
+    # Last 10 weeks — loads + revenue + profit + margin
+    weekly_task = pool.fetch(
+        f"""
+        SELECT
+          (br4.origin_actual_departure::date
+             - ((EXTRACT(DOW FROM br4.origin_actual_departure)::int + 6) % 7))::date AS week_start,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {scope}
+          AND br4.origin_actual_departure::date >= $1
+          AND br4.origin_actual_departure::date <= $2
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        ten_weeks_start, today,
+    )
+
+    # Summary by Week — wider window, with lane count
+    summary_task = pool.fetch(
+        f"""
+        SELECT
+          (br4.origin_actual_departure::date
+             - ((EXTRACT(DOW FROM br4.origin_actual_departure)::int + 6) % 7))::date AS week_start,
+          COUNT(DISTINCT TRIM(COALESCE(br4.origin_name,'')) || '-' || TRIM(COALESCE(br4.dest_name,''))) AS lanes,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {scope}
+          AND br4.origin_actual_departure::date >= $1
+          AND br4.origin_actual_departure::date <= $2
+        GROUP BY 1
+        ORDER BY 1 DESC
+        """,
+        summary_start, today,
+    )
+
+    weekly_rows, summary_rows = await asyncio.gather(weekly_task, summary_task)
+
+    return {
+        "success": True,
+        "data": {
+            "weeks": [
+                {
+                    "week_start": r["week_start"].isoformat(),
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                }
+                for r in weekly_rows
+            ],
+            "summary_by_week": [
+                {
+                    "week_start": r["week_start"].isoformat(),
+                    "lanes": int(r["lanes"] or 0),
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                }
+                for r in summary_rows
+            ],
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 5 — Risk (scoped; all filters to margin_amt < 0)
+#   * Worst Margins by Lanes (with 15/18/20% profit + diff+)
+#   * Negative Loads by Order (with carrier, concentration)
+#   * Negative Loads by Customer
+# ---------------------------------------------------------------------------
+
+
+@router.get("/risk")
+async def risk(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    # ---- Worst Margins by Lanes ----------------------------------------
+    wm_params: list = []
+    wm_where = _scope_where("br4", team, customer, wm_params)
+    wm_params.extend([s, e])
+    wm_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(wm_params)-1} AND ${len(wm_params)}"
+    )
+    wm_task = pool.fetch(
+        f"""
+        SELECT
+          TRIM(br4.customer_name) AS customer,
+          TRIM(br4.origin_name)   AS origin,
+          TRIM(br4.dest_name)     AS destination,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.15 - SUM(br4.margin_amt)::numeric) AS diff_15,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.18 - SUM(br4.margin_amt)::numeric) AS diff_18,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.20 - SUM(br4.margin_amt)::numeric) AS diff_20
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {wm_where} AND {wm_df}
+        GROUP BY TRIM(br4.customer_name), TRIM(br4.origin_name), TRIM(br4.dest_name)
+        HAVING COALESCE(SUM(br4.margin_amt), 0) < 0
+        ORDER BY profit ASC NULLS LAST
+        LIMIT 200
+        """,
+        *wm_params,
+    )
+
+    # ---- Negative Loads by Order ---------------------------------------
+    # JOIN movement for carrier name; keep orders with no movement via LEFT JOIN.
+    no_params: list = []
+    no_where = _scope_where("br4", team, customer, no_params)
+    no_params.extend([s, e])
+    no_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(no_params)-1} AND ${len(no_params)}"
+    )
+    no_task = pool.fetch(
+        f"""
+        WITH mov AS (
+          SELECT order_id, company_id, payee_name,
+                 ROW_NUMBER() OVER (PARTITION BY order_id, company_id
+                                    ORDER BY movement_id ASC) AS rn
+          FROM public.mcleod_gld_movement
+          WHERE company_id = ANY($1)
+        ),
+        tot AS (
+          SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {no_where} AND {no_df}
+            AND br4.margin_amt < 0
+        )
+        SELECT
+          TRIM(br4.id)            AS id,
+          TRIM(br4.customer_name) AS customer,
+          COALESCE(TRIM(mov.payee_name), '') AS carrier,
+          TRIM(br4.origin_name)   AS origin,
+          TRIM(br4.dest_name)     AS destination,
+          COALESCE(br4.total_charge, 0)::numeric AS revenue,
+          COALESCE(br4.margin_amt, 0)::numeric AS profit,
+          CASE WHEN br4.total_charge > 0
+               THEN br4.margin_amt::numeric / br4.total_charge::numeric
+               ELSE 0 END AS margin_pct,
+          CASE WHEN (SELECT total_margin FROM tot) <> 0
+               THEN br4.margin_amt::numeric / (SELECT total_margin FROM tot)
+               ELSE 0 END AS conc_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN mov ON mov.order_id = br4.id
+                     AND mov.company_id = br4.company_id
+                     AND mov.rn = 1
+        WHERE {no_where} AND {no_df}
+          AND br4.margin_amt < 0
+        ORDER BY br4.margin_amt ASC
+        LIMIT 500
+        """,
+        _pad_variants(ALLOWED_COMPANIES),
+        *no_params,
+    )
+
+    # ---- Negative Loads by Customer ------------------------------------
+    nc_params: list = []
+    nc_where = _scope_where("br4", team, customer, nc_params)
+    nc_params.extend([s, e])
+    nc_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(nc_params)-1} AND ${len(nc_params)}"
+    )
+    nc_task = pool.fetch(
+        f"""
+        WITH tot AS (
+          SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {nc_where} AND {nc_df}
+            AND br4.margin_amt < 0
+        )
+        SELECT
+          TRIM(br4.customer_name) AS customer,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          CASE WHEN (SELECT total_margin FROM tot) <> 0
+               THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
+               ELSE 0 END AS conc_pct
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {nc_where} AND {nc_df}
+          AND br4.margin_amt < 0
+        GROUP BY TRIM(br4.customer_name)
+        ORDER BY profit ASC
+        LIMIT 200
+        """,
+        *nc_params,
+    )
+
+    wm, no, nc = await asyncio.gather(wm_task, no_task, nc_task)
+
+    return {
+        "success": True,
+        "data": {
+            "worst_lanes": [
+                {
+                    "customer": r["customer"],
+                    "origin": r["origin"],
+                    "destination": r["destination"],
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "diff_15": float(r["diff_15"] or 0),
+                    "diff_18": float(r["diff_18"] or 0),
+                    "diff_20": float(r["diff_20"] or 0),
+                }
+                for r in wm
+            ],
+            "neg_orders": [
+                {
+                    "id": r["id"],
+                    "customer": r["customer"],
+                    "carrier": r["carrier"],
+                    "origin": r["origin"],
+                    "destination": r["destination"],
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "conc_pct": float(r["conc_pct"] or 0) * 100.0,
+                }
+                for r in no
+            ],
+            "neg_customers": [
+                {
+                    "customer": r["customer"],
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "conc_pct": float(r["conc_pct"] or 0) * 100.0,
+                }
+                for r in nc
+            ],
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 6 — Orders
+#   * Lane Production Analysis (scoped, customer+origin+dest aggregate)
+#   * All Orders (scoped, load-level detail with carrier)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/orders")
+async def orders(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    # ---- Lane Production Analysis --------------------------------------
+    lpa_params: list = []
+    lpa_where = _scope_where("br4", team, customer, lpa_params)
+    lpa_params.extend([s, e])
+    lpa_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(lpa_params)-1} AND ${len(lpa_params)}"
+    )
+    lpa_task = pool.fetch(
+        f"""
+        WITH tot AS (
+          SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {lpa_where} AND {lpa_df}
+        )
+        SELECT
+          TRIM(br4.customer_name) AS customer,
+          TRIM(br4.origin_name)   AS origin,
+          TRIM(br4.dest_name)     AS destination,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          CASE WHEN SUM(br4.total_charge) > 0
+               THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
+               ELSE 0 END AS margin_pct,
+          CASE WHEN (SELECT total_margin FROM tot) <> 0
+               THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
+               ELSE 0 END AS conc_pct,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.15 - SUM(br4.margin_amt)::numeric) AS diff_15,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.18 - SUM(br4.margin_amt)::numeric) AS diff_18,
+          GREATEST(0, SUM(br4.total_charge)::numeric * 0.20 - SUM(br4.margin_amt)::numeric) AS diff_20
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {lpa_where} AND {lpa_df}
+        GROUP BY TRIM(br4.customer_name), TRIM(br4.origin_name), TRIM(br4.dest_name)
+        ORDER BY profit DESC NULLS LAST
+        LIMIT 500
+        """,
+        *lpa_params,
+    )
+
+    # ---- All Orders (with carrier via LEFT JOIN movement) --------------
+    ao_params: list = [_pad_variants(ALLOWED_COMPANIES)]
+    ao_where = _scope_where("br4", team, customer, ao_params)
+    ao_params.extend([s, e])
+    ao_df = (
+        f"br4.origin_actual_departure::date BETWEEN "
+        f"${len(ao_params)-1} AND ${len(ao_params)}"
+    )
+    ao_task = pool.fetch(
+        f"""
+        WITH mov AS (
+          SELECT order_id, company_id, payee_name,
+                 ROW_NUMBER() OVER (PARTITION BY order_id, company_id
+                                    ORDER BY movement_id ASC) AS rn
+          FROM public.mcleod_gld_movement
+          WHERE company_id = ANY($1)
+        )
+        SELECT
+          TRIM(br4.team_id)       AS team,
+          TRIM(br4.id)            AS id,
+          TRIM(br4.customer_name) AS customer,
+          COALESCE(TRIM(mov.payee_name), '') AS carrier,
+          TRIM(br4.origin_name)   AS origin,
+          TRIM(br4.dest_name)     AS destination,
+          br4.origin_actual_departure AS departure,
+          COALESCE(br4.total_charge, 0)::numeric AS revenue,
+          COALESCE(br4.margin_amt, 0)::numeric AS profit,
+          CASE WHEN br4.total_charge > 0
+               THEN br4.margin_amt::numeric / br4.total_charge::numeric
+               ELSE 0 END AS margin_pct,
+          GREATEST(0, br4.total_charge::numeric * 0.15 - br4.margin_amt::numeric) AS diff_15,
+          GREATEST(0, br4.total_charge::numeric * 0.18 - br4.margin_amt::numeric) AS diff_18,
+          GREATEST(0, br4.total_charge::numeric * 0.20 - br4.margin_amt::numeric) AS diff_20
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN mov ON mov.order_id = br4.id
+                     AND mov.company_id = br4.company_id
+                     AND mov.rn = 1
+        WHERE {ao_where} AND {ao_df}
+        ORDER BY br4.origin_actual_departure DESC NULLS LAST
+        LIMIT 1000
+        """,
+        *ao_params,
+    )
+
+    lpa, ao = await asyncio.gather(lpa_task, ao_task)
+
+    return {
+        "success": True,
+        "data": {
+            "lane_analysis": [
+                {
+                    "customer": r["customer"],
+                    "origin": r["origin"],
+                    "destination": r["destination"],
+                    "loads": int(r["loads"] or 0),
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "conc_pct": float(r["conc_pct"] or 0) * 100.0,
+                    "diff_15": float(r["diff_15"] or 0),
+                    "diff_18": float(r["diff_18"] or 0),
+                    "diff_20": float(r["diff_20"] or 0),
+                }
+                for r in lpa
+            ],
+            "all_orders": [
+                {
+                    "team": r["team"],
+                    "id": r["id"],
+                    "customer": r["customer"],
+                    "carrier": r["carrier"],
+                    "origin": r["origin"],
+                    "destination": r["destination"],
+                    "departure": r["departure"].isoformat() if r["departure"] else None,
+                    "revenue": float(r["revenue"] or 0),
+                    "profit": float(r["profit"] or 0),
+                    "margin_pct": float(r["margin_pct"] or 0) * 100.0,
+                    "diff_15": float(r["diff_15"] or 0),
+                    "diff_18": float(r["diff_18"] or 0),
+                    "diff_20": float(r["diff_20"] or 0),
+                }
+                for r in ao
+            ],
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+        },
+    }
