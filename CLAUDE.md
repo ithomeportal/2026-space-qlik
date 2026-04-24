@@ -80,6 +80,7 @@
 - Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent (partial index on `qlik_app_id IS NOT NULL`)
 - Never `dict.pop()` on module-level constants — use `.get()`
 - Auto-seed on startup if `role_report_access` is empty
+- **Custom reports upsert runs on every startup** regardless of the empty-check above — adding a new entry to `CUSTOM_REPORTS` in `seed.py` is enough, the next Render deploy will insert the row via `seed_custom_reports(pool)` (called from `main.py` lifespan). No manual `POST /api/admin/seed` needed.
 - FastAPI router order matters: search router BEFORE reports router
 
 ### Code-Made Reports (see `docs/SPEC-CUSTOM-REPORTS.md`)
