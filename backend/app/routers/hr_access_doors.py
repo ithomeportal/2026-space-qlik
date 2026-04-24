@@ -65,6 +65,22 @@ _DEPARTMENT_NORMALIZED = """
   END
 """
 
+# IT department employees are excluded from this report (requested by HR — IT
+# staff keep irregular hours so their punches are noise in the on-time metric).
+# Applied inside the JOIN so every endpoint (filters, kpis, rows, trend,
+# by-department) drops them uniformly. Covers the two spellings seen in the
+# timeoff_employee Graph sync: "IT" and "Information Technology", plus any
+# "IT <something>" prefix (e.g. "IT Support"). NULL departments pass through.
+_EXCLUDE_IT_SQL = """
+  AND (
+    e.department IS NULL
+    OR (
+      UPPER(TRIM(e.department)) NOT IN ('IT', 'INFORMATION TECHNOLOGY')
+      AND UPPER(TRIM(e.department)) NOT LIKE 'IT %'
+    )
+  )
+"""
+
 # Expected-arrival timestamp for this row. NULL when no rule matches -> the
 # row falls in the "Not On Time Reference" bucket. Order matters: the
 # `Operations (DFW) / Operations Intern` exception must come BEFORE the
@@ -130,6 +146,7 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
         JOIN public.timeoff_employee e
           ON TRIM(z.email) = TRIM(e.email)
          AND COALESCE(e.email, '') <> ''
+         {_EXCLUDE_IT_SQL}
         WHERE z.event_date BETWEEN {start_placeholder} AND {end_placeholder}
     )
     """
