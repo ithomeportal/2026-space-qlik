@@ -3,9 +3,24 @@
 Mirrors Bruno's "Executive Report" Qlik app
 (8a36f235-d077-4ab0-85ae-ba3732fd36c3) as a portal custom report. Scope:
 TEAM1-5, company TMS/TMS3, status D/P, excluding OILTEX and
-UNILINK customers. Source: public.mcleod_gld_budget_report_v4 with optional
-LEFT JOIN to public.mcleod_gld_movement for carrier name. Profit-TM gauge
-reads from public.daily_production_budget_report.
+UNILINK customers.
+
+Data sources:
+- Overview tab roll-ups (KPIs, Summary by Team, All Teams Performance,
+  Profit-TM gauge) all read from public.daily_production_budget_report,
+  joined to a customer→team mapping derived from
+  public.mcleod_gld_budget_report_v4. This is the same source that powers
+  the 2026 Official Budget Follow Up report and the Profit-TM gauge, and
+  it is refreshed every 6h by n8n (SQi0VmZS1nYmo7Kt). Using v4 directly
+  for these panels used to produce $0 for teams with no April production
+  in v4 even when budget_report had daily actuals — the mismatch was
+  confusing users.
+- Tabs that need load-level / lane-level detail (Customers, Risk, Orders,
+  Trends, Weekly) still read from public.mcleod_gld_budget_report_v4,
+  because daily_production_budget_report is a day-level aggregate and
+  doesn't expose origin/destination/order id/carrier.
+
+The v4-based panels LEFT JOIN public.mcleod_gld_movement for carrier name.
 
 TEAM-DFW is intentionally excluded — neither a filter button nor included
 in any aggregate.
@@ -187,6 +202,43 @@ def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def _customer_team_cte(teams_param_pos: int) -> str:
+    """Per-customer canonical team CTE, derived from v4.
+
+    Emits `customer_team(customer_name, team_id)` where each customer is
+    mapped to the team with the most v4 rows (tiebreak by team_id). The
+    padded-variants list must be at $-placeholder position ``teams_param_pos``.
+
+    Used by every Overview panel that aggregates daily_production_budget_report
+    by team — production actuals come from budget_report (6h n8n refresh),
+    team assignment from v4. This matches the Profit-TM gauge logic and the
+    2026 Official Budget Follow Up report.
+    """
+    return f"""
+    customer_team AS (
+        SELECT customer_name, team_id FROM (
+            SELECT
+                TRIM(customer_name) AS customer_name,
+                TRIM(team_id)       AS team_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY TRIM(customer_name)
+                    ORDER BY COUNT(*) DESC, TRIM(team_id)
+                ) AS rn
+            FROM public.mcleod_gld_budget_report_v4
+            WHERE team_id = ANY(${teams_param_pos})
+            GROUP BY TRIM(customer_name), TRIM(team_id)
+        ) ranked
+        WHERE rn = 1
+    )
+    """
+
+
+_BUDGET_EXCLUDE_FRAG = (
+    " AND UPPER(COALESCE(budget.\"Customer Name\",'')) NOT LIKE '%OILTEX%'"
+    " AND UPPER(COALESCE(budget.\"Customer Name\",'')) NOT LIKE '%UNILINK%'"
+)
+
+
 # ---------------------------------------------------------------------------
 # /filters — teams + distinct customer list
 # ---------------------------------------------------------------------------
@@ -237,59 +289,6 @@ async def filters(
 # ---------------------------------------------------------------------------
 
 
-def _kpi_sql(where: str, date_frag: str) -> str:
-    return f"""
-    SELECT
-      COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
-      COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
-      COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
-      CASE WHEN SUM(br4.total_charge) > 0
-           THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
-           ELSE 0 END AS margin_pct,
-      CASE WHEN COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) > 0
-           THEN SUM(br4.total_charge)::numeric
-                / COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0)
-           ELSE 0 END AS avg_r_per_l,
-      CASE WHEN COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) > 0
-           THEN SUM(br4.margin_amt)::numeric
-                / COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0)
-           ELSE 0 END AS avg_p_per_l
-    FROM public.mcleod_gld_budget_report_v4 br4
-    WHERE {where} AND {date_frag}
-    """
-
-
-def _summary_by_team_sql(where: str, date_frag: str, team_list_pos: int) -> str:
-    """Summary by Team that always emits one row per team in ${team_list_pos}.
-
-    Using ``unnest(...) LEFT JOIN agg`` keeps the row visible with zero
-    values even when a team has no matching production in the current
-    window — otherwise the GROUP BY collapses missing teams off the UI.
-    """
-    return f"""
-    WITH agg AS (
-      SELECT
-        TRIM(br4.team_id) AS team,
-        COUNT(DISTINCT br4.customer_name) AS cust,
-        COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
-        COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
-        COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
-      FROM public.mcleod_gld_budget_report_v4 br4
-      WHERE {where} AND {date_frag}
-      GROUP BY TRIM(br4.team_id)
-    )
-    SELECT
-      t.team,
-      COALESCE(a.cust,    0) AS cust,
-      COALESCE(a.loads,   0) AS loads,
-      COALESCE(a.revenue, 0)::numeric AS revenue,
-      COALESCE(a.profit,  0)::numeric AS profit
-    FROM unnest(${team_list_pos}::text[]) AS t(team)
-    LEFT JOIN agg a ON a.team = t.team
-    ORDER BY profit DESC NULLS LAST, team
-    """
-
-
 @router.get("/overview")
 async def overview(
     request: Request,
@@ -306,35 +305,92 @@ async def overview(
     m_start = _month_start(today)
     m_end = _month_end(today)
 
+    allowed_teams_padded = _pad_variants(ALLOWED_TEAMS)
+    team_list_for_unnest = [team] if team else list(ALLOWED_TEAMS)
+
     # ---- KPIs (scoped) --------------------------------------------------
-    kpi_params: list = []
-    kpi_where = _scope_where("br4", team, customer, kpi_params)
-    kpi_params.extend([s, e])
-    kpi_date_frag = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(kpi_params)-1} AND ${len(kpi_params)}"
+    # Production actuals come from daily_production_budget_report so teams
+    # with no April rows in v4 still show real numbers (matches Profit-TM
+    # gauge). Team assignment comes from v4 via customer_team CTE.
+    kpi_params: list = [s, e, allowed_teams_padded]
+    kpi_extra = ""
+    if team:
+        kpi_params.append(team)
+        kpi_extra += f" AND ct.team_id = ${len(kpi_params)}"
+    if customer:
+        kpi_params.append(customer)
+        kpi_extra += f' AND budget."Customer Name" = ${len(kpi_params)}'
+    kpi_task = pool.fetchrow(
+        f"""
+        WITH {_customer_team_cte(3)}
+        SELECT
+          COALESCE(SUM(budget."Loads Actual"),   0)::numeric AS loads,
+          COALESCE(SUM(budget."Revenue Actual"), 0)::numeric AS revenue,
+          COALESCE(SUM(budget."Profit Actual"),  0)::numeric AS profit,
+          CASE WHEN SUM(budget."Revenue Actual") > 0
+               THEN SUM(budget."Profit Actual")::numeric
+                    / SUM(budget."Revenue Actual")::numeric
+               ELSE 0 END AS margin_pct,
+          CASE WHEN SUM(budget."Loads Actual") > 0
+               THEN SUM(budget."Revenue Actual")::numeric
+                    / SUM(budget."Loads Actual")::numeric
+               ELSE 0 END AS avg_r_per_l,
+          CASE WHEN SUM(budget."Loads Actual") > 0
+               THEN SUM(budget."Profit Actual")::numeric
+                    / SUM(budget."Loads Actual")::numeric
+               ELSE 0 END AS avg_p_per_l
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE budget."Date" BETWEEN $1 AND $2
+        {_BUDGET_EXCLUDE_FRAG}
+        {kpi_extra}
+        """,
+        *kpi_params,
     )
-    kpi_task = pool.fetchrow(_kpi_sql(kpi_where, kpi_date_frag), *kpi_params)
 
     # ---- Summary by Team (scoped) --------------------------------------
-    # Always emit one row per team in the effective list so teams with
-    # zero MTD rows still appear (e.g. when v4 is sparse for the month).
-    sbt_params: list = []
-    sbt_where = _scope_where("br4", team, customer, sbt_params)
-    sbt_params.extend([s, e])
-    sbt_date_frag = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(sbt_params)-1} AND ${len(sbt_params)}"
-    )
-    sbt_team_list = [team] if team else list(ALLOWED_TEAMS)
-    sbt_params.append(sbt_team_list)
+    # Always emit one row per team in the effective list so teams with no
+    # production in the window still appear with zeros.
+    sbt_params: list = [s, e, allowed_teams_padded, team_list_for_unnest]
+    sbt_extra = ""
+    if team:
+        sbt_params.append(team)
+        sbt_extra += f" AND ct.team_id = ${len(sbt_params)}"
+    if customer:
+        sbt_params.append(customer)
+        sbt_extra += f' AND budget."Customer Name" = ${len(sbt_params)}'
     sbt_task = pool.fetch(
-        _summary_by_team_sql(sbt_where, sbt_date_frag, len(sbt_params)),
+        f"""
+        WITH {_customer_team_cte(3)},
+        agg AS (
+          SELECT
+            ct.team_id AS team,
+            COUNT(DISTINCT budget."Customer Name") AS cust,
+            COALESCE(SUM(budget."Loads Actual"),   0)::numeric AS loads,
+            COALESCE(SUM(budget."Revenue Actual"), 0)::numeric AS revenue,
+            COALESCE(SUM(budget."Profit Actual"),  0)::numeric AS profit
+          FROM public.daily_production_budget_report budget
+          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          WHERE budget."Date" BETWEEN $1 AND $2
+          {_BUDGET_EXCLUDE_FRAG}
+          {sbt_extra}
+          GROUP BY ct.team_id
+        )
+        SELECT
+          t.team,
+          COALESCE(a.cust,    0) AS cust,
+          COALESCE(a.loads,   0) AS loads,
+          COALESCE(a.revenue, 0)::numeric AS revenue,
+          COALESCE(a.profit,  0)::numeric AS profit
+        FROM unnest($4::text[]) AS t(team)
+        LEFT JOIN agg a ON a.team = t.team
+        ORDER BY profit DESC NULLS LAST, team
+        """,
         *sbt_params,
     )
 
     # ---- Profit-TM (semi-scoped: current month, team+customer apply) ---
-    tm_params: list = [m_start, m_end, _pad_variants(ALLOWED_TEAMS)]
+    tm_params: list = [m_start, m_end, allowed_teams_padded]
     tm_extra = ""
     if team:
         tm_params.append(team)
@@ -344,112 +400,92 @@ async def overview(
         tm_extra += f' AND budget."Customer Name" = ${len(tm_params)}'
     profit_tm_task = pool.fetchval(
         f"""
-        WITH customer_team AS (
-            SELECT customer_name, team_id FROM (
-                SELECT
-                    TRIM(customer_name) AS customer_name,
-                    TRIM(team_id)       AS team_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY TRIM(customer_name)
-                        ORDER BY COUNT(*) DESC, TRIM(team_id)
-                    ) AS rn
-                FROM public.mcleod_gld_budget_report_v4
-                WHERE team_id = ANY($3)
-                GROUP BY TRIM(customer_name), TRIM(team_id)
-            ) ranked
-            WHERE rn = 1
-        )
+        WITH {_customer_team_cte(3)}
         SELECT COALESCE(SUM(budget."Profit Actual"), 0)::numeric
         FROM public.daily_production_budget_report budget
         JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
+        {_BUDGET_EXCLUDE_FRAG}
         {tm_extra}
         """,
         *tm_params,
     )
 
     # ---- All Teams Performance (GLOBAL — Yd / Week / Month) -------------
-    # Always emit one row per team in ALLOWED_TEAMS (not just teams that
-    # happen to have MTD rows in v4), via unnest LEFT JOIN agg.
+    # Ignores every filter. Always emits one row per ALLOWED_TEAMS member
+    # via unnest LEFT JOIN agg so teams with no production still appear.
     yesterday = today - timedelta(days=1)
     week_start = _week_start(today)
-    atp_scope = _global_scope_where("br4")
     atp_task = pool.fetch(
         f"""
-        WITH agg AS (
+        WITH {_customer_team_cte(5)},
+        agg AS (
           SELECT
-            TRIM(br4.team_id) AS team,
-            COUNT(*) FILTER (
-              WHERE br4.origin_actual_departure::date = $1
-                AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-            ) AS yd_loads,
-            COALESCE(SUM(br4.margin_amt) FILTER (
-              WHERE br4.origin_actual_departure::date = $1
-            ), 0)::numeric AS yd_profit,
-            CASE WHEN SUM(br4.total_charge) FILTER (
-                WHERE br4.origin_actual_departure::date = $1
-            ) > 0 THEN
-              SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date = $1)::numeric
-              / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date = $1)::numeric
-            ELSE 0 END AS yd_margin,
-            COUNT(*) FILTER (
-              WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
-                AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-            ) AS wk_loads,
-            COALESCE(SUM(br4.margin_amt) FILTER (
-              WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
-            ), 0)::numeric AS wk_profit,
-            CASE WHEN SUM(br4.total_charge) FILTER (
-                WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3
-            ) > 0 THEN
-              SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3)::numeric
-              / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $2 AND $3)::numeric
-            ELSE 0 END AS wk_margin,
-            COUNT(*) FILTER (
-              WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
-                AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-            ) AS mo_loads,
-            COALESCE(SUM(br4.margin_amt) FILTER (
-              WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
-            ), 0)::numeric AS mo_profit,
-            CASE WHEN SUM(br4.total_charge) FILTER (
-                WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
-            ) > 0 THEN
-              SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
-              / SUM(br4.total_charge) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
-            ELSE 0 END AS mo_margin,
-            CASE WHEN COUNT(*) FILTER (
-                WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
-                  AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-            ) > 0 THEN
-              SUM(br4.margin_amt) FILTER (WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5)::numeric
-              / COUNT(*) FILTER (
-                  WHERE br4.origin_actual_departure::date BETWEEN $4 AND $5
-                    AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-              )
-            ELSE 0 END AS mo_p_per_l
-          FROM public.mcleod_gld_budget_report_v4 br4
-          WHERE {atp_scope}
-            AND br4.origin_actual_departure::date BETWEEN $4 AND $3
-          GROUP BY TRIM(br4.team_id)
+            ct.team_id AS team,
+            COALESCE(SUM(budget."Loads Actual")
+              FILTER (WHERE budget."Date" = $1), 0)::numeric AS yd_loads,
+            COALESCE(SUM(budget."Profit Actual")
+              FILTER (WHERE budget."Date" = $1), 0)::numeric AS yd_profit,
+            CASE WHEN SUM(budget."Revenue Actual")
+                      FILTER (WHERE budget."Date" = $1) > 0
+                 THEN SUM(budget."Profit Actual")
+                        FILTER (WHERE budget."Date" = $1)::numeric
+                      / SUM(budget."Revenue Actual")
+                        FILTER (WHERE budget."Date" = $1)::numeric
+                 ELSE 0 END AS yd_margin,
+            COALESCE(SUM(budget."Loads Actual")
+              FILTER (WHERE budget."Date" BETWEEN $2 AND $3), 0)::numeric AS wk_loads,
+            COALESCE(SUM(budget."Profit Actual")
+              FILTER (WHERE budget."Date" BETWEEN $2 AND $3), 0)::numeric AS wk_profit,
+            CASE WHEN SUM(budget."Revenue Actual")
+                      FILTER (WHERE budget."Date" BETWEEN $2 AND $3) > 0
+                 THEN SUM(budget."Profit Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $2 AND $3)::numeric
+                      / SUM(budget."Revenue Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $2 AND $3)::numeric
+                 ELSE 0 END AS wk_margin,
+            COALESCE(SUM(budget."Loads Actual")
+              FILTER (WHERE budget."Date" BETWEEN $4 AND $3), 0)::numeric AS mo_loads,
+            COALESCE(SUM(budget."Profit Actual")
+              FILTER (WHERE budget."Date" BETWEEN $4 AND $3), 0)::numeric AS mo_profit,
+            CASE WHEN SUM(budget."Revenue Actual")
+                      FILTER (WHERE budget."Date" BETWEEN $4 AND $3) > 0
+                 THEN SUM(budget."Profit Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
+                      / SUM(budget."Revenue Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
+                 ELSE 0 END AS mo_margin,
+            CASE WHEN SUM(budget."Loads Actual")
+                      FILTER (WHERE budget."Date" BETWEEN $4 AND $3) > 0
+                 THEN SUM(budget."Profit Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
+                      / SUM(budget."Loads Actual")
+                        FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
+                 ELSE 0 END AS mo_p_per_l
+          FROM public.daily_production_budget_report budget
+          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          WHERE budget."Date" BETWEEN $4 AND $3
+            AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
+            AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%UNILINK%'
+          GROUP BY ct.team_id
         )
         SELECT
           t.team,
-          COALESCE(a.yd_loads,  0) AS yd_loads,
-          COALESCE(a.yd_profit, 0)::numeric AS yd_profit,
-          COALESCE(a.yd_margin, 0) AS yd_margin,
-          COALESCE(a.wk_loads,  0) AS wk_loads,
-          COALESCE(a.wk_profit, 0)::numeric AS wk_profit,
-          COALESCE(a.wk_margin, 0) AS wk_margin,
-          COALESCE(a.mo_loads,  0) AS mo_loads,
-          COALESCE(a.mo_profit, 0)::numeric AS mo_profit,
-          COALESCE(a.mo_margin, 0) AS mo_margin,
+          COALESCE(a.yd_loads,   0) AS yd_loads,
+          COALESCE(a.yd_profit,  0)::numeric AS yd_profit,
+          COALESCE(a.yd_margin,  0) AS yd_margin,
+          COALESCE(a.wk_loads,   0) AS wk_loads,
+          COALESCE(a.wk_profit,  0)::numeric AS wk_profit,
+          COALESCE(a.wk_margin,  0) AS wk_margin,
+          COALESCE(a.mo_loads,   0) AS mo_loads,
+          COALESCE(a.mo_profit,  0)::numeric AS mo_profit,
+          COALESCE(a.mo_margin,  0) AS mo_margin,
           COALESCE(a.mo_p_per_l, 0)::numeric AS mo_p_per_l
         FROM unnest($6::text[]) AS t(team)
         LEFT JOIN agg a ON a.team = t.team
         ORDER BY mo_profit DESC NULLS LAST, team
         """,
-        yesterday, week_start, today, m_start, today, list(ALLOWED_TEAMS),
+        yesterday, week_start, today, m_start, allowed_teams_padded, list(ALLOWED_TEAMS),
     )
 
     kpi, sbt, profit_tm, atp = await asyncio.gather(
