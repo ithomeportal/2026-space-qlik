@@ -22,6 +22,8 @@ import {
   DoorOpen,
   Headphones,
   PiggyBank,
+  Crown,
+  Activity,
 } from "lucide-react"
 import type { ComponentType } from "react"
 
@@ -44,6 +46,8 @@ const REPORT_ICON_MAP: Record<string, IconConfig> = {
   "Carrier Savings Dashboard": { icon: Truck, bg: "from-[#EA580C] to-[#FB923C]", fg: "text-white" },
   "eSavings from Carriers": { icon: PiggyBank, bg: "from-[#065F46] to-[#10B981]", fg: "text-white" },
   "2026 Official Budget Follow Up": { icon: Target, bg: "from-[#1B3A5C] to-[#2563EB]", fg: "text-white" },
+  "XRay CORP Mng": { icon: Activity, bg: "from-[#0E7490] to-[#22D3EE]", fg: "text-white" },
+  "CEO Executive": { icon: Crown, bg: "from-[#312E81] to-[#4F46E5]", fg: "text-white" },
   "Available": { icon: Boxes, bg: "from-[#B45309] to-[#FCD34D]", fg: "text-white" },
   "Customer Attrition Detail": { icon: UserMinus, bg: "from-[#DC2626] to-[#F87171]", fg: "text-white" },
   "Spot Details by Express Module": { icon: FileSpreadsheet, bg: "from-[#C2410C] to-[#FB923C]", fg: "text-white" },
