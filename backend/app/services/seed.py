@@ -504,6 +504,87 @@ async def dedupe_roles(pool) -> list[dict]:
     return merged
 
 
+async def seed_custom_reports(pool) -> int:
+    """Insert/update every row in ``CUSTOM_REPORTS`` against the shared pool.
+
+    Runs on every backend startup so new code-made reports added to the
+    ``CUSTOM_REPORTS`` list ship automatically — the original ``seed_all``
+    only fires when ``role_report_access`` is empty, which means new
+    custom reports never made it into the DB on subsequent deploys.
+
+    The INSERT uses ``ON CONFLICT (custom_path) DO UPDATE`` so this is
+    safe to call on every boot — existing rows get title/description/
+    tags/category refreshed, missing rows get created. Role mappings are
+    inserted with ``ON CONFLICT DO NOTHING``, which preserves any
+    admin-assigned overrides while ensuring at least the seed-declared
+    roles can see the report.
+
+    Returns the number of CUSTOM_REPORTS entries processed (for logs).
+    """
+    # Make sure the schema pieces we need exist. These are no-ops on a
+    # fully-migrated DB but keep this function runnable standalone.
+    await pool.execute(
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_type TEXT DEFAULT 'qlik'"
+    )
+    await pool.execute(
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_path TEXT"
+    )
+    await pool.execute(
+        "ALTER TABLE reports ALTER COLUMN qlik_app_id DROP NOT NULL"
+    )
+    await pool.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS reports_custom_path_key
+        ON reports (custom_path)
+        WHERE custom_path IS NOT NULL
+        """
+    )
+
+    # Build a case-insensitive lookup of existing roles so we can map
+    # role names from CUSTOM_REPORTS regardless of their casing in DB.
+    role_rows = await pool.fetch("SELECT id, name FROM roles")
+    role_ids_ci = {r["name"].lower(): r["id"] for r in role_rows}
+
+    for custom in CUSTOM_REPORTS:
+        custom_path = f"/reports/{custom['key']}"
+        row = await pool.fetchrow(
+            """
+            INSERT INTO reports (title, description, note, category, tags,
+                                 owner_name, is_mobile, report_type, custom_path)
+            VALUES ($1, $2, $3, $4, $5, $6, FALSE, 'custom', $7)
+            ON CONFLICT (custom_path) WHERE custom_path IS NOT NULL DO UPDATE SET
+              title = EXCLUDED.title,
+              description = EXCLUDED.description,
+              note = EXCLUDED.note,
+              category = EXCLUDED.category,
+              tags = EXCLUDED.tags,
+              owner_name = EXCLUDED.owner_name,
+              report_type = 'custom'
+            RETURNING id
+            """,
+            custom["title"],
+            custom.get("description"),
+            custom.get("note"),
+            custom.get("category"),
+            custom.get("tags", []),
+            custom.get("owner_name"),
+            custom_path,
+        )
+        if row:
+            for role_name in custom.get("roles", []):
+                role_id = role_ids_ci.get(role_name.lower())
+                if role_id:
+                    await pool.execute(
+                        """
+                        INSERT INTO role_report_access (role_id, report_id)
+                        VALUES ($1, $2) ON CONFLICT DO NOTHING
+                        """,
+                        role_id,
+                        row["id"],
+                    )
+    return len(CUSTOM_REPORTS)
+
+
 async def seed_all():
     pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=1, max_size=3)
 

@@ -154,6 +154,17 @@ async def lifespan(app: FastAPI):
 
                 await seed_all()
 
+            # Always idempotently upsert code-made (custom) reports so new
+            # entries added to CUSTOM_REPORTS ship on the next deploy — the
+            # full seed_all only runs once (when role_report_access is empty).
+            try:
+                from app.services.seed import seed_custom_reports
+
+                n = await seed_custom_reports(app.state.pool)
+                logger.info(f"Custom reports upserted: {n}")
+            except Exception as e:
+                logger.warning(f"Custom-reports upsert skipped: {e}")
+
             # Schedule favicon backfill as background task (not blocking startup)
             asyncio.create_task(_backfill_favicons(app.state.pool))
         except Exception as e:
