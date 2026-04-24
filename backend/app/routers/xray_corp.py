@@ -99,43 +99,14 @@ def _resolve_range(
     return YEAR_START, YEAR_END
 
 
-def _scope_where(
-    alias: str,
-    team: Optional[str],
-    customer: Optional[str],
-    params: list,
-) -> str:
-    """Common CORP-scope WHERE clauses for the budget_report_v4 load-level table.
-
-    `alias` is the SQL alias of the budget_report_v4 table.
-    Pushes $-placeholders onto `params` and returns the WHERE fragment.
-    """
-    parts = [
-        f"TRIM({alias}.team_id) = ANY($" + str(len(params) + 1) + ")",
-    ]
-    params.append(list(CORP_TEAMS))
-    parts.append(f"TRIM({alias}.company_id) = ANY($" + str(len(params) + 1) + ")")
-    params.append(list(CORP_COMPANIES))
-    parts.append(f"TRIM({alias}.status) = ANY($" + str(len(params) + 1) + ")")
-    params.append(list(OPEN_STATUSES))
-    parts.append(f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'")
-    if team:
-        parts.append(f"TRIM({alias}.team_id) = $" + str(len(params) + 1))
-        params.append(team)
-    if customer:
-        parts.append(f"{alias}.customer_name = $" + str(len(params) + 1))
-        params.append(customer)
-    return " AND ".join(parts)
-
-
 def _pad_variants(values) -> list[str]:
     """Expand each value into unpadded + 3-space-padded twins.
 
-    mcleod_gld_scorecard stores text columns inconsistently: sometimes `'TEAM1'`,
-    sometimes `'TEAM1   '` (CHAR(8)-style padding). Covering both in the WHERE
-    clause lets PostgreSQL use a plain btree index on the column (no expression
-    indexes needed) — which is the difference between a ~200ms seek and a
-    multi-minute full-table sequential scan.
+    mcleod_gld_scorecard and mcleod_gld_budget_report_v4 store text columns
+    inconsistently: sometimes `'TEAM1'`, sometimes `'TEAM1   '` (CHAR(8)-style
+    padding). Covering both in the WHERE clause lets PostgreSQL use a plain
+    btree index on the column (no expression indexes needed) — which is the
+    difference between a ~200ms seek and a multi-minute full-table scan.
     """
     seen: set[str] = set()
     out: list[str] = []
@@ -145,6 +116,45 @@ def _pad_variants(values) -> list[str]:
                 seen.add(cand)
                 out.append(cand)
     return out
+
+
+def _scope_where(
+    alias: str,
+    team: Optional[str],
+    customer: Optional[str],
+    params: list,
+) -> str:
+    """Common CORP-scope WHERE clauses for the budget_report_v4 load-level table.
+
+    `alias` is the SQL alias of the budget_report_v4 table. Pushes $-placeholders
+    onto `params` and returns the WHERE fragment. Uses sargable `= ANY($N)`
+    predicates with padded+unpadded variants (same pattern as `_scorecard_cte`)
+    so btree indexes on `team_id`, `company_id`, `status` are usable.
+    """
+    teams_param = _pad_variants(CORP_TEAMS)
+    companies_param = _pad_variants(CORP_COMPANIES)
+    statuses_param = _pad_variants(OPEN_STATUSES)
+
+    params.append(teams_param)
+    p_teams = len(params)
+    params.append(companies_param)
+    p_companies = len(params)
+    params.append(statuses_param)
+    p_status = len(params)
+
+    parts = [
+        f"{alias}.team_id    = ANY(${p_teams})",
+        f"{alias}.company_id = ANY(${p_companies})",
+        f"{alias}.status     = ANY(${p_status})",
+        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+    ]
+    if team:
+        params.append(_pad_variants([team]))
+        parts.append(f"{alias}.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"{alias}.customer_name = ${len(params)}")
+    return " AND ".join(parts)
 
 
 def _scorecard_cte(kind: str) -> str:
@@ -1180,7 +1190,7 @@ async def risk(
     lim_idx = len(params)
 
     # Worst margins by lane
-    worst_lanes = await pool.fetch(
+    worst_lanes_task = pool.fetch(
         f"""
         SELECT
           br4.customer_name AS customer,
@@ -1206,7 +1216,7 @@ async def risk(
     )
 
     # Negative loads by order — one row per order, LEFT JOIN movement
-    neg_orders = await pool.fetch(
+    neg_orders_task = pool.fetch(
         f"""
         WITH neg AS (
             SELECT br4.id, br4.customer_name, br4.company_id,
@@ -1250,7 +1260,7 @@ async def risk(
     )
 
     # Negative loads — roll-up by customer
-    neg_customer = await pool.fetch(
+    neg_customer_task = pool.fetch(
         f"""
         WITH neg AS (
             SELECT br4.customer_name,
@@ -1285,7 +1295,7 @@ async def risk(
     loss_params: list = []
     loss_where = _scope_where("br4", team, customer, loss_params)
     loss_params.append(losses_start)
-    losses_rows = await pool.fetch(
+    losses_task = pool.fetch(
         f"""
         SELECT
           DATE_TRUNC('month', br4.origin_actual_departure)::date AS month_bucket,
@@ -1301,6 +1311,12 @@ async def risk(
         """,
         *loss_params,
     )
+
+    # Run all 4 independent queries concurrently.
+    worst_lanes, neg_orders, neg_customer, losses_rows = await asyncio.gather(
+        worst_lanes_task, neg_orders_task, neg_customer_task, losses_task,
+    )
+
     losses_month, losses_week = [], []
     for r in losses_rows:
         base = {"loads": int(r["loads"] or 0), "profit": float(r["profit"] or 0)}

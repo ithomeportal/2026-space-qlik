@@ -1,11 +1,12 @@
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import asyncpg
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -212,6 +213,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _timing_log(request: Request, call_next):
+    """Log wall-clock duration for every request so we can pinpoint slow endpoints.
+
+    Only emits for custom-report routes to keep logs focused. Render log stream
+    → search `perf route=/api/custom/xray-corp` to see durations per endpoint.
+    """
+    path = request.url.path
+    if not path.startswith("/api/custom/"):
+        return await call_next(request)
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "perf route=%s status=%s duration_ms=%s qs=%s",
+        path, response.status_code, duration_ms, request.url.query or "-",
+    )
+    return response
 
 app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
