@@ -18,6 +18,7 @@ from app.routers import (
     budget_followup,
     carriers_savings,
     ceo_executive,
+    hr_access_doors,
     preferences,
     qlik,
     reports,
@@ -154,6 +155,33 @@ async def lifespan(app: FastAPI):
 
                 await seed_all()
 
+            # One-time migration (idempotent): flip the legacy "HR - Access Log
+            # Doors" Qlik row (app 4573ff42-…, sheet ZYDdxs on unilink.us) to a
+            # code-made row pointing at /reports/hr-access-doors. Runs on every
+            # boot but no-ops once the row has been converted. Also removes the
+            # obsolete "(Mob) HR - Access Log Doors" mobile duplicate.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/hr-access-doors',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '4573ff42-c0b5-48ef-9945-20861b7a6f63'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/hr-access-doors')
+                    """
+                )
+                await app.state.pool.execute(
+                    """
+                    DELETE FROM reports
+                     WHERE title = '(Mob) HR - Access Log Doors'
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"HR Access Log migration skipped: {e}")
+
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -255,6 +283,7 @@ app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")
 app.include_router(xray_corp.router, prefix="/api")
 app.include_router(ceo_executive.router, prefix="/api")
+app.include_router(hr_access_doors.router, prefix="/api")
 
 
 @app.get("/api/health")

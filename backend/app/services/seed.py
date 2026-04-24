@@ -71,6 +71,16 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO"],
     },
+    {
+        "key": "hr-access-doors",  # -> /reports/hr-access-doors
+        "title": "HR - Access Log Doors",
+        "description": "Fingerprint check-in log with on-time vs late analysis per employee, team and day",
+        "note": "First punch/day · expected arrival per dept+job_title · source: zk_gld_onlyfingerprint + timeoff_employee",
+        "category": "HR",
+        "tags": ["hr", "attendance", "fingerprint", "on-time", "late", "access", "door"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "HR", "IT"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
@@ -237,16 +247,9 @@ REPORTS = [
         "owner_name": "Melany",
         "roles": ["executive", "hr"],
     },
-    {
-        "qlik_app_id": "4573ff42-c0b5-48ef-9945-20861b7a6f63",
-        "qlik_sheet_id": "ZYDdxs",
-        "title": "HR - Access Log Doors",
-        "description": "Door access log analysis for HR and security",
-        "category": "HR",
-        "tags": ["access", "doors", "security"],
-        "owner_name": "Melany",
-        "roles": ["executive", "hr", "it"],
-    },
+    # NOTE: "HR - Access Log Doors" was migrated to a code-made report on
+    # 2026-04-24. See CUSTOM_REPORTS (key=hr-access-doors) and the one-time
+    # row-flip in main.py lifespan. Do not re-add it here.
     {
         "qlik_app_id": "3e30136b-050a-4f19-83ab-17a7d55a2fc3",
         "qlik_sheet_id": "NfAFQFz",
@@ -370,17 +373,9 @@ MOBILE_REPORTS = [
         "roles": ["executive", "sales"],
         "is_mobile": True,
     },
-    {
-        "qlik_app_id": "22bdd2b4-34a8-496f-937c-2142adabcd6a",
-        "qlik_sheet_id": "ZYDdxs",
-        "title": "(Mob) HR - Access Log Doors",
-        "description": "Access log analysis optimized for mobile",
-        "category": "HR",
-        "tags": ["access", "doors", "mobile"],
-        "owner_name": "Melany",
-        "roles": ["executive", "hr", "it"],
-        "is_mobile": True,
-    },
+    # NOTE: "(Mob) HR - Access Log Doors" removed 2026-04-24 — the code-made
+    # desktop page at /reports/hr-access-doors is responsive (scrolls on
+    # mobile), so no separate mobile tile is needed.
     {
         "qlik_app_id": "9e477387-e2ce-46bc-a27f-ec85b06c0f7e",
         "qlik_sheet_id": "NfAFQFz",
