@@ -19,12 +19,51 @@ const RANGE_OPTIONS: { key: PodiumRange; label: string }[] = [
   { key: "mtd", label: "Month to date" },
 ]
 
+type TeamFilter = "all" | "TM1" | "TM2" | "TM3" | "TM4"
+
+const TEAM_OPTIONS: { key: TeamFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "TM1", label: "TM1" },
+  { key: "TM2", label: "TM2" },
+  { key: "TM3", label: "TM3" },
+  { key: "TM4", label: "TM4" },
+]
+
+function normalizeTeam(v: string | null | undefined): string {
+  return (v ?? "").trim().toUpperCase()
+}
+
 export default function PodiumDfwPage() {
   const [range, setRange] = useState<PodiumRange>("today")
+  const [teamFilter, setTeamFilter] = useState<TeamFilter>("all")
   const q = usePodiumOverview(range)
 
-  const kpis = q.data?.data?.kpis
-  const rows = q.data?.data?.rows ?? []
+  const rawRows = q.data?.data?.rows ?? []
+
+  // Filter rows by team (client-side — datalake already returns all DFW rows).
+  const rows = useMemo(() => {
+    if (teamFilter === "all") return rawRows
+    const target = teamFilter.toUpperCase()
+    return rawRows.filter((r) => normalizeTeam(r.team) === target)
+  }, [rawRows, teamFilter])
+
+  // Recompute KPIs from the filtered rows so cards stay in sync with the table.
+  // Backend KPI math uses the same rows + sum — safe to mirror here.
+  const kpis = useMemo(() => {
+    if (teamFilter === "all") return q.data?.data?.kpis
+    let profit = 0
+    let revenue = 0
+    for (const r of rows) {
+      if (typeof r.profit === "number") profit += r.profit
+      if (typeof r.revenue === "number") revenue += r.revenue
+    }
+    return {
+      loads: rows.length,
+      profit,
+      revenue,
+      margin_pct: revenue > 0 ? profit / revenue : null,
+    }
+  }, [rows, teamFilter, q.data?.data?.kpis])
 
   // Podium medal lookup: top-3 by profit (descending, nulls excluded).
   const medalByOrder = useMemo(() => {
@@ -85,27 +124,51 @@ export default function PodiumDfwPage() {
         </div>
       </div>
 
-      {/* Range toggle */}
+      {/* Range + Team toggles */}
       <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
-        <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-2 px-6 py-3">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-            Range
-          </span>
-          <div className="inline-flex rounded-md border border-[#E5E7EB] bg-white p-0.5">
-            {RANGE_OPTIONS.map((o) => (
-              <button
-                key={o.key}
-                onClick={() => setRange(o.key)}
-                className={
-                  range === o.key
-                    ? "rounded px-3 py-1 text-xs font-semibold bg-[#1B3A5C] text-white"
-                    : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
-                }
-              >
-                {o.label}
-              </button>
-            ))}
+        <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Range
+            </span>
+            <div className="inline-flex rounded-md border border-[#E5E7EB] bg-white p-0.5">
+              {RANGE_OPTIONS.map((o) => (
+                <button
+                  key={o.key}
+                  onClick={() => setRange(o.key)}
+                  className={
+                    range === o.key
+                      ? "rounded px-3 py-1 text-xs font-semibold bg-[#1B3A5C] text-white"
+                      : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Team
+            </span>
+            <div className="inline-flex rounded-md border border-[#E5E7EB] bg-white p-0.5">
+              {TEAM_OPTIONS.map((o) => (
+                <button
+                  key={o.key}
+                  onClick={() => setTeamFilter(o.key)}
+                  className={
+                    teamFilter === o.key
+                      ? "rounded px-3 py-1 text-xs font-semibold bg-[#C2410C] text-white"
+                      : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <span className="ml-auto text-xs text-[#9CA3AF]">
             TEAM-DFW · Rate Conf Received
           </span>
