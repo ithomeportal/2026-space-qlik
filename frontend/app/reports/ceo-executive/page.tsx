@@ -14,12 +14,12 @@ import { Orders } from "./tabs/Orders"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
-type TabKey = "overview" | "trends" | "customers" | "weekly" | "risk" | "orders"
+// Overview now bundles Overview + Trends + Customers content, stacked in that
+// order, so those two no longer get their own tabs.
+type TabKey = "overview" | "weekly" | "risk" | "orders"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
-  { key: "trends", label: "Trends" },
-  { key: "customers", label: "Customers" },
   { key: "weekly", label: "Weekly" },
   { key: "risk", label: "Risk" },
   { key: "orders", label: "Orders" },
@@ -235,9 +235,13 @@ export default function CeoExecutivePage() {
       </div>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
-        {activeTab === "overview" && <Overview filters={filters} />}
-        {activeTab === "trends" && <Trends />}
-        {activeTab === "customers" && <Customers filters={filters} />}
+        {activeTab === "overview" && (
+          <div className="space-y-10">
+            <Overview filters={filters} />
+            <Trends />
+            <Customers filters={filters} />
+          </div>
+        )}
         {activeTab === "weekly" && <Weekly />}
         {activeTab === "risk" && <Risk filters={filters} />}
         {activeTab === "orders" && <Orders filters={filters} />}
