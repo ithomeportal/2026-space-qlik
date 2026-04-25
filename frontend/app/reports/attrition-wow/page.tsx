@@ -3,18 +3,12 @@
 import { Suspense, useCallback, useMemo, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import {
-  ArrowLeft,
-  Loader2,
-  TrendingDown,
-  Users,
-} from "lucide-react"
+import { ArrowLeft, Loader2, Users } from "lucide-react"
 import {
   useAttritionFilters,
   useAttritionFreshness,
   type AttritionFilters,
 } from "@/lib/attrition-wow-api"
-import { AttritionErrorBanner } from "./ErrorBanner"
 import { fmtTimestamp, fmtWeekRange } from "./format"
 import { OverviewTab } from "./tabs/OverviewTab"
 import { ReactiveTab } from "./tabs/ReactiveTab"

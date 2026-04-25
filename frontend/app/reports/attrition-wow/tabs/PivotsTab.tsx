@@ -78,7 +78,7 @@ export function PivotsTab({ filters }: Props) {
           </div>
         </div>
         <div className="ml-auto text-[10px] text-[#6B7280]">
-          Cells colored vs each row's 8-week average · current week excluded
+          Cells colored vs each row&apos;s 8-week average · current week excluded
         </div>
       </div>
 

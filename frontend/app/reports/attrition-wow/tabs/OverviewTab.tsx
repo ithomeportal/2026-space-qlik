@@ -93,7 +93,6 @@ export function OverviewTab({ filters }: Props) {
               loading={loadingSummary}
               block={s?.loads}
               fmt={fmtCount1}
-              fmtAbs={fmtCount}
               isCount
             />
             <MetricRow
@@ -101,21 +100,18 @@ export function OverviewTab({ filters }: Props) {
               loading={loadingSummary}
               block={s?.revenue}
               fmt={fmtUsd}
-              fmtAbs={fmtUsd}
             />
             <MetricRow
               label="$ Profit"
               loading={loadingSummary}
               block={s?.profit}
               fmt={fmtUsd}
-              fmtAbs={fmtUsd}
             />
             <MetricRow
               label="% Margin"
               loading={loadingSummary}
               block={s?.margin_pct}
               fmt={fmtPct}
-              fmtAbs={fmtPct}
               isPct
             />
             <MetricRow
@@ -123,7 +119,6 @@ export function OverviewTab({ filters }: Props) {
               loading={loadingSummary}
               block={s?.profit_per_load}
               fmt={fmtUsd}
-              fmtAbs={fmtUsd}
             />
           </tbody>
         </table>
@@ -260,7 +255,6 @@ function MetricRow({
   loading,
   block,
   fmt,
-  fmtAbs,
   isCount,
   isPct,
 }: {
@@ -268,7 +262,6 @@ function MetricRow({
   loading: boolean
   block: MetricBlock | undefined
   fmt: (v: number | null | undefined) => string
-  fmtAbs: (v: number | null | undefined) => string
   isCount?: boolean
   isPct?: boolean
 }) {
