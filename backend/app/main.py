@@ -15,6 +15,7 @@ from slowapi.util import get_remote_address
 from app.config import settings
 from app.routers import (
     admin,
+    attrition_wow,
     budget_followup,
     carriers_savings,
     ceo_executive,
@@ -196,6 +197,33 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"HR Access Log migration skipped: {e}")
 
+            # 2026-04-25 — flip legacy Qlik "Attrition Week-Over-Week"
+            # (app 4e326aa5-…) to a code-made row pointing at
+            # /reports/attrition-wow. seed_custom_reports() then sets the
+            # title/desc/roles to the new spec. Removes the (Mob) duplicate.
+            # Idempotent: no-ops once flipped.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/attrition-wow',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '4e326aa5-3d7a-4802-a792-56e28a35fdd6'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/attrition-wow')
+                    """
+                )
+                await app.state.pool.execute(
+                    """
+                    DELETE FROM reports
+                     WHERE title = '(Mob) Attrition Week-Over-Week'
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"Attrition WoW migration skipped: {e}")
+
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -326,6 +354,7 @@ app.include_router(ceo_executive.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
+app.include_router(attrition_wow.router, prefix="/api")
 
 
 @app.get("/api/health")

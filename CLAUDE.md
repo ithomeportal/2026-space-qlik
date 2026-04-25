@@ -100,6 +100,7 @@
 | CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | Overview roll-ups: `daily_production_budget_report` + v4 team map; detail panels: v4. Scope includes CORP (team_id TEAM1-5) **and DFW** (team_id TEAM-DFW → sub-teams TM1-TM4 via `v4.team` col). Division pill (All/CORP/DFW) narrows the team_id universe; Team pill auto-swaps between TEAM1-5 (CORP) and TM1-4 (DFW). DFW sub-team filter uses `TRIM(team)=…` only AFTER the sargable team_id prune |
 | Podium Set DFW | `/reports/podium-dfw` | admin + DFW | `mcleod_gld_order_post_hist` (Rate Conf Received, latest/order) LEFT JOIN `mcleod_gld_budget_report_v4`; replaces Qlik `0a0c7a49-…`; 15-min auto-refresh; DB is already CST (no `AT TIME ZONE`); client-side Team pill filter (All/TM1-TM4) recomputes KPIs + medals — backend scope stays pinned to `TEAM-DFW` |
 | Top Losses Lanes | `/reports/losses-lanes` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_budget_report_v4`; scope TEAM1-5 + TEAM-DFW / TMS,TMS3 / status D,P; excludes UNILINK & OILTEX; `margin_amt<0` filter on every visual; mirrors Bruno's Qlik sheet `de4ecec0-…/GjMvAnC`; presets MTD/Last Month/This Year/Custom; daily 7 AM CST weekly-movers email to msalazarm + dfrodriguez (needs `RESEND_API_KEY` on Render) |
+| Attrition WoW | `/reports/attrition-wow` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_budget_report_v4`; replaces Qlik app `e6440781-…`; same scope as Losses Lanes minus the `margin_amt<0` filter; **all windows are completed Mon-Sun ISO weeks**, current week excluded so KPIs don't bounce mid-week; tabs Overview / Reactive Customers / 12-Week Pivots / Weekly Trends; reactive tables segment customers by Days Since Last Load (1-7 / 8-28 / 29-63 / 64-248 / 249-365 / >365); WoW $Var = SUM(margin_amt) LW − LW-1; one-time Lifespan migration flips legacy Qlik row `4e326aa5-…` to custom_path. Desktop-only (banner at <1280px) |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -136,7 +137,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW
 
 ---
 

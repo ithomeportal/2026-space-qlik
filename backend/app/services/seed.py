@@ -101,6 +101,16 @@ CUSTOM_REPORTS = [
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
+    {
+        "key": "attrition-wow",  # -> /reports/attrition-wow
+        "title": "Attrition WoW",
+        "description": "Week-over-week attrition: active lanes/customers, reactive customers, WoW $Var, 15-week trends",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · excludes UNILINK & OILTEX · ISO Mon-Sun weeks · current week excluded · source: mcleod_gld_budget_report_v4",
+        "category": "Executive",
+        "tags": ["attrition", "wow", "weekly", "reactive", "lanes", "customers", "trends", "variance"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
 ]
 
 # 19 desktop + 12 mobile reports

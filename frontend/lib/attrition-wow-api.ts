@@ -1,0 +1,351 @@
+"use client"
+
+import { useQuery } from "@tanstack/react-query"
+
+interface ApiResponse<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+async function apiFetch<T>(path: string): Promise<ApiResponse<T>> {
+  const res = await fetch(`/api/proxy/${path}`, {
+    headers: { "Content-Type": "application/json" },
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+const ATTRITION_RETRY = {
+  retry: (failureCount: number, error: unknown) => {
+    const msg = error instanceof Error ? error.message : ""
+    if (/\b401\b|\b403\b/.test(msg)) return false
+    return failureCount < 2
+  },
+  retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+}
+
+// ---------------------------------------------------------------------------
+// Shared filter contract — Attrition WoW has no date range (everything is
+// anchored to the most recent completed Mon-Sun week).
+// ---------------------------------------------------------------------------
+
+export interface AttritionFilters {
+  teams?: string[]
+  customer?: string
+  contract?: string
+  lane?: string
+}
+
+function buildQs(f: AttritionFilters, extra?: Record<string, string>) {
+  const q = new URLSearchParams()
+  if (f.teams && f.teams.length) q.set("teams", f.teams.join(","))
+  if (f.customer) q.set("customer", f.customer)
+  if (f.contract) q.set("contract", f.contract)
+  if (f.lane) q.set("lane", f.lane)
+  if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
+  const s = q.toString()
+  return s ? `?${s}` : ""
+}
+
+function keyOf(f: AttritionFilters) {
+  return [
+    (f.teams ?? []).slice().sort().join(","),
+    f.customer ?? "",
+    f.contract ?? "",
+    f.lane ?? "",
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface AttritionFilterOptions {
+  teams: string[]
+  customers: string[]
+  contract_types: string[]
+}
+
+export interface AttritionFreshness {
+  last_load_date: string | null
+  rows_in_scope: number
+  last_completed_week: { start: string; end: string }
+}
+
+export interface DiffPair {
+  diff: number | null
+  pct: number | null
+}
+
+export interface MetricBlock {
+  l8w_avg: number | null
+  lw: number | null
+  l2w_avg: number | null
+  diff_lw_vs_l8w: DiffPair
+  diff_l2w_vs_l8w: DiffPair
+}
+
+export interface CountBlock {
+  l8w: number
+  lw: number
+  diff: number | null
+  pct: number | null
+}
+
+export interface AttritionSummary {
+  windows: {
+    l8w: { start: string; end: string }
+    lw: { start: string; end: string }
+    l2w: { start: string; end: string }
+  }
+  active_lanes: CountBlock
+  active_customers: CountBlock
+  loads: MetricBlock
+  revenue: MetricBlock
+  profit: MetricBlock
+  margin_pct: MetricBlock
+  profit_per_load: MetricBlock
+}
+
+export interface WeekRow {
+  week_start: string
+  loads: number
+  customers: number
+  revenue: number
+  profit: number
+  margin_pct: number | null
+}
+
+export interface AttritionTrends {
+  weeks: WeekRow[]
+  reference: {
+    l8w_avg_loads: number
+    l8w_avg_customers: number
+    l8w_avg_revenue: number
+    l8w_avg_profit: number
+    l8w_avg_margin: number | null
+  }
+}
+
+export interface PivotRow {
+  week_start: string
+  dim_key: string
+  value: number | null
+}
+
+export interface AttritionPivot {
+  data: PivotRow[]
+  meta: { dim: "customer" | "team"; metric: "loads" | "revenue" | "profit" | "margin"; weeks: number }
+}
+
+export interface ReactiveRow {
+  team: string | null
+  customer: string | null
+  avg_loads_l8w: number
+  avg_rev_l8w: number
+  avg_profit_l8w: number
+  avg_margin_l8w: number | null
+  avg_loads_l2_4w: number
+  avg_rev_l2_4w: number
+  avg_profit_l2_4w: number
+  avg_margin_l2_4w: number | null
+  avg_loads_l5_9w: number
+  avg_rev_l5_9w: number
+  avg_profit_l5_9w: number
+  avg_margin_l5_9w: number | null
+  lw_loads: number
+  lw_revenue: number
+  lw_profit: number
+  lw_margin: number | null
+  load_diff_lw_vs_l8w: number
+  pct_var_loads_lw_vs_l8w: number | null
+  pct_var_rev_lw_vs_l8w: number | null
+  pct_var_profit_lw_vs_l8w: number | null
+  pct_var_loads_l2_4_vs_l8w: number | null
+  pct_var_rev_l2_4_vs_l8w: number | null
+  pct_var_profit_l2_4_vs_l8w: number | null
+  pct_var_loads_l5_9_vs_l8w: number | null
+  pct_var_rev_l5_9_vs_l8w: number | null
+  pct_var_profit_l5_9_vs_l8w: number | null
+  last_load_date: string | null
+  days_since_last_load: number | null
+  bucket:
+    | "lw"
+    | "l2_4w"
+    | "l5_9w"
+    | "spot_recent"
+    | "spot_stale"
+    | "gt_1y"
+    | "no_load"
+  reactive_this_week: boolean
+}
+
+export interface AttritionReactive {
+  data: ReactiveRow[]
+  meta: {
+    windows: {
+      l8w: { start: string; end: string }
+      lw: { start: string; end: string }
+      l2_4w: { start: string; end: string }
+      l5_9w: { start: string; end: string }
+    }
+  }
+}
+
+export interface LaneSummaryRow {
+  team: string | null
+  customer: string | null
+  lane: string | null
+  contract_type: string | null
+  avg_loads_l8w: number
+  avg_rev_l8w: number
+  avg_profit_l8w: number
+  avg_margin_l8w: number | null
+  avg_loads_l2_4w: number
+  avg_rev_l2_4w: number
+  avg_profit_l2_4w: number
+  lw_loads: number
+  lw_revenue: number
+  lw_profit: number
+  lw_margin: number | null
+  total_loads: number
+  total_revenue: number
+  total_profit: number
+  total_margin: number | null
+  load_diff_lw_vs_l8w: number
+  pct_var_loads_lw_vs_l8w: number | null
+  pct_var_rev_lw_vs_l8w: number | null
+  pct_var_profit_lw_vs_l8w: number | null
+  pct_var_loads_l2_4_vs_l8w: number | null
+  pct_var_rev_l2_4_vs_l8w: number | null
+  pct_var_profit_l2_4_vs_l8w: number | null
+  last_load_date: string | null
+  days_since_last_load: number | null
+  bucket: ReactiveRow["bucket"]
+}
+
+export interface WowVarRow {
+  team: string
+  customer_id: string | null
+  customer_name: string | null
+  var: number
+}
+
+export interface WowVariation {
+  total: number
+  by_team: { team: string; var: number }[]
+  by_customer: WowVarRow[]
+  windows: {
+    lw: { start: string; end: string }
+    lw_prev: { start: string; end: string }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+export function useAttritionFilters() {
+  return useQuery({
+    queryKey: ["attrition-wow", "filters"],
+    queryFn: () => apiFetch<AttritionFilterOptions>("custom/attrition-wow/filters"),
+    staleTime: 10 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionFreshness() {
+  return useQuery({
+    queryKey: ["attrition-wow", "freshness"],
+    queryFn: () => apiFetch<AttritionFreshness>("custom/attrition-wow/freshness"),
+    staleTime: 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionSummary(f: AttritionFilters) {
+  return useQuery({
+    queryKey: ["attrition-wow", "summary", ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<AttritionSummary>(`custom/attrition-wow/summary${buildQs(f)}`),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionTrends(f: AttritionFilters, weeks = 15) {
+  return useQuery({
+    queryKey: ["attrition-wow", "trends", weeks, ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<AttritionTrends>(
+        `custom/attrition-wow/weekly-trends${buildQs(f, { weeks: String(weeks) })}`,
+      ),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionPivot(
+  f: AttritionFilters,
+  dim: "customer" | "team",
+  metric: "loads" | "revenue" | "profit" | "margin",
+  weeks = 12,
+) {
+  return useQuery({
+    queryKey: ["attrition-wow", "pivot", dim, metric, weeks, ...keyOf(f)],
+    queryFn: async () => {
+      const res = await apiFetch<PivotRow[]>(
+        `custom/attrition-wow/pivot${buildQs(f, {
+          dim,
+          metric,
+          weeks: String(weeks),
+        })}`,
+      )
+      return res
+    },
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionReactive(f: AttritionFilters) {
+  return useQuery({
+    queryKey: ["attrition-wow", "reactive", ...keyOf(f)],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/proxy/custom/attrition-wow/reactive-summary${buildQs(f)}`,
+        { headers: { "Content-Type": "application/json" } },
+      )
+      if (!res.ok) throw new Error(`API error: ${res.status}`)
+      return res.json() as Promise<{
+        success: boolean
+        data: ReactiveRow[]
+        meta: AttritionReactive["meta"]
+        error?: string
+      }>
+    },
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionLaneSummary(f: AttritionFilters) {
+  return useQuery({
+    queryKey: ["attrition-wow", "lane-summary", ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<LaneSummaryRow[]>(`custom/attrition-wow/lane-summary${buildQs(f)}`),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionWowVariation(f: AttritionFilters) {
+  return useQuery({
+    queryKey: ["attrition-wow", "wow-var", ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<WowVariation>(`custom/attrition-wow/wow-variation${buildQs(f)}`),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
