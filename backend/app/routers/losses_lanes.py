@@ -1198,17 +1198,20 @@ async def send_test_email(
     """Fire the weekly-movers email immediately. Admin-only.
 
     Useful to verify the daily 7 AM CST job's output without waiting for
-    the cron. With no args, sends to the production recipients
-    (msalazarm + dfrodriguez). Pass ``override_to=you@example.com`` to
-    redirect for a solo test.
+    the cron. With no args, sends to the production distribution (Erick
+    + Christian on To:, Jennifer + Bruce on CC:, Melany + Diego on BCC:).
+    Pass ``override_to=you@example.com`` to redirect a solo test — when
+    overridden, CC and BCC are dropped so the test message lands only on
+    the override address.
     """
     pool = get_datalake_gold_pool(request)
-    from app.services.losses_alerts import RECIPIENTS, send_weekly_movers_email
+    from app.services.losses_alerts import send_weekly_movers_email
 
     if override_to:
-        recipients = [r.strip() for r in override_to.split(",") if r.strip()]
+        to_list = [r.strip() for r in override_to.split(",") if r.strip()]
+        result = await send_weekly_movers_email(
+            pool, to=to_list, cc=(), bcc=(), top_n=top_n
+        )
     else:
-        recipients = list(RECIPIENTS)
-
-    result = await send_weekly_movers_email(pool, recipients=recipients, top_n=top_n)
+        result = await send_weekly_movers_email(pool, top_n=top_n)
     return {"success": bool(result.get("sent")), "data": result}

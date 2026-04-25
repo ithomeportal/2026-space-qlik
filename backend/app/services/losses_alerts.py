@@ -1,8 +1,14 @@
 """Daily 7 AM CST email alert for Losses Lanes weekly movers.
 
-Subscribers (hard-coded, per product 2026-04-24):
-    - msalazarm@unilinktransportation.com  (Melany Salazar M.)
-    - dfrodriguez@unilinktransportation.com (Diego F. Rodriguez)
+Distribution (updated 2026-04-25):
+    To:  Erick Mendoza (President & CEO), Christian Mendoza (Sr. VP DFW)
+    CC:  Jennifer Alanis (Director DFW), Bruce Kimbark (CFO)
+    BCC: Melany Salazar M., Diego F. Rodriguez
+
+A single email is sent so CC recipients are visible to the To: line and
+BCC recipients stay hidden. Previously this looped one send per address
+to keep the To: line clean — that's no longer the right shape since
+Erick/Christian need to see who else is on the thread.
 
 Gracefully no-ops when:
     - ``settings.RESEND_API_KEY`` is empty (env var not set on Render)
@@ -26,9 +32,17 @@ from app.routers.losses_lanes import compute_weekly_movers
 
 logger = logging.getLogger(__name__)
 
-RECIPIENTS: tuple[str, ...] = (
-    "msalazarm@unilinktransportation.com",
-    "dfrodriguez@unilinktransportation.com",
+TO_RECIPIENTS: tuple[str, ...] = (
+    "emendoza@unilinktransportation.com",      # Erick Mendoza  — President & CEO
+    "christian@unilinktransportation.com",     # Christian Mendoza — Sr. VP DFW Presidency
+)
+CC_RECIPIENTS: tuple[str, ...] = (
+    "jennifer@unilinktransportation.com",      # Jennifer Alanis — Director DFW
+    "bkimbark@unilinktransportation.com",      # Bruce Kimbark   — CFO Finance
+)
+BCC_RECIPIENTS: tuple[str, ...] = (
+    "msalazarm@unilinktransportation.com",     # Melany Salazar M.
+    "dfrodriguez@unilinktransportation.com",   # Diego F. Rodriguez
 )
 
 FROM_ADDRESS = "UNILINK Space <noreply@unilinkportal.com>"
@@ -179,7 +193,9 @@ def render_html(data: dict[str, Any], portal_url: str) -> str:
 async def send_weekly_movers_email(
     pool,
     *,
-    recipients: Iterable[str] = RECIPIENTS,
+    to: Iterable[str] = TO_RECIPIENTS,
+    cc: Iterable[str] = CC_RECIPIENTS,
+    bcc: Iterable[str] = BCC_RECIPIENTS,
     top_n: int = 10,
     portal_url: str = "https://space.unilinkportal.com",
 ) -> dict[str, Any]:
@@ -217,28 +233,38 @@ async def send_weekly_movers_email(
     )
 
     resend.api_key = settings.RESEND_API_KEY
-    recipients_list = list(recipients)
+    to_list = list(to)
+    cc_list = list(cc)
+    bcc_list = list(bcc)
+
+    if not to_list:
+        logger.warning("send_weekly_movers_email: empty TO list; skipping send")
+        return {"sent": False, "reason": "no_to_recipients"}
 
     try:
-        # Resend v2 Python SDK: one request per recipient keeps the "To:" line
-        # clean (each person sees only their own email as recipient).
-        for to in recipients_list:
-            resend.Emails.send(
-                {
-                    "from": FROM_ADDRESS,
-                    "to": to,
-                    "subject": subject,
-                    "html": html,
-                }
-            )
+        # Single send: To: line shows Erick + Christian, CC line shows Jennifer
+        # + Bruce, BCC stays hidden (Melany + Diego). Resend Python SDK accepts
+        # `to`, `cc`, `bcc` as either string or list.
+        payload: dict[str, Any] = {
+            "from": FROM_ADDRESS,
+            "to": to_list,
+            "subject": subject,
+            "html": html,
+        }
+        if cc_list:
+            payload["cc"] = cc_list
+        if bcc_list:
+            payload["bcc"] = bcc_list
+        resend.Emails.send(payload)
         logger.info(
-            "send_weekly_movers_email: sent to %d recipients, %d total changes",
-            len(recipients_list),
-            total_changes,
+            "send_weekly_movers_email: sent (to=%d cc=%d bcc=%d), %d total changes",
+            len(to_list), len(cc_list), len(bcc_list), total_changes,
         )
         return {
             "sent": True,
-            "recipients": recipients_list,
+            "to":  to_list,
+            "cc":  cc_list,
+            "bcc": bcc_list,
             "changes": {
                 "new": len(data["new_entries"]),
                 "dropped": len(data["dropped"]),
