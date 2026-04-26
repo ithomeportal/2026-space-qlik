@@ -449,95 +449,113 @@ async def _pinned_payload(pool, side: str, params_seed: list, where: str) -> dic
     rolling_12m_start = date(y, m, 1)
     rolling_10w_start = today - timedelta(weeks=10)
 
-    # All param indices computed against a copy of params_seed so we can
-    # reuse the same `where` (which references early params).
-    p = list(params_seed)
-    p.append(fail_codes)
-    p_fail = len(p)
-    p.append(stop_types)
-    p_stop = len(p)
-    p.append(m_start)
-    p_m_start = len(p)
-    p.append(q_start)
-    p_q_start = len(p)
-    p.append(y_start)
-    p_y_start = len(p)
-    p.append(today_clamped)
-    p_today = len(p)
-    p.append(rolling_12m_start)
-    p_12m = len(p)
-    p.append(rolling_10w_start)
-    p_10w = len(p)
+    # asyncpg requires the param count passed in to MATCH the placeholder
+    # count in the SQL exactly. Each query gets its own `params` list (cloned
+    # from `params_seed` so the scope `where` placeholders stay valid) plus
+    # only the extra args that query references. Order matters: append in
+    # the same order as the placeholder indices below.
 
-    fail_pred = _service_fail_predicate("sc", p_fail, p_stop)
+    # ---- KPI: needs fail_codes, stop_types, m_start, q_start, y_start, today
+    p_kpi = list(params_seed)
+    p_kpi.append(fail_codes)
+    p_kpi_fail = len(p_kpi)
+    p_kpi.append(stop_types)
+    p_kpi_stop = len(p_kpi)
+    p_kpi.append(m_start)
+    p_kpi_m = len(p_kpi)
+    p_kpi.append(q_start)
+    p_kpi_q = len(p_kpi)
+    p_kpi.append(y_start)
+    p_kpi_y = len(p_kpi)
+    p_kpi.append(today_clamped)
+    p_kpi_today = len(p_kpi)
+    fail_pred_kpi = _service_fail_predicate("sc", p_kpi_fail, p_kpi_stop)
 
-    # KPI block — three windows in one DB hit.
     kpi_sql = f"""
     SELECT
-      -- This month
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_m_start} AND ${p_today}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_m} AND ${p_kpi_today}
           AND sc.total_charge <> 0
       ) AS m_orders,
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_m_start} AND ${p_today}
-          AND {fail_pred}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_m} AND ${p_kpi_today}
+          AND {fail_pred_kpi}
       ) AS m_fail,
-      -- This quarter
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_q_start} AND ${p_today}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_q} AND ${p_kpi_today}
           AND sc.total_charge <> 0
       ) AS q_orders,
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_q_start} AND ${p_today}
-          AND {fail_pred}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_q} AND ${p_kpi_today}
+          AND {fail_pred_kpi}
       ) AS q_fail,
-      -- This year
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_y_start} AND ${p_today}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_y} AND ${p_kpi_today}
           AND sc.total_charge <> 0
       ) AS y_orders,
       COUNT(DISTINCT sc.id) FILTER (
-        WHERE sc.{date_col}::date BETWEEN ${p_y_start} AND ${p_today}
-          AND {fail_pred}
+        WHERE sc.{date_col}::date BETWEEN ${p_kpi_y} AND ${p_kpi_today}
+          AND {fail_pred_kpi}
       ) AS y_fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
-      AND sc.{date_col}::date BETWEEN ${p_y_start} AND ${p_today}
+      AND sc.{date_col}::date BETWEEN ${p_kpi_y} AND ${p_kpi_today}
     """
 
-    # Rolling 12 months (monthly buckets)
+    # ---- Rolling 12 months: fail_codes, stop_types, 12m_start, today
+    p_12m = list(params_seed)
+    p_12m.append(fail_codes)
+    p_12m_fail = len(p_12m)
+    p_12m.append(stop_types)
+    p_12m_stop = len(p_12m)
+    p_12m.append(rolling_12m_start)
+    p_12m_start_idx = len(p_12m)
+    p_12m.append(today_clamped)
+    p_12m_today = len(p_12m)
+    fail_pred_12m = _service_fail_predicate("sc", p_12m_fail, p_12m_stop)
+
     rolling_12m_sql = f"""
     SELECT
       DATE_TRUNC('month', sc.{date_col})::date AS bucket,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_12m}) AS fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
-      AND sc.{date_col}::date BETWEEN ${p_12m} AND ${p_today}
+      AND sc.{date_col}::date BETWEEN ${p_12m_start_idx} AND ${p_12m_today}
     GROUP BY DATE_TRUNC('month', sc.{date_col})
     ORDER BY bucket
     """
 
-    # Rolling 10 weeks (ISO weekly buckets — Mon-anchored)
+    # ---- Rolling 10 weeks: fail_codes, stop_types, 10w_start, today
+    p_10w = list(params_seed)
+    p_10w.append(fail_codes)
+    p_10w_fail = len(p_10w)
+    p_10w.append(stop_types)
+    p_10w_stop = len(p_10w)
+    p_10w.append(rolling_10w_start)
+    p_10w_start_idx = len(p_10w)
+    p_10w.append(today_clamped)
+    p_10w_today = len(p_10w)
+    fail_pred_10w = _service_fail_predicate("sc", p_10w_fail, p_10w_stop)
+
     rolling_10w_sql = f"""
     SELECT
       DATE_TRUNC('week', sc.{date_col})::date AS bucket,
       EXTRACT(ISOYEAR FROM sc.{date_col})::int AS iso_year,
       EXTRACT(WEEK    FROM sc.{date_col})::int AS iso_week,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_10w}) AS fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
-      AND sc.{date_col}::date BETWEEN ${p_10w} AND ${p_today}
+      AND sc.{date_col}::date BETWEEN ${p_10w_start_idx} AND ${p_10w_today}
     GROUP BY 1, 2, 3
     ORDER BY bucket
     """
 
     kpi_row, r12m, r10w = await asyncio.gather(
-        pool.fetchrow(kpi_sql, *p),
-        pool.fetch(rolling_12m_sql, *p),
-        pool.fetch(rolling_10w_sql, *p),
+        pool.fetchrow(kpi_sql, *p_kpi),
+        pool.fetch(rolling_12m_sql, *p_12m),
+        pool.fetch(rolling_10w_sql, *p_10w),
     )
 
     def pct_on_time(orders: int, fail: int) -> Optional[float]:
@@ -871,35 +889,51 @@ async def _detail(
         not_codes = _DEL_NOT_PAD
         stop_types = _DEL_STOP_PAD
 
-    params: list = []
+    # Scope params shared by every query.
+    base_params: list = []
     where, s, e, team_list, company_list, sub_team_list = _bind_scope_with_date(
         date_col, range_, start_date, end_date, division, teams, companies,
-        sub_teams, customer, carrier, params,
+        sub_teams, customer, carrier, base_params,
     )
-    params.append(fail_codes)
-    p_fail = len(params)
-    params.append(not_codes)
-    p_not = len(params)
-    params.append(stop_types)
-    p_stop = len(params)
-    fail_pred = _service_fail_predicate("sc", p_fail, p_stop)
-    not_pred = _service_fail_predicate("sc", p_not, p_stop)
 
-    # KPI block + Our-Fault / Not-Our-Fault counts
+    # KPI references BOTH fail-codes AND not-codes; by_customer/by_lane only
+    # reference fail-codes. Postgres rejects unreferenced positional params
+    # ("could not determine data type of parameter $N"), so each query gets
+    # its own params list.
+
+    # ---- KPI: scope + fail_codes + not_codes + stop_types
+    p_kpi = list(base_params)
+    p_kpi.append(fail_codes)
+    p_kpi_fail = len(p_kpi)
+    p_kpi.append(not_codes)
+    p_kpi_not = len(p_kpi)
+    p_kpi.append(stop_types)
+    p_kpi_stop = len(p_kpi)
+    fail_pred_kpi = _service_fail_predicate("sc", p_kpi_fail, p_kpi_stop)
+    not_pred_kpi = _service_fail_predicate("sc", p_kpi_not, p_kpi_stop)
+
     kpi_sql = f"""
     SELECT
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {not_pred}) AS not_fault_fail
+      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_kpi}) AS fail,
+      COUNT(DISTINCT sc.id) FILTER (WHERE {not_pred_kpi}) AS not_fault_fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
     """
+
+    # ---- by_customer / by_lane: scope + fail_codes + stop_types
+    p_simple = list(base_params)
+    p_simple.append(fail_codes)
+    p_simple_fail = len(p_simple)
+    p_simple.append(stop_types)
+    p_simple_stop = len(p_simple)
+    fail_pred_simple = _service_fail_predicate("sc", p_simple_fail, p_simple_stop)
 
     by_customer_sql = f"""
     SELECT
       TRIM(sc.customer_name) AS customer_name,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_simple}) AS fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
       AND sc.customer_name IS NOT NULL
@@ -916,7 +950,7 @@ async def _detail(
       TRIM(sc.orig_city_name) || ', ' || TRIM(sc.orig_state) AS origin,
       TRIM(sc.dest_city_name) || ', ' || TRIM(sc.dest_state) AS destination,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
-      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+      COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_simple}) AS fail
     FROM public.mcleod_gld_scorecard sc
     WHERE {where}
       AND sc.customer_name IS NOT NULL
@@ -930,9 +964,9 @@ async def _detail(
     """
 
     kpi_row, by_customer, by_lane = await asyncio.gather(
-        pool.fetchrow(kpi_sql, *params),
-        pool.fetch(by_customer_sql, *params),
-        pool.fetch(by_lane_sql, *params),
+        pool.fetchrow(kpi_sql, *p_kpi),
+        pool.fetch(by_customer_sql, *p_simple),
+        pool.fetch(by_lane_sql, *p_simple),
     )
 
     def on_time(o, f):
