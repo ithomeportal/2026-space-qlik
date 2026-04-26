@@ -19,9 +19,6 @@ import { Detail } from "./tabs/Detail"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
-const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
-const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"] as const
-const DFW_TEAMS = ["TEAM-DFW"] as const
 const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
 const ALL_COMPANIES = ["TMS", "TMS3"] as const
 

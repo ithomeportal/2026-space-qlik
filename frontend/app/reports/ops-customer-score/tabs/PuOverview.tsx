@@ -6,13 +6,7 @@ import {
   type OcsFilters,
 } from "@/lib/ops-customer-score-api"
 import { OcsErrorBanner } from "../ErrorBanner"
-import {
-  fmtCount,
-  fmtMonthBucket,
-  fmtPct,
-  onTimeBg,
-  onTimeColor,
-} from "../format"
+import { fmtCount, fmtMonthBucket, fmtPct, onTimeColor } from "../format"
 
 interface Props {
   filters: OcsFilters

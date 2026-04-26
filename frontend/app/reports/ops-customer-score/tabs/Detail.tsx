@@ -193,10 +193,13 @@ function HeaderKpis({ d, side }: { d: OcsDetail | undefined; side: "pu" | "del" 
   )
 }
 
-export function Detail({ filters, side }: Props) {
-  const detailQuery = side === "pu"
-    ? useOcsPuDetail(filters)
-    : useOcsDelDetail(filters)
+function DetailInner({
+  filters,
+  side,
+  detailQuery,
+}: Props & {
+  detailQuery: ReturnType<typeof useOcsPuDetail>
+}) {
   const d = detailQuery.data?.data
   const sideLabel = side === "pu" ? "PU" : "DEL"
   const orderColumn = `${sideLabel} Order`
@@ -329,5 +332,29 @@ export function Detail({ filters, side }: Props) {
         schedLateLabel={schedLateLabel}
       />
     </div>
+  )
+}
+
+function PuDetailWrapper({ filters }: { filters: OcsFilters }) {
+  const detailQuery = useOcsPuDetail(filters)
+  return (
+    <DetailInner filters={filters} side="pu" detailQuery={detailQuery} />
+  )
+}
+
+function DelDetailWrapper({ filters }: { filters: OcsFilters }) {
+  const detailQuery = useOcsDelDetail(filters)
+  return (
+    <DetailInner filters={filters} side="del" detailQuery={detailQuery} />
+  )
+}
+
+export function Detail({ filters, side }: Props) {
+  // Switch to a per-side wrapper so each only calls one hook
+  // (avoids react-hooks/rules-of-hooks).
+  return side === "pu" ? (
+    <PuDetailWrapper filters={filters} />
+  ) : (
+    <DelDetailWrapper filters={filters} />
   )
 }
