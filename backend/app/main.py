@@ -21,6 +21,7 @@ from app.routers import (
     ceo_executive,
     hr_access_doors,
     losses_lanes,
+    ops_direct_compare,
     ops_margins,
     podium_dfw,
     preferences,
@@ -358,6 +359,7 @@ app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
+app.include_router(ops_direct_compare.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
 
 

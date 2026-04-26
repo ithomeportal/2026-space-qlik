@@ -112,6 +112,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "ops-direct-compare",  # -> /reports/ops-direct-compare
+        "title": "OPs Direct Compare",
+        "description": "Side-by-side period comparison: KPIs, customer & lane diff tables, 12-month trend, this-year+last-year orders",
+        "note": "Two independent panels (data1 vs data2) · per-panel Date/Division/Team filters · scope TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · excludes UNILINK & OILTEX · source: mcleod_gld_budget_report_v4 · replaces Bruno's Qlik 4a8e2ffd-…",
+        "category": "Operations",
+        "tags": ["compare", "ops", "margin", "period", "diff", "customers", "lanes", "trend"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
+    {
         "key": "sales-attrition-to-ops",  # -> /reports/sales-attrition-to-ops
         "title": "Sales- Attrition to OPs",
         "description": "Customer attrition signal: last-load date, days-since, 13-month #loads/$profit/%margin trend, 8-week sparkline per customer",

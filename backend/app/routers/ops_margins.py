@@ -125,8 +125,16 @@ def _scope_where(
     destination: Optional[str],
     sub_teams: Optional[list[str]],
     params: list,
+    *,
+    exclude_customers: bool = True,
 ) -> str:
-    """Common WHERE fragment for v4. Appends positional params, returns SQL."""
+    """Common WHERE fragment for v4. Appends positional params, returns SQL.
+
+    ``exclude_customers`` keeps the project-wide UNILINK/OILTEX exclusion
+    on by default. Set False only when the consuming report needs to
+    include those rows (currently no caller does — kept as an escape hatch
+    so the helper stays general).
+    """
     params.append(_pad_variants(teams, width=8))
     p_teams = len(params)
     params.append(_pad_variants(companies, width=4))
@@ -138,9 +146,12 @@ def _scope_where(
         f"{alias}.team_id    = ANY(${p_teams})",
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
-        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
-        f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
+    if exclude_customers:
+        parts.extend([
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+        ])
     if customer:
         params.append(customer)
         parts.append(f"{alias}.customer_name = ${len(params)}")
