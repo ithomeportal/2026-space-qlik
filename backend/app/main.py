@@ -26,6 +26,7 @@ from app.routers import (
     preferences,
     qlik,
     reports,
+    sales_attrition_to_ops,
     search,
     xray_corp,
 )
@@ -357,6 +358,7 @@ app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
+app.include_router(sales_attrition_to_ops.router, prefix="/api")
 
 
 @app.get("/api/health")

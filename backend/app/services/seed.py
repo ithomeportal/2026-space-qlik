@@ -112,6 +112,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "sales-attrition-to-ops",  # -> /reports/sales-attrition-to-ops
+        "title": "Sales- Attrition to OPs",
+        "description": "Customer attrition signal: last-load date, days-since, 13-month #loads/$profit/%margin trend, 8-week sparkline per customer",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · status D/P · excludes UNILINK & OILTEX · source: mcleod_gld_budget_report_v4 · replaces Bruno's Qlik 9b669acd-…",
+        "category": "Sales",
+        "tags": ["attrition", "sales", "customers", "days", "margin", "profit", "loads", "sparkline"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance"],
+    },
+    {
         "key": "attrition-wow",  # -> /reports/attrition-wow
         "title": "Attrition WoW",
         "description": "Week-over-week attrition: active lanes/customers, reactive customers, WoW $Var, 15-week trends",
