@@ -21,6 +21,7 @@ from app.routers import (
     ceo_executive,
     hr_access_doors,
     losses_lanes,
+    ops_margins,
     podium_dfw,
     preferences,
     qlik,
@@ -355,6 +356,7 @@ app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
+app.include_router(ops_margins.router, prefix="/api")
 
 
 @app.get("/api/health")

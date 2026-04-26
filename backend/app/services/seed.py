@@ -102,6 +102,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "ops-margins",  # -> /reports/ops-margins
+        "title": "OPs Margins",
+        "description": "Best & worst margin lanes/customers · negative-load detail · margin trend & distribution",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · excludes UNILINK & OILTEX · cascading filters (Division/Team/Customer/Company/Origin/Destination) · source: mcleod_gld_budget_report_v4 (+ mcleod_gld_movement for carrier name)",
+        "category": "Operations",
+        "tags": ["margin", "ops", "lanes", "customers", "losses", "best", "worst", "concentration"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
+    {
         "key": "attrition-wow",  # -> /reports/attrition-wow
         "title": "Attrition WoW",
         "description": "Week-over-week attrition: active lanes/customers, reactive customers, WoW $Var, 15-week trends",
