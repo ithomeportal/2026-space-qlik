@@ -51,7 +51,7 @@ export function Trend12m({ variant, title }: Props) {
         <div>
           <h3 className="text-sm font-semibold text-[#1B3A5C]">{title}</h3>
           <div className="text-[10px] uppercase tracking-wider text-[#6B7280]">
-            Last 12 months · all teams · ignores both panels' filters
+            Last 12 months · all teams · ignores both panels&apos; filters
           </div>
         </div>
         <div className="flex items-center gap-3 text-[10px] text-[#6B7280]">
