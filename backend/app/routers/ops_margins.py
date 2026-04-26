@@ -875,14 +875,18 @@ async def negative_orders(
 ):
     """Order-level rows with margin_amt<0, including Carrier (payee_name).
 
-    LEFT JOIN ``mcleod_gld_movement`` keeps the predicate ``d.sequence=1``
-    inside the ON clause — orders older than the movement table's 45-day
-    retention window still show up (with carrier=NULL) instead of silently
-    disappearing.
+    Carrier name comes from ``mcleod_gld_movement`` via a pre-filtered CTE
+    that the planner can hash-join, instead of a per-row correlated
+    subquery (which TRIM-ed both sides and full-scanned movement once per
+    base row — caused 504s on the proxy). The ``sequence=1`` predicate
+    lives in the CTE filter, never the WHERE of the outer query, so the
+    LEFT JOIN stays a true LEFT JOIN — orders older than the movement
+    table's 45-day retention window show up with ``carrier=NULL`` instead
+    of silently disappearing.
     """
     pool = get_datalake_gold_pool(request)
     params: list = []
-    where, _s, _e, _t, _c, _sub = _bind_scope(
+    where, _s, _e, _t, company_list, _sub = _bind_scope(
         range, start_date, end_date, division, teams, companies, sub_teams,
         customer, origin, destination, params,
     )
@@ -900,47 +904,55 @@ async def negative_orders(
         "date_asc":     "actual_day ASC NULLS LAST, id ASC",
     }.get(sort, "profit ASC")
 
+    # Pre-filter movement to the same companies in scope so the hash join
+    # builds against a much smaller table. ROW_NUMBER picks sequence=1 (the
+    # first stop = carrier of record).
+    params.append(_pad_variants(company_list, width=4))
+    p_mov_companies = len(params)
     params.extend([limit, offset])
     lim_p, off_p = len(params) - 1, len(params)
 
     rows = await pool.fetch(
         f"""
-        WITH base AS (
+        WITH mov AS (
+          SELECT
+            order_id,
+            company_id,
+            payee_name,
+            ROW_NUMBER() OVER (
+              PARTITION BY order_id, company_id
+              ORDER BY sequence ASC
+            ) AS rn
+          FROM public.mcleod_gld_movement
+          WHERE company_id = ANY(${p_mov_companies})
+        ),
+        base AS (
           SELECT
             br4.origin_actual_departure::date AS actual_day,
             TRIM(br4.id)            AS id,
             TRIM(br4.customer_name) AS customer,
+            COALESCE(TRIM(mov.payee_name), '') AS carrier,
             {_origin_expr("br4")}   AS origin,
             {_dest_expr("br4")}     AS destination,
-            TRIM(br4.company_id)    AS company_id,
             br4.total_charge::numeric AS revenue,
             br4.margin_amt::numeric   AS profit,
             CASE WHEN br4.total_charge <> 0
                  THEN br4.margin_amt::numeric / br4.total_charge::numeric
                  ELSE NULL END AS margin_pct
           FROM public.mcleod_gld_budget_report_v4 br4
+          LEFT JOIN mov
+                 ON mov.order_id   = br4.id
+                AND mov.company_id = br4.company_id
+                AND mov.rn = 1
           WHERE {where}
             AND br4.margin_amt < 0 AND br4.total_charge <> 0
-        ),
-        with_carrier AS (
-          SELECT
-            base.*,
-            (
-              SELECT TRIM(d.payee_name)
-              FROM public.mcleod_gld_movement d
-              WHERE TRIM(d.company_id) = base.company_id
-                AND TRIM(d.order_id)   = base.id
-                AND d.sequence = 1
-              LIMIT 1
-            ) AS carrier
-          FROM base
         ),
         with_total AS (
           SELECT
             *,
             SUM(profit) OVER () AS total_profit,
             COUNT(*)    OVER () AS total_count
-          FROM with_carrier
+          FROM base
         )
         SELECT
           actual_day, id, customer, carrier, origin, destination,
