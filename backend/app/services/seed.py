@@ -122,6 +122,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "ops-customer-score",  # -> /reports/ops-customer-score
+        "title": "OPs Customer Score",
+        "description": "Customer service quality: PU/DEL on-time, by team/customer/delay code, rolling 12m/10w trends, Our-Fault vs Not-Our-Fault detail",
+        "note": "Scope: TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · status D/P · source: mcleod_gld_scorecard · replaces Bruno's Qlik de4c1a28-…",
+        "category": "Operations",
+        "tags": ["scorecard", "ops", "service-fail", "on-time", "customer", "carrier", "pickup", "delivery"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
+    {
         "key": "sales-attrition-to-ops",  # -> /reports/sales-attrition-to-ops
         "title": "Sales- Attrition to OPs",
         "description": "Customer attrition signal: last-load date, days-since, 13-month #loads/$profit/%margin trend, 8-week sparkline per customer",
@@ -215,16 +225,9 @@ REPORTS = [
         "owner_name": "Melany",
         "roles": ["executive", "finance", "sales"],
     },
-    {
-        "qlik_app_id": "de4c1a28-5e6a-465d-a351-59f99950a5d4",
-        "qlik_sheet_id": "f0dd9fa9-4898-4c14-a6bc-6db60357070f",
-        "title": "Customer Scorecard",
-        "description": "Customer performance metrics and scorecards",
-        "category": "Operations",
-        "tags": ["customer", "scorecard", "operations"],
-        "owner_name": "Melany",
-        "roles": ["executive", "operations"],
-    },
+    # NOTE: "Customer Scorecard" (app de4c1a28-…) was migrated to a code-made
+    # report on 2026-04-26. See CUSTOM_REPORTS (key=ops-customer-score) and the
+    # one-time row-flip in main.py lifespan. Do not re-add it here.
     {
         "qlik_app_id": "a12b7dea-9226-40a8-b0ef-ba8e8d9087b8",
         "qlik_sheet_id": "e332c952-ad92-4625-b2b6-eec3347cd8ba",

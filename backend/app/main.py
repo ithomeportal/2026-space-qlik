@@ -21,6 +21,7 @@ from app.routers import (
     ceo_executive,
     hr_access_doors,
     losses_lanes,
+    ops_customer_score,
     ops_direct_compare,
     ops_margins,
     podium_dfw,
@@ -227,6 +228,32 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Attrition WoW migration skipped: {e}")
 
+            # 2026-04-26 — flip legacy Qlik "Customer Scorecard"
+            # (app de4c1a28-…) to the code-made "OPs Customer Score" pointing
+            # at /reports/ops-customer-score. seed_custom_reports() then sets
+            # the title/desc/roles. Idempotent: no-ops once flipped.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/ops-customer-score',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = 'de4c1a28-5e6a-465d-a351-59f99950a5d4'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/ops-customer-score')
+                    """
+                )
+                await app.state.pool.execute(
+                    """
+                    DELETE FROM reports
+                     WHERE title = '(Mob) Customer Scorecard'
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"Customer Score migration skipped: {e}")
+
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -360,6 +387,7 @@ app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
+app.include_router(ops_customer_score.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
 
 
