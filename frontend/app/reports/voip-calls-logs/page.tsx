@@ -44,6 +44,8 @@ import {
   type VoipFilters,
   type VoipRange,
 } from "@/lib/voip-calls-api"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,6 +81,14 @@ const PAGE_LIMIT = 200
 // ---------------------------------------------------------------------------
 
 export default function VoipCallsLogsPage() {
+  return (
+    <RoleGuard roles={[...REPORT_ACCESS["voip-calls-logs"]]}>
+      <VoipCallsLogsContent />
+    </RoleGuard>
+  )
+}
+
+function VoipCallsLogsContent() {
   const [range, setRange] = useState<VoipRange>("wtd")
   const [direction, setDirection] = useState<VoipDirection>("ALL")
   const [search, setSearch] = useState<string>("")

@@ -15,6 +15,8 @@ import { fmtCount, fmtTimestamp } from "./format"
 import { PuOverview } from "./tabs/PuOverview"
 import { DelOverview } from "./tabs/DelOverview"
 import { Detail } from "./tabs/Detail"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -484,14 +486,16 @@ function OcsContent() {
 
 export default function OpsCustomerScorePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
-        </div>
-      }
-    >
-      <OcsContent />
-    </Suspense>
+    <RoleGuard roles={[...REPORT_ACCESS["ops-customer-score"]]}>
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
+          </div>
+        }
+      >
+        <OcsContent />
+      </Suspense>
+    </RoleGuard>
   )
 }

@@ -20,6 +20,8 @@ import {
   type OpsRange,
 } from "@/lib/ops-margins-api"
 import { OpsErrorBanner } from "./ErrorBanner"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 import { fmtCount, fmtPct, fmtTimestamp, fmtUsd } from "./format"
 import { Distribution } from "./tabs/Distribution"
 import { LossesCombo } from "./tabs/LossesCombo"
@@ -694,14 +696,16 @@ function KpiCard({
 
 export default function OpsMarginsPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#F9FAFB]">
-          <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
-        </div>
-      }
-    >
-      <OpsMarginsContent />
-    </Suspense>
+    <RoleGuard roles={[...REPORT_ACCESS["ops-margins"]]}>
+      <Suspense
+        fallback={
+          <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#F9FAFB]">
+            <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
+          </div>
+        }
+      >
+        <OpsMarginsContent />
+      </Suspense>
+    </RoleGuard>
   )
 }

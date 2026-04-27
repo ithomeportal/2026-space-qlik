@@ -23,6 +23,8 @@ import {
 import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
 import { MonthlyTotalsChart } from "./MonthlyTotalsChart"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 const CORP_TEAMS: readonly SavingsCorpTeam[] = [
   "TEAM1",
@@ -65,6 +67,14 @@ function fmtMonth(iso: string | null | undefined) {
 }
 
 export default function ESavingsFromCarriersPage() {
+  return (
+    <RoleGuard roles={[...REPORT_ACCESS["esavings-carriers"]]}>
+      <ESavingsFromCarriersContent />
+    </RoleGuard>
+  )
+}
+
+function ESavingsFromCarriersContent() {
   const [month, setMonth] = useState<string | undefined>(undefined)
   const [origin, setOrigin] = useState("")
   const [dest, setDest] = useState("")

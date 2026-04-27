@@ -13,6 +13,8 @@ import { Overview } from "./tabs/Overview"
 import { Trends } from "./tabs/Trends"
 import { Customers } from "./tabs/Customers"
 import { Weekly } from "./tabs/Weekly"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 import { Risk } from "./tabs/Risk"
 import { Orders } from "./tabs/Orders"
 
@@ -52,6 +54,14 @@ function clampToYear(iso: string) {
 }
 
 export default function CeoExecutivePage() {
+  return (
+    <RoleGuard roles={[...REPORT_ACCESS["ceo-executive"]]}>
+      <CeoExecutiveContent />
+    </RoleGuard>
+  )
+}
+
+function CeoExecutiveContent() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview")
   const [range, setRange] = useState<CeoRange>("mtd")
   const [startDate, setStartDate] = useState<string>(YEAR_START)

@@ -22,6 +22,8 @@ import { CustomerTable } from "./sections/CustomerTable"
 import { LaneTable } from "./sections/LaneTable"
 import { OrdersTable } from "./sections/OrdersTable"
 import { Trend12m } from "./sections/Trend12m"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -322,14 +324,16 @@ function DirectCompareContent() {
 
 export default function OpsDirectComparePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-[calc(100vh-64px)] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
-        </div>
-      }
-    >
-      <DirectCompareContent />
-    </Suspense>
+    <RoleGuard roles={[...REPORT_ACCESS["ops-direct-compare"]]}>
+      <Suspense
+        fallback={
+          <div className="flex min-h-[calc(100vh-64px)] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
+          </div>
+        }
+      >
+        <DirectCompareContent />
+      </Suspense>
+    </RoleGuard>
   )
 }

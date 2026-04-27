@@ -10,6 +10,8 @@ import { Teams } from "./tabs/Teams"
 import { Trends } from "./tabs/Trends"
 import { Risk } from "./tabs/Risk"
 import { ContractSpot } from "./tabs/ContractSpot"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -42,6 +44,14 @@ function clampToYear(iso: string) {
 }
 
 export default function XrayCorpPage() {
+  return (
+    <RoleGuard roles={[...REPORT_ACCESS["xray-corp-mng"]]}>
+      <XrayCorpContent />
+    </RoleGuard>
+  )
+}
+
+function XrayCorpContent() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview")
   const [range, setRange] = useState<XrayRange>("mtd")
   const [startDate, setStartDate] = useState<string>(YEAR_START)

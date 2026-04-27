@@ -20,6 +20,8 @@ import {
   useBudgetMonthly,
   useBudgetSummary,
 } from "@/lib/api"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -69,6 +71,14 @@ function clampToYear(iso: string) {
 type Preset = "full" | "ytd" | "custom"
 
 export default function BudgetFollowUp2026Page() {
+  return (
+    <RoleGuard roles={[...REPORT_ACCESS["budget-followup-2026"]]}>
+      <BudgetFollowUp2026Content />
+    </RoleGuard>
+  )
+}
+
+function BudgetFollowUp2026Content() {
   const [preset, setPreset] = useState<Preset>("full")
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(YEAR_END)

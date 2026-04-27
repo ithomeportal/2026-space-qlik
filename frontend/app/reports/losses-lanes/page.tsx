@@ -19,6 +19,8 @@ import {
   type LossesRange,
 } from "@/lib/losses-lanes-api"
 import { LossesErrorBanner } from "./ErrorBanner"
+import { RoleGuard } from "@/components/RoleGuard"
+import { REPORT_ACCESS } from "@/lib/report-access"
 import { WorstLanes } from "./tabs/WorstLanes"
 import { WorstCustomers } from "./tabs/WorstCustomers"
 import { TopCombo } from "./tabs/TopCombo"
@@ -539,14 +541,16 @@ function TeamModeBtn({
 
 export default function LossesLanesPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#F9FAFB]">
-          <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
-        </div>
-      }
-    >
-      <LossesContent />
-    </Suspense>
+    <RoleGuard roles={[...REPORT_ACCESS["losses-lanes"]]}>
+      <Suspense
+        fallback={
+          <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#F9FAFB]">
+            <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
+          </div>
+        }
+      >
+        <LossesContent />
+      </Suspense>
+    </RoleGuard>
   )
 }
