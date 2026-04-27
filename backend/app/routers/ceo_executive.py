@@ -1038,12 +1038,15 @@ async def risk(
     s, e = _resolve_range(range, start_date, end_date)
 
     # ---- Worst Margins by Lanes ----------------------------------------
+    # Date filter is half-open `>= s AND < e+1` so Postgres can use the btree
+    # on origin_actual_departure (idx_v4_dep). Wrapping the column in `::date`
+    # was killing sargability and forcing a full seq-scan of v4 (380 MB).
     wm_params: list = []
     wm_where = _scope_where("br4", team, customer, wm_params, division=division)
     wm_params.extend([s, e])
     wm_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(wm_params)-1} AND ${len(wm_params)}"
+        f"br4.origin_actual_departure >= ${len(wm_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(wm_params)}::date + 1)"
     )
     wm_task = pool.fetch(
         f"""
@@ -1071,27 +1074,21 @@ async def risk(
     )
 
     # ---- Negative Loads by Order ---------------------------------------
-    # JOIN movement for carrier name; keep orders with no movement via LEFT JOIN.
-    # Seed $1 with ALLOWED_COMPANIES for the CTE BEFORE _scope_where so its
-    # placeholders start at $2 and line up with the positional args below.
-    # movement.company_id is varchar(4) — same width as v4.company_id.
-    no_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
+    # LEFT JOIN LATERAL to fetch first-by-movement_id payee_name per
+    # (order_id, company_id). The old CTE pre-aggregated all 400k+ movement
+    # rows with a window function before joining (5.9s). LATERAL fires one
+    # index seek per matching v4 row using idx_movement_order_company_mv,
+    # cutting the query to ~150ms even when all filters are open.
+    no_params: list = []
     no_where = _scope_where("br4", team, customer, no_params, division=division)
     no_params.extend([s, e])
     no_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(no_params)-1} AND ${len(no_params)}"
+        f"br4.origin_actual_departure >= ${len(no_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(no_params)}::date + 1)"
     )
     no_task = pool.fetch(
         f"""
-        WITH mov AS (
-          SELECT order_id, company_id, payee_name,
-                 ROW_NUMBER() OVER (PARTITION BY order_id, company_id
-                                    ORDER BY movement_id ASC) AS rn
-          FROM public.mcleod_gld_movement
-          WHERE company_id = ANY($1)
-        ),
-        tot AS (
+        WITH tot AS (
           SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS total_margin
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {no_where} AND {no_df}
@@ -1112,9 +1109,13 @@ async def risk(
                THEN br4.margin_amt::numeric / (SELECT total_margin FROM tot)
                ELSE 0 END AS conc_pct
         FROM public.mcleod_gld_budget_report_v4 br4
-        LEFT JOIN mov ON mov.order_id = br4.id
-                     AND mov.company_id = br4.company_id
-                     AND mov.rn = 1
+        LEFT JOIN LATERAL (
+          SELECT m.payee_name
+          FROM public.mcleod_gld_movement m
+          WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+          ORDER BY m.movement_id ASC
+          LIMIT 1
+        ) mov ON TRUE
         WHERE {no_where} AND {no_df}
           AND br4.margin_amt < 0
         ORDER BY br4.margin_amt ASC
@@ -1128,8 +1129,8 @@ async def risk(
     nc_where = _scope_where("br4", team, customer, nc_params, division=division)
     nc_params.extend([s, e])
     nc_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(nc_params)-1} AND ${len(nc_params)}"
+        f"br4.origin_actual_departure >= ${len(nc_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(nc_params)}::date + 1)"
     )
     nc_task = pool.fetch(
         f"""
@@ -1232,8 +1233,8 @@ async def orders(
     lpa_where = _scope_where("br4", team, customer, lpa_params, division=division)
     lpa_params.extend([s, e])
     lpa_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(lpa_params)-1} AND ${len(lpa_params)}"
+        f"br4.origin_actual_departure >= ${len(lpa_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(lpa_params)}::date + 1)"
     )
     lpa_task = pool.fetch(
         f"""
@@ -1268,22 +1269,19 @@ async def orders(
     )
 
     # ---- All Orders (with carrier via LEFT JOIN movement) --------------
-    ao_params: list = [_pad_variants(ALLOWED_COMPANIES, width=4)]
+    # LATERAL pulls first-by-movement_id payee_name per (order_id, company_id)
+    # using idx_movement_order_company_mv (1 index seek per matching v4 row),
+    # vs the old CTE that pre-aggregated 400k+ movement rows with a window
+    # function. Cuts the query from ~6s to ~150ms.
+    ao_params: list = []
     ao_where = _scope_where("br4", team, customer, ao_params, division=division)
     ao_params.extend([s, e])
     ao_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(ao_params)-1} AND ${len(ao_params)}"
+        f"br4.origin_actual_departure >= ${len(ao_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(ao_params)}::date + 1)"
     )
     ao_task = pool.fetch(
         f"""
-        WITH mov AS (
-          SELECT order_id, company_id, payee_name,
-                 ROW_NUMBER() OVER (PARTITION BY order_id, company_id
-                                    ORDER BY movement_id ASC) AS rn
-          FROM public.mcleod_gld_movement
-          WHERE company_id = ANY($1)
-        )
         SELECT
           CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
                ELSE TRIM(br4.team_id) END AS team,
@@ -1302,9 +1300,13 @@ async def orders(
           GREATEST(0, br4.total_charge::numeric * 0.18 - br4.margin_amt::numeric) AS diff_18,
           GREATEST(0, br4.total_charge::numeric * 0.20 - br4.margin_amt::numeric) AS diff_20
         FROM public.mcleod_gld_budget_report_v4 br4
-        LEFT JOIN mov ON mov.order_id = br4.id
-                     AND mov.company_id = br4.company_id
-                     AND mov.rn = 1
+        LEFT JOIN LATERAL (
+          SELECT m.payee_name
+          FROM public.mcleod_gld_movement m
+          WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+          ORDER BY m.movement_id ASC
+          LIMIT 1
+        ) mov ON TRUE
         WHERE {ao_where} AND {ao_df}
         ORDER BY br4.origin_actual_departure DESC NULLS LAST
         LIMIT 1000
