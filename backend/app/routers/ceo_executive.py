@@ -285,6 +285,55 @@ _BUDGET_EXCLUDE_FRAG = (
 )
 
 
+def _production_cte(start_pos: int, end_pos: int) -> str:
+    """Unified production source — CORP from daily_production_budget_report,
+    DFW from v4 (aggregated to customer × day to match budget_report grain).
+
+    daily_production_budget_report is CORP-only (Team IDs TEAM1..TEAM5);
+    DFW customers are absent there, which made every DFW Overview panel
+    return $0. v4 has all DFW production, so we UNION ALL the two sources
+    keyed by customer_name + Date and the rest of each Overview query
+    (the customer_team JOIN, the GROUP BY ct.division_team, etc.) keeps
+    working unchanged.
+
+    For CORP, v4 vs budget_report MTD parity is ~0.0% (Jan-Mar 2026)
+    and ~0.17% in the current month. Empirically zero DFW customers
+    overlap with budget_report customers, so no double-counting.
+
+    Args:
+      start_pos / end_pos: 1-indexed $ placeholder positions for the
+        date window (date / date). The same two params drive both
+        sides — outer queries can keep `WHERE budget."Date" BETWEEN
+        $s AND $e` if they want the redundant predicate.
+    """
+    return f"""
+    production AS (
+      SELECT
+        TRIM("Customer Name") AS "Customer Name",
+        COALESCE("Loads Actual",   0)::numeric AS "Loads Actual",
+        COALESCE("Revenue Actual", 0)::numeric AS "Revenue Actual",
+        COALESCE("Profit Actual",  0)::numeric AS "Profit Actual",
+        "Date"
+      FROM public.daily_production_budget_report
+      WHERE "Date" BETWEEN ${start_pos} AND ${end_pos}
+      UNION ALL
+      SELECT
+        TRIM(customer_name) AS "Customer Name",
+        COUNT(*)::numeric AS "Loads Actual",
+        COALESCE(SUM(total_charge), 0)::numeric AS "Revenue Actual",
+        COALESCE(SUM(margin_amt),   0)::numeric AS "Profit Actual",
+        origin_actual_departure::date AS "Date"
+      FROM public.mcleod_gld_budget_report_v4
+      WHERE team_id = 'TEAM-DFW'
+        AND company_id = ANY('{{TMS,"TMS ",TMS3}}'::text[])
+        AND status     = ANY('{{D,P}}'::text[])
+        AND origin_actual_departure >= ${start_pos}
+        AND origin_actual_departure <  (${end_pos}::date + 1)
+      GROUP BY TRIM(customer_name), origin_actual_departure::date
+    )
+    """
+
+
 # ---------------------------------------------------------------------------
 # /filters — teams + distinct customer list
 # ---------------------------------------------------------------------------
@@ -373,9 +422,9 @@ async def overview(
         team_list_for_unnest = list(ALL_DIVISION_TEAMS)
 
     # ---- KPIs (scoped) --------------------------------------------------
-    # Production actuals come from daily_production_budget_report so teams
-    # with no April rows in v4 still show real numbers (matches Profit-TM
-    # gauge). Team assignment comes from v4 via customer_team CTE.
+    # Production source unifies CORP (daily_production_budget_report) with
+    # DFW (v4 aggregated) via _production_cte. Without this, Division=DFW
+    # returned $0 because budget_report has zero DFW customers.
     kpi_params: list = [s, e, scoped_teams_padded]
     kpi_extra = ""
     if team:
@@ -386,7 +435,8 @@ async def overview(
         kpi_extra += f' AND budget."Customer Name" = ${len(kpi_params)}'
     kpi_task = pool.fetchrow(
         f"""
-        WITH {_customer_team_cte(3)}
+        WITH {_production_cte(1, 2)},
+        {_customer_team_cte(3)}
         SELECT
           COALESCE(SUM(budget."Loads Actual"),   0)::numeric AS loads,
           COALESCE(SUM(budget."Revenue Actual"), 0)::numeric AS revenue,
@@ -403,9 +453,9 @@ async def overview(
                THEN SUM(budget."Profit Actual")::numeric
                     / SUM(budget."Loads Actual")::numeric
                ELSE 0 END AS avg_p_per_l
-        FROM public.daily_production_budget_report budget
+        FROM production budget
         JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-        WHERE budget."Date" BETWEEN $1 AND $2
+        WHERE 1=1
         {_BUDGET_EXCLUDE_FRAG}
         {kpi_extra}
         """,
@@ -423,7 +473,8 @@ async def overview(
         sbt_extra += f' AND budget."Customer Name" = ${len(sbt_params)}'
     sbt_task = pool.fetch(
         f"""
-        WITH {_customer_team_cte(3)},
+        WITH {_production_cte(1, 2)},
+        {_customer_team_cte(3)},
         agg AS (
           SELECT
             ct.division_team AS team,
@@ -431,9 +482,9 @@ async def overview(
             COALESCE(SUM(budget."Loads Actual"),   0)::numeric AS loads,
             COALESCE(SUM(budget."Revenue Actual"), 0)::numeric AS revenue,
             COALESCE(SUM(budget."Profit Actual"),  0)::numeric AS profit
-          FROM public.daily_production_budget_report budget
+          FROM production budget
           JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-          WHERE budget."Date" BETWEEN $1 AND $2
+          WHERE 1=1
           {_BUDGET_EXCLUDE_FRAG}
           {sbt_extra}
           GROUP BY ct.division_team
@@ -462,11 +513,12 @@ async def overview(
         tm_extra += f' AND budget."Customer Name" = ${len(tm_params)}'
     profit_tm_task = pool.fetchval(
         f"""
-        WITH {_customer_team_cte(3)}
+        WITH {_production_cte(1, 2)},
+        {_customer_team_cte(3)}
         SELECT COALESCE(SUM(budget."Profit Actual"), 0)::numeric
-        FROM public.daily_production_budget_report budget
+        FROM production budget
         JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-        WHERE budget."Date" BETWEEN $1 AND $2
+        WHERE 1=1
         {_BUDGET_EXCLUDE_FRAG}
         {tm_extra}
         """,
@@ -481,9 +533,12 @@ async def overview(
     # division filter.
     yesterday = today - timedelta(days=1)
     week_start = _week_start(today)
+    # production window spans m_start..today ($4..$3) so the FILTER (WHERE
+    # budget."Date" = $1) etc. all see rows from both CORP + DFW sources.
     atp_task = pool.fetch(
         f"""
-        WITH {_customer_team_cte(5)},
+        WITH {_production_cte(4, 3)},
+        {_customer_team_cte(5)},
         agg AS (
           SELECT
             ct.division_team AS team,
@@ -527,10 +582,9 @@ async def overview(
                       / SUM(budget."Loads Actual")
                         FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
                  ELSE 0 END AS mo_p_per_l
-          FROM public.daily_production_budget_report budget
+          FROM production budget
           JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-          WHERE budget."Date" BETWEEN $4 AND $3
-            AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
+          WHERE UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
             AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%UNILINK%'
           GROUP BY ct.division_team
         )
