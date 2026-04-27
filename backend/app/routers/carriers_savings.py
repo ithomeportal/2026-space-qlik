@@ -17,12 +17,25 @@ Division / Team filter (added 2026-04-17):
 This router reads `base_lane` / `base_month` / `variance` as-is; no recomputation.
 """
 
+import asyncio
+import logging
 from datetime import date
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.routers.deps import get_savings_pool, require_tag_role
+from app.services.lane_rates import (
+    Lane,
+    fetch_lb123_history,
+    fetch_sonar_history,
+    get_cached_rates,
+    make_lane,
+    upsert_rates,
+)
+
+_logger = logging.getLogger(__name__)
 
 # TagRoles that can view eSavings from Carriers (admin bypasses).
 # DFW added 2026-04-17 so DFW users can filter by their own division.
@@ -561,3 +574,193 @@ async def _resolve_month(pool, requested: Optional[date]) -> Optional[date]:
     return await pool.fetchval(
         "SELECT MAX(month_date) FROM public.carriers_savings_results_report"
     )
+
+
+# ============================================================================
+# Lane market rates  (SONAR + 123LoadBoard, monthly historical benchmarks)
+# ============================================================================
+
+# SONAR is hard-capped at 100 req/min globally. We bound parallelism well below
+# that since each call also costs a 123LB request.
+_RATE_FETCH_CONCURRENCY = 8
+
+
+@router.get("/lane-rates")
+async def lane_rates(
+    request: Request,
+    month: Optional[date] = Query(None, description="YYYY-MM-01"),
+    customer_id: Optional[str] = Query(None),
+    origin: Optional[str] = Query(None),
+    dest: Optional[str] = Query(None),
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
+    sort: str = Query("variance_desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500),
+    equipment: str = Query("VAN"),
+    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+):
+    """Return SONAR + 123LB monthly benchmark rates for the same lanes /lanes returns.
+
+    Mirrors /lanes filters/sort/paging exactly so the frontend can join row-for-row
+    by `customer_id|origin_name|dest_name`. Per lane we look up the cache; on miss
+    we call the provider once for that lane and persist all months in one shot
+    (a single API call returns ~24 months — closing future months for free).
+    """
+    pool = get_savings_pool(request)
+    target_month = await _resolve_month(pool, month)
+    if not target_month:
+        return {"success": True, "data": {}, "meta": {"month_date": None}}
+
+    sort_sql = {
+        "variance_desc": "report.variance DESC NULLS LAST",
+        "variance_asc": "report.variance ASC NULLS LAST",
+        "loads_desc": "report.number_monthly_loads DESC",
+        "cost_desc": "report.cost_monthly_usd DESC",
+        "customer": "report.customer_name ASC",
+    }.get(sort, "report.variance DESC NULLS LAST")
+
+    offset = (page - 1) * limit
+
+    where_parts = ["report.month_date = $1"]
+    params: list = [target_month]
+    if customer_id:
+        params.append(customer_id)
+        where_parts.append(f"report.customer_id = ${len(params)}")
+    if origin:
+        params.append(f"%{origin}%")
+        where_parts.append(f"report.origin_name ILIKE ${len(params)}")
+    if dest:
+        params.append(f"%{dest}%")
+        where_parts.append(f"report.dest_name ILIKE ${len(params)}")
+
+    team_ids = _resolve_team_filter(division, team)
+    cte, join_sql, where_extra, extra_params = _build_team_clauses(
+        team_ids, next_param_index=len(params) + 1
+    )
+    params.extend(extra_params)
+    if where_extra:
+        where_parts.append(where_extra.lstrip().removeprefix("AND ").strip())
+
+    params_with_paging = params + [limit, offset]
+
+    rows = await pool.fetch(
+        f"""
+        {cte}
+        SELECT report.customer_id, report.origin_name, report.dest_name
+        FROM public.carriers_savings_results_report report
+        {join_sql}
+        WHERE {' AND '.join(where_parts)}
+        ORDER BY {sort_sql}
+        LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+        """,
+        *params_with_paging,
+    )
+
+    year_month = f"{target_month.year:04d}-{target_month.month:02d}"
+    equipment = (equipment or "VAN").upper()
+
+    # Build the parsed-Lane list, dropping cross-border / unparseable lanes.
+    parsed: list[tuple[dict, Optional[Lane]]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    unique_lanes: list[Lane] = []
+    for r in rows:
+        ln = make_lane(r["origin_name"] or "", r["dest_name"] or "", equipment)
+        parsed.append(({"customer_id": r["customer_id"],
+                        "origin_name": r["origin_name"],
+                        "dest_name": r["dest_name"]}, ln))
+        if ln and ln.is_us:
+            key = (ln.origin_city, ln.origin_state, ln.dest_city, ln.dest_state, ln.equipment)
+            if key not in seen:
+                seen.add(key)
+                unique_lanes.append(ln)
+
+    # 1) Bulk cache lookup for both providers, just for this month.
+    cached_sonar = await get_cached_rates(pool, unique_lanes, [year_month], "sonar")
+    cached_lb123 = await get_cached_rates(pool, unique_lanes, [year_month], "lb123")
+
+    def _key_for(ln: Lane) -> tuple:
+        return (ln.origin_city, ln.origin_state, ln.dest_city, ln.dest_state, ln.equipment, year_month)
+
+    missing_sonar = [ln for ln in unique_lanes if _key_for(ln) not in cached_sonar]
+    missing_lb123 = [ln for ln in unique_lanes if _key_for(ln) not in cached_lb123]
+
+    sem = asyncio.Semaphore(_RATE_FETCH_CONCURRENCY)
+
+    async def _fill_sonar(client: httpx.AsyncClient, ln: Lane) -> None:
+        async with sem:
+            history = await fetch_sonar_history(client, ln, months=24)
+            if history:
+                try:
+                    await upsert_rates(pool, ln, "sonar", history)
+                except Exception as exc:
+                    _logger.warning("[SONAR] upsert failed %s→%s: %s",
+                                    ln.origin_city, ln.dest_city, exc)
+            for m in history:
+                if m.year_month == year_month:
+                    cached_sonar[_key_for(ln)] = m
+                    break
+
+    async def _fill_lb123(client: httpx.AsyncClient, ln: Lane) -> None:
+        async with sem:
+            history = await fetch_lb123_history(client, ln, months=12)
+            if history:
+                try:
+                    await upsert_rates(pool, ln, "lb123", history)
+                except Exception as exc:
+                    _logger.warning("[123LB] upsert failed %s→%s: %s",
+                                    ln.origin_city, ln.dest_city, exc)
+            for m in history:
+                if m.year_month == year_month:
+                    cached_lb123[_key_for(ln)] = m
+                    break
+
+    if missing_sonar or missing_lb123:
+        async with httpx.AsyncClient() as client:
+            await asyncio.gather(
+                *(_fill_sonar(client, ln) for ln in missing_sonar),
+                *(_fill_lb123(client, ln) for ln in missing_lb123),
+                return_exceptions=True,
+            )
+
+    # Build the response, keyed how the frontend keys lane rows.
+    out: dict[str, dict] = {}
+    for r, ln in parsed:
+        row_key = f"{r['customer_id']}|{r['origin_name']}|{r['dest_name']}"
+        if not ln or not ln.is_us:
+            out[row_key] = {
+                "sonar": None, "lb123": None, "skip_reason": "non-us"
+                if (ln and not ln.is_us) else "unparseable",
+            }
+            continue
+        s = cached_sonar.get(_key_for(ln))
+        l = cached_lb123.get(_key_for(ln))
+        out[row_key] = {
+            "sonar": _serialize_rate(s),
+            "lb123": _serialize_rate(l),
+        }
+    return {
+        "success": True,
+        "data": out,
+        "meta": {
+            "month_date": target_month.isoformat(),
+            "year_month": year_month,
+            "lanes_in_page": len(parsed),
+            "us_lanes": len(unique_lanes),
+        },
+    }
+
+
+def _serialize_rate(m) -> Optional[dict]:
+    if m is None:
+        return None
+    return {
+        "avg_rate": m.avg_rate,
+        "min_rate": m.min_rate,
+        "max_rate": m.max_rate,
+        "avg_rpm": m.avg_rpm,
+        "min_rpm": m.min_rpm,
+        "max_rpm": m.max_rpm,
+        "loads_included": m.loads_included,
+        "mileage": m.mileage,
+    }

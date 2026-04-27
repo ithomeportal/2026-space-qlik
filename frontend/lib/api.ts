@@ -348,6 +348,52 @@ export function useSavingsLanes(filters: SavingsLanesFilters) {
   })
 }
 
+export interface SavingsLaneRate {
+  avg_rate: number | null
+  min_rate: number | null
+  max_rate: number | null
+  avg_rpm: number | null
+  min_rpm: number | null
+  max_rpm: number | null
+  loads_included: number | null
+  mileage: number | null
+}
+
+export interface SavingsLaneRates {
+  sonar: SavingsLaneRate | null
+  lb123: SavingsLaneRate | null
+  skip_reason?: "non-us" | "unparseable"
+}
+
+/**
+ * Per-lane SONAR + 123LB benchmark rates for the same set of lanes returned
+ * by `useSavingsLanes`. Keyed by `${customer_id}|${origin_name}|${dest_name}`.
+ * First call may be slow (cold cache); subsequent loads of the same month
+ * are instant. Cross-border (non-US) lanes return `null` rates.
+ */
+export function useSavingsLaneRates(filters: SavingsLanesFilters) {
+  const qs = new URLSearchParams()
+  if (filters.month) qs.set("month", filters.month)
+  if (filters.customerId) qs.set("customer_id", filters.customerId)
+  if (filters.origin) qs.set("origin", filters.origin)
+  if (filters.dest) qs.set("dest", filters.dest)
+  if (filters.sort) qs.set("sort", filters.sort)
+  if (filters.division) qs.set("division", filters.division)
+  if (filters.team) qs.set("team", filters.team)
+  qs.set("page", String(filters.page ?? 1))
+  qs.set("limit", String(filters.limit ?? 100))
+  return useQuery({
+    queryKey: ["savings", "lane-rates", filters],
+    queryFn: () =>
+      apiFetch<Record<string, SavingsLaneRates>>(
+        `custom/carriers-savings/lane-rates?${qs}`,
+      ),
+    // Closed months are immutable. The current MTD month soft-expires in 24h
+    // server-side, so a 10-min client cache is safe everywhere.
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
 // === 2026 Official Budget Follow Up ===
 
 export interface BudgetFilterOptions {

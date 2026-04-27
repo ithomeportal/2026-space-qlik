@@ -13,12 +13,14 @@ import {
 import {
   useSavingsByCustomer,
   useSavingsByTeam,
+  useSavingsLaneRates,
   useSavingsLanes,
   useSavingsMonthlyTotals,
   useSavingsMonths,
   useSavingsSummary,
   type SavingsCorpTeam,
   type SavingsDivision,
+  type SavingsLaneRate,
 } from "@/lib/api"
 import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
@@ -169,6 +171,12 @@ function ESavingsFromCarriersContent() {
   const lanes = lanesRes?.data ?? []
   const totalLanes = lanesRes?.meta?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(totalLanes / limit))
+
+  // SONAR + 123LB monthly benchmark rates for the same page of lanes.
+  // First call against a cold lane is slow (external APIs); subsequent loads
+  // of the same month are instant (cache hit on lane_market_rates).
+  const { data: rateRes, isFetching: loadingRates } = useSavingsLaneRates(lanesFilters)
+  const rateMap = rateRes?.data ?? {}
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
@@ -486,12 +494,24 @@ function ESavingsFromCarriersContent() {
                       <th className="px-3 py-2 text-right font-medium">Base $</th>
                       <th className="px-3 py-2 text-right font-medium">Cost</th>
                       <th className="px-3 py-2 text-right font-medium">Variance</th>
+                      <th
+                        className="px-3 py-2 text-right font-medium"
+                        title="SONAR (FreightWaves) TRAC monthly avg for this lane"
+                      >
+                        SONAR $
+                      </th>
+                      <th
+                        className="px-3 py-2 text-right font-medium"
+                        title="123LoadBoard rate-history monthly avg for this lane"
+                      >
+                        123LB $
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#F3F4F6]">
                     {loadingLanes && lanes.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-3 py-6 text-center">
+                        <td colSpan={10} className="px-3 py-6 text-center">
                           <Loader2 className="mx-auto h-5 w-5 animate-spin text-[#6B7280]" />
                         </td>
                       </tr>
@@ -499,55 +519,69 @@ function ESavingsFromCarriersContent() {
                     {!loadingLanes && lanes.length === 0 && (
                       <tr>
                         <td
-                          colSpan={8}
+                          colSpan={10}
                           className="px-3 py-6 text-center text-xs text-[#9CA3AF]"
                         >
                           No lanes match the current filters
                         </td>
                       </tr>
                     )}
-                    {lanes.map((lane) => (
-                      <tr
-                        key={`${lane.customer_id}-${lane.origin_name}-${lane.dest_name}-${lane.month_date}`}
-                        className="hover:bg-[#F9FAFB]"
-                      >
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-[#111827]">
-                            {lane.customer_name}
-                          </div>
-                          <div className="text-xs text-[#6B7280]">
-                            {lane.customer_id}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-[#374151]">
-                          {lane.origin_name}
-                        </td>
-                        <td className="px-3 py-2 text-[#374151]">
-                          {lane.dest_name}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {fmtCount(lane.number_monthly_loads)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                          {fmtCurrency(lane.avg_monthly_usd)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
-                          {fmtCurrency(lane.base_lane)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                          {fmtCurrency(lane.cost_monthly_usd)}
-                        </td>
-                        <td
-                          className={`px-3 py-2 text-right tabular-nums font-semibold ${
-                            Number(lane.variance) >= 0
-                              ? "text-[#059669]"
-                              : "text-[#DC2626]"
-                          }`}
+                    {lanes.map((lane) => {
+                      const rates =
+                        rateMap[`${lane.customer_id}|${lane.origin_name}|${lane.dest_name}`]
+                      return (
+                        <tr
+                          key={`${lane.customer_id}-${lane.origin_name}-${lane.dest_name}-${lane.month_date}`}
+                          className="hover:bg-[#F9FAFB]"
                         >
-                          {fmtCurrency(lane.variance)}
-                        </td>
-                      </tr>
-                    ))}
+                          <td className="px-3 py-2">
+                            <div className="font-medium text-[#111827]">
+                              {lane.customer_name}
+                            </div>
+                            <div className="text-xs text-[#6B7280]">
+                              {lane.customer_id}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-[#374151]">
+                            {lane.origin_name}
+                          </td>
+                          <td className="px-3 py-2 text-[#374151]">
+                            {lane.dest_name}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtCount(lane.number_monthly_loads)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
+                            {fmtCurrency(lane.avg_monthly_usd)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                            {fmtCurrency(lane.base_lane)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
+                            {fmtCurrency(lane.cost_monthly_usd)}
+                          </td>
+                          <td
+                            className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                              Number(lane.variance) >= 0
+                                ? "text-[#059669]"
+                                : "text-[#DC2626]"
+                            }`}
+                          >
+                            {fmtCurrency(lane.variance)}
+                          </td>
+                          <RateCell
+                            rate={rates?.sonar ?? null}
+                            skipReason={rates?.skip_reason}
+                            loading={loadingRates && !rates}
+                          />
+                          <RateCell
+                            rate={rates?.lb123 ?? null}
+                            skipReason={rates?.skip_reason}
+                            loading={loadingRates && !rates}
+                          />
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -652,6 +686,57 @@ function KpiCard({ label, value, icon, tone, loading, goal }: KpiCardProps) {
         </div>
       )}
     </div>
+  )
+}
+
+interface RateCellProps {
+  rate: SavingsLaneRate | null
+  skipReason?: "non-us" | "unparseable"
+  loading: boolean
+}
+
+function RateCell({ rate, skipReason, loading }: RateCellProps) {
+  if (loading) {
+    return (
+      <td className="px-3 py-2 text-right text-xs text-[#9CA3AF]">
+        <span className="inline-block h-3 w-12 animate-pulse rounded bg-[#F3F4F6]" />
+      </td>
+    )
+  }
+  if (skipReason === "non-us") {
+    return (
+      <td
+        className="px-3 py-2 text-right text-xs text-[#9CA3AF]"
+        title="Cross-border lane — SONAR/123LB are US-only"
+      >
+        n/a
+      </td>
+    )
+  }
+  if (!rate || rate.avg_rate == null) {
+    return (
+      <td
+        className="px-3 py-2 text-right text-xs text-[#9CA3AF]"
+        title="No data returned for this lane and month"
+      >
+        —
+      </td>
+    )
+  }
+  const tooltip = [
+    rate.avg_rpm != null ? `RPM ${rate.avg_rpm.toFixed(2)}` : null,
+    rate.mileage != null ? `${rate.mileage} mi` : null,
+    rate.loads_included != null ? `${rate.loads_included} loads` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  return (
+    <td
+      className="px-3 py-2 text-right tabular-nums text-[#374151]"
+      title={tooltip || undefined}
+    >
+      {fmtCurrency(rate.avg_rate)}
+    </td>
   )
 }
 

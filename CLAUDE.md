@@ -98,7 +98,7 @@
 
 | Report | Path | Roles | Primary source(s) |
 |---|---|---|---|
-| eSavings from Carriers | `/reports/esavings-carriers` | CEO, Executive, Procurement, Finance, CORP, DFW | `carriers_savings_results_report` |
+| eSavings from Carriers | `/reports/esavings-carriers` | CEO, Executive, Procurement, Finance, CORP, DFW | `carriers_savings_results_report` + `lane_market_rates` (SONAR + 123LB monthly cache) |
 | 2026 Official Budget Follow Up | `/reports/budget-followup-2026` | CEO, Executive, Operations, Finance, CORP, DFW | `daily_production_budget_report` + v4 team map |
 | XRay CORP Mng | `/reports/xray-corp-mng` | CEO, Executive, CORP, Operations, Finance | v4 + scorecard + movement + budget_report + savings |
 | CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | **Overview roll-ups** (KPIs, Summary by Team, Profit-TM, All Teams Performance) read from a **`production` CTE that UNION ALLs `daily_production_budget_report` (CORP) with v4-DFW production aggregated to customer × day** (helper `_production_cte(start_pos, end_pos)`). Without the union, Division=DFW returned $0 because budget_report is CORP-only. Detail panels (Risk, Orders, Customers, Trends, Weekly) read v4 directly. Scope: CORP (team_id `TEAM1..TEAM5`) **and** DFW (team_id `TEAM-DFW` → sub-teams `TM1..TM4` via `v4.team` col). Division pill (All/CORP/DFW) narrows the team_id universe; Team pill auto-swaps between TEAM1-5 (CORP) and TM1-4 (DFW). DFW sub-team filter uses `TRIM(team)=…` only AFTER the sargable team_id prune. **Perf (2026-04-27)**: indexes `idx_v4_dep (origin_actual_departure)` + `idx_movement_order_company_mv (order_id, company_id, movement_id)` on Aiven, plus `LATERAL ... LIMIT 1` movement join + half-open date filter, took Risk tab 3.5s→448ms, Orders tab 3.3s→532ms, Customers tab 879ms→352ms |
@@ -249,6 +249,10 @@ SEED_SECRET=<secret>
 TV_SECRET=<shared with frontend>
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 RESEND_API_KEY=<shared with frontend — powers daily Losses Lanes weekly-movers email at 7 AM CST>
+SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>          # eSavings SONAR $ column
+# SONAR_USERNAME / SONAR_PASSWORD — fallback if SONAR_TOKEN is not set
+LB123_CLIENT_ID=<123LoadBoard OAuth client id>                       # eSavings 123LB $ column
+LB123_CLIENT_SECRET=<123LoadBoard OAuth client secret>
 ```
 
 ---

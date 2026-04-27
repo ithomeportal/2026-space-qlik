@@ -60,6 +60,20 @@ async def _scheduled_losses_alert():
         logger.error(f"Scheduled losses alert failed: {e}")
 
 
+async def _scheduled_lane_rates_prewarm():
+    """Background job: pre-warm SONAR + 123LB monthly rates for lanes in the
+    current and previous month so the eSavings report never blocks on a cold
+    cache. Runs daily at 5 AM CST."""
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.lane_rates_prewarm import prewarm_lane_market_rates
+
+        result = await prewarm_lane_market_rates(pool)
+        logger.info(f"Lane-rates prewarm complete: {result}")
+    except Exception as e:
+        logger.error(f"Lane-rates prewarm failed: {e}")
+
+
 async def _backfill_favicons(pool: asyncpg.Pool):
     """Background task: backfill missing favicons without blocking startup."""
     try:
@@ -354,6 +368,18 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Losses alert NOT scheduled — missing env vars: %s", ", ".join(missing)
         )
+
+    # Schedule nightly lane_market_rates pre-warm at 5:00 AM CST. Skips when
+    # neither SONAR nor 123LB credentials are present (the prewarm just no-ops).
+    if settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_lane_rates_prewarm,
+            CronTrigger(hour=5, minute=0, timezone="America/Chicago"),
+            id="daily_lane_rates_prewarm",
+            name="Pre-warm SONAR + 123LB lane market rates",
+            replace_existing=True,
+        )
+        logger.info("Scheduled lane-rates prewarm at 5:00 AM CST")
 
     if scheduler.get_jobs():
         scheduler.start()
