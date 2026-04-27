@@ -21,13 +21,13 @@ const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as c
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"]
 const DFW_TEAMS = ["TEAM-DFW"]
 
-type TabKey = "overview" | "reactive" | "pivots" | "trends"
+type TabKey = "overview" | "reactive" | "pivots"
 
+// Bruno (2026-04-27): merged "12-Week Pivots" + "Weekly Trends" into one tab.
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "reactive", label: "Reactive Customers" },
-  { key: "pivots", label: "12-Week Pivots" },
-  { key: "trends", label: "Weekly Trends" },
+  { key: "pivots", label: "Trends & Pivots" },
 ]
 
 function AttritionContent() {
@@ -35,7 +35,14 @@ function AttritionContent() {
   const router = useRouter()
   const pathname = usePathname()
 
-  const activeTab = (searchParams.get("tab") as TabKey) || "overview"
+  const rawTab = searchParams.get("tab")
+  // Migration: legacy ?tab=trends links land on the merged Pivots tab.
+  const activeTab: TabKey =
+    rawTab === "reactive" || rawTab === "pivots"
+      ? rawTab
+      : rawTab === "trends"
+        ? "pivots"
+        : "overview"
   const teamsParam = searchParams.get("teams")
   const teams = useMemo<string[]>(() => {
     if (teamsParam === null) return [...ALL_TEAMS]
@@ -300,8 +307,12 @@ function AttritionContent() {
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
         {activeTab === "overview" && <OverviewTab filters={filters} />}
         {activeTab === "reactive" && <ReactiveTab filters={filters} />}
-        {activeTab === "pivots" && <PivotsTab filters={filters} />}
-        {activeTab === "trends" && <TrendsTab filters={filters} />}
+        {activeTab === "pivots" && (
+          <div className="space-y-6">
+            <PivotsTab filters={filters} />
+            <TrendsTab filters={filters} />
+          </div>
+        )}
       </div>
     </div>
   )

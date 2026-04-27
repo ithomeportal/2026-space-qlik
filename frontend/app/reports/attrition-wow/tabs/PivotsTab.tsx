@@ -168,6 +168,13 @@ function PivotPanel({
                   className="sticky left-0 z-10 max-w-[260px] truncate bg-white px-3 py-1.5 text-[#111827]"
                   title={row.dim_key}
                 >
+                  {dim === "customer" && (
+                    <StatusDot
+                      lw={row.values[0] ?? null}
+                      l2w={row.values[1] ?? null}
+                      ref={row.ref}
+                    />
+                  )}
                   {row.dim_key}
                 </td>
                 <td className="bg-white px-3 py-1.5 text-right font-mono font-semibold text-[#1B3A5C]">
@@ -212,4 +219,45 @@ function fmtMonDay(iso: string): string {
   } catch {
     return iso
   }
+}
+
+// Bruno's "Just in by Customer" rule (2026-04-27):
+//   both LW & L2W >= 8-week avg  → green
+//   one of LW or L2W <  8-week avg → yellow
+//   both LW & L2W <  8-week avg  → red
+function StatusDot({
+  lw,
+  l2w,
+  ref,
+}: {
+  lw: number | null
+  l2w: number | null
+  ref: number | null
+}) {
+  if (ref === null || lw === null || l2w === null) {
+    return (
+      <span
+        className="mr-2 inline-block h-2 w-2 rounded-full bg-[#D1D5DB]"
+        title="Insufficient data"
+      />
+    )
+  }
+  const lwBelow = lw < ref
+  const l2wBelow = l2w < ref
+  let color = "#15803D" // green: both at or above
+  let label = "Both LW & L2W ≥ 8-week avg"
+  if (lwBelow && l2wBelow) {
+    color = "#DC2626"
+    label = "Both LW & L2W below 8-week avg"
+  } else if (lwBelow || l2wBelow) {
+    color = "#CA8A04"
+    label = "LW or L2W below 8-week avg"
+  }
+  return (
+    <span
+      className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
+      style={{ backgroundColor: color }}
+      title={label}
+    />
+  )
 }

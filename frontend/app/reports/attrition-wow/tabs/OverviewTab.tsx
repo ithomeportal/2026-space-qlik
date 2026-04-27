@@ -12,7 +12,6 @@ import {
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
-  fmtCount1,
   fmtPct,
   fmtSignedCount,
   fmtSignedPct,
@@ -20,6 +19,9 @@ import {
   fmtUsd,
   fmtWeekRange,
 } from "../format"
+
+// Cream tint applied to the L8W avg column (Bruno's request, 2026-04-27).
+const L8W_BG = "bg-[#FFFBEB]"
 
 interface Props {
   filters: AttritionFilters
@@ -70,7 +72,9 @@ export function OverviewTab({ filters }: Props) {
               <th className="w-32 px-3 py-2 text-left font-semibold uppercase tracking-wider">
                 Metric
               </th>
-              <th className="px-3 py-2 text-right font-semibold">L8W avg</th>
+              <th className={`px-3 py-2 text-right font-semibold ${L8W_BG}`}>
+                L8W avg
+              </th>
               <th className="px-3 py-2 text-right font-semibold">L2W avg</th>
               <th className="px-3 py-2 text-right font-semibold">
                 Δ (L2W vs L8W)
@@ -92,7 +96,7 @@ export function OverviewTab({ filters }: Props) {
               label="# Loads"
               loading={loadingSummary}
               block={s?.loads}
-              fmt={fmtCount1}
+              fmt={fmtCount}
               isCount
             />
             <MetricRow
@@ -297,7 +301,7 @@ function MetricRow({
       <td className="px-3 py-2 text-left font-semibold text-[#374151]">
         {label}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-[#111827]">
+      <td className={`px-3 py-2 text-right font-mono text-[#111827] ${L8W_BG}`}>
         {cell(block?.l8w_avg)}
       </td>
       <td className="px-3 py-2 text-right font-mono text-[#111827]">

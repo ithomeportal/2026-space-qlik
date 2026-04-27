@@ -131,6 +131,11 @@ function BarPanel({
         {data.map((d, i) => {
           const v = values[i]
           const h = (Math.abs(v) / safeMax) * 180
+          // Bruno (2026-04-27): bars at-or-above the 8w avg use the panel
+          // color; bars below the average drop to a softer gray so the
+          // above-avg weeks pop visually.
+          const aboveAvg = refValue !== null && v >= refValue
+          const fill = v < 0 ? "#DC2626" : aboveAvg ? color : "#D1D5DB"
           return (
             <div
               key={d.week_start}
@@ -145,7 +150,7 @@ function BarPanel({
                 className="w-full rounded-t"
                 style={{
                   height: `${h}px`,
-                  backgroundColor: v < 0 ? "#DC2626" : color,
+                  backgroundColor: fill,
                   opacity: v === 0 ? 0.2 : 1,
                 }}
               />

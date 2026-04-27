@@ -8,7 +8,9 @@ export const USD0 = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 })
 
-export const COUNT = new Intl.NumberFormat("en-US")
+export const COUNT = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0,
+})
 
 export const COUNT1 = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,

@@ -10,7 +10,6 @@ import {
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
-  fmtCount1,
   fmtPct,
   fmtSignedPct,
   fmtTimestamp,
@@ -61,9 +60,11 @@ const BUCKET_LABELS: Record<Bucket, { title: string; subtitle: string; days: str
   },
 }
 
+// Bruno's order (2026-04-27): show "2 to 4 Weeks" before "Last Week"
+// so the medium-attrition bucket is the entry point.
 const BUCKET_ORDER: Bucket[] = [
-  "lw",
   "l2_4w",
+  "lw",
   "l5_9w",
   "spot_recent",
   "spot_stale",
@@ -90,7 +91,7 @@ export function ReactiveTab({ filters }: Props) {
   }, [rows])
 
   const [openBuckets, setOpenBuckets] = useState<Set<Bucket>>(
-    () => new Set<Bucket>(["lw", "l2_4w"]),
+    () => new Set<Bucket>(["l2_4w", "lw"]),
   )
   const toggle = (b: Bucket) => {
     const next = new Set(openBuckets)
@@ -232,12 +233,12 @@ function ReactiveTable({
                   {r.customer || "—"}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {fmtCount1(r.avg_loads_l8w)}
+                  {fmtCount(r.avg_loads_l8w)}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">
                   {variant === "lw"
                     ? fmtCount(r.lw_loads)
-                    : fmtCount1(v.loads)}
+                    : fmtCount(v.loads)}
                 </td>
                 <PctCell v={v.pct_loads} />
                 <td className="px-3 py-1.5 text-right font-mono">
