@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
-ATTRITION_ROLES = ("CEO", "Executive", "CORP", "DFW", "Operations", "Finance")
+ATTRITION_ROLES = ("CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance")
 
 YEAR_START = date(2025, 1, 1)  # PDF base filter
 

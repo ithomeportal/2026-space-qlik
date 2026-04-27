@@ -149,7 +149,7 @@ CUSTOM_REPORTS = [
         "category": "Executive",
         "tags": ["attrition", "wow", "weekly", "reactive", "lanes", "customers", "trends", "variance"],
         "owner_name": "admin",
-        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+        "roles": ["CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance"],
     },
     {
         "key": "voip-calls-logs",  # -> /reports/voip-calls-logs
