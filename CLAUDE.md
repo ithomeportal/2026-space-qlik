@@ -50,6 +50,7 @@
 - ONLY light mode — block dark mode
 - shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18
 - Search bar is pure React/HTML (no cmdk / Base UI / Radix)
+- Never name a custom prop `ref` (e.g. for a chart's reference/baseline/avg value) — React reserves it and validates the value at element-creation; passing a non-callback throws minified error #284. Use `refValue`/`baseline`/`avg` instead. Bit us on Attrition WoW Trends tab (commit `0112ddf`)
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `"jwt"` (invalid)
