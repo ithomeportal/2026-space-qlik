@@ -172,7 +172,7 @@ function PivotPanel({
                     <StatusDot
                       lw={row.values[0] ?? null}
                       l2w={row.values[1] ?? null}
-                      ref={row.ref}
+                      avg={row.ref}
                     />
                   )}
                   {row.dim_key}
@@ -228,13 +228,13 @@ function fmtMonDay(iso: string): string {
 function StatusDot({
   lw,
   l2w,
-  ref,
+  avg,
 }: {
   lw: number | null
   l2w: number | null
-  ref: number | null
+  avg: number | null
 }) {
-  if (ref === null || lw === null || l2w === null) {
+  if (avg === null || lw === null || l2w === null) {
     return (
       <span
         className="mr-2 inline-block h-2 w-2 rounded-full bg-[#D1D5DB]"
@@ -242,8 +242,8 @@ function StatusDot({
       />
     )
   }
-  const lwBelow = lw < ref
-  const l2wBelow = l2w < ref
+  const lwBelow = lw < avg
+  const l2wBelow = l2w < avg
   let color = "#15803D" // green: both at or above
   let label = "Both LW & L2W ≥ 8-week avg"
   if (lwBelow && l2wBelow) {
