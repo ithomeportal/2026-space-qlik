@@ -743,8 +743,8 @@ async def customers(
     pc_where = _scope_where("br4", team, customer, pc_params, division=division)
     pc_params.extend([s, e])
     pc_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(pc_params)-1} AND ${len(pc_params)}"
+        f"br4.origin_actual_departure >= ${len(pc_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(pc_params)}::date + 1)"
     )
     pc_task = pool.fetch(
         f"""
@@ -780,8 +780,8 @@ async def customers(
     wp_where = _scope_where("br4", team, customer, wp_params, division=division)
     wp_params.extend([s, e])
     wp_df = (
-        f"br4.origin_actual_departure::date BETWEEN "
-        f"${len(wp_params)-1} AND ${len(wp_params)}"
+        f"br4.origin_actual_departure >= ${len(wp_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(wp_params)}::date + 1)"
     )
     wp_task = pool.fetch(
         f"""
@@ -823,7 +823,8 @@ async def customers(
             COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {g_scope}
-            AND br4.origin_actual_departure::date BETWEEN $1 AND $2
+            AND br4.origin_actual_departure >= $1
+            AND br4.origin_actual_departure < ($2::date + 1)
             AND br4.customer_name IS NOT NULL
           GROUP BY TRIM(br4.customer_name)
         ),
@@ -859,7 +860,8 @@ async def customers(
             COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {g_scope}
-            AND br4.origin_actual_departure::date BETWEEN $1 AND $2
+            AND br4.origin_actual_departure >= $1
+            AND br4.origin_actual_departure < ($2::date + 1)
             AND br4.customer_name IS NOT NULL
           GROUP BY TRIM(br4.customer_name)
         ),
