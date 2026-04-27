@@ -57,7 +57,7 @@ export function TrendsTab({ filters }: Props) {
               color={f.color}
               axisColor={f.axisColor}
               isPct={f.isPct ?? false}
-              ref={
+              refValue={
                 f.key === "loads"
                   ? ref?.l8w_avg_loads ?? null
                   : f.key === "customers"
@@ -84,7 +84,7 @@ function BarPanel({
   color,
   axisColor,
   isPct,
-  ref,
+  refValue,
 }: {
   title: string
   data: WeekRow[]
@@ -93,7 +93,7 @@ function BarPanel({
   color: string
   axisColor: string
   isPct: boolean
-  ref: number | null
+  refValue: number | null
 }) {
   const values = useMemo(
     () =>
@@ -103,7 +103,7 @@ function BarPanel({
       }),
     [data, field],
   )
-  const max = Math.max(0, ...values, ref ?? 0)
+  const max = Math.max(0, ...values, refValue ?? 0)
   const safeMax = max === 0 ? 1 : max
 
   return (
@@ -112,12 +112,12 @@ function BarPanel({
         <div className="text-sm font-semibold" style={{ color: axisColor }}>
           {title}
         </div>
-        {ref !== null && (
+        {refValue !== null && (
           <div className="text-[10px] text-[#6B7280]">
             <span className="font-semibold" style={{ color: axisColor }}>
               ━━
             </span>{" "}
-            8w avg: {fmt(ref)}
+            8w avg: {fmt(refValue)}
           </div>
         )}
       </div>
