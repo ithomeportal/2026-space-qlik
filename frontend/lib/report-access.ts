@@ -37,6 +37,16 @@ export const REPORT_ACCESS = {
     "DFW",
     "CORP",
   ],
+  "track-award-loads": [
+    "CEO",
+    "Executive",
+    "Sales",
+    "Procurement",
+    "Operations",
+    "Finance",
+    "CORP",
+    "DFW",
+  ],
 } as const
 
 export type ReportKey = keyof typeof REPORT_ACCESS

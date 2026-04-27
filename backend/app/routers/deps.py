@@ -24,6 +24,18 @@ def get_datalake_gold_pool(request: Request) -> asyncpg.Pool:
 get_savings_pool = get_datalake_gold_pool
 
 
+def get_automations_pool(request: Request) -> asyncpg.Pool:
+    """Pool for automations_db — tables produced by n8n workflows
+    (e.g. contract_performance_analysis powering Track Award Loads)."""
+    pool = getattr(request.app.state, "automations_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Automations data source not configured",
+        )
+    return pool
+
+
 def require_tag_role(*allowed: str):
     """Factory: require the user to have at least one of the given tag roles (admin bypasses)."""
 

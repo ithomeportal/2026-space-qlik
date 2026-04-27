@@ -152,6 +152,22 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "track-award-loads",  # -> /reports/track-award-loads
+        "title": "Track Award Loads",
+        "description": "Primary-award lane performance: awarded vs actual loads, profit, carrier cost — by Division / Customer / Award / Lane",
+        "note": "Source: contract_performance_analysis (automations_db) — n8n daily 02:25 · award_status=PRIMARY · latest snapshot only · replaces Bruno's Qlik 949cafc8-… (legacy unilink.us tenant)",
+        "category": "Sales",
+        "tags": [
+            "awards", "primary", "lanes", "profit", "carrier-cost",
+            "tracker", "rfp", "contract", "performance",
+        ],
+        "owner_name": "admin",
+        "roles": [
+            "CEO", "Executive", "Sales", "Procurement",
+            "Operations", "Finance", "CORP", "DFW",
+        ],
+    },
+    {
         "key": "voip-calls-logs",  # -> /reports/voip-calls-logs
         "title": "VoIP Calls Logs",
         "description": "Vonage VoIP call logs — KPIs, direction mix, daily trend, hour-of-day, DOW × hour heatmap, top users, paginated detail",

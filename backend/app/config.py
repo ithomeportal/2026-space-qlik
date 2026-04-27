@@ -5,6 +5,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     # Aiven aivn_datalake_gold — source for code-made reports (e.g. eSavings from Carriers)
     SAVINGS_DATABASE_URL: str = ""
+    # Aiven automations_db — source for n8n-produced tables
+    # (e.g. contract_performance_analysis powering Track Award Loads)
+    AUTOMATIONS_DATABASE_URL: str = ""
     QLIK_TENANT_URL: str = "https://mb01txe2h9rovgh.us.qlikcloud.com"
     QLIK_PRIVATE_KEY: str = ""
     QLIK_ISSUER: str = ""

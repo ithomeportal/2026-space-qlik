@@ -30,6 +30,7 @@ from app.routers import (
     reports,
     sales_attrition_to_ops,
     search,
+    track_award_loads,
     voip_calls,
     xray_corp,
 )
@@ -297,6 +298,35 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"VoIP Calls Logs migration skipped: {e}")
 
+            # 2026-04-27 — flip legacy Qlik "Awards Tracker"
+            # (app 949cafc8-…, legacy unilink.us tenant — not embeddable from
+            # the portal tenant) to the code-made "Track Award Loads" pointing
+            # at /reports/track-award-loads. seed_custom_reports() then sets
+            # the title/desc/roles. Removes the (Mob) Awards Tracker duplicate
+            # (app 651f789a-…) since the new page is responsive. Idempotent.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/track-award-loads',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '949cafc8-cd79-4058-a528-cd4b330d9298'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/track-award-loads')
+                    """
+                )
+                await app.state.pool.execute(
+                    """
+                    DELETE FROM reports
+                     WHERE qlik_app_id = '651f789a-f9a4-44ad-9ce3-301a1a3dc2ef'
+                        OR title = '(Mob) Awards Tracker'
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"Awards Tracker migration skipped: {e}")
+
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -333,6 +363,24 @@ async def lifespan(app: FastAPI):
             app.state.savings_pool = None
     else:
         app.state.savings_pool = None
+
+    # Third pool for automations_db (n8n-produced tables, e.g.
+    # contract_performance_analysis -> Track Award Loads).
+    if settings.AUTOMATIONS_DATABASE_URL:
+        try:
+            app.state.automations_pool = await asyncpg.create_pool(
+                settings.AUTOMATIONS_DATABASE_URL, min_size=1, max_size=4
+            )
+            logger.info(
+                "Automations pool connected — powers Track Award Loads"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Automations DB connect failed: {e}. Track Award Loads will 503."
+            )
+            app.state.automations_pool = None
+    else:
+        app.state.automations_pool = None
 
     # Schedule daily user sync at 2:00 AM CST (America/Chicago)
     if settings.TIMEOFF_DATABASE_URL:
@@ -391,6 +439,8 @@ async def lifespan(app: FastAPI):
         await app.state.pool.close()
     if getattr(app.state, "savings_pool", None):
         await app.state.savings_pool.close()
+    if getattr(app.state, "automations_pool", None):
+        await app.state.automations_pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -445,6 +495,7 @@ app.include_router(ops_direct_compare.router, prefix="/api")
 app.include_router(ops_customer_score.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
 app.include_router(voip_calls.router, prefix="/api")
+app.include_router(track_award_loads.router, prefix="/api")
 
 
 @app.get("/api/health")
