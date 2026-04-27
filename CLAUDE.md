@@ -50,7 +50,7 @@
 - ONLY light mode — block dark mode
 - shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18
 - Search bar is pure React/HTML (no cmdk / Base UI / Radix)
-- Never name a custom prop `ref` (e.g. for a chart's reference/baseline/avg value) — React reserves it and validates the value at element-creation; passing a non-callback throws minified error #284. Use `refValue`/`baseline`/`avg` instead. Bit us on Attrition WoW Trends tab (commit `0112ddf`)
+- Never name a custom prop `ref` (e.g. for a chart's reference/baseline/avg value) — React reserves it and validates the value at element-creation; passing a non-callback throws minified error #284. Use `refValue`/`baseline`/`avg` instead. Bit us twice on Attrition WoW: Trends tab `<BarPanel ref={…}>` (commit `0112ddf`), then the merged Pivots tab `<StatusDot ref={…}>` only crashed on the *By Customer* view because *by Team* didn't render the dot (commit `2d86800`). Audit small inline children — status dots, delta arrows, sparkline tips — not just the chart panels
 - Every code-made report wraps its default export in `<RoleGuard roles={[...REPORT_ACCESS["<key>"]]}>` (`frontend/components/RoleGuard.tsx`) so users without an allowed TagRole see a single clean access-denied banner instead of every panel firing its own 403. Source-of-truth role lists live in `frontend/lib/report-access.ts` and must mirror `backend/app/services/seed.py::CUSTOM_REPORTS` + each router's `*_ROLES` tuple. Match is case-insensitive; admin always bypasses
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
