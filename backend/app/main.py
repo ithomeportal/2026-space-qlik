@@ -30,6 +30,7 @@ from app.routers import (
     reports,
     sales_attrition_to_ops,
     search,
+    voip_calls,
     xray_corp,
 )
 
@@ -254,6 +255,34 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Customer Score migration skipped: {e}")
 
+            # 2026-04-26 — flip legacy Qlik "Vonage VoIP Calls"
+            # (app 3e30136b-…) to the code-made "VoIP Calls Logs" pointing
+            # at /reports/voip-calls-logs. seed_custom_reports() then sets
+            # the title/desc/roles (everyone). Removes the (Mob) duplicate
+            # (app 9e477387-…). Idempotent: no-ops once flipped.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/voip-calls-logs',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '3e30136b-050a-4f19-83ab-17a7d55a2fc3'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/voip-calls-logs')
+                    """
+                )
+                await app.state.pool.execute(
+                    """
+                    DELETE FROM reports
+                     WHERE qlik_app_id = '9e477387-e2ce-46bc-a27f-ec85b06c0f7e'
+                        OR title = '(Mob) Vonage VoIP Calls'
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"VoIP Calls Logs migration skipped: {e}")
+
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -389,6 +418,7 @@ app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
 app.include_router(ops_customer_score.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
+app.include_router(voip_calls.router, prefix="/api")
 
 
 @app.get("/api/health")

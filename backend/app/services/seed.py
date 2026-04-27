@@ -151,6 +151,20 @@ CUSTOM_REPORTS = [
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
+    {
+        "key": "voip-calls-logs",  # -> /reports/voip-calls-logs
+        "title": "VoIP Calls Logs",
+        "description": "Vonage VoIP call logs — KPIs, direction mix, daily trend, hour-of-day, DOW × hour heatmap, top users, paginated detail",
+        "note": "Default WTD (with Today / Last 7d / MTD / Last Month / YTD / Custom presets) · floor 2025-01-01 · free-text search across user/extension/phone/details · source: vonage_gld_by_user · replaces Qlik 3e30136b-… · available to everyone",
+        "category": "IT",
+        "tags": ["voip", "vonage", "calls", "telecom", "logs", "duration", "direction", "users"],
+        "owner_name": "admin",
+        # All canonical TagRoles → visible to every user. Admins always bypass.
+        "roles": [
+            "CEO", "Executive", "Procurement", "Finance",
+            "Operations", "Sales", "HR", "IT", "DFW", "CORP",
+        ],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
@@ -313,16 +327,9 @@ REPORTS = [
     # NOTE: "HR - Access Log Doors" was migrated to a code-made report on
     # 2026-04-24. See CUSTOM_REPORTS (key=hr-access-doors) and the one-time
     # row-flip in main.py lifespan. Do not re-add it here.
-    {
-        "qlik_app_id": "3e30136b-050a-4f19-83ab-17a7d55a2fc3",
-        "qlik_sheet_id": "NfAFQFz",
-        "title": "Vonage VoIP Calls",
-        "description": "VoIP call analytics and metrics via Vonage",
-        "category": "IT",
-        "tags": ["voip", "vonage", "calls", "telecom"],
-        "owner_name": "Melany",
-        "roles": ["executive", "it"],
-    },
+    # NOTE: "Vonage VoIP Calls" (app 3e30136b-…) was migrated to a code-made
+    # report on 2026-04-26. See CUSTOM_REPORTS (key=voip-calls-logs) and the
+    # one-time row-flip in main.py lifespan. Do not re-add it here.
     {
         "qlik_app_id": "86da731f-577f-45d3-9d40-c416649a4937",
         "qlik_sheet_id": "RqXzx",
@@ -439,17 +446,10 @@ MOBILE_REPORTS = [
     # NOTE: "(Mob) HR - Access Log Doors" removed 2026-04-24 — the code-made
     # desktop page at /reports/hr-access-doors is responsive (scrolls on
     # mobile), so no separate mobile tile is needed.
-    {
-        "qlik_app_id": "9e477387-e2ce-46bc-a27f-ec85b06c0f7e",
-        "qlik_sheet_id": "NfAFQFz",
-        "title": "(Mob) Vonage VoIP Calls",
-        "description": "VoIP call analytics optimized for mobile",
-        "category": "IT",
-        "tags": ["voip", "vonage", "mobile"],
-        "owner_name": "Melany",
-        "roles": ["executive", "it"],
-        "is_mobile": True,
-    },
+    # NOTE: "(Mob) Vonage VoIP Calls" (app 9e477387-…) removed 2026-04-26 —
+    # the desktop code-made report at /reports/voip-calls-logs handles all
+    # call-log lookups; no separate mobile tile is needed (page renders a
+    # <1280px desktop banner like OPs Margins / OPs Direct Compare).
     {
         "qlik_app_id": "b45e95b3-15f0-4cd8-8fa6-bb968917d9d2",
         "qlik_sheet_id": "8aae69c7-d3be-4759-91aa-4f31960f2155",
