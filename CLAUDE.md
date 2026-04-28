@@ -99,7 +99,7 @@
 
 | Report | Path | Roles | Primary source |
 |---|---|---|---|
-| eSavings from Carriers | `/reports/esavings-carriers` | CEO, Executive, Procurement, Finance, CORP, DFW | `carriers_savings_results_report` + `lane_market_rates` (SONAR + 123LB monthly cache) |
+| eSavings from Carriers | `/reports/esavings-carriers` | CEO, Executive, Procurement, Finance, CORP, DFW | `carriers_savings_results_report` + `lane_market_rates` (SONAR + 123LB monthly cache). Quarterly base = simple avg of prior-quarter non-zero monthly avgs; **no prior-quarter activity → base=0, variance=0** (refined 2026-04-28 — replaced the silent 2025-fallback that produced fake overpays). UI shows `base_month` chip under BASE $ with a red dot on stale rows. |
 | 2026 Official Budget Follow Up | `/reports/budget-followup-2026` | CEO, Executive, Operations, Finance, CORP, DFW | `daily_production_budget_report` + v4 team map |
 | XRay CORP Mng | `/reports/xray-corp-mng` | CEO, Executive, CORP, Operations, Finance | v4 + scorecard + movement + budget_report + savings |
 | CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | `_production_cte` UNIONs `daily_production_budget_report` (CORP) with v4-DFW for Overview roll-ups; detail tabs read v4. Perf indexes: `idx_v4_dep`, `idx_movement_order_company_mv`. See SPEC-CUSTOM-REPORTS.md |

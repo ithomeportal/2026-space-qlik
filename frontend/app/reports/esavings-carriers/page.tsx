@@ -555,7 +555,13 @@ function ESavingsFromCarriersContent() {
                             {fmtCurrency(lane.avg_monthly_usd)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
-                            {fmtCurrency(lane.base_lane)}
+                            <div className="flex flex-col items-end leading-tight">
+                              <span>{fmtCurrency(lane.base_lane)}</span>
+                              <BaseMonthChip
+                                baseMonth={lane.base_month}
+                                monthDate={lane.month_date}
+                              />
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
                             {fmtCurrency(lane.cost_monthly_usd)}
@@ -686,6 +692,47 @@ function KpiCard({ label, value, icon, tone, loading, goal }: KpiCardProps) {
         </div>
       )}
     </div>
+  )
+}
+
+// Stale-base detector: any row whose displayed base predates the current
+// quarter's reference period (e.g. Apr–Dec 2026 row showing a 2025-MM base
+// instead of `Q1-2026`). Should be empty after the n8n zero-base deploy.
+function isStaleBase(
+  baseMonth: string | null | undefined,
+  monthDate: string | null | undefined,
+): boolean {
+  if (!baseMonth || !monthDate) return false
+  if (baseMonth.startsWith("Q") || baseMonth === "None") return false
+  const m = monthDate.slice(0, 7)
+  if (m >= "2026-04" && baseMonth < "2026-01") return true
+  return false
+}
+
+function BaseMonthChip({
+  baseMonth,
+  monthDate,
+}: {
+  baseMonth: string | null | undefined
+  monthDate: string | null | undefined
+}) {
+  if (!baseMonth || baseMonth === "None") return null
+  const stale = isStaleBase(baseMonth, monthDate)
+  const className = stale
+    ? "mt-0.5 inline-flex items-center gap-1 rounded-sm bg-[#FEE2E2] px-1 py-px text-[10px] font-medium text-[#991B1B]"
+    : "mt-0.5 inline-flex items-center rounded-sm bg-[#F3F4F6] px-1 py-px text-[10px] font-medium text-[#6B7280]"
+  return (
+    <span
+      className={className}
+      title={
+        stale
+          ? `Stale base: this Apr–Dec 2026 row is using a ${baseMonth} carrier cost instead of Q1-2026 (no Q1 history)`
+          : `Base period applied to this row`
+      }
+    >
+      {stale ? <span aria-hidden="true">●</span> : null}
+      {baseMonth}
+    </span>
   )
 }
 
