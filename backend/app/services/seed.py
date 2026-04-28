@@ -207,6 +207,22 @@ CUSTOM_REPORTS = [
             "Operations", "Sales", "HR", "IT", "DFW", "CORP",
         ],
     },
+    {
+        "key": "carrier-risk",  # -> /reports/carrier-risk
+        "title": "Risk Asss for Carriers",
+        "description": "Carrier risk assessment — # carriers per lane, top-carrier share, HHI concentration, price dispersion, single-carrier lane flags",
+        "note": "Source: mcleod_gld_dispatchers ⨝ mcleod_gld_budget_report_v4 · carrier_cost = override_pay_amt + driver_extra_pay (NOT total_carrier_pay) · scope TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · status D,P · excludes UNILINK & OILTEX · replaces Qlik d7b9deb0-… (legacy unilink.us)",
+        "category": "Operations",
+        "tags": [
+            "carrier", "risk", "concentration", "hhi", "lanes",
+            "procurement", "single-carrier", "top-share",
+        ],
+        "owner_name": "admin",
+        "roles": [
+            "CEO", "Executive", "Procurement",
+            "CORP", "DFW", "Operations", "Finance",
+        ],
+    },
 ]
 
 # 19 desktop + 12 mobile reports

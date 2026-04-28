@@ -58,6 +58,15 @@ export const REPORT_ACCESS = {
     "Operations",
     "Finance",
   ],
+  "carrier-risk": [
+    "CEO",
+    "Executive",
+    "Procurement",
+    "CORP",
+    "DFW",
+    "Operations",
+    "Finance",
+  ],
 } as const
 
 export type ReportKey = keyof typeof REPORT_ACCESS

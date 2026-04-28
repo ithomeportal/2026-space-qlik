@@ -17,6 +17,7 @@ from app.routers import (
     admin,
     attrition_wow,
     budget_followup,
+    carrier_risk,
     carriers_savings,
     ceo_executive,
     dfw_access_doors,
@@ -541,6 +542,7 @@ app.include_router(sales_attrition_to_ops.router, prefix="/api")
 app.include_router(voip_calls.router, prefix="/api")
 app.include_router(track_award_loads.router, prefix="/api")
 app.include_router(rfp_performance.router, prefix="/api")
+app.include_router(carrier_risk.router, prefix="/api")
 
 
 @app.get("/api/health")
