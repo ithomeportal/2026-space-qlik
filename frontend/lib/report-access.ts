@@ -18,6 +18,7 @@ export const REPORT_ACCESS = {
   "xray-corp-mng": ["CEO", "Executive", "CORP", "Operations", "Finance"],
   "ceo-executive": ["CEO"],
   "hr-access-doors": ["CEO", "Executive", "HR", "IT"],
+  "dfw-access-doors": ["DFW", "DFW-Assistent", "DFW KAM", "Assitent OPs manager"],
   "podium-dfw": ["DFW"],
   "losses-lanes": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
   "ops-margins": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
