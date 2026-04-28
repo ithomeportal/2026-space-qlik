@@ -22,6 +22,7 @@ from app.routers import (
     ceo_executive,
     dfw_access_doors,
     hr_access_doors,
+    it_tickets,
     losses_lanes,
     ops_customer_score,
     ops_direct_compare,
@@ -315,6 +316,26 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"VoIP Calls Logs migration skipped: {e}")
 
+            # 2026-04-28 — flip legacy Qlik "IT Managed Services"
+            # (app 86da731f-…, sheet RqXzx) to the code-made "IT Tickets Mgmt"
+            # pointing at /reports/it-tickets-mgmt. seed_custom_reports() then
+            # sets the title/desc/roles (everyone). Idempotent: no-ops once flipped.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/it-tickets-mgmt',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '86da731f-577f-45d3-9d40-c416649a4937'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/it-tickets-mgmt')
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"IT Tickets Mgmt migration skipped: {e}")
+
             # 2026-04-28 — flip legacy Qlik "RFP Performance Tracker"
             # (app 6df25048-…) to the code-made "Performance for RFPs"
             # pointing at /reports/rfp-performance. seed_custom_reports()
@@ -426,6 +447,27 @@ async def lifespan(app: FastAPI):
     else:
         app.state.automations_pool = None
 
+    # Fourth pool for fresh_services_unlk (FreshService Tickets/Agents mirror,
+    # populated by an external Spark ETL). Powers IT Tickets Mgmt report.
+    if settings.FRESHSERVICE_DATABASE_URL:
+        try:
+            app.state.freshservice_pool = await asyncpg.create_pool(
+                settings.FRESHSERVICE_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                init=_set_cst_session,
+            )
+            logger.info(
+                "FreshService pool connected — powers IT Tickets Mgmt"
+            )
+        except Exception as e:
+            logger.warning(
+                f"FreshService DB connect failed: {e}. IT Tickets Mgmt will 503."
+            )
+            app.state.freshservice_pool = None
+    else:
+        app.state.freshservice_pool = None
+
     # Schedule daily user sync at 2:00 AM CST (America/Chicago)
     if settings.TIMEOFF_DATABASE_URL:
         scheduler.add_job(
@@ -485,6 +527,8 @@ async def lifespan(app: FastAPI):
         await app.state.savings_pool.close()
     if getattr(app.state, "automations_pool", None):
         await app.state.automations_pool.close()
+    if getattr(app.state, "freshservice_pool", None):
+        await app.state.freshservice_pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -543,6 +587,7 @@ app.include_router(voip_calls.router, prefix="/api")
 app.include_router(track_award_loads.router, prefix="/api")
 app.include_router(rfp_performance.router, prefix="/api")
 app.include_router(carrier_risk.router, prefix="/api")
+app.include_router(it_tickets.router, prefix="/api")
 
 
 @app.get("/api/health")

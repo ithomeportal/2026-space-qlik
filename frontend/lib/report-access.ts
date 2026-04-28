@@ -67,6 +67,18 @@ export const REPORT_ACCESS = {
     "Operations",
     "Finance",
   ],
+  "it-tickets-mgmt": [
+    "CEO",
+    "Executive",
+    "Procurement",
+    "Finance",
+    "Operations",
+    "Sales",
+    "HR",
+    "IT",
+    "DFW",
+    "CORP",
+  ],
 } as const
 
 export type ReportKey = keyof typeof REPORT_ACCESS

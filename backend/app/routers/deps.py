@@ -36,6 +36,18 @@ def get_automations_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def get_freshservice_pool(request: Request) -> asyncpg.Pool:
+    """Pool for fresh_services_unlk — FreshService Tickets/Agents mirror
+    populated by an external Spark ETL. Powers the IT Tickets Mgmt report."""
+    pool = getattr(request.app.state, "freshservice_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="FreshService data source not configured",
+        )
+    return pool
+
+
 def require_tag_role(*allowed: str):
     """Factory: require the user to have at least one of the given tag roles (admin bypasses)."""
 

@@ -223,6 +223,23 @@ CUSTOM_REPORTS = [
             "CORP", "DFW", "Operations", "Finance",
         ],
     },
+    {
+        "key": "it-tickets-mgmt",  # -> /reports/it-tickets-mgmt
+        "title": "IT Tickets Mgmt",
+        "description": "FreshService IT tickets — Service Request / Incident KPIs, status & priority mix, agent assignments, pending/closed details",
+        "note": "Type tabs (Service Request / Incident) · default Last 30d (Today / WTD / Last 7d / MTD / Last Month / YTD / Custom) · excludes Onboarding/Offboarding/Cancelled/Test (IT) · status code 6→In Progress, 8→Waiting for user response · agents joined via ResponderId (Bruno's PDF JOIN was on Id=Id which matches 0 rows — corrected) · source: fresh_services_unlk.\"Tickets\" + \"Agents\" (Spark ETL) · replaces Qlik 86da731f-… · available to everyone",
+        "category": "IT",
+        "tags": [
+            "it", "service-desk", "incidents", "tickets", "freshservice",
+            "agents", "categories", "priority", "sla",
+        ],
+        "owner_name": "admin",
+        # All canonical TagRoles → visible to every user. Admins always bypass.
+        "roles": [
+            "CEO", "Executive", "Procurement", "Finance",
+            "Operations", "Sales", "HR", "IT", "DFW", "CORP",
+        ],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
@@ -381,16 +398,9 @@ REPORTS = [
     # NOTE: "Vonage VoIP Calls" (app 3e30136b-…) was migrated to a code-made
     # report on 2026-04-26. See CUSTOM_REPORTS (key=voip-calls-logs) and the
     # one-time row-flip in main.py lifespan. Do not re-add it here.
-    {
-        "qlik_app_id": "86da731f-577f-45d3-9d40-c416649a4937",
-        "qlik_sheet_id": "RqXzx",
-        "title": "IT Managed Services",
-        "description": "IT service desk incidents and service requests",
-        "category": "IT",
-        "tags": ["it", "service-desk", "incidents", "tickets"],
-        "owner_name": "Melany",
-        "roles": ["executive", "it"],
-    },
+    # NOTE: "IT Managed Services" (app 86da731f-…) was migrated to a
+    # code-made report on 2026-04-28. See CUSTOM_REPORTS (key=it-tickets-mgmt)
+    # and the one-time row-flip in main.py lifespan. Do not re-add it here.
 ]
 
 # 12 mobile (Mob) reports — same roles as desktop counterparts
