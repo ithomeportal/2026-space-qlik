@@ -370,27 +370,41 @@ async def monthly(
 # Bruno's 2026-04-28 feedback: weekly chart, top-5 leaderboards, tabbed detail
 # ---------------------------------------------------------------------------
 
-def _windows():
-    """Anchor points for tab metrics (calendar days, no holidays).
+def _count_workdays(start: date, end: date) -> int:
+    """Mon–Fri days in [start, end] inclusive. No holiday calendar."""
+    if start > end:
+        return 0
+    count = 0
+    d = start
+    while d <= end:
+        if d.weekday() < 5:  # Mon=0 .. Fri=4
+            count += 1
+        d = d + timedelta(days=1)
+    return count
 
-    Returns a dict with the start/end dates for: last calendar month, last 21
-    days (3 weeks rolling), last 14 days, current month-to-yesterday, and the
-    count of days remaining in the current calendar month after yesterday.
+
+def _windows():
+    """Anchor points for tab metrics.
+
+    Day-count denominators (Avg×LastMonth divisor and Projected days-remaining)
+    are *Mon–Fri working days, no holidays* per Bruno's 2026-04-28 v2 spec.
+    Numerator sums (revenue/profit windows) still aggregate every calendar day
+    with data — the spec just constrains the divisor.
     """
     today = cst_today()
     yesterday = today - timedelta(days=1)
 
     last_month_end = today.replace(day=1) - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
-    days_in_last_month = (last_month_end - last_month_start).days + 1
+    workdays_in_last_month = _count_workdays(last_month_start, last_month_end)
 
     cm_start = today.replace(day=1)
     cm_end = today.replace(day=monthrange(today.year, today.month)[1])
     # Actuals through yesterday — today's data is partial (n8n every 6h).
     cm_actual_end = max(cm_start, yesterday)
-    cm_days_total = (cm_end - cm_start).days + 1
-    cm_days_elapsed = (cm_actual_end - cm_start).days + 1 if yesterday >= cm_start else 0
-    cm_days_remaining = max(0, cm_days_total - cm_days_elapsed)
+    # "Remaining" = today through end of month (today inclusive — its work is
+    # still ahead, even if the row is partial).
+    cm_workdays_remaining = _count_workdays(today, cm_end) if today <= cm_end else 0
 
     last21_start = yesterday - timedelta(days=20)  # inclusive 21 days
     last14_start = yesterday - timedelta(days=13)  # inclusive 14 days
@@ -402,10 +416,10 @@ def _windows():
         "yesterday": yesterday,
         "last_month_start": last_month_start,
         "last_month_end": last_month_end,
-        "days_in_last_month": days_in_last_month,
+        "workdays_in_last_month": workdays_in_last_month,
         "cm_start": cm_start,
         "cm_actual_end": cm_actual_end,
-        "cm_days_remaining": cm_days_remaining,
+        "cm_workdays_remaining": cm_workdays_remaining,
         "last21_start": last21_start,
         "last14_start": last14_start,
         "min_scan": min_scan,
@@ -456,8 +470,8 @@ async def by_customer_detail(
         parts.append(f'budget."Customer Name" = ${len(params)}')
     where = " AND ".join(parts)
 
-    days_in_last = w["days_in_last_month"] or 1
-    cm_remaining = w["cm_days_remaining"]
+    days_in_last = w["workdays_in_last_month"] or 1
+    cm_remaining = w["cm_workdays_remaining"]
 
     # Three metrics in one query — cuts the round-trip overhead 3×.
     rows = await pool.fetch(
@@ -572,9 +586,10 @@ async def by_customer_detail(
             "windows": {
                 "last_month_start": w["last_month_start"].isoformat(),
                 "last_month_end": w["last_month_end"].isoformat(),
-                "days_in_last_month": w["days_in_last_month"],
+                "workdays_in_last_month": w["workdays_in_last_month"],
                 "current_month_actual_end": w["cm_actual_end"].isoformat(),
-                "current_month_days_remaining": w["cm_days_remaining"],
+                "current_month_workdays_remaining": w["cm_workdays_remaining"],
+                "day_basis": "mon-fri (no holidays)",
             },
         },
     }

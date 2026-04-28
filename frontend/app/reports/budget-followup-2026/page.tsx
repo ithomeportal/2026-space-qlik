@@ -73,7 +73,7 @@ const fmtUsdCompact = (n: number) => {
 
 type Metric = "revenue" | "loads" | "profit"
 type Preset = "full" | "ytd" | "mtd" | "custom"
-type CustomerTab = "overview" | "revenue" | "profit" | "loads"
+type CustomerTab = "overview" | "revenue" | "profit"
 type SortDir = "asc" | "desc"
 
 type OverviewSortKey =
@@ -572,7 +572,6 @@ function BudgetFollowUp2026Content() {
                   { k: "overview" as const, label: "Overview" },
                   { k: "revenue" as const, label: "Revenue" },
                   { k: "profit" as const, label: "Profit" },
-                  { k: "loads" as const, label: "Loads" },
                 ].map((t) => (
                   <button
                     key={t.k}
@@ -617,7 +616,6 @@ function BudgetFollowUp2026Content() {
               onRowClick={(name) =>
                 setCustomer(customer === name ? undefined : name)
               }
-              isCurrency={tab !== "loads"}
             />
           )}
         </section>
@@ -1144,14 +1142,12 @@ function DetailTable({
   loading,
   activeCustomer,
   onRowClick,
-  isCurrency,
 }: {
   rows: BudgetCustomerDetailRow[]
-  metricKey: "revenue" | "profit" | "loads"
+  metricKey: "revenue" | "profit"
   loading: boolean
   activeCustomer?: string
   onRowClick: (customer_name: string) => void
-  isCurrency: boolean
 }) {
   const [sortKey, setSortKey] = useState<DetailSortKey>("actual")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -1179,8 +1175,7 @@ function DetailTable({
     return sliced
   }, [rows, metricKey, sortKey, sortDir])
 
-  const fmtVal = (v: number | null | undefined) =>
-    isCurrency ? fmtUsd(v) : fmtInt(v)
+  const fmtVal = (v: number | null | undefined) => fmtUsd(v)
 
   const Header = ({
     label,
