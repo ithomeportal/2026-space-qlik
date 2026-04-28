@@ -178,6 +178,22 @@ CUSTOM_REPORTS = [
         ],
     },
     {
+        "key": "rfp-performance",  # -> /reports/rfp-performance
+        "title": "Performance for RFPs",
+        "description": "RFP submission, conversion, awarded volume & revenue tracker — Open / Closed / Lost / Won blocks, sensitivity table, last-12-mo combos, by-customer pivots",
+        "note": "Source: rfp_results_history (automations_db) — n8n daily 01:00 CST · default Date filter = YTD · convertio-ratio / 12-mo combo / potential-by-month tables ignore the Date filter · replaces Bruno's Qlik 6df25048-…",
+        "category": "Sales",
+        "tags": [
+            "rfp", "performance", "tracker", "conversion", "awarded",
+            "potential-revenue", "won", "lost", "ratio", "lanes",
+        ],
+        "owner_name": "admin",
+        "roles": [
+            "CEO", "Executive", "Sales", "Procurement",
+            "CORP", "DFW", "Operations", "Finance",
+        ],
+    },
+    {
         "key": "voip-calls-logs",  # -> /reports/voip-calls-logs
         "title": "VoIP Calls Logs",
         "description": "Vonage VoIP call logs — KPIs, direction mix, daily trend, hour-of-day, DOW × hour heatmap, top users, paginated detail",
@@ -300,16 +316,9 @@ REPORTS = [
         "owner_name": "Melany",
         "roles": ["executive", "operations"],
     },
-    {
-        "qlik_app_id": "6df25048-2917-43e9-a944-a48cc355fdb4",
-        "qlik_sheet_id": "Kpmpkd",
-        "title": "RFP Performance Tracker",
-        "description": "RFP tracking and performance metrics",
-        "category": "Operations",
-        "tags": ["rfp", "performance", "tracking"],
-        "owner_name": "Melany",
-        "roles": ["executive", "operations"],
-    },
+    # NOTE: "RFP Performance Tracker" (app 6df25048-…) was migrated to a
+    # code-made report on 2026-04-28. See CUSTOM_REPORTS (key=rfp-performance)
+    # and the one-time row-flip in main.py lifespan. Do not re-add it here.
     {
         "qlik_app_id": "9b669acd-bf18-4467-9dbc-adeaec537670",
         "qlik_sheet_id": "XPfek",

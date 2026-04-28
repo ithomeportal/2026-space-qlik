@@ -29,6 +29,7 @@ from app.routers import (
     preferences,
     qlik,
     reports,
+    rfp_performance,
     sales_attrition_to_ops,
     search,
     track_award_loads,
@@ -313,6 +314,27 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"VoIP Calls Logs migration skipped: {e}")
 
+            # 2026-04-28 — flip legacy Qlik "RFP Performance Tracker"
+            # (app 6df25048-…) to the code-made "Performance for RFPs"
+            # pointing at /reports/rfp-performance. seed_custom_reports()
+            # then sets the title/desc/roles to the new spec. Idempotent:
+            # no-ops once flipped.
+            try:
+                await app.state.pool.execute(
+                    """
+                    UPDATE reports
+                       SET qlik_app_id   = NULL,
+                           qlik_sheet_id = NULL,
+                           report_type   = 'custom',
+                           custom_path   = '/reports/rfp-performance',
+                           is_active     = TRUE
+                     WHERE qlik_app_id = '6df25048-2917-43e9-a944-a48cc355fdb4'
+                       AND (custom_path IS NULL OR custom_path <> '/reports/rfp-performance')
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"RFP Performance migration skipped: {e}")
+
             # 2026-04-27 — flip legacy Qlik "Awards Tracker"
             # (app 949cafc8-…, legacy unilink.us tenant — not embeddable from
             # the portal tenant) to the code-made "Track Award Loads" pointing
@@ -518,6 +540,7 @@ app.include_router(ops_customer_score.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
 app.include_router(voip_calls.router, prefix="/api")
 app.include_router(track_award_loads.router, prefix="/api")
+app.include_router(rfp_performance.router, prefix="/api")
 
 
 @app.get("/api/health")

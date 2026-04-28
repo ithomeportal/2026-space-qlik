@@ -48,6 +48,16 @@ export const REPORT_ACCESS = {
     "CORP",
     "DFW",
   ],
+  "rfp-performance": [
+    "CEO",
+    "Executive",
+    "Sales",
+    "Procurement",
+    "CORP",
+    "DFW",
+    "Operations",
+    "Finance",
+  ],
 } as const
 
 export type ReportKey = keyof typeof REPORT_ACCESS
