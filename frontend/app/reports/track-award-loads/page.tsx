@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useMemo, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { ArrowLeft, ArrowUpDown, Award, Loader2, X } from "lucide-react"
+import { AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Award, Loader2, Minus, X } from "lucide-react"
 import {
   useTalByAwardLane,
   useTalByCustomer,
@@ -196,6 +196,18 @@ function Content() {
       </div>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
+        <ExpiryBanner
+          rows={lanesQ.data?.data?.rows ?? []}
+          loading={lanesQ.isLoading}
+          onJumpToDeepest={() => {
+            setTab("award-lane")
+            setLaneSort("days_asc")
+            // small scroll nudge so the user lands on the table
+            setTimeout(() => {
+              window.scrollTo({ top: window.innerHeight * 0.4, behavior: "smooth" })
+            }, 50)
+          }}
+        />
         <ErrorBanner
           errors={[
             kpisQ.error,
@@ -806,6 +818,7 @@ function AwardLaneTable({
           <SortableTh label="Days to Exp" k="days_asc" altK="days_desc" sort={sort} setSort={setSort} numeric />
           <th className="px-3 py-2 text-right font-semibold">Awarded Vol</th>
           <SortableTh label="Total Actual Vol" k="loads_desc" altK="loads_asc" sort={sort} setSort={setSort} numeric />
+          <th className="px-3 py-2 text-right font-semibold" title="Δ in Total Actual Volume vs the snapshot ~7 days ago. Needs ≥7 days of n8n history.">WoW Δ</th>
           <SortableTh label="Load Variance" k="load_variance_desc" altK="load_variance_asc" sort={sort} setSort={setSort} numeric />
           <th className="px-3 py-2 text-right font-semibold">% Loads</th>
           <th className="px-3 py-2 text-right font-semibold">Projected Profit</th>
@@ -849,6 +862,9 @@ function AwardLaneTable({
             </td>
             <td className="px-3 py-1.5 text-right tabular-nums">{fmtInt(r.awarded_volume)}</td>
             <td className="px-3 py-1.5 text-right tabular-nums">{fmtInt(r.total_actual_volume)}</td>
+            <td className="px-3 py-1.5 text-right">
+              <WowCell delta={r.wow_delta_loads} prev={r.prev_total_loads} prevSnap={r.prev_snapshot} />
+            </td>
             <td className={`px-3 py-1.5 text-right tabular-nums ${r.load_variance < 0 ? "text-[#991B1B]" : r.load_variance > 0 ? "text-[#065F46]" : ""}`}>
               {fmtSignedInt(r.load_variance)}
             </td>
@@ -930,6 +946,42 @@ function SortableTh({
   )
 }
 
+// ---------------------------------------------------------------------------
+// WoW cell — colored arrow + delta value, em-dash before history exists
+// ---------------------------------------------------------------------------
+
+function WowCell({
+  delta,
+  prev,
+  prevSnap,
+}: {
+  delta: number | null
+  prev: number | null
+  prevSnap: string | null
+}) {
+  if (delta == null || prev == null) {
+    return (
+      <span className="text-[10px] text-[#9CA3AF]" title="No prior snapshot — needs ≥7 days of n8n history">
+        —
+      </span>
+    )
+  }
+  const tone =
+    delta > 0
+      ? "text-[#065F46]"
+      : delta < 0
+        ? "text-[#991B1B]"
+        : "text-[#6B7280]"
+  const Arrow = delta > 0 ? ArrowUp : delta < 0 ? ArrowDown : Minus
+  const tooltip = `Prev (${prevSnap?.slice(0, 10) ?? "—"}): ${prev.toLocaleString("en-US")}`
+  return (
+    <span className={`inline-flex items-center justify-end gap-0.5 text-xs tabular-nums ${tone}`} title={tooltip}>
+      <Arrow className="h-3 w-3" />
+      <span>{delta === 0 ? "0" : (delta > 0 ? "+" : "") + Math.round(delta).toLocaleString("en-US")}</span>
+    </span>
+  )
+}
+
 function fmtSignedInt(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "—"
   if (n === 0) return "0"
@@ -951,4 +1003,87 @@ function fmtSignedMoney(n: number | null | undefined): string {
 function parseList(v: string | null): string[] {
   if (!v) return []
   return v.split(",").map((x) => x.trim()).filter(Boolean)
+}
+
+// ---------------------------------------------------------------------------
+// Expiry banner — surfaces awards expiring soon AND underperforming
+// ---------------------------------------------------------------------------
+
+function ExpiryBanner({
+  rows,
+  loading,
+  onJumpToDeepest,
+}: {
+  rows: TalByAwardLaneRow[]
+  loading: boolean
+  onJumpToDeepest: () => void
+}) {
+  // Look only at Active awards. Underperforming = % loads ratio < 80% OR
+  // actual_profit < projected_profit (whichever is more conservative).
+  const summary = useMemo(() => {
+    let exp7 = 0
+    let exp30 = 0
+    let exp7Bad = 0
+    for (const r of rows) {
+      if (r.days_to_expiration == null || r.days_to_expiration < 0) continue
+      const underperforming =
+        (r.load_ratio != null && r.load_ratio < 0.8) ||
+        r.actual_profit < r.projected_profit
+      if (r.days_to_expiration <= 7) {
+        exp7 += 1
+        if (underperforming) exp7Bad += 1
+      }
+      if (r.days_to_expiration <= 30) exp30 += 1
+    }
+    return { exp7, exp30, exp7Bad }
+  }, [rows])
+
+  if (loading || rows.length === 0 || (summary.exp7 === 0 && summary.exp30 === 0)) {
+    return null
+  }
+
+  const tone =
+    summary.exp7 > 0
+      ? {
+          bg: "bg-[#FEF2F2]",
+          border: "border-[#FCA5A5]",
+          icon: "text-[#991B1B]",
+          headline: "text-[#991B1B]",
+          dim: "text-[#7F1D1D]",
+        }
+      : {
+          bg: "bg-[#FEFCE8]",
+          border: "border-[#FEF08A]",
+          icon: "text-[#92400E]",
+          headline: "text-[#92400E]",
+          dim: "text-[#78350F]",
+        }
+
+  return (
+    <button
+      onClick={onJumpToDeepest}
+      className={`group flex w-full items-start gap-3 rounded-lg border ${tone.border} ${tone.bg} px-4 py-3 text-left transition-shadow hover:shadow-md`}
+    >
+      <AlertCircle className={`mt-0.5 h-5 w-5 shrink-0 ${tone.icon}`} />
+      <div className="flex-1 space-y-0.5">
+        <div className={`text-sm font-semibold ${tone.headline}`}>
+          {summary.exp7 > 0
+            ? `${summary.exp7} award lane${summary.exp7 === 1 ? "" : "s"} expire in ≤ 7 days`
+            : `${summary.exp30} award lane${summary.exp30 === 1 ? "" : "s"} expire in ≤ 30 days`}
+          {summary.exp7Bad > 0 && (
+            <span className="ml-2 rounded-full bg-[#991B1B] px-2 py-0.5 text-[10px] uppercase tracking-wider text-white">
+              {summary.exp7Bad} underperforming
+            </span>
+          )}
+        </div>
+        <div className={`text-xs ${tone.dim}`}>
+          ≤7d: <strong>{summary.exp7}</strong> · ≤30d: <strong>{summary.exp30}</strong>
+          {" "}— click to jump to the Award &amp; Lane table sorted by Days to Exp ↑
+        </div>
+      </div>
+      <span className={`shrink-0 self-center text-xs font-semibold ${tone.headline} group-hover:underline`}>
+        View →
+      </span>
+    </button>
+  )
 }

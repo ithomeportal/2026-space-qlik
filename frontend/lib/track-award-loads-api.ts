@@ -134,6 +134,9 @@ export interface TalByAwardLaneRow extends TalAggRow {
   load_ratio: number | null
   profit_ratio: number | null
   carrier_cost_ratio: number | null
+  prev_total_loads: number | null
+  prev_snapshot: string | null
+  wow_delta_loads: number | null
 }
 
 export type TalAwardLaneSort =

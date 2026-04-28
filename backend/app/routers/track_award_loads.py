@@ -565,29 +565,66 @@ async def by_award_lane(
         "award_asc":          "award_name ASC, lane ASC",
     }.get(sort, "days_to_expiration ASC NULLS LAST")
 
-    # Bruno's PDF column "Award ID" maps to the bigint PK `audit_id` (shown
-    # as 354632/354633/… in the screenshot). The `award_id_name` column is
-    # the upstream RFP item code (heavily right-padded fixed-width) — keep
-    # both, since `audit_id` is the unique row id and `award_id_name` is the
-    # human-readable RFP line code.
+    # Bruno's PDF column "Award ID" maps to the bigint PK `audit_id`. NOTE:
+    # destination `audit_id` is a SERIAL (`nextval(..._audit_id_seq)`), so a
+    # new audit_id is minted on every n8n run. To match the same logical
+    # award lane across daily snapshots we therefore join on the natural
+    # business key, not on audit_id.
+    #
+    # WoW delta: pick the snapshot closest to (latest − 7d) within the
+    # 15-day rolling window. Lane key reuses the same TRIM-concat the
+    # snapshot CTE builds. Until 8 days of history accumulate, prev_*
+    # values come back NULL and the frontend renders em-dashes.
     rows = await pool.fetch(
         f"""
         {SNAPSHOT_CTE}
+        ,
+        prior AS (
+          SELECT MAX(analysis_date) AS d
+          FROM contract_performance_analysis
+          WHERE award_status IN ('Primary','PRIMARY')
+            AND analysis_date <= (SELECT d FROM latest) - INTERVAL '7 days'
+        ),
+        cpa_prior AS (
+          SELECT
+            COALESCE(c.award_name, '')          AS award_name,
+            COALESCE(c.mcleod_customer_id, '')  AS customer_id,
+            TRIM(c.origin_city_name) || ', ' || TRIM(c.origin_state)
+              || ' - ' ||
+              TRIM(c.dest_city_name) || ', ' || TRIM(c.dest_state)  AS lane,
+            COALESCE(c.equipment, '')           AS equipment,
+            SUM(c.total_loads)                  AS prev_total_loads,
+            MAX(c.analysis_date)                AS prev_snapshot
+          FROM contract_performance_analysis c, prior p
+          WHERE p.d IS NOT NULL
+            AND c.analysis_date = p.d
+            AND c.award_status IN ('Primary','PRIMARY')
+          GROUP BY 1, 2, 3, 4
+        )
         SELECT
-          audit_id,
-          NULLIF(TRIM(award_id_name), '')                 AS award_id_name,
-          COALESCE(NULLIF(award_name, ''), '—')           AS award_name,
-          COALESCE(NULLIF(mcleod_customer_name, ''), '—') AS customer_name,
-          lane,
-          equipment                                       AS equip,
-          effective_date,
-          expiration_date,
-          days_to_expiration,
+          cpa.audit_id,
+          NULLIF(TRIM(cpa.award_id_name), '')                 AS award_id_name,
+          COALESCE(NULLIF(cpa.award_name, ''), '—')           AS award_name,
+          COALESCE(NULLIF(cpa.mcleod_customer_name, ''), '—') AS customer_name,
+          cpa.lane,
+          cpa.equipment                                       AS equip,
+          cpa.effective_date,
+          cpa.expiration_date,
+          cpa.days_to_expiration,
+          cp.prev_total_loads,
+          cp.prev_snapshot,
           {_AGG_COLUMNS}
         FROM cpa
+        LEFT JOIN cpa_prior cp
+               ON cp.award_name   = COALESCE(cpa.award_name, '')
+              AND cp.customer_id  = COALESCE(cpa.mcleod_customer_id, '')
+              AND cp.lane         = cpa.lane
+              AND cp.equipment    = COALESCE(cpa.equipment, '')
         WHERE {where}
-        GROUP BY audit_id, award_id_name, award_name, mcleod_customer_name, lane,
-                 equipment, effective_date, expiration_date, days_to_expiration
+        GROUP BY cpa.audit_id, cpa.award_id_name, cpa.award_name,
+                 cpa.mcleod_customer_name, cpa.lane, cpa.equipment,
+                 cpa.effective_date, cpa.expiration_date,
+                 cpa.days_to_expiration, cp.prev_total_loads, cp.prev_snapshot
         ORDER BY {order_by}
         """,
         *params,
@@ -612,6 +649,19 @@ async def by_award_lane(
             if agg["projected_carrier_cost"]
             else None
         )
+        # WoW delta: total_actual_volume is summed across the row's GROUP BY
+        # so it equals cpa.total_loads here. The prior snapshot's total_loads
+        # is per-audit_id (no aggregation) since LEFT JOIN happens after the
+        # GROUP BY, but cpa is grouped by audit_id so the join is 1:1 and
+        # MAX() in the SQL is unneeded.
+        prev_loads = (
+            int(r["prev_total_loads"]) if r["prev_total_loads"] is not None else None
+        )
+        wow_delta = (
+            agg["total_actual_volume"] - prev_loads
+            if prev_loads is not None
+            else None
+        )
         out.append(
             {
                 "audit_id": int(r["audit_id"]) if r["audit_id"] is not None else None,
@@ -633,6 +683,11 @@ async def by_award_lane(
                 "load_ratio": load_ratio,
                 "profit_ratio": profit_ratio,
                 "carrier_cost_ratio": carrier_ratio,
+                "prev_total_loads": prev_loads,
+                "prev_snapshot": r["prev_snapshot"].isoformat()
+                if r["prev_snapshot"] is not None
+                else None,
+                "wow_delta_loads": wow_delta,
             }
         )
 
