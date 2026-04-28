@@ -586,13 +586,16 @@ async def by_award_lane(
             AND analysis_date <= (SELECT d FROM latest) - INTERVAL '7 days'
         ),
         cpa_prior AS (
+          -- Distinct column names so the LEFT JOIN below doesn't collide
+          -- with `cpa.lane` / `cpa.equipment` / `cpa.award_name` (which the
+          -- shared _AGG_COLUMNS macro references unqualified).
           SELECT
-            COALESCE(c.award_name, '')          AS award_name,
-            COALESCE(c.mcleod_customer_id, '')  AS customer_id,
+            COALESCE(c.award_name, '')          AS pa_award_name,
+            COALESCE(c.mcleod_customer_id, '')  AS pa_customer_id,
             TRIM(c.origin_city_name) || ', ' || TRIM(c.origin_state)
               || ' - ' ||
-              TRIM(c.dest_city_name) || ', ' || TRIM(c.dest_state)  AS lane,
-            COALESCE(c.equipment, '')           AS equipment,
+              TRIM(c.dest_city_name) || ', ' || TRIM(c.dest_state)  AS pa_lane,
+            COALESCE(c.equipment, '')           AS pa_equipment,
             SUM(c.total_loads)                  AS prev_total_loads,
             MAX(c.analysis_date)                AS prev_snapshot
           FROM contract_performance_analysis c, prior p
@@ -616,10 +619,10 @@ async def by_award_lane(
           {_AGG_COLUMNS}
         FROM cpa
         LEFT JOIN cpa_prior cp
-               ON cp.award_name   = COALESCE(cpa.award_name, '')
-              AND cp.customer_id  = COALESCE(cpa.mcleod_customer_id, '')
-              AND cp.lane         = cpa.lane
-              AND cp.equipment    = COALESCE(cpa.equipment, '')
+               ON cp.pa_award_name  = COALESCE(cpa.award_name, '')
+              AND cp.pa_customer_id = COALESCE(cpa.mcleod_customer_id, '')
+              AND cp.pa_lane        = cpa.lane
+              AND cp.pa_equipment   = COALESCE(cpa.equipment, '')
         WHERE {where}
         GROUP BY cpa.audit_id, cpa.award_id_name, cpa.award_name,
                  cpa.mcleod_customer_name, cpa.lane, cpa.equipment,
