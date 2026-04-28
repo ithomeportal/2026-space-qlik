@@ -15,7 +15,8 @@ Does not recompute actuals/budgets — the workflow owns that math; this router 
 aggregates per filter.
 """
 
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -353,6 +354,365 @@ async def monthly(
         "data": [
             {
                 "month_date": r["month_date"].isoformat(),
+                "loads_actual": float(r["loads_actual"] or 0),
+                "loads_budget": float(r["loads_budget"] or 0),
+                "revenue_actual": float(r["revenue_actual"] or 0),
+                "revenue_budget": float(r["revenue_budget"] or 0),
+                "profit_actual": float(r["profit_actual"] or 0),
+                "profit_budget": float(r["profit_budget"] or 0),
+            }
+            for r in rows
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bruno's 2026-04-28 feedback: weekly chart, top-5 leaderboards, tabbed detail
+# ---------------------------------------------------------------------------
+
+def _windows():
+    """Anchor points for tab metrics (calendar days, no holidays).
+
+    Returns a dict with the start/end dates for: last calendar month, last 21
+    days (3 weeks rolling), last 14 days, current month-to-yesterday, and the
+    count of days remaining in the current calendar month after yesterday.
+    """
+    today = cst_today()
+    yesterday = today - timedelta(days=1)
+
+    last_month_end = today.replace(day=1) - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+    days_in_last_month = (last_month_end - last_month_start).days + 1
+
+    cm_start = today.replace(day=1)
+    cm_end = today.replace(day=monthrange(today.year, today.month)[1])
+    # Actuals through yesterday — today's data is partial (n8n every 6h).
+    cm_actual_end = max(cm_start, yesterday)
+    cm_days_total = (cm_end - cm_start).days + 1
+    cm_days_elapsed = (cm_actual_end - cm_start).days + 1 if yesterday >= cm_start else 0
+    cm_days_remaining = max(0, cm_days_total - cm_days_elapsed)
+
+    last21_start = yesterday - timedelta(days=20)  # inclusive 21 days
+    last14_start = yesterday - timedelta(days=13)  # inclusive 14 days
+
+    # Bound for SQL date filter: oldest needed boundary.
+    min_scan = min(YEAR_START, last_month_start, last21_start, last14_start)
+    return {
+        "today": today,
+        "yesterday": yesterday,
+        "last_month_start": last_month_start,
+        "last_month_end": last_month_end,
+        "days_in_last_month": days_in_last_month,
+        "cm_start": cm_start,
+        "cm_actual_end": cm_actual_end,
+        "cm_days_remaining": cm_days_remaining,
+        "last21_start": last21_start,
+        "last14_start": last14_start,
+        "min_scan": min_scan,
+    }
+
+
+@router.get("/by-customer-detail")
+async def by_customer_detail(
+    request: Request,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+):
+    """Per-customer trajectory rows for the Revenue/Profit/Loads tabs.
+
+    Actual / Budget / Var respect the filter date window (so they line up with
+    the Overview tab). The avg-and-projected columns are anchored to *now*
+    (last calendar month, rolling 21d, rolling 14d, current MTD) regardless
+    of the filter range.
+    """
+    pool = get_datalake_gold_pool(request)
+    s = _clamp(start_date, YEAR_START)
+    e = _clamp(end_date, YEAR_END)
+    w = _windows()
+
+    params: list = [
+        s,                   # $1 window start
+        e,                   # $2 window end
+        w["last_month_start"],  # $3
+        w["last_month_end"],    # $4
+        w["last21_start"],   # $5
+        w["last14_start"],   # $6
+        w["yesterday"],      # $7  (also used as upper bound for last21/last14)
+        w["cm_start"],       # $8
+        w["cm_actual_end"],  # $9
+        w["min_scan"],       # $10 outer date floor
+        e,                   # $11 outer date ceiling
+    ]
+    parts = ['budget."Date" BETWEEN $10 AND $11']
+    team_list = _parse_teams(teams)
+    if team_list:
+        params.append(team_list)
+        parts.append(f"ct.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f'budget."Customer Name" = ${len(params)}')
+    where = " AND ".join(parts)
+
+    days_in_last = w["days_in_last_month"] or 1
+    cm_remaining = w["cm_days_remaining"]
+
+    # Three metrics in one query — cuts the round-trip overhead 3×.
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE},
+        agg AS (
+            SELECT
+                budget."Customer Name" AS customer_name,
+                ct.team_id             AS team_id,
+
+                -- WINDOW (filter range) actual + budget for each metric
+                COALESCE(SUM(budget."Revenue Actual") FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS rev_actual,
+                COALESCE(SUM(budget."Revenue Budget") FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS rev_budget,
+                COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS prof_actual,
+                COALESCE(SUM(budget."Profit Budget")  FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS prof_budget,
+                COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS loads_actual,
+                COALESCE(SUM(budget."Loads Budget")   FILTER (WHERE budget."Date" BETWEEN $1 AND $2), 0) AS loads_budget,
+
+                -- LAST MONTH (calendar)
+                COALESCE(SUM(budget."Revenue Actual") FILTER (WHERE budget."Date" BETWEEN $3 AND $4), 0) AS rev_last_month,
+                COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $3 AND $4), 0) AS prof_last_month,
+                COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $3 AND $4), 0) AS loads_last_month,
+
+                -- LAST 21 DAYS (rolling 3 weeks, inclusive through yesterday)
+                COALESCE(SUM(budget."Revenue Actual") FILTER (WHERE budget."Date" BETWEEN $5 AND $7), 0) AS rev_last21,
+                COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $5 AND $7), 0) AS prof_last21,
+                COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $5 AND $7), 0) AS loads_last21,
+
+                -- LAST 14 DAYS (rolling 2 weeks, inclusive through yesterday)
+                COALESCE(SUM(budget."Revenue Actual") FILTER (WHERE budget."Date" BETWEEN $6 AND $7), 0) AS rev_last14,
+                COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $6 AND $7), 0) AS prof_last14,
+                COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $6 AND $7), 0) AS loads_last14,
+
+                -- CURRENT MONTH-TO-YESTERDAY actual
+                COALESCE(SUM(budget."Revenue Actual") FILTER (WHERE budget."Date" BETWEEN $8 AND $9), 0) AS rev_mtd,
+                COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $8 AND $9), 0) AS prof_mtd,
+                COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $8 AND $9), 0) AS loads_mtd
+            FROM public.daily_production_budget_report budget
+            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            WHERE {where}
+            GROUP BY budget."Customer Name", ct.team_id
+        )
+        SELECT
+            customer_name,
+            team_id,
+
+            rev_actual,  rev_budget,  (rev_actual  - rev_budget)  AS rev_var,
+            (rev_last_month / {days_in_last})::numeric              AS rev_avg_last_month,
+            (rev_last21 / 3.0)::numeric                              AS rev_avg_week,
+            (rev_last14 / 14.0)::numeric                             AS rev_avg_day,
+            ((rev_last_month / {days_in_last}) * {cm_remaining} + rev_mtd)::numeric AS rev_projected,
+
+            prof_actual, prof_budget, (prof_actual - prof_budget) AS prof_var,
+            (prof_last_month / {days_in_last})::numeric              AS prof_avg_last_month,
+            (prof_last21 / 3.0)::numeric                             AS prof_avg_week,
+            (prof_last14 / 14.0)::numeric                            AS prof_avg_day,
+            ((prof_last_month / {days_in_last}) * {cm_remaining} + prof_mtd)::numeric AS prof_projected,
+
+            loads_actual, loads_budget, (loads_actual - loads_budget) AS loads_var,
+            (loads_last_month / {days_in_last})::numeric             AS loads_avg_last_month,
+            (loads_last21 / 3.0)::numeric                            AS loads_avg_week,
+            (loads_last14 / 14.0)::numeric                           AS loads_avg_day,
+            ((loads_last_month / {days_in_last}) * {cm_remaining} + loads_mtd)::numeric AS loads_projected
+        FROM agg
+        ORDER BY rev_actual DESC NULLS LAST
+        """,
+        *params,
+    )
+
+    def _f(row, key):
+        v = row[key]
+        return float(v) if v is not None else 0.0
+
+    data = []
+    for r in rows:
+        data.append({
+            "customer_name": r["customer_name"],
+            "team_id": r["team_id"],
+            "revenue": {
+                "actual": _f(r, "rev_actual"),
+                "budget": _f(r, "rev_budget"),
+                "var": _f(r, "rev_var"),
+                "avg_last_month": _f(r, "rev_avg_last_month"),
+                "avg_week": _f(r, "rev_avg_week"),
+                "avg_day": _f(r, "rev_avg_day"),
+                "projected": _f(r, "rev_projected"),
+            },
+            "profit": {
+                "actual": _f(r, "prof_actual"),
+                "budget": _f(r, "prof_budget"),
+                "var": _f(r, "prof_var"),
+                "avg_last_month": _f(r, "prof_avg_last_month"),
+                "avg_week": _f(r, "prof_avg_week"),
+                "avg_day": _f(r, "prof_avg_day"),
+                "projected": _f(r, "prof_projected"),
+            },
+            "loads": {
+                "actual": _f(r, "loads_actual"),
+                "budget": _f(r, "loads_budget"),
+                "var": _f(r, "loads_var"),
+                "avg_last_month": _f(r, "loads_avg_last_month"),
+                "avg_week": _f(r, "loads_avg_week"),
+                "avg_day": _f(r, "loads_avg_day"),
+                "projected": _f(r, "loads_projected"),
+            },
+        })
+
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "windows": {
+                "last_month_start": w["last_month_start"].isoformat(),
+                "last_month_end": w["last_month_end"].isoformat(),
+                "days_in_last_month": w["days_in_last_month"],
+                "current_month_actual_end": w["cm_actual_end"].isoformat(),
+                "current_month_days_remaining": w["cm_days_remaining"],
+            },
+        },
+    }
+
+
+@router.get("/top5")
+async def top5(
+    request: Request,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+):
+    """Five small leaderboards: Top/Worst Volume, Top/Worst Profit, Non-Budget Active.
+
+    All buckets respect the same Range/Team/Customer filters as the rest of the
+    page. Each list is at most 5 rows.
+    """
+    pool = get_datalake_gold_pool(request)
+    where, params = _where_and_params(start_date, end_date, teams, customer)
+
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE},
+        agg AS (
+            SELECT
+                budget."Customer Name" AS customer_name,
+                COALESCE(SUM(budget."Loads Actual"),  0) AS loads_actual,
+                COALESCE(SUM(budget."Loads Budget"),  0) AS loads_budget,
+                COALESCE(SUM(budget."Profit Actual"), 0) AS profit_actual,
+                COALESCE(SUM(budget."Profit Budget"), 0) AS profit_budget
+            FROM public.daily_production_budget_report budget
+            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            WHERE {where}
+            GROUP BY budget."Customer Name"
+        )
+        SELECT
+            customer_name,
+            (loads_actual  - loads_budget)  AS loads_var,
+            (profit_actual - profit_budget) AS profit_var,
+            loads_actual, loads_budget,
+            profit_actual, profit_budget
+        FROM agg
+        """,
+        *params,
+    )
+
+    customers = [dict(r) for r in rows]
+
+    def _pick(predicate, sort_key, reverse=True, limit=5):
+        return [
+            {
+                "customer_name": r["customer_name"],
+                "loads_var": float(r["loads_var"] or 0),
+                "profit_var": float(r["profit_var"] or 0),
+                "loads_actual": float(r["loads_actual"] or 0),
+                "loads_budget": float(r["loads_budget"] or 0),
+                "profit_actual": float(r["profit_actual"] or 0),
+                "profit_budget": float(r["profit_budget"] or 0),
+            }
+            for r in sorted(
+                [c for c in customers if predicate(c)],
+                key=sort_key,
+                reverse=reverse,
+            )[:limit]
+        ]
+
+    has_loads_budget    = lambda c: float(c["loads_budget"] or 0) > 0
+    has_profit_budget   = lambda c: float(c["profit_budget"] or 0) > 0
+    no_profit_budget    = lambda c: float(c["profit_budget"] or 0) == 0 and float(c["profit_actual"] or 0) > 0
+
+    return {
+        "success": True,
+        "data": {
+            "top_volume":  _pick(has_loads_budget,  lambda c: float(c["loads_var"]  or 0), reverse=True),
+            "worst_volume": _pick(has_loads_budget, lambda c: float(c["loads_var"]  or 0), reverse=False),
+            "top_profit":  _pick(has_profit_budget, lambda c: float(c["profit_var"] or 0), reverse=True),
+            "worst_profit": _pick(has_profit_budget, lambda c: float(c["profit_var"] or 0), reverse=False),
+            "non_budget":  _pick(no_profit_budget,  lambda c: float(c["profit_actual"] or 0), reverse=True),
+        },
+    }
+
+
+@router.get("/weekly")
+async def weekly(
+    request: Request,
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+):
+    """Last 12 ISO weeks (Mon–Sun, current excluded — Attrition WoW convention)."""
+    pool = get_datalake_gold_pool(request)
+
+    today = cst_today()
+    # ISO Monday of current week, then back 12 weeks => 12-week window through last Sunday.
+    weekday = today.isoweekday()  # Mon=1
+    cur_week_mon = today - timedelta(days=weekday - 1)
+    last_week_sun = cur_week_mon - timedelta(days=1)
+    window_start = cur_week_mon - timedelta(weeks=12)  # 12 full prior weeks
+    window_end = last_week_sun
+
+    parts = ['budget."Date" BETWEEN $1 AND $2']
+    params: list = [window_start, window_end]
+    team_list = _parse_teams(teams)
+    if team_list:
+        params.append(team_list)
+        parts.append(f"ct.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f'budget."Customer Name" = ${len(params)}')
+    where = " AND ".join(parts)
+
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT
+            DATE_TRUNC('week', budget."Date")::date AS week_start,
+            SUM(budget."Loads Actual")   AS loads_actual,
+            SUM(budget."Loads Budget")   AS loads_budget,
+            SUM(budget."Revenue Actual") AS revenue_actual,
+            SUM(budget."Revenue Budget") AS revenue_budget,
+            SUM(budget."Profit Actual")  AS profit_actual,
+            SUM(budget."Profit Budget")  AS profit_budget
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE {where}
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        *params,
+    )
+
+    return {
+        "success": True,
+        "data": [
+            {
+                "week_start": r["week_start"].isoformat(),
                 "loads_actual": float(r["loads_actual"] or 0),
                 "loads_budget": float(r["loads_budget"] or 0),
                 "revenue_actual": float(r["revenue_actual"] or 0),

@@ -539,6 +539,81 @@ export function useBudgetMonthly(filters: BudgetFilters) {
   })
 }
 
+export interface BudgetWeekPoint {
+  week_start: string
+  loads_actual: number
+  loads_budget: number
+  revenue_actual: number
+  revenue_budget: number
+  profit_actual: number
+  profit_budget: number
+}
+
+export function useBudgetWeekly(filters: BudgetFilters) {
+  // Weekly window is fixed (last 12 ISO weeks), so date filters are dropped —
+  // only team / customer narrow the rollup.
+  const rest: BudgetFilters = { teams: filters.teams, customer: filters.customer }
+  return useQuery({
+    queryKey: ["budget", "weekly", rest],
+    queryFn: () =>
+      apiFetch<BudgetWeekPoint[]>(`custom/budget-followup/weekly${budgetQs(rest)}`),
+  })
+}
+
+export interface BudgetTop5Row {
+  customer_name: string
+  loads_var: number
+  profit_var: number
+  loads_actual: number
+  loads_budget: number
+  profit_actual: number
+  profit_budget: number
+}
+
+export interface BudgetTop5 {
+  top_volume: BudgetTop5Row[]
+  worst_volume: BudgetTop5Row[]
+  top_profit: BudgetTop5Row[]
+  worst_profit: BudgetTop5Row[]
+  non_budget: BudgetTop5Row[]
+}
+
+export function useBudgetTop5(filters: BudgetFilters) {
+  return useQuery({
+    queryKey: ["budget", "top5", filters],
+    queryFn: () =>
+      apiFetch<BudgetTop5>(`custom/budget-followup/top5${budgetQs(filters)}`),
+  })
+}
+
+export interface BudgetMetricCell {
+  actual: number
+  budget: number
+  var: number
+  avg_last_month: number
+  avg_week: number
+  avg_day: number
+  projected: number
+}
+
+export interface BudgetCustomerDetailRow {
+  customer_name: string
+  team_id: string
+  revenue: BudgetMetricCell
+  profit: BudgetMetricCell
+  loads: BudgetMetricCell
+}
+
+export function useBudgetByCustomerDetail(filters: BudgetFilters) {
+  return useQuery({
+    queryKey: ["budget", "by-customer-detail", filters],
+    queryFn: () =>
+      apiFetch<BudgetCustomerDetailRow[]>(
+        `custom/budget-followup/by-customer-detail${budgetQs(filters)}`,
+      ),
+  })
+}
+
 export function useToggleFavorite() {
   const queryClient = useQueryClient()
   const { data: prefs } = usePreferences()
