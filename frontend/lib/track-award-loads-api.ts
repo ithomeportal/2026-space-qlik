@@ -137,6 +137,9 @@ export interface TalByAwardLaneRow extends TalAggRow {
   prev_total_loads: number | null
   prev_snapshot: string | null
   wow_delta_loads: number | null
+  rpm: number | null
+  min_charge: number | null
+  all_in_rates: number | null
 }
 
 export type TalAwardLaneSort =

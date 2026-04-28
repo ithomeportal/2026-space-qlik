@@ -603,6 +603,25 @@ async def by_award_lane(
             AND c.analysis_date = p.d
             AND c.award_status IN ('Primary','PRIMARY')
           GROUP BY 1, 2, 3, 4
+        ),
+        -- Per-lane rate metadata pulled from the upstream registrations table.
+        -- Same prefix-aliasing trick (`at_*`) so unqualified _AGG_COLUMNS refs
+        -- continue to resolve to `cpa`. MAX() collapses the ~8 known cases
+        -- where the same lane shows up twice with slightly different rates.
+        ats_rates AS (
+          SELECT
+            COALESCE(ats.award_name, '')          AS at_award_name,
+            COALESCE(ats.mcleod_customer_id, '')  AS at_customer_id,
+            TRIM(ats.origin_city_name) || ', ' || TRIM(ats.origin_state)
+              || ' - ' ||
+              TRIM(ats.dest_city_name) || ', ' || TRIM(ats.dest_state) AS at_lane,
+            COALESCE(ats.equipment, '')           AS at_equipment,
+            MAX(ats.rpm_value_usd)                AS rpm,
+            MAX(ats.min_charge_value)             AS min_charge,
+            MAX(ats.all_in_rates_value)           AS all_in_rates
+          FROM awards_tracker_registration_source ats
+          WHERE UPPER(ats.award_status) = 'PRIMARY'
+          GROUP BY 1, 2, 3, 4
         )
         SELECT
           cpa.audit_id,
@@ -616,6 +635,9 @@ async def by_award_lane(
           cpa.days_to_expiration,
           cp.prev_total_loads,
           cp.prev_snapshot,
+          ar.rpm,
+          ar.min_charge,
+          ar.all_in_rates,
           {_AGG_COLUMNS}
         FROM cpa
         LEFT JOIN cpa_prior cp
@@ -623,11 +645,17 @@ async def by_award_lane(
               AND cp.pa_customer_id = COALESCE(cpa.mcleod_customer_id, '')
               AND cp.pa_lane        = cpa.lane
               AND cp.pa_equipment   = COALESCE(cpa.equipment, '')
+        LEFT JOIN ats_rates ar
+               ON ar.at_award_name  = COALESCE(cpa.award_name, '')
+              AND ar.at_customer_id = COALESCE(cpa.mcleod_customer_id, '')
+              AND ar.at_lane        = cpa.lane
+              AND ar.at_equipment   = COALESCE(cpa.equipment, '')
         WHERE {where}
         GROUP BY cpa.audit_id, cpa.award_id_name, cpa.award_name,
                  cpa.mcleod_customer_name, cpa.lane, cpa.equipment,
                  cpa.effective_date, cpa.expiration_date,
-                 cpa.days_to_expiration, cp.prev_total_loads, cp.prev_snapshot
+                 cpa.days_to_expiration, cp.prev_total_loads, cp.prev_snapshot,
+                 ar.rpm, ar.min_charge, ar.all_in_rates
         ORDER BY {order_by}
         """,
         *params,
@@ -691,6 +719,10 @@ async def by_award_lane(
                 if r["prev_snapshot"] is not None
                 else None,
                 "wow_delta_loads": wow_delta,
+                # Per-lane rates from the upstream awards_tracker_registration_source
+                "rpm": float(r["rpm"]) if r["rpm"] is not None else None,
+                "min_charge": float(r["min_charge"]) if r["min_charge"] is not None else None,
+                "all_in_rates": float(r["all_in_rates"]) if r["all_in_rates"] is not None else None,
             }
         )
 

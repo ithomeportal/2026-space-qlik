@@ -813,6 +813,9 @@ function AwardLaneTable({
           <th className="px-3 py-2 font-semibold">Customer</th>
           <th className="px-3 py-2 font-semibold">Lane</th>
           <th className="px-3 py-2 font-semibold">Equip</th>
+          <th className="px-3 py-2 text-right font-semibold" title="Rate per mile from awards_tracker_registration_source">RPM</th>
+          <th className="px-3 py-2 text-right font-semibold" title="Minimum charge per load">Min Chg</th>
+          <th className="px-3 py-2 text-right font-semibold" title="All-in rate (line haul + accessorials)">All-in</th>
           <th className="px-3 py-2 font-semibold">Effective</th>
           <th className="px-3 py-2 font-semibold">Expiration</th>
           <SortableTh label="Days to Exp" k="days_asc" altK="days_desc" sort={sort} setSort={setSort} numeric />
@@ -849,6 +852,9 @@ function AwardLaneTable({
               {r.lane}
             </td>
             <td className="px-3 py-1.5 text-[#374151]">{r.equip || "—"}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#374151]">{fmtRate(r.rpm)}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#374151]">{fmtMoney(r.min_charge)}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#374151]">{fmtMoney(r.all_in_rates)}</td>
             <td className="px-3 py-1.5 text-[#374151]">{fmtDate(r.effective_date)}</td>
             <td className="px-3 py-1.5 text-[#374151]">{fmtDate(r.expiration_date)}</td>
             <td className="px-3 py-1.5 text-right">
@@ -980,6 +986,11 @@ function WowCell({
       <span>{delta === 0 ? "0" : (delta > 0 ? "+" : "") + Math.round(delta).toLocaleString("en-US")}</span>
     </span>
   )
+}
+
+function fmtRate(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—"
+  return `$${n.toFixed(2)}`
 }
 
 function fmtSignedInt(n: number | null | undefined): string {
