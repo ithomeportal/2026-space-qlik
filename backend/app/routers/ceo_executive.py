@@ -61,6 +61,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -105,7 +106,7 @@ def _resolve_range(
     start_date: Optional[date],
     end_date: Optional[date],
 ) -> tuple[date, date]:
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     if rng == "mtd":
         return today_clamped.replace(day=1), today_clamped
@@ -402,7 +403,7 @@ async def overview(
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
-    today = date.today()
+    today = cst_today()
     m_start = _month_start(today)
     m_end = _month_end(today)
 
@@ -684,7 +685,7 @@ async def trends(
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
 ):
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     fifteen_months_start = _shift_months(_month_start(today), -14)
     eighty_days_start = today - timedelta(days=79)
 
@@ -989,7 +990,7 @@ async def weekly(
     _user: dict = Depends(require_tag_role(*CEO_ROLES)),
 ):
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     this_week_mon = _week_start(today)
     ten_weeks_start = this_week_mon - timedelta(weeks=9)
     summary_start = today - timedelta(weeks=12)  # ~12 weeks for Summary by Week

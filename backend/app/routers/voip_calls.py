@@ -44,6 +44,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_user
 
 router = APIRouter(tags=["voip-calls"], prefix="/custom/voip-calls")
@@ -62,7 +63,7 @@ DIRECTIONS = ("INBOUND", "OUTBOUND", "INTRA_PBX")
 
 
 def _today() -> date:
-    return date.today()
+    return cst_today()
 
 
 def _resolve_range(

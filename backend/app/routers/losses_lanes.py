@@ -24,6 +24,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_admin, require_tag_role
 
@@ -72,7 +73,7 @@ def _resolve_range(
     end_date: Optional[date],
 ) -> tuple[date, date]:
     """Expand the 4-preset range selector into a concrete [start, end] pair."""
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     m_start, _m_end, lm_start, lm_end = _month_bounds(today)
     if rng == "last_month":
@@ -605,7 +606,7 @@ async def by_week(
 ):
     """Weekly series — STICKY last 8 weeks (matches Bruno's Qlik expression)."""
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     # WeekStart(Today(),-8,0) → Monday of 8 weeks ago. WeekStart(Today(),1,0) → next Monday.
     monday = today - timedelta(days=today.weekday())
     start = monday - timedelta(weeks=8)
@@ -659,7 +660,7 @@ async def by_month(
 ):
     """Monthly series — STICKY last 6 months (matches Bruno's Qlik expression)."""
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     # AddMonths(MonthStart(Today()), -6) → first day of 6 months ago.
     m_start = today.replace(day=1)
     y, m = m_start.year, m_start.month - 6
@@ -876,7 +877,7 @@ async def lane_trend(
     down overall.
     """
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     start = today - timedelta(days=days - 1)
     team_list = _parse_teams(teams)
 
@@ -954,7 +955,7 @@ async def compute_weekly_movers(
     7 AM CST email scheduler can call it without going through FastAPI.
     Returns the same ``data`` dict that /weekly-movers wraps.
     """
-    today = date.today()
+    today = cst_today()
     this_mon = today - timedelta(days=today.weekday())
     last_mon = this_mon - timedelta(days=7)
     this_sun = this_mon + timedelta(days=6)

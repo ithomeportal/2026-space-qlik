@@ -31,6 +31,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -81,7 +82,7 @@ def _resolve_range(
     start_date: Optional[date],
     end_date: Optional[date],
 ) -> tuple[date, date]:
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     m_start, _m_end, lm_start, lm_end = _month_bounds(today)
     if rng == "last_month":
@@ -1134,7 +1135,7 @@ async def losses_by_month(
     _user: dict = Depends(require_tag_role(*OPS_ROLES)),
 ):
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     m_start = today.replace(day=1)
     y, m = m_start.year, m_start.month - (months - 1)
     while m <= 0:
@@ -1193,7 +1194,7 @@ async def losses_by_week(
     _user: dict = Depends(require_tag_role(*OPS_ROLES)),
 ):
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     monday = today - timedelta(days=today.weekday())
     start = monday - timedelta(weeks=weeks - 1)
     end = monday + timedelta(days=6)
@@ -1364,7 +1365,7 @@ async def customer_spark(
         return {"success": True, "data": {}, "meta": {"weeks": weeks}}
 
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     monday = today - timedelta(days=today.weekday())
     start = monday - timedelta(weeks=weeks - 1)
     end = monday + timedelta(days=6)

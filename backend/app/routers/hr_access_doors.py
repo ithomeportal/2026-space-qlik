@@ -44,6 +44,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
 # TagRoles allowed to view this report (admin bypasses automatically).
@@ -182,7 +183,7 @@ async def filters(
     90 days. Scoped to 90d so the dropdowns stay tight (ex-employees age out).
     """
     pool = get_datalake_gold_pool(request)
-    since = date.today() - timedelta(days=90)
+    since = cst_today() - timedelta(days=90)
 
     rows = await pool.fetch(
         f"""
@@ -203,7 +204,7 @@ async def filters(
             "departments": departments,
             "job_titles": job_titles,
             "names": names,
-            "today": date.today().isoformat(),
+            "today": cst_today().isoformat(),
         },
     }
 
@@ -372,7 +373,7 @@ async def trend_30d(
     previous 30 days." Also ignores department per the same annotation.
     """
     pool = get_datalake_gold_pool(request)
-    end = date.today()
+    end = cst_today()
     start = end - timedelta(days=29)  # inclusive 30-day window
 
     params: list = [start, end]
@@ -461,7 +462,7 @@ async def by_department(
 def _resolve_window(start_date: Optional[date], end_date: Optional[date]) -> tuple[date, date]:
     """Both default to today; swap if inverted. The user-facing filter default
     matches Bruno's Qlik spec: `Date (default value = today)`."""
-    today = date.today()
+    today = cst_today()
     s = start_date or today
     e = end_date or start_date or today
     if s > e:

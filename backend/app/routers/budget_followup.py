@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
 BUDGET_ROLES = ("CEO", "Executive", "Operations", "Finance", "CORP", "DFW")
@@ -187,7 +188,7 @@ async def summary(
     data["margin_variance_pct"] = data["margin_actual_pct"] - data["margin_budget_pct"]
 
     # Working-days elapsed / remaining within the applied window (vs full year 2026).
-    today = date.today()
+    today = cst_today()
     clamp_today = min(max(today, YEAR_START), YEAR_END)
     total_days = (YEAR_END - YEAR_START).days + 1
     elapsed_days = (clamp_today - YEAR_START).days + (1 if clamp_today >= YEAR_START else 0)

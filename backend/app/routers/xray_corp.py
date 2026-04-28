@@ -31,6 +31,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -83,7 +84,7 @@ def _resolve_range(
     end_date: Optional[date],
 ) -> tuple[date, date]:
     """Expand the 4-mode range selector into a concrete [start, end] pair."""
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     if rng == "mtd":
         m_start = today_clamped.replace(day=1)
@@ -293,7 +294,7 @@ async def kpis(
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
-    today = date.today()
+    today = cst_today()
     m_start, m_end, _, _, _, _ = _month_bounds(today)
 
     # ---- KPIs + Loss Loads via production query --------------------------
@@ -458,7 +459,7 @@ async def trio_tables(
     Returns one row per team per window, plus totals.
     """
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     yesterday = today - timedelta(days=1)
     m_start, _, _, _, _, _ = _month_bounds(today)
     w_start, _, _, _ = _week_bounds(today)
@@ -557,7 +558,7 @@ async def projection(
     this-month-to-date) and ignore the RANGE filter.
     """
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     m_start, m_end, _, _, past, pending = _month_bounds(today)
 
     # Find the window that contains the last 14 business days (Mon–Sat).
@@ -852,7 +853,7 @@ async def teams_breakdown(
 ):
     """Per-team Loads / Profit / Margin across TM, TW, LW, L2W..L5W. Ignores RANGE+team."""
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     m_start, _, _, _, _, _ = _month_bounds(today)
     w_mon, _, _, _ = _week_bounds(today)
 
@@ -966,7 +967,7 @@ async def trends(
       - month: last 15 months          (for by-month combo charts + rev-vs-CC/L)
     """
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     day_start = today - timedelta(days=14)
     week_start = (today - timedelta(days=today.weekday())) - timedelta(days=7 * 11)
     month_start = date(today.year, today.month, 1)
@@ -1081,7 +1082,7 @@ async def summary_table(
 ):
     """Summary by Month (last 15) + Summary by Week (last 16) tables for the Trends tab."""
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     # Enough history for both tables
     start = today - timedelta(days=500)
 
@@ -1278,7 +1279,7 @@ async def risk(
     )
 
     # Losses-over-time (last 8 months and 8 weeks; independent of RANGE)
-    today = date.today()
+    today = cst_today()
     losses_start = today - timedelta(days=280)  # ~8 months safety window
     loss_params: list = []
     loss_where = _scope_where("br4", team, customer, loss_params)
@@ -1339,7 +1340,7 @@ async def contract_spot(
 ):
     """Contract vs Spot weekly breakdown — last 9 ISO weeks. Ignores RANGE."""
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     start = (today - timedelta(days=today.weekday())) - timedelta(days=7 * 8)
 
     params: list = []

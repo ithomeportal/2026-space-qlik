@@ -27,6 +27,7 @@ from typing import Any, Iterable
 
 import resend
 
+from app.clock import cst_today
 from app.config import settings
 from app.routers.losses_lanes import compute_weekly_movers
 
@@ -155,7 +156,7 @@ def render_html(data: dict[str, Any], portal_url: str) -> str:
     this_w = window.get("this_week", {})
     last_w = window.get("last_week", {})
     top_n = window.get("top_n", 10)
-    today = date.today().isoformat()
+    today = cst_today().isoformat()
 
     return f"""
     <!DOCTYPE html>
@@ -229,7 +230,7 @@ async def send_weekly_movers_email(
     subject = (
         f"[UNILINK Space] Losses Lanes — {len(data['new_entries'])} new, "
         f"{len(data['dropped'])} out, {len(data['moved'])} moved "
-        f"(Top-{top_n}, {date.today().isoformat()})"
+        f"(Top-{top_n}, {cst_today().isoformat()})"
     )
 
     resend.api_key = settings.RESEND_API_KEY

@@ -18,9 +18,11 @@ Source tables:
 Scope: ``team_id = ANY(pad_variants('TEAM-DFW'))`` -- sargable, never TRIM()
 in the predicate (CLAUDE.md "Sargability rule").
 
-Timezone: the datalake stores everything already in America/Chicago, so every
-window uses plain ``CURRENT_DATE`` / ``date_trunc('week' | 'month',
-CURRENT_DATE)`` with no ``AT TIME ZONE`` conversion.
+Timezone: the datalake stores everything already in America/Chicago, and the
+asyncpg pool pins every session to ``SET TIME ZONE 'America/Chicago'``
+(`main._set_cst_session`), so plain ``CURRENT_DATE`` / ``date_trunc('week' |
+'month', CURRENT_DATE)`` already resolve to CST — no per-query
+``AT TIME ZONE`` conversion is needed.
 
 Perf notes:
   * The base CTE is marked ``MATERIALIZED`` so the ROW_NUMBER() partition runs
@@ -89,7 +91,7 @@ rate_conf AS MATERIALIZED (
 
 
 # Map the UI range values to a SQL boolean that filters ``rate_conf.posted_date``.
-# DB is already stored in CST so no ``AT TIME ZONE`` is needed.
+# Pool sessions are pinned to America/Chicago, so CURRENT_DATE is CST.
 _RANGE_FILTERS = {
     "today": "posted_date::date = CURRENT_DATE",
     "wtd":   "posted_date::date >= date_trunc('week', CURRENT_DATE)::date",

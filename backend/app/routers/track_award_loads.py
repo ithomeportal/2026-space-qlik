@@ -40,6 +40,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from app.clock import cst_today
 from app.routers.deps import get_automations_pool, require_tag_role
 
 # Approved by Diego 2026-04-27 (PDF spec review).
@@ -761,7 +762,7 @@ async def freshness(
           )
         """
     )
-    today = date.today().isoformat()
+    today = cst_today().isoformat()
     return {
         "success": True,
         "data": {

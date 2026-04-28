@@ -36,6 +36,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 from app.routers.ops_margins import (
@@ -731,7 +732,7 @@ async def trend_12m(
     request: Request,
     _user: dict = Depends(require_tag_role(*OPS_ROLES)),
 ):
-    today = date.today()
+    today = cst_today()
     cache_key = today.isoformat()
     now_ts = time.monotonic()
     cached = _trend_cache.get(cache_key)
@@ -878,7 +879,7 @@ async def orders_window(
     _user: dict = Depends(require_tag_role(*OPS_ROLES)),
 ):
     pool = get_datalake_gold_pool(request)
-    today = date.today()
+    today = cst_today()
     start = date(today.year - 1, 1, 1)
     end = today
 

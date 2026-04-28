@@ -56,6 +56,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -139,7 +140,7 @@ def _resolve_range(
     start_date: Optional[date],
     end_date: Optional[date],
 ) -> tuple[date, date]:
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     m_start, _m_end, lm_start, lm_end = _month_bounds(today)
     if rng == "last_month":
@@ -408,7 +409,7 @@ def _pinned_cache_key(
 ) -> tuple:
     return (
         side,
-        date.today().isoformat(),
+        cst_today().isoformat(),
         (division or "All").upper(),
         teams_csv or "",
         companies_csv or "",
@@ -434,7 +435,7 @@ async def _pinned_payload(pool, side: str, params_seed: list, where: str) -> dic
         fail_codes = _DEL_FAIL_PAD
         stop_types = _DEL_STOP_PAD
 
-    today = date.today()
+    today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     m_start, _m_end, _lm_start, _lm_end = _month_bounds(today)
     # Quarter-start: month at 1/4/7/10
@@ -635,7 +636,7 @@ async def _get_pinned(
         payload = await _pinned_payload(pool, side, params, where)
         _pinned_cache[cache_key] = (now_ts, payload)
         # Drop other-day keys so the cache cannot grow unbounded.
-        today_iso = date.today().isoformat()
+        today_iso = cst_today().isoformat()
         for k in list(_pinned_cache.keys()):
             if k[1] != today_iso:
                 _pinned_cache.pop(k, None)

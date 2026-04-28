@@ -34,6 +34,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -64,7 +65,7 @@ def _last_completed_week(today: Optional[date] = None) -> tuple[date, date]:
 
     Bruno's "LAST WEEK (13 APR 26 - 19 APR 26)" anchors here.
     """
-    today = today or date.today()
+    today = today or cst_today()
     # Mon=0..Sun=6 → days back to this Monday
     this_monday = today - timedelta(days=today.weekday())
     last_sunday = this_monday - timedelta(days=1)
@@ -696,7 +697,7 @@ async def reactive_summary(
     response.headers["Cache-Control"] = CACHE_HEADER
 
     team_list = _parse_csv(teams, ALL_TEAMS)
-    today = date.today()
+    today = cst_today()
     l8w_start, l8w_end = _l8w_window(today)
     lw_start, lw_end = _last_completed_week(today)
     # L2-4W = 3 weeks ending the day before LW starts (per PDF "previous 4
@@ -882,7 +883,7 @@ async def lane_summary(
     response.headers["Cache-Control"] = CACHE_HEADER
 
     team_list = _parse_csv(teams, ALL_TEAMS)
-    today = date.today()
+    today = cst_today()
     l8w_start, l8w_end = _l8w_window(today)
     lw_start, lw_end = _last_completed_week(today)
     l24_end = lw_start - timedelta(days=1)

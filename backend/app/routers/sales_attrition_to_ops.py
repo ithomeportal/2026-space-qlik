@@ -32,6 +32,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_tag_role
 
@@ -74,7 +75,7 @@ def _resolve_range(
 
     Default = ``last_365`` (Bruno's "Last 365 days" filter default).
     """
-    today = date.today()
+    today = cst_today()
     if rng == "mtd":
         return today.replace(day=1), today
     if rng == "last_month":
@@ -150,7 +151,7 @@ async def filters(
 ):
     """Available teams + distinct customer list (within scope, 13-month floor)."""
     pool = get_datalake_gold_pool(request)
-    floor = date.today() - timedelta(days=WINDOW_FLOOR_DAYS)
+    floor = cst_today() - timedelta(days=WINDOW_FLOOR_DAYS)
     rows = await pool.fetch(
         """
         SELECT DISTINCT TRIM(customer_name) AS customer_name
@@ -207,7 +208,7 @@ async def details(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_list = _parse_teams(teams)
-    today = date.today()
+    today = cst_today()
     spark_floor = today - timedelta(weeks=8)
     offset = (page - 1) * limit
 
@@ -398,7 +399,7 @@ async def trend(
     pool = get_datalake_gold_pool(request)
     team_list = _parse_teams(teams)
 
-    today = date.today()
+    today = cst_today()
     # 13-month window starting at the first of (today − 12 months).
     start_month = today.replace(day=1)
     for _ in range(12):

@@ -105,6 +105,17 @@ async def _backfill_favicons(pool: asyncpg.Pool):
         logger.error(f"Favicon backfill task failed: {e}")
 
 
+async def _set_cst_session(conn: asyncpg.Connection) -> None:
+    """Pin every new connection to America/Chicago.
+
+    Render runs containers in UTC and Aiven Postgres defaults the session to UTC
+    too. The datalake stores timestamps already in CST, so without this every
+    bare ``CURRENT_DATE`` / ``now()`` flips a day early between 18:00–23:59 CST.
+    Pairs with ``app.clock.cst_today`` on the Python side.
+    """
+    await conn.execute("SET TIME ZONE 'America/Chicago'")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
@@ -112,7 +123,10 @@ async def lifespan(app: FastAPI):
     if settings.DATABASE_URL:
         try:
             app.state.pool = await asyncpg.create_pool(
-                settings.DATABASE_URL, min_size=2, max_size=10
+                settings.DATABASE_URL,
+                min_size=2,
+                max_size=10,
+                init=_set_cst_session,
             )
             # Ensure apps tables exist
             await app.state.pool.execute(
@@ -350,7 +364,10 @@ async def lifespan(app: FastAPI):
     if settings.SAVINGS_DATABASE_URL:
         try:
             app.state.savings_pool = await asyncpg.create_pool(
-                settings.SAVINGS_DATABASE_URL, min_size=1, max_size=4
+                settings.SAVINGS_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                init=_set_cst_session,
             )
             logger.info(
                 "Datalake (gold) pool connected — powers eSavings, Budget Follow Up & XRay CORP Mng"
@@ -369,7 +386,10 @@ async def lifespan(app: FastAPI):
     if settings.AUTOMATIONS_DATABASE_URL:
         try:
             app.state.automations_pool = await asyncpg.create_pool(
-                settings.AUTOMATIONS_DATABASE_URL, min_size=1, max_size=4
+                settings.AUTOMATIONS_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                init=_set_cst_session,
             )
             logger.info(
                 "Automations pool connected — powers Track Award Loads"

@@ -32,6 +32,8 @@ from typing import Optional
 
 import httpx
 
+from app.clock import cst_today
+
 _ONE_DAY = timedelta(days=1)
 
 logger = logging.getLogger(__name__)
@@ -230,7 +232,7 @@ async def fetch_sonar_history(
     origin = _sonar_pick_location(kma, lane.origin_city, lane.origin_state)
     dest = _sonar_pick_location(kma, lane.dest_city, lane.dest_state)
 
-    today = date.today()
+    today = cst_today()
     start = date(today.year, today.month, 1)
     # `months - 1` because the start date counts as month 1.
     for _ in range(months - 1):
@@ -359,7 +361,7 @@ async def fetch_lb123_history(
     if not token:
         return []
 
-    today = date.today()
+    today = cst_today()
     end_d = today
     start = date(today.year, today.month, 1)
     for _ in range(months - 1):
@@ -435,7 +437,7 @@ MTD_CACHE_TTL_HOURS = 24
 
 
 def _is_current_mtd(year_month: str) -> bool:
-    today = date.today()
+    today = cst_today()
     return year_month == f"{today.year:04d}-{today.month:02d}"
 
 

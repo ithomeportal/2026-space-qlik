@@ -13,6 +13,7 @@ from datetime import date
 
 import httpx
 
+from app.clock import cst_today
 from app.services.lane_rates import (
     Lane,
     fetch_lb123_history,
@@ -39,7 +40,7 @@ async def prewarm_lane_market_rates(pool) -> dict:
         logger.warning("[lane-rates prewarm] no savings pool; skipping")
         return {"status": "skipped", "reason": "no-pool"}
 
-    today = date.today()
+    today = cst_today()
     months = [
         date(today.year, today.month, 1),
         _previous_month(date(today.year, today.month, 1)),
