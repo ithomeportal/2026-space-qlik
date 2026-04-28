@@ -124,6 +124,11 @@
 - Seed uses `role_ids_ci` (lowercased-key dict) for case-insensitive lookup
 - `POST /api/admin/dedupe-roles?secret=<SEED_SECRET>` merges case duplicates and migrates all refs
 
+### Render Env Vars — Always URL-Encode `$` in Connection Strings
+- Render silently strips one `$` from values containing `$$` during env-var injection (length on dashboard ≠ length in container — verified 2026-04-28 with `FRESHSERVICE_DATABASE_URL`: dashboard 121 chars, container 120). Auth fails with no log, pool stays None, endpoint 503s, frontend spins forever
+- **Always percent-encode special chars in DB URLs**: `$` → `%24`, `*` → `%2A`, `@` → `%40`, `#` → `%23`, `?` → `%3F`. asyncpg accepts encoded URLs identically to raw ones — no downside
+- After setting an env var via `PUT /v1/services/{id}/env-vars/{KEY}`, hit `GET /api/_pool_diag` (or any endpoint that exercises the pool) on the next deploy and confirm `fs_url_len` matches the encoded length you sent
+
 ### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
 - Free tier spins down after ~15 min inactivity — cold starts 30–60s
 - Vercel cron `/api/cron/keepalive` pings `/api/health` every 10 min
@@ -248,7 +253,7 @@ TV_SECRET=<shared with backend>
 DATABASE_URL=<Aiven Postgres URL>
 SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers MOST code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
 AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — powers Track Award Loads (n8n's contract_performance_analysis) and Performance for RFPs (n8n's rfp_results_history). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=automations_db. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here.>
-FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — powers IT Tickets Mgmt (Tickets/Agents tables fed by an external Spark ETL, NOT n8n). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=fresh_services_unlk. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here.>
+FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — powers IT Tickets Mgmt (Tickets/Agents tables fed by an external Spark ETL, NOT n8n). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=fresh_services_unlk. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here. **Percent-encode `$` → `%24` and `*` → `%2A` in the password** (Render strips one `$` from `$$` during env-var injection — silently breaks auth).>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com

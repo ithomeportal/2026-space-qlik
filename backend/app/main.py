@@ -593,16 +593,3 @@ app.include_router(it_tickets.router, prefix="/api")
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.get("/api/_pool_diag")
-async def _pool_diag():
-    """Temporary diagnostic to check which DB pools opened at startup."""
-    return {
-        "main": app.state.pool is not None,
-        "savings": getattr(app.state, "savings_pool", None) is not None,
-        "automations": getattr(app.state, "automations_pool", None) is not None,
-        "freshservice": getattr(app.state, "freshservice_pool", None) is not None,
-        "fs_url_set": bool(settings.FRESHSERVICE_DATABASE_URL),
-        "fs_url_len": len(settings.FRESHSERVICE_DATABASE_URL or ""),
-    }
