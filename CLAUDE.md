@@ -112,6 +112,8 @@
 | VoIP Calls Logs | `/reports/voip-calls-logs` | **everyone** | `vonage_gld_by_user` (1 GB, ~1.6M rows, fresh through current minute, no n8n); WTD default; indexes `idx_vonage_gld_by_user_start{,_dir}` |
 | OPs Customer Score | `/reports/ops-customer-score` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_scorecard`; 4 tabs (PU/DEL × Overview/Detail); KPI cards + 12mo/10wk charts ignore Date filter and cache 10 min |
 | Track Award Loads | `/reports/track-award-loads` | CEO, Executive, Sales, Procurement, Operations, Finance, CORP, DFW | `contract_performance_analysis` in **`automations_db`** (NOT `aivn_datalake_gold` — own pool, `AUTOMATIONS_DATABASE_URL` env var) ⨝ `awards_tracker_registration_source` (per-lane RPM/Min Chg/All-in rates via natural-key LEFT JOIN). Replaces legacy Qlik `949cafc8-…` (unilink.us tenant — not embeddable). n8n daily 02:25 (`3XkU4PfCm4EBYgTl Contract Performance Analysis`) keeps 15-day rolling window; **always pin to `analysis_date = MAX` snapshot** or aggregates inflate by ~15×. 4 filter pills · 4 KPI containers · 4 detail tables. Partial index `idx_cpa_primary_latest` covers the snapshot+filter path. Days-to-Exp red banner + WoW Δ on Total Actual Volume (joins natural key — destination `audit_id` is SERIAL, not stable across snapshots) |
+| HR Access Log Doors | `/reports/hr-access-doors` | CEO, Executive, HR, IT | `zk_gld_onlyfingerprint` ⨝ `timeoff_employee`; first-punch/day, expected-arrival rule per dept+job_title; integer minute delta. Replaces Bruno's legacy Qlik `4573ff42-…` (unilink.us tenant). |
+| DFW Access Log Doors | `/reports/dfw-access-doors` | DFW, DFW-Assistent, DFW KAM, Assitent OPs manager | Department-locked clone of HR Access Log Doors — server-side gate `dep = 'Operations (DFW)'` (not a query param, can't be widened); imports SQL fragments from `hr_access_doors.py` (single source of truth for the on-time rule); replaces by-department bar with by-job-title bar; 30-day trend also locked to Operations (DFW). |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -148,7 +150,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, DFW Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads
 
 ---
 
