@@ -110,6 +110,7 @@
 | Attrition WoW | `/reports/attrition-wow` | CEO, Executive, Sales, CORP, DFW, Operations, Finance | v4; ISO Mon-Sun weeks (current excluded); **3 tabs (post-Bruno 2026-04-27)**: Overview · Reactive Customers · Trends & Pivots (merged). Cream-bg L8W avg col; integer AVG LOADS; by-Customer pivot has red/yellow/green status dot vs 8w avg; Trends bars use panel color above-avg, gray below. Reactive bucket order: 2-4W before LW |
 | VoIP Calls Logs | `/reports/voip-calls-logs` | **everyone** | `vonage_gld_by_user` (1 GB, ~1.6M rows, fresh through current minute, no n8n); WTD default; indexes `idx_vonage_gld_by_user_start{,_dir}` |
 | OPs Customer Score | `/reports/ops-customer-score` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_scorecard`; 4 tabs (PU/DEL × Overview/Detail); KPI cards + 12mo/10wk charts ignore Date filter and cache 10 min |
+| Track Award Loads | `/reports/track-award-loads` | CEO, Executive, Sales, Procurement, Operations, Finance, CORP, DFW | `contract_performance_analysis` in **`automations_db`** (NOT `aivn_datalake_gold` — own pool, `AUTOMATIONS_DATABASE_URL` env var). Replaces legacy Qlik `949cafc8-…` (unilink.us tenant — not embeddable). n8n daily 02:25 (`3XkU4PfCm4EBYgTl Contract Performance Analysis`) keeps 15-day rolling window; **always pin to `analysis_date = MAX` snapshot** or aggregates inflate by ~15×. 4 filter pills · 4 KPI containers · 4 detail tables. Partial index `idx_cpa_primary_latest` covers the snapshot+filter path. Days-to-Exp red banner + WoW Δ on Total Actual Volume (joins natural key — destination `audit_id` is SERIAL, not stable across snapshots) |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -146,7 +147,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads
 
 ---
 
@@ -239,7 +240,8 @@ TV_SECRET=<shared with backend>
 ### Backend (Render)
 ```
 DATABASE_URL=<Aiven Postgres URL>
-SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers ALL code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers MOST code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
+AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — powers ONLY Track Award Loads (n8n's contract_performance_analysis). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=automations_db. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here.>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
@@ -304,4 +306,4 @@ LB123_CLIENT_SECRET=<123LoadBoard OAuth client secret>
 | `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
 | `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, incidents, lessons |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
-| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec |
+| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec, Track Award Loads spec, audit_id SERIAL trap |
