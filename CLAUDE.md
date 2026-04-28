@@ -94,6 +94,7 @@
 - **Sargability for `origin_actual_departure`** — never `origin_actual_departure::date BETWEEN $s AND $e` (kills `idx_v4_dep`). Use half-open `origin_actual_departure >= $s AND origin_actual_departure < ($e::date + 1)`. ~30× faster.
 - **First-match-per-key joins** — use `LEFT JOIN LATERAL (... ORDER BY ... LIMIT 1) ON TRUE` not `ROW_NUMBER() WHERE rn=1` CTE; ~40× faster with a supporting `(key1, key2, sort_col)` btree. Movement ⇒ `idx_movement_order_company_mv`.
 - **Placeholder rule** — seed CTE-leading `$1` into `params` **before** calling `_scope_where`; never pass extra positional at `pool.fetch` time, or downstream `BETWEEN $N-1 AND $N` placeholders shift.
+- **CST clock rule** — Render runs containers in UTC and Aiven defaults sessions to UTC. Datalake is already CST. To keep the app's notion of "today" aligned with the data: Python side use `from app.clock import cst_today` (never `date.today()`); SQL side use bare `CURRENT_DATE` / `now()` / `date_trunc(...)` — every asyncpg pool runs `init=_set_cst_session` (`SET TIME ZONE 'America/Chicago'`) at connect time, so they all resolve to CST without per-query `AT TIME ZONE` rewrites. Bruno caught this on XRay CORP Mng on 2026-04-27 (commit `123e5b0`): "Yesterday=Apr 27" while CST clock was still on Apr 27. Affects every code-made report between 18:00–23:59 CST.
 - **Current catalog** (one-line; full specs/lessons in `docs/SPEC-CUSTOM-REPORTS.md`):
 
 | Report | Path | Roles | Primary source |
@@ -306,4 +307,4 @@ LB123_CLIENT_SECRET=<123LoadBoard OAuth client secret>
 | `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
 | `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, incidents, lessons |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
-| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec, Track Award Loads spec, audit_id SERIAL trap |
+| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec, Track Award Loads spec, audit_id SERIAL trap, CST clock pin |
