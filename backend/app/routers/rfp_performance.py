@@ -980,7 +980,17 @@ async def details(
       status,
       rfp_created_by,
       submitted_date::date  AS submitted_date,
-      effective_end_date::date AS end_date,
+      -- Pricing-Portal data-entry typos have produced 5-digit years
+      -- ('32027-03-10', '20226-04-24') in `effective_end_date`. asyncpg's
+      -- date_decode then raises `ValueError: year out of range`. Clamp to
+      -- a sane window and emit as text so the protocol never tries to
+      -- decode a bad date. Two rows known affected (rfp_id=738, 815).
+      CASE
+        WHEN effective_end_date IS NULL THEN NULL
+        WHEN EXTRACT(YEAR FROM effective_end_date) BETWEEN 1900 AND 2200
+          THEN to_char(effective_end_date, 'YYYY-MM-DD')
+        ELSE NULL
+      END AS end_date,
       (SELECT total FROM counted) AS total_count
     FROM base
     ORDER BY {order_by}
@@ -1016,7 +1026,9 @@ async def details(
             "status": r["status"],
             "sales_executive": r["rfp_created_by"],
             "submitted_date": r["submitted_date"].isoformat() if r["submitted_date"] else None,
-            "end_date": r["end_date"].isoformat() if r["end_date"] else None,
+            # end_date already a 'YYYY-MM-DD' string from the SQL CASE (or NULL);
+            # see the comment in the query for the typo-year guard.
+            "end_date": r["end_date"],
         }
         for r in rows
     ]
