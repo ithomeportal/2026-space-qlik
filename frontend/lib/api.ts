@@ -425,6 +425,8 @@ export interface BudgetSummary {
   total_days: number
   days_elapsed: number
   days_remaining: number
+  pending_days: number
+  holidays_days: number
   start_date: string
   end_date: string
 }

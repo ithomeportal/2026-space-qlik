@@ -73,7 +73,7 @@ const fmtUsdCompact = (n: number) => {
 
 type Metric = "revenue" | "loads" | "profit"
 type Preset = "full" | "ytd" | "mtd" | "custom"
-type CustomerTab = "overview" | "revenue" | "profit"
+type CustomerTab = "overview" | "revenue" | "profit" | "loads"
 type SortDir = "asc" | "desc"
 
 type OverviewSortKey =
@@ -89,6 +89,7 @@ type OverviewSortKey =
   | "profit_variance"
   | "margin_actual_pct"
   | "margin_budget_pct"
+  | "margin_variance_pp"
 
 const OVERVIEW_SORT_PARAM: Record<OverviewSortKey, { desc: string; asc: string }> = {
   customer_name:      { desc: "customer", asc: "customer" },
@@ -103,6 +104,7 @@ const OVERVIEW_SORT_PARAM: Record<OverviewSortKey, { desc: string; asc: string }
   profit_variance:    { desc: "profit_variance_desc", asc: "profit_variance_desc" },
   margin_actual_pct:  { desc: "revenue_actual_desc", asc: "revenue_actual_desc" },
   margin_budget_pct:  { desc: "revenue_actual_desc", asc: "revenue_actual_desc" },
+  margin_variance_pp: { desc: "revenue_actual_desc", asc: "revenue_actual_desc" },
 }
 
 function todayIso() {
@@ -177,7 +179,14 @@ function BudgetFollowUp2026Content() {
   const { data: summaryRes, isLoading: loadingSummary } = useBudgetSummary(filters)
   const s = summaryRes?.data
 
-  const { data: monthlyRes, isLoading: loadingMonthly } = useBudgetMonthly(filters)
+  // Monthly chart is pinned to the full year (Bruno's 2026-04-30 v3 spec — "Keep
+  // the full year fixed in the monthly chart. It should not be affected by the
+  // date filter."). Teams + customer narrowing still applies.
+  const monthlyFilters: BudgetFilters = useMemo(
+    () => ({ startDate: YEAR_START, endDate: YEAR_END, teams, customer }),
+    [teams, customer],
+  )
+  const { data: monthlyRes, isLoading: loadingMonthly } = useBudgetMonthly(monthlyFilters)
   const monthly = monthlyRes?.data ?? []
 
   const { data: weeklyRes, isLoading: loadingWeekly } = useBudgetWeekly(filters)
@@ -209,13 +218,17 @@ function BudgetFollowUp2026Content() {
     const rows = [...customers]
     const { key, dir } = overviewSort
     const factor = dir === "asc" ? 1 : -1
+    const valueOf = (row: BudgetCustomerRow): number => {
+      if (key === "margin_variance_pp") {
+        return Number(row.margin_actual_pct ?? 0) - Number(row.margin_budget_pct ?? 0)
+      }
+      return Number((row as unknown as Record<string, unknown>)[key] ?? 0)
+    }
     rows.sort((a, b) => {
       if (key === "customer_name") {
         return a.customer_name.localeCompare(b.customer_name) * factor
       }
-      const av = Number((a as unknown as Record<string, unknown>)[key] ?? 0)
-      const bv = Number((b as unknown as Record<string, unknown>)[key] ?? 0)
-      return (av - bv) * factor
+      return (valueOf(a) - valueOf(b)) * factor
     })
     return rows
   }, [customers, overviewSort])
@@ -446,16 +459,23 @@ function BudgetFollowUp2026Content() {
           />
         </section>
 
-        {/* Secondary KPIs */}
-        <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <MiniKpi label="Days Elapsed" value={fmtCount(s?.days_elapsed)} hint={`of ${fmtCount(s?.total_days)}`} />
-          <MiniKpi label="Days Remaining" value={fmtCount(s?.days_remaining)} />
-          <MiniKpi
-            label="Active Customers"
-            value={fmtCount(s?.active_customers)}
-            hint={`of ${fmtCount(s?.total_customers)}`}
-          />
+        {/* Secondary KPIs — Bruno 2026-04-30 v3 order:
+            Active Days → Pending Days → Days Elapsed → Days Remaining → Holidays Days.
+            All five move with the date/team/customer filters. */}
+        <section className="grid grid-cols-2 gap-4 md:grid-cols-5">
           <MiniKpi label="Active Days" value={fmtCount(s?.active_days)} />
+          <MiniKpi
+            label="Pending Days"
+            value={fmtCount(s?.pending_days)}
+            hint="Mon–Fri, no holidays"
+          />
+          <MiniKpi
+            label="Days Elapsed"
+            value={fmtCount(s?.days_elapsed)}
+            hint={`of ${fmtCount(s?.total_days)}`}
+          />
+          <MiniKpi label="Days Remaining" value={fmtCount(s?.days_remaining)} />
+          <MiniKpi label="Holidays Days" value={fmtCount(s?.holidays_days)} />
         </section>
 
         {/* Monthly chart */}
@@ -502,7 +522,8 @@ function BudgetFollowUp2026Content() {
               </div>
             )}
             {teamRows.map((t) => {
-              const revVar = Number(t.revenue_actual) - Number(t.revenue_budget)
+              const loadsVar = Number(t.loads_actual) - Number(t.loads_budget)
+              const profitVar = Number(t.profit_actual) - Number(t.profit_budget)
               return (
                 <div
                   key={t.team_id}
@@ -528,15 +549,28 @@ function BudgetFollowUp2026Content() {
                         {fmtUsd(t.profit_actual)}
                       </span>
                     </div>
+                    {/* Bruno 2026-04-30 v3: replace Rev variance with Loads
+                        variance + Profit variance per team card. */}
                     <div
                       className={`flex items-center justify-between font-medium ${
-                        revVar >= 0 ? "text-[#059669]" : "text-[#DC2626]"
+                        loadsVar >= 0 ? "text-[#059669]" : "text-[#DC2626]"
                       }`}
                     >
-                      <span>Rev variance</span>
+                      <span>Load variance</span>
                       <span className="tabular-nums">
-                        {revVar >= 0 ? "+" : ""}
-                        {fmtUsd(revVar)}
+                        {loadsVar >= 0 ? "+" : ""}
+                        {fmtInt(loadsVar)}
+                      </span>
+                    </div>
+                    <div
+                      className={`flex items-center justify-between font-medium ${
+                        profitVar >= 0 ? "text-[#059669]" : "text-[#DC2626]"
+                      }`}
+                    >
+                      <span>Profit variance</span>
+                      <span className="tabular-nums">
+                        {profitVar >= 0 ? "+" : ""}
+                        {fmtUsd(profitVar)}
                       </span>
                     </div>
                   </div>
@@ -572,6 +606,7 @@ function BudgetFollowUp2026Content() {
                   { k: "overview" as const, label: "Overview" },
                   { k: "revenue" as const, label: "Revenue" },
                   { k: "profit" as const, label: "Profit" },
+                  { k: "loads" as const, label: "Loads" },
                 ].map((t) => (
                   <button
                     key={t.k}
@@ -823,6 +858,8 @@ function PeriodChart({
                   day: "numeric",
                   timeZone: "UTC",
                 })
+          const fmtCompact = (n: number) =>
+            metric === "loads" ? fmtInt(n) : fmtUsdCompact(n)
           return (
             <div
               key={v.label}
@@ -843,9 +880,16 @@ function PeriodChart({
                   style={{ height: `${budgetH}px` }}
                 />
               </div>
-              {/* Always-on actual amount label, even when bar is short */}
-              <div className="text-[10px] font-semibold tabular-nums text-[#1B3A5C]">
-                {metric === "loads" ? fmtInt(v.actual) : fmtUsdCompact(v.actual)}
+              {/* Bruno 2026-04-30 v3: show value labels for *both* Actual and
+                  Budget bars (was Actual only). Stacked so they fit under
+                  narrow weekly columns without overlapping the next bar. */}
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-[10px] font-semibold tabular-nums text-[#1B3A5C]">
+                  {fmtCompact(v.actual)}
+                </span>
+                <span className="text-[10px] tabular-nums text-[#9CA3AF]">
+                  {fmtCompact(v.budget)}
+                </span>
               </div>
               <div className="text-[10px] text-[#6B7280]">{labelText}</div>
               <div
@@ -853,10 +897,7 @@ function PeriodChart({
                   varianceOk ? "text-[#059669]" : "text-[#DC2626]"
                 }`}
               >
-                {varianceOk ? "▲" : "▼"}{" "}
-                {metric === "loads"
-                  ? fmtInt(Math.abs(variance))
-                  : fmtUsdCompact(Math.abs(variance))}
+                {varianceOk ? "▲" : "▼"} {fmtCompact(Math.abs(variance))}
               </div>
             </div>
           )
@@ -998,32 +1039,36 @@ function OverviewTable({
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[#F9FAFB] text-xs uppercase tracking-wider text-[#6B7280]">
+            {/* Bruno 2026-04-30 v3: column order is now Budget → Actual → Var
+                for every metric group. Loads/Revenue/Profit/Margin in that
+                order, with Margin Var as a brand-new column. */}
             <tr>
               <HeaderCell label="Customer" align="left" sortKey="customer_name" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
-              <HeaderCell label="Loads A" sortKey="loads_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Loads B" sortKey="loads_budget" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
+              <HeaderCell label="Loads A" sortKey="loads_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Loads Var" sortKey="loads_variance" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
-              <HeaderCell label="Revenue A" sortKey="revenue_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Revenue B" sortKey="revenue_budget" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
+              <HeaderCell label="Revenue A" sortKey="revenue_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Revenue Var" sortKey="revenue_variance" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
-              <HeaderCell label="Profit A" sortKey="profit_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Profit B" sortKey="profit_budget" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
+              <HeaderCell label="Profit A" sortKey="profit_actual" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Profit Var" sortKey="profit_variance" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
-              <HeaderCell label="Margin A" sortKey="margin_actual_pct" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
               <HeaderCell label="Margin B" sortKey="margin_budget_pct" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
+              <HeaderCell label="Margin A" sortKey="margin_actual_pct" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
+              <HeaderCell label="Margin Var" sortKey="margin_variance_pp" activeKey={sortKey} activeDir={sortDir} onClick={onHeaderClick} />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F3F4F6]">
             {loading && rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-3 py-6 text-center">
+                <td colSpan={13} className="px-3 py-6 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-[#6B7280]" />
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-3 py-6 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={13} className="px-3 py-6 text-center text-xs text-[#9CA3AF]">
                   No customers match the current filters
                 </td>
               </tr>
@@ -1032,6 +1077,8 @@ function OverviewTable({
               const loadsVar = Number(c.loads_variance)
               const revVar = Number(c.revenue_variance)
               const profVar = Number(c.profit_variance)
+              const marginVarPp =
+                Number(c.margin_actual_pct ?? 0) - Number(c.margin_budget_pct ?? 0)
               return (
                 <tr
                   key={c.customer_name}
@@ -1043,11 +1090,11 @@ function OverviewTable({
                   onClick={() => onRowClick(c.customer_name)}
                 >
                   <td className="px-3 py-2 font-medium text-[#111827]">{c.customer_name}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                    {fmtInt(c.loads_actual)}
-                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
                     {fmtInt(c.loads_budget)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
+                    {fmtInt(c.loads_actual)}
                   </td>
                   <td
                     className={`px-3 py-2 text-right tabular-nums font-medium ${
@@ -1057,11 +1104,11 @@ function OverviewTable({
                     {loadsVar >= 0 ? "+" : ""}
                     {fmtInt(loadsVar)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                    {fmtUsd(c.revenue_actual)}
-                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
                     {fmtUsd(c.revenue_budget)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
+                    {fmtUsd(c.revenue_actual)}
                   </td>
                   <td
                     className={`px-3 py-2 text-right tabular-nums font-semibold ${
@@ -1071,11 +1118,11 @@ function OverviewTable({
                     {revVar >= 0 ? "+" : ""}
                     {fmtUsd(revVar)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                    {fmtUsd(c.profit_actual)}
-                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
                     {fmtUsd(c.profit_budget)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
+                    {fmtUsd(c.profit_actual)}
                   </td>
                   <td
                     className={`px-3 py-2 text-right tabular-nums font-semibold ${
@@ -1085,11 +1132,19 @@ function OverviewTable({
                     {profVar >= 0 ? "+" : ""}
                     {fmtUsd(profVar)}
                   </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                    {fmtPct(c.margin_budget_pct)}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
                     {fmtPct(c.margin_actual_pct)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
-                    {fmtPct(c.margin_budget_pct)}
+                  <td
+                    className={`px-3 py-2 text-right tabular-nums font-medium ${
+                      marginVarPp >= 0 ? "text-[#059669]" : "text-[#DC2626]"
+                    }`}
+                  >
+                    {marginVarPp >= 0 ? "+" : ""}
+                    {PCT1.format(marginVarPp)} pp
                   </td>
                 </tr>
               )
@@ -1144,7 +1199,7 @@ function DetailTable({
   onRowClick,
 }: {
   rows: BudgetCustomerDetailRow[]
-  metricKey: "revenue" | "profit"
+  metricKey: "revenue" | "profit" | "loads"
   loading: boolean
   activeCustomer?: string
   onRowClick: (customer_name: string) => void
@@ -1175,16 +1230,45 @@ function DetailTable({
     return sliced
   }, [rows, metricKey, sortKey, sortDir])
 
-  const fmtVal = (v: number | null | undefined) => fmtUsd(v)
+  // Loads tab uses integer formatting; Revenue/Profit use USD.
+  const fmtVal = (v: number | null | undefined) =>
+    metricKey === "loads" ? fmtInt(v) : fmtUsd(v)
+
+  // Sticky totals row at top — sums every numeric column over the *currently
+  // displayed* rows (Bruno 2026-04-30 v3 ask).
+  const totals = useMemo(() => {
+    const acc = {
+      actual: 0,
+      budget: 0,
+      var: 0,
+      avg_last_month: 0,
+      avg_week: 0,
+      avg_day: 0,
+      projected: 0,
+    }
+    for (const r of rows) {
+      const c = r[metricKey]
+      acc.actual         += Number(c.actual ?? 0)
+      acc.budget         += Number(c.budget ?? 0)
+      acc.var            += Number(c.var ?? 0)
+      acc.avg_last_month += Number(c.avg_last_month ?? 0)
+      acc.avg_week       += Number(c.avg_week ?? 0)
+      acc.avg_day        += Number(c.avg_day ?? 0)
+      acc.projected      += Number(c.projected ?? 0)
+    }
+    return acc
+  }, [rows, metricKey])
 
   const Header = ({
     label,
     k,
     align = "right",
+    className = "",
   }: {
     label: string
     k: DetailSortKey
     align?: "left" | "right"
+    className?: string
   }) => {
     const active = sortKey === k
     const Icon = !active ? ArrowUpDown : sortDir === "desc" ? ArrowDown : ArrowUp
@@ -1193,7 +1277,7 @@ function DetailTable({
         onClick={() => onHeaderClick(k)}
         className={`cursor-pointer select-none px-3 py-2 ${
           align === "left" ? "text-left" : "text-right"
-        } font-medium hover:text-[#111827]`}
+        } font-medium hover:text-[#111827] ${className}`}
       >
         <span className={`inline-flex items-center gap-1 ${active ? "text-[#1B3A5C]" : ""}`}>
           {label}
@@ -1203,21 +1287,68 @@ function DetailTable({
     )
   }
 
+  // Cream-tint background for Budget/Actual/Var columns (Bruno 2026-04-30 v3).
+  const CREAM_BG = "bg-[#FEF7E6]"
+
   return (
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[#F9FAFB] text-xs uppercase tracking-wider text-[#6B7280]">
+            {/* Bruno 2026-04-30 v3 column order: Budget → Actual → Var first,
+                then the three rolling-average columns and Projected. */}
             <tr>
               <Header label="Customer" k="customer_name" align="left" />
-              <Header label="Actual" k="actual" />
-              <Header label="Budget" k="budget" />
-              <Header label="Var" k="var" />
-              <Header label="AVG × Last Month" k="avg_last_month" />
+              <Header label="Budget" k="budget" className={CREAM_BG} />
+              <Header label="Actual" k="actual" className={CREAM_BG} />
+              <Header label="Var" k="var" className={CREAM_BG} />
+              <Header label="AVG per day Last Month" k="avg_last_month" />
               <Header label="AVG × Week" k="avg_week" />
               <Header label="AVG × Day" k="avg_day" />
               <Header label="Projected" k="projected" />
             </tr>
+            {/* Sticky totals row (only when we actually have data). */}
+            {sorted.length > 0 && (
+              <tr className="border-t border-[#E5E7EB] bg-[#F3F4F6] text-[#1B3A5C]">
+                <td className="px-3 py-2 font-semibold uppercase tracking-wider text-[10px] text-[#6B7280]">
+                  Totals
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${CREAM_BG}`}>
+                  {fmtVal(totals.budget)}
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${CREAM_BG}`}>
+                  {fmtVal(totals.actual)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums font-semibold ${CREAM_BG} ${
+                    totals.var >= 0 ? "text-[#059669]" : "text-[#DC2626]"
+                  }`}
+                >
+                  {totals.var >= 0 ? "+" : ""}
+                  {fmtVal(totals.var)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                  {fmtVal(totals.avg_last_month)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                  {fmtVal(totals.avg_week)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                  {fmtVal(totals.avg_day)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                    totals.projected > 0
+                      ? "text-[#059669]"
+                      : totals.projected < 0
+                      ? "text-[#DC2626]"
+                      : "text-[#1B3A5C]"
+                  }`}
+                >
+                  {fmtVal(totals.projected)}
+                </td>
+              </tr>
+            )}
           </thead>
           <tbody className="divide-y divide-[#F3F4F6]">
             {loading && sorted.length === 0 && (
@@ -1237,6 +1368,13 @@ function DetailTable({
             {sorted.map((r) => {
               const cell = r[metricKey]
               const v = Number(cell.var)
+              const proj = Number(cell.projected)
+              const projColor =
+                proj > 0
+                  ? "text-[#059669]"
+                  : proj < 0
+                  ? "text-[#DC2626]"
+                  : "text-[#1B3A5C]"
               return (
                 <tr
                   key={r.customer_name}
@@ -1248,14 +1386,14 @@ function DetailTable({
                   onClick={() => onRowClick(r.customer_name)}
                 >
                   <td className="px-3 py-2 font-medium text-[#111827]">{r.customer_name}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
-                    {fmtVal(cell.actual)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#6B7280]">
+                  <td className={`px-3 py-2 text-right tabular-nums text-[#6B7280] ${CREAM_BG}`}>
                     {fmtVal(cell.budget)}
                   </td>
+                  <td className={`px-3 py-2 text-right tabular-nums text-[#374151] ${CREAM_BG}`}>
+                    {fmtVal(cell.actual)}
+                  </td>
                   <td
-                    className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                    className={`px-3 py-2 text-right tabular-nums font-semibold ${CREAM_BG} ${
                       v >= 0 ? "text-[#059669]" : "text-[#DC2626]"
                     }`}
                   >
@@ -1271,7 +1409,7 @@ function DetailTable({
                   <td className="px-3 py-2 text-right tabular-nums text-[#374151]">
                     {fmtVal(cell.avg_day)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-[#1B3A5C]">
+                  <td className={`px-3 py-2 text-right tabular-nums font-semibold ${projColor}`}>
                     {fmtVal(cell.projected)}
                   </td>
                 </tr>

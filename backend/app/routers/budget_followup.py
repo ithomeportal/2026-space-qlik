@@ -33,6 +33,23 @@ YEAR_END = date(2026, 12, 31)
 # Teams we surface — anything else in McLeod is ignored here.
 ALLOWED_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
 
+# US federal holidays observed in 2026 — used by Pending/Holidays-Days KPIs and as
+# the "no-holidays" filter for the workday helpers in this report. Independence
+# Day 2026 falls on Saturday, so the federal observance shifts to Friday Jul 3.
+US_HOLIDAYS_2026 = frozenset({
+    date(2026, 1, 1),    # New Year's Day
+    date(2026, 1, 19),   # MLK Day
+    date(2026, 2, 16),   # Presidents' Day
+    date(2026, 5, 25),   # Memorial Day
+    date(2026, 6, 19),   # Juneteenth
+    date(2026, 7, 3),    # Independence Day (observed — Jul 4 is Sat)
+    date(2026, 9, 7),    # Labor Day
+    date(2026, 10, 12),  # Columbus Day
+    date(2026, 11, 11),  # Veterans Day
+    date(2026, 11, 26),  # Thanksgiving
+    date(2026, 12, 25),  # Christmas
+})
+
 # Per-customer canonical team, derived from McLeod. One row per customer: the team with
 # the most loads (tiebreak alphabetical). Prepend with `WITH ` when embedding in a query.
 CUSTOMER_TEAM_CTE = f"""
@@ -188,17 +205,39 @@ async def summary(
         data[f"{metric}_achievement_pct"] = (a / b * 100.0) if b else 0.0
     data["margin_variance_pct"] = data["margin_actual_pct"] - data["margin_budget_pct"]
 
-    # Working-days elapsed / remaining within the applied window (vs full year 2026).
+    # Calendar-day breakdown of the *applied filter window* (not the full year),
+    # so Bruno's "KPIs should move with the filters" requirement holds.
     today = cst_today()
-    clamp_today = min(max(today, YEAR_START), YEAR_END)
-    total_days = (YEAR_END - YEAR_START).days + 1
-    elapsed_days = (clamp_today - YEAR_START).days + (1 if clamp_today >= YEAR_START else 0)
+    win_start = _clamp(start_date, YEAR_START)
+    win_end = _clamp(end_date, YEAR_END)
+    total_days = (win_end - win_start).days + 1
+    if today < win_start:
+        elapsed_days = 0
+    elif today > win_end:
+        elapsed_days = total_days
+    else:
+        elapsed_days = (today - win_start).days + 1
     data["total_days"] = total_days
     data["days_elapsed"] = max(0, min(total_days, elapsed_days))
     data["days_remaining"] = max(0, total_days - data["days_elapsed"])
 
-    data["start_date"] = _clamp(start_date, YEAR_START).isoformat()
-    data["end_date"] = _clamp(end_date, YEAR_END).isoformat()
+    # Pending Days = Mon–Fri working days remaining inside the window from today
+    # onwards (holidays excluded). Complements `days_remaining` (calendar days).
+    pending_start = max(today, win_start)
+    pending_days = 0
+    if pending_start <= win_end:
+        d = pending_start
+        while d <= win_end:
+            if d.weekday() < 5 and d not in US_HOLIDAYS_2026:
+                pending_days += 1
+            d = d + timedelta(days=1)
+    data["pending_days"] = pending_days
+
+    # Holidays Days = US federal holidays falling inside the window.
+    data["holidays_days"] = sum(1 for h in US_HOLIDAYS_2026 if win_start <= h <= win_end)
+
+    data["start_date"] = win_start.isoformat()
+    data["end_date"] = win_end.isoformat()
 
     return {"success": True, "data": data}
 
@@ -371,13 +410,18 @@ async def monthly(
 # ---------------------------------------------------------------------------
 
 def _count_workdays(start: date, end: date) -> int:
-    """Mon–Fri days in [start, end] inclusive. No holiday calendar."""
+    """Mon–Fri days in [start, end] inclusive, excluding US 2026 federal holidays.
+
+    Used by the Avg×LastMonth divisor and Projected days-remaining math in the
+    detail-tab tables (Bruno's 2026-04-30 v3 spec — adds holiday calendar to the
+    earlier "Mon–Fri, no holidays" rule from 2026-04-28 v2).
+    """
     if start > end:
         return 0
     count = 0
     d = start
     while d <= end:
-        if d.weekday() < 5:  # Mon=0 .. Fri=4
+        if d.weekday() < 5 and d not in US_HOLIDAYS_2026:
             count += 1
         d = d + timedelta(days=1)
     return count
