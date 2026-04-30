@@ -15,6 +15,7 @@ from slowapi.util import get_remote_address
 from app.config import settings
 from app.routers import (
     admin,
+    admin_cashflow,
     attrition_wow,
     budget_followup,
     carrier_risk,
@@ -588,6 +589,7 @@ app.include_router(track_award_loads.router, prefix="/api")
 app.include_router(rfp_performance.router, prefix="/api")
 app.include_router(carrier_risk.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
+app.include_router(admin_cashflow.router, prefix="/api")
 
 
 @app.get("/api/health")

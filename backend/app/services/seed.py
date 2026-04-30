@@ -240,6 +240,22 @@ CUSTOM_REPORTS = [
             "Operations", "Sales", "HR", "IT", "DFW", "CORP",
         ],
     },
+    {
+        "key": "admin-cashflow",  # -> /reports/admin-cashflow
+        "title": "Admin Aging Cashflow",
+        "description": "A/R cashflow discipline — delivery-vs-bill / BOL-vs-bill / carrier-invoice-vs-bill aging, delivered-not-billed and ready-not-billed inventory",
+        "note": "Source: mcleod_gld_cashflow (Spark ETL, no n8n) · scope TEAM1–TEAM5 + TEAM-DFW · TMS/TMS3 · status D,P · default MTD (Today / WTD / Last 7d / MTD / Last Month / YTD / Custom) · 12-week sparklines on the 3 % KPIs · aging-buckets chart + top-delayed-customers leaderboard · banner when delivered+ready unbilled > $3M · real calendar-day diff (a::date - b::date), not Qlik's day() function · replaces Bruno's legacy Admin CashFlow Qlik dashboard",
+        "category": "Finance",
+        "tags": [
+            "cashflow", "aging", "billing", "ar", "discipline",
+            "unbilled", "delivery", "bol", "invoice", "admin",
+        ],
+        "owner_name": "admin",
+        "roles": [
+            "CEO", "Executive", "Finance",
+            "CORP", "DFW", "Operations",
+        ],
+    },
 ]
 
 # 19 desktop + 12 mobile reports
