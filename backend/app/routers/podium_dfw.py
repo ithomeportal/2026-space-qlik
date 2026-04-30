@@ -38,6 +38,7 @@ today's rows may come back with ``profit=NULL`` / ``revenue=NULL``. We pass
 them through (frontend renders an em-dash) -- matches the Qlik app behavior.
 """
 
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -183,5 +184,92 @@ async def overview(
             "range": range,
             "kpis": kpis,
             "rows": rows,
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# /podiums  -- Bruno's 5 leaderboards (top-3 each).
+# Spec (BRUNO -- DFW Podiums.pdf, 2026-04-30):
+#   This Week (Mon-Sun, current week):
+#     - Top 3 Bookers by Profit  (Posted by, Profit, Loads)
+#     - Top 3 Bookers by Margin% (Posted by, Margin% = SumProfit/SumRevenue, Loads)
+#     - Top 3 Bookers by Loads   (Posted by, Loads)
+#   Today:
+#     - Top 3 Bookers by Loads   (Posted by, Loads)
+#     - Top 3 Bookers by Profit  (Posted by, Profit)
+# Totals row on the frontend = sum of just the 3 displayed rows.
+# date_trunc('week', CURRENT_DATE) is ISO Monday in Postgres -> Mon-Sun is
+# half-open [week_start, week_start + 7).
+# --------------------------------------------------------------------------
+@router.get("/podiums")
+async def podiums(
+    request: Request,
+    _user: dict = Depends(require_tag_role(*PODIUM_ROLES)),
+):
+    pool = get_datalake_gold_pool(request)
+    params = [_pad_variants(list(PODIUM_TEAMS), width=8)]
+
+    sql = f"""
+    WITH {_RATE_CONF_CTE},
+    weekly AS (
+        SELECT posted_by,
+               COUNT(*)::int                            AS loads,
+               COALESCE(SUM(profit), 0)::float          AS profit,
+               COALESCE(SUM(revenue), 0)::float         AS revenue,
+               CASE WHEN COALESCE(SUM(revenue), 0) > 0
+                    THEN SUM(profit)::float / SUM(revenue)::float
+                    ELSE NULL END                       AS margin_pct
+        FROM rate_conf
+        WHERE posted_date::date >= date_trunc('week', CURRENT_DATE)::date
+          AND posted_date::date <  date_trunc('week', CURRENT_DATE)::date + 7
+          AND posted_by IS NOT NULL AND posted_by <> ''
+        GROUP BY posted_by
+    ),
+    daily AS (
+        SELECT posted_by,
+               COUNT(*)::int                            AS loads,
+               COALESCE(SUM(profit), 0)::float          AS profit
+        FROM rate_conf
+        WHERE posted_date::date = CURRENT_DATE
+          AND posted_by IS NOT NULL AND posted_by <> ''
+        GROUP BY posted_by
+    )
+    SELECT
+        (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
+           FROM (SELECT posted_by, profit, loads FROM weekly
+                 ORDER BY profit DESC NULLS LAST LIMIT 3) t)        AS week_top_profit,
+        (SELECT COALESCE(json_agg(t ORDER BY t.margin_pct DESC NULLS LAST), '[]'::json)
+           FROM (SELECT posted_by, margin_pct, loads, profit, revenue FROM weekly
+                 WHERE revenue > 0
+                 ORDER BY margin_pct DESC NULLS LAST LIMIT 3) t)    AS week_top_margin,
+        (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
+           FROM (SELECT posted_by, loads FROM weekly
+                 ORDER BY loads DESC LIMIT 3) t)                    AS week_top_loads,
+        (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
+           FROM (SELECT posted_by, loads FROM daily
+                 ORDER BY loads DESC LIMIT 3) t)                    AS today_top_loads,
+        (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
+           FROM (SELECT posted_by, profit FROM daily
+                 ORDER BY profit DESC NULLS LAST LIMIT 3) t)        AS today_top_profit
+    """
+
+    row = await pool.fetchrow(sql, *params)
+
+    def _parse(v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    return {
+        "success": True,
+        "data": {
+            "week_top_profit":  _parse(row["week_top_profit"])  if row else [],
+            "week_top_margin":  _parse(row["week_top_margin"])  if row else [],
+            "week_top_loads":   _parse(row["week_top_loads"])   if row else [],
+            "today_top_loads":  _parse(row["today_top_loads"])  if row else [],
+            "today_top_profit": _parse(row["today_top_profit"]) if row else [],
         },
     }
