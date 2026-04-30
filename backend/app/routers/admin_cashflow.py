@@ -516,8 +516,8 @@ async def sparklines(
 # ---------------------------------------------------------------------------
 
 _DELIVERED_NOT_BILLED_SORTS = {
-    "ship_desc": "origin_actual_arrival DESC NULLS LAST",
-    "ship_asc": "origin_actual_arrival ASC NULLS LAST",
+    "ship_desc": "ship_date DESC NULLS LAST",
+    "ship_asc": "ship_date ASC NULLS LAST",
     "delivered_desc": "dest_actual_arrival DESC NULLS LAST",
     "delivered_asc": "dest_actual_arrival ASC NULLS LAST",
     "revenue_desc": "total_charge DESC NULLS LAST",
@@ -638,11 +638,11 @@ async def delivered_not_billed(
 # ---------------------------------------------------------------------------
 
 _READY_NOT_BILLED_SORTS = {
-    "ship_desc": "origin_actual_arrival DESC NULLS LAST",
-    "ship_asc": "origin_actual_arrival ASC NULLS LAST",
+    "ship_desc": "ship_date DESC NULLS LAST",
+    "ship_asc": "ship_date ASC NULLS LAST",
     "revenue_desc": "total_charge DESC NULLS LAST",
     "revenue_asc": "total_charge ASC NULLS LAST",
-    "status_asc": "status ASC, origin_actual_arrival ASC NULLS LAST",
+    "status_asc": "status ASC, ship_date ASC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -668,7 +668,7 @@ async def ready_not_billed(
     team_list = _parse_teams(teams)
     company_list = _parse_companies(companies)
     offset = (page - 1) * limit
-    order_by = _READY_NOT_BILLED_SORTS.get(sort, "origin_actual_arrival ASC NULLS LAST")
+    order_by = _READY_NOT_BILLED_SORTS.get(sort, "ship_date ASC NULLS LAST")
 
     params: list = []
     where = _scope_where(
