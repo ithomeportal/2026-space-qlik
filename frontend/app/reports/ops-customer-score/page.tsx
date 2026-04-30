@@ -22,6 +22,7 @@ const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
 const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
+const CORP_SUB_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"] as const
 const ALL_COMPANIES = ["TMS", "TMS3"] as const
 
 type TabKey = "pu-overview" | "del-overview" | "pu-detail" | "del-detail"
@@ -71,6 +72,14 @@ function OcsContent() {
     )
   }, [subTeamsParam])
 
+  const corpTeamsParam = searchParams.get("corp")
+  const corpTeams = useMemo<string[]>(() => {
+    if (!corpTeamsParam) return []
+    return corpTeamsParam.split(",").filter((t) =>
+      (CORP_SUB_TEAMS as readonly string[]).includes(t),
+    )
+  }, [corpTeamsParam])
+
   const companiesParam = searchParams.get("co")
   const companies = useMemo<string[]>(() => {
     if (companiesParam === null) return [...ALL_COMPANIES]
@@ -106,11 +115,16 @@ function OcsContent() {
     updateUrl({
       div: d === "All" ? null : d,
       sub: null,
+      corp: null,
     })
   }
   const setSubTeams = (next: string[]) => {
     if (!next.length) updateUrl({ sub: null })
     else updateUrl({ sub: next.join(",") })
+  }
+  const setCorpTeams = (next: string[]) => {
+    if (!next.length) updateUrl({ corp: null })
+    else updateUrl({ corp: next.join(",") })
   }
   const setCompanies = (next: string[]) => {
     if (next.length === ALL_COMPANIES.length) updateUrl({ co: null })
@@ -123,17 +137,19 @@ function OcsContent() {
       startDate: range === "custom" ? clampToYear(startDate) : undefined,
       endDate: range === "custom" ? clampToYear(endDate) : undefined,
       division,
+      teams: division === "CORP" && corpTeams.length ? corpTeams : undefined,
       companies:
         companies.length === ALL_COMPANIES.length ? undefined : companies,
       subTeams: division === "DFW" && subTeams.length ? subTeams : undefined,
       customer: customer || undefined,
       carrier: carrier || undefined,
     }),
-    [range, startDate, endDate, division, companies, subTeams, customer, carrier],
+    [range, startDate, endDate, division, corpTeams, companies, subTeams, customer, carrier],
   )
 
   const { data: filterRes } = useOcsFilters({
     division,
+    teams: division === "CORP" && corpTeams.length ? corpTeams : undefined,
     companies:
       companies.length === ALL_COMPANIES.length ? undefined : companies,
     subTeams: division === "DFW" && subTeams.length ? subTeams : undefined,
@@ -239,6 +255,40 @@ function OcsContent() {
                             active
                               ? subTeams.filter((x) => x !== t)
                               : [...subTeams, t],
+                          )
+                        }
+                        className={`rounded-md border px-2 py-1 text-xs ${
+                          active
+                            ? "border-[#111827] bg-[#111827] text-white"
+                            : "border-[#E5E7EB] bg-white text-[#374151]"
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* CORP sub-teams (only in CORP mode) */}
+            {division === "CORP" && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B7280]">
+                  CORP Sub-Team
+                </div>
+                <div className="mt-1 flex gap-1">
+                  {CORP_SUB_TEAMS.map((t) => {
+                    const active = corpTeams.includes(t)
+                    return (
+                      <button
+                        type="button"
+                        key={t}
+                        onClick={() =>
+                          setCorpTeams(
+                            active
+                              ? corpTeams.filter((x) => x !== t)
+                              : [...corpTeams, t],
                           )
                         }
                         className={`rounded-md border px-2 py-1 text-xs ${
