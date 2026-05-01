@@ -67,16 +67,28 @@ async def _scheduled_losses_alert():
 
 
 async def _scheduled_rfp_digest():
-    """Background job: send daily 5:30 PM CST RFP Performance email digest."""
+    """Background job: send daily 5:30 PM CST RFP Performance email digest.
+
+    Recipients confirmed by Diego on 2026-04-30:
+        To:  pricing@unilinktransportation.com
+        Cc:  emendoza (CEO), janaya
+        Bcc: dfrodriguez, msalazarm
+    """
     try:
         pool = getattr(app.state, "automations_pool", None)
         from app.services.rfp_daily_digest import send_daily_digest
 
-        # First-send recipients per Diego (will switch to CEO + final list once approved).
         result = await send_daily_digest(
             pool,
-            to=["ithome@unilinkportal.com"],
-            bcc=["dfrodriguez@unilinktransportation.com"],
+            to=["pricing@unilinktransportation.com"],
+            cc=[
+                "emendoza@unilinktransportation.com",
+                "janaya@unilinktransportation.com",
+            ],
+            bcc=[
+                "dfrodriguez@unilinktransportation.com",
+                "msalazarm@unilinktransportation.com",
+            ],
         )
         logger.info(f"Scheduled RFP digest complete: {result}")
     except Exception as e:
