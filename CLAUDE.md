@@ -130,6 +130,11 @@
 - **Always percent-encode special chars in DB URLs**: `$` → `%24`, `*` → `%2A`, `@` → `%40`, `#` → `%23`, `?` → `%3F`. asyncpg accepts encoded URLs identically to raw ones — no downside
 - After setting an env var via `PUT /v1/services/{id}/env-vars/{KEY}`, hit `GET /api/_pool_diag` (or any endpoint that exercises the pool) on the next deploy and confirm `fs_url_len` matches the encoded length you sent
 
+### Scheduled Email Digests (see `docs/SPEC-RELIABILITY.md` §Scheduled Jobs)
+- **`daily_losses_alert`** — 07:00 CST daily, Resend → `noreply@unilinkportal.com`, Top Losses Lanes weekly-movers (`app/services/losses_alerts.py`).
+- **`daily_rfp_digest`** — 17:30 CST Mon-Fri, **MS Graph** → `ithome@unilinktransportation.com`, RFP Performance summary (`app/services/rfp_daily_digest.py`). Recipients hard-coded in `_scheduled_rfp_digest()` in `main.py:46-71`. Uses the existing `admin-ms-api` Entra app (Mail.Send Application perm + admin consent). Token POST is hand-rolled in `app/services/msgraph_mailer.py` — **no `msal` dep** (httpx is enough). Test endpoint: `POST /api/admin/rfp-digest/test?secret=$SEED_SECRET&to=...&cc=...&bcc=...`.
+- Adding a new digest: copy `rfp_daily_digest.py` shape (data-fetch via existing pool + `render_html` + `send_mail`), register a new `_scheduled_*` wrapper in `main.py` lifespan, document in SPEC-RELIABILITY.md table.
+
 ### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
 - Free tier spins down after ~15 min inactivity — cold starts 30–60s
 - Vercel cron `/api/cron/keepalive` pings `/api/health` every 10 min
@@ -268,6 +273,12 @@ SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>          # eSavings S
 # SONAR_USERNAME / SONAR_PASSWORD — fallback if SONAR_TOKEN is not set
 LB123_CLIENT_ID=<123LoadBoard OAuth client id>                       # eSavings 123LB $ column
 LB123_CLIENT_SECRET=<123LoadBoard OAuth client secret>
+# Microsoft Graph (admin-ms-api app) — powers RFP Performance daily digest at 5:30 PM CST Mon-Fri
+# from ithome@unilinktransportation.com. Same Entra app as /BOT/admin-ms; needs Mail.Send Application permission with admin consent.
+MS_TENANT_ID=<Unilink Entra tenant id, same as /BOT/admin-ms>
+MS_CLIENT_ID=<admin-ms-api client id>
+MS_CLIENT_SECRET=<admin-ms-api secret — expires 2027-12-30>
+MS_SEND_FROM=ithome@unilinktransportation.com
 ```
 
 ---
