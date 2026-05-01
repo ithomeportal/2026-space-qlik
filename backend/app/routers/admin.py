@@ -698,6 +698,44 @@ async def admin_sync_users(_admin: dict = Depends(require_admin)):
     return {"success": True, "data": result}
 
 
+@router.post("/rfp-digest/test")
+async def admin_rfp_digest_test(
+    request: Request,
+    secret: str = Query(...),
+    to: str = Query(
+        "ithome@unilinkportal.com",
+        description="Comma-separated To: addresses",
+    ),
+    cc: str = Query("", description="Comma-separated CC: addresses"),
+    bcc: str = Query(
+        "dfrodriguez@unilinktransportation.com",
+        description="Comma-separated BCC: addresses",
+    ),
+):
+    """Trigger one-off send of the RFP Performance daily digest.
+
+    Used to preview the email outside the 17:30 CST cron. Protected by
+    SEED_SECRET. Defaults match the production first-send config so
+    hitting the endpoint with no overrides reproduces what the scheduler
+    would do at 17:30.
+    """
+    if secret != settings.SEED_SECRET:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from app.services.rfp_daily_digest import send_daily_digest
+
+    pool = getattr(request.app.state, "automations_pool", None)
+    to_list = [a.strip() for a in to.split(",") if a.strip()]
+    cc_list = [a.strip() for a in cc.split(",") if a.strip()]
+    bcc_list = [a.strip() for a in bcc.split(",") if a.strip()]
+    result = await send_daily_digest(
+        pool, to=to_list, cc=cc_list or None, bcc=bcc_list or None
+    )
+    return {"success": True, "data": result}
+
+
 # --- Usage Analytics ---
 
 

@@ -66,6 +66,23 @@ async def _scheduled_losses_alert():
         logger.error(f"Scheduled losses alert failed: {e}")
 
 
+async def _scheduled_rfp_digest():
+    """Background job: send daily 5:30 PM CST RFP Performance email digest."""
+    try:
+        pool = getattr(app.state, "automations_pool", None)
+        from app.services.rfp_daily_digest import send_daily_digest
+
+        # First-send recipients per Diego (will switch to CEO + final list once approved).
+        result = await send_daily_digest(
+            pool,
+            to=["ithome@unilinkportal.com"],
+            bcc=["dfrodriguez@unilinktransportation.com"],
+        )
+        logger.info(f"Scheduled RFP digest complete: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled RFP digest failed: {e}")
+
+
 async def _scheduled_lane_rates_prewarm():
     """Background job: pre-warm SONAR + 123LB monthly rates for lanes in the
     current and previous month so the eSavings report never blocks on a cold
@@ -515,6 +532,45 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
         logger.info("Scheduled lane-rates prewarm at 5:00 AM CST")
+
+    # Schedule daily RFP Performance digest at 5:30 PM CST (Mon-Fri only).
+    # Needs the automations_db pool (rfp_results_history) and MS Graph creds.
+    if (
+        settings.AUTOMATIONS_DATABASE_URL
+        and settings.MS_TENANT_ID
+        and settings.MS_CLIENT_ID
+        and settings.MS_CLIENT_SECRET
+    ):
+        scheduler.add_job(
+            _scheduled_rfp_digest,
+            CronTrigger(
+                day_of_week="mon-fri",
+                hour=17,
+                minute=30,
+                timezone="America/Chicago",
+            ),
+            id="daily_rfp_digest",
+            name="Send RFP Performance daily digest",
+            replace_existing=True,
+        )
+        logger.info(
+            "Scheduled daily RFP Performance digest at 17:30 CST (Mon-Fri) "
+            "from %s",
+            settings.MS_SEND_FROM,
+        )
+    else:
+        missing = []
+        if not settings.AUTOMATIONS_DATABASE_URL:
+            missing.append("AUTOMATIONS_DATABASE_URL")
+        if not settings.MS_TENANT_ID:
+            missing.append("MS_TENANT_ID")
+        if not settings.MS_CLIENT_ID:
+            missing.append("MS_CLIENT_ID")
+        if not settings.MS_CLIENT_SECRET:
+            missing.append("MS_CLIENT_SECRET")
+        logger.warning(
+            "RFP digest NOT scheduled — missing env vars: %s", ", ".join(missing)
+        )
 
     if scheduler.get_jobs():
         scheduler.start()

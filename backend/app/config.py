@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     SEED_SECRET: str = "change-me-in-production"
     TV_SECRET: str = "change-me-in-production"
 
+    # Microsoft Graph (admin-ms-api app) — used to send the RFP Performance
+    # daily digest from ithome@unilinktransportation.com via /sendMail.
+    # Requires Mail.Send Application permission with admin consent.
+    MS_TENANT_ID: str = ""
+    MS_CLIENT_ID: str = ""
+    MS_CLIENT_SECRET: str = ""
+    MS_SEND_FROM: str = "ithome@unilinktransportation.com"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
