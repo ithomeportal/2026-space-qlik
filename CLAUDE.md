@@ -258,7 +258,7 @@ TV_SECRET=<shared with backend>
 ### Backend (Render)
 ```
 DATABASE_URL=<Aiven Postgres URL>
-SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers MOST code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers MOST code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
 AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — powers Track Award Loads (n8n's contract_performance_analysis) and Performance for RFPs (n8n's rfp_results_history). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=automations_db. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here.>
 FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — powers IT Tickets Mgmt (Tickets/Agents tables fed by an external Spark ETL, NOT n8n). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=fresh_services_unlk. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here. **Percent-encode `$` → `%24` and `*` → `%2A` in the password** (Render strips one `$` from `$$` during env-var injection — silently breaks auth).>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
