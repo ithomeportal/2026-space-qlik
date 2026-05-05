@@ -102,6 +102,16 @@ CUSTOM_REPORTS = [
         "roles": ["DFW"],
     },
     {
+        "key": "dfw-podium-top",  # -> /reports/dfw-podium-top
+        "title": "DFW Podium Top",
+        "description": "DFW Top-3 Bookers leaderboards — This-Week Profit / Margin / Loads + Today Loads / Profit",
+        "note": "Companion to Podium Set DFW · no date filter · top-3 only · TEAM-DFW · source: order_post_hist + budget_report_v4 (same CTE as podium-dfw)",
+        "category": "Operations",
+        "tags": ["dfw", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
+        "owner_name": "Diego",
+        "roles": ["DFW"],
+    },
+    {
         "key": "losses-lanes",  # -> /reports/losses-lanes
         "title": "Top Losses Lanes",
         "description": "Worst-margin lanes & customers: leak by lane, 15/18/20% target-profit gap, order detail",

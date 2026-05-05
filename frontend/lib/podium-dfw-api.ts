@@ -71,53 +71,6 @@ export function usePodiumOverview(range: PodiumRange) {
 }
 
 // ---------------------------------------------------------------------------
-// Podium leaderboards (Bruno's spec, 2026-04-30) -- top 3 each
-// ---------------------------------------------------------------------------
-
-export interface PodiumWeekProfitRow {
-  posted_by: string
-  profit: number | null
-  loads: number
-}
-
-export interface PodiumWeekMarginRow {
-  posted_by: string
-  margin_pct: number | null
-  loads: number
-  profit: number | null
-  revenue: number | null
-}
-
-export interface PodiumLoadsRow {
-  posted_by: string
-  loads: number
-}
-
-export interface PodiumTodayProfitRow {
-  posted_by: string
-  profit: number | null
-}
-
-export interface PodiumLeaderboards {
-  week_top_profit: PodiumWeekProfitRow[]
-  week_top_margin: PodiumWeekMarginRow[]
-  week_top_loads:  PodiumLoadsRow[]
-  today_top_loads: PodiumLoadsRow[]
-  today_top_profit: PodiumTodayProfitRow[]
-}
-
-export function usePodiums() {
-  return useQuery({
-    queryKey: ["podium-dfw", "podiums"],
-    queryFn: () => apiFetch<PodiumLeaderboards>(`custom/podium-dfw/podiums`),
-    refetchInterval: FIFTEEN_MIN,
-    refetchIntervalInBackground: false,
-    staleTime: 5 * 60 * 1000,
-    ...PODIUM_RETRY,
-  })
-}
-
-// ---------------------------------------------------------------------------
 // Formatters
 // ---------------------------------------------------------------------------
 

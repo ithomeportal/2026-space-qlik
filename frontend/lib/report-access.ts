@@ -20,6 +20,7 @@ export const REPORT_ACCESS = {
   "hr-access-doors": ["CEO", "Executive", "HR", "IT"],
   "dfw-access-doors": ["DFW", "DFW-Assistent", "DFW KAM", "Assitent OPs manager"],
   "podium-dfw": ["DFW"],
+  "dfw-podium-top": ["DFW"],
   "losses-lanes": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
   "ops-margins": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
   "ops-direct-compare": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],

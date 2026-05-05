@@ -29,6 +29,7 @@ from app.routers import (
     ops_direct_compare,
     ops_margins,
     podium_dfw,
+    podium_top,
     preferences,
     qlik,
     reports,
@@ -646,6 +647,7 @@ app.include_router(ceo_executive.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
+app.include_router(podium_top.router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
