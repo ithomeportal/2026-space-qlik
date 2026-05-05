@@ -62,6 +62,7 @@ ADMIN_CASHFLOW_ROLES = (
     "CORP",
     "DFW",
     "Operations",
+    "AdminFinance",
 )
 
 # Bruno's scope tuples — kept verbatim from the PDF.

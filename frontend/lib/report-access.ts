@@ -86,6 +86,7 @@ export const REPORT_ACCESS = {
     "CORP",
     "DFW",
     "Operations",
+    "AdminFinance",
   ],
 } as const
 

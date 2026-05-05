@@ -254,6 +254,7 @@ CUSTOM_REPORTS = [
         "roles": [
             "CEO", "Executive", "Finance",
             "CORP", "DFW", "Operations",
+            "AdminFinance",
         ],
     },
 ]
