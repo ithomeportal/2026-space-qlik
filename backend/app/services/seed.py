@@ -142,6 +142,16 @@ CUSTOM_REPORTS = [
         "roles": ["DFW", "DFW-Assistent", "DFW KAM", "Assitent OPs manager"],
     },
     {
+        "key": "admin-access-doors",  # -> /reports/admin-access-doors
+        "title": "Admin - Access Log Doors",
+        "description": "Fingerprint check-in log filtered to the Admin department — on-time vs late by employee, job-title and day",
+        "note": "Same engine as HR Access Log Doors but server-locked to dep='Admin'; by-job-title bar replaces by-department · source: zk_gld_onlyfingerprint + timeoff_employee",
+        "category": "Admin",
+        "tags": ["admin", "attendance", "fingerprint", "on-time", "late", "access", "door"],
+        "owner_name": "Diego",
+        "roles": ["AdminFinance"],
+    },
+    {
         "key": "podium-dfw",  # -> /reports/podium-dfw
         "title": "Podium Set DFW",
         "description": "Live DFW Rate-Conf Received podium: KPIs + today's bookings (Today / WTD / MTD)",
