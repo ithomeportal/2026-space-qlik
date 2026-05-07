@@ -72,6 +72,46 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "xray-dfw-tm1",  # -> /reports/xray-dfw-tm1
+        "title": "XRay DFW TM1",
+        "description": "XRay DFW Mng locked to TM1 — KPIs, lanes, trends, risk and contract/spot split for TM1 only",
+        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM1 + leadership",
+        "category": "Executive",
+        "tags": ["dfw", "tm1", "x-ray", "management", "kpi", "otp", "otd"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM1", "CEO", "Executive"],
+    },
+    {
+        "key": "xray-dfw-tm2",  # -> /reports/xray-dfw-tm2
+        "title": "XRay DFW TM2",
+        "description": "XRay DFW Mng locked to TM2 — KPIs, lanes, trends, risk and contract/spot split for TM2 only",
+        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM2 + leadership",
+        "category": "Executive",
+        "tags": ["dfw", "tm2", "x-ray", "management", "kpi", "otp", "otd"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM2", "CEO", "Executive"],
+    },
+    {
+        "key": "xray-dfw-tm3",  # -> /reports/xray-dfw-tm3
+        "title": "XRay DFW TM3",
+        "description": "XRay DFW Mng locked to TM3 — KPIs, lanes, trends, risk and contract/spot split for TM3 only",
+        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM3 + leadership",
+        "category": "Executive",
+        "tags": ["dfw", "tm3", "x-ray", "management", "kpi", "otp", "otd"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM3", "CEO", "Executive"],
+    },
+    {
+        "key": "xray-dfw-tm4",  # -> /reports/xray-dfw-tm4
+        "title": "XRay DFW TM4",
+        "description": "XRay DFW Mng locked to TM4 — KPIs, lanes, trends, risk and contract/spot split for TM4 only",
+        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM4 + leadership",
+        "category": "Executive",
+        "tags": ["dfw", "tm4", "x-ray", "management", "kpi", "otp", "otd"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM4", "CEO", "Executive"],
+    },
+    {
         "key": "ceo-executive",  # -> /reports/ceo-executive
         "title": "CEO Executive",
         "description": "Executive 6-tab view: KPIs, trends, customers, weekly, risk, orders",

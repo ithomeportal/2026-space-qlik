@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
@@ -23,6 +24,31 @@ const XRAY_DFW_RETRY = {
     return failureCount < 2
   },
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+}
+
+// ---------------------------------------------------------------------------
+// API prefix context — default points at the cross-team `/custom/xray-dfw`
+// router. Per-team pages (e.g. /reports/xray-dfw-tm1) wrap their content in
+// <XrayDfwApiProvider prefix="custom/xray-dfw-tm1"> so every hook below
+// transparently hits the team-locked endpoints.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PREFIX = "custom/xray-dfw"
+
+const ApiPrefixContext = createContext<string>(DEFAULT_PREFIX)
+
+export function XrayDfwApiProvider({
+  prefix,
+  children,
+}: {
+  prefix: string
+  children: ReactNode
+}) {
+  return createElement(ApiPrefixContext.Provider, { value: prefix }, children)
+}
+
+function useApiPrefix() {
+  return useContext(ApiPrefixContext)
 }
 
 // ---------------------------------------------------------------------------
@@ -293,24 +319,28 @@ export interface XrayDfwLaneAnalysisRow {
 }
 
 // ---------------------------------------------------------------------------
-// Hooks
+// Hooks — every URL is built from the prefix in context so the same hooks
+// power the cross-team report (`/reports/xray-dfw-mng`) and the per-team
+// reports (`/reports/xray-dfw-tm{1..4}`).
 // ---------------------------------------------------------------------------
 
 export function useXrayDfwFilters() {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
-    queryKey: ["xray-dfw", "filters"],
-    queryFn: () => apiFetch<XrayDfwFilterOptions>("custom/xray-dfw/filters"),
+    queryKey: [prefix, "filters"],
+    queryFn: () => apiFetch<XrayDfwFilterOptions>(`${prefix}/filters`),
     staleTime: 30 * 60 * 1000,
   })
 }
 
 export function useXrayDfwKpis(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "kpis", f],
-    queryFn: () => apiFetch<XrayDfwKpis>(`custom/xray-dfw/kpis${dfwQs(f)}`),
+    queryKey: [prefix, "kpis", f],
+    queryFn: () => apiFetch<XrayDfwKpis>(`${prefix}/kpis${dfwQs(f)}`),
   })
 }
 
@@ -318,12 +348,13 @@ export function useXrayDfwTrio(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "trio", f],
+    queryKey: [prefix, "trio", f],
     queryFn: () =>
-      apiFetch<XrayDfwTrio>(`custom/xray-dfw/trio-tables${dfwQs({ range: "full", ...f })}`),
+      apiFetch<XrayDfwTrio>(`${prefix}/trio-tables${dfwQs({ range: "full", ...f })}`),
     staleTime: 5 * 60 * 1000,
   })
 }
@@ -332,31 +363,34 @@ export function useXrayDfwProjection(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "projection", f],
+    queryKey: [prefix, "projection", f],
     queryFn: () =>
-      apiFetch<XrayDfwProjection>(`custom/xray-dfw/projection${dfwQs({ range: "full", ...f })}`),
+      apiFetch<XrayDfwProjection>(`${prefix}/projection${dfwQs({ range: "full", ...f })}`),
     staleTime: 5 * 60 * 1000,
   })
 }
 
 export function useXrayDfwByCustomer(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "by-customer", f],
-    queryFn: () => apiFetch<XrayDfwCustomerRow[]>(`custom/xray-dfw/by-customer${dfwQs(f)}`),
+    queryKey: [prefix, "by-customer", f],
+    queryFn: () => apiFetch<XrayDfwCustomerRow[]>(`${prefix}/by-customer${dfwQs(f)}`),
   })
 }
 
 export function useXrayDfwByLane(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "by-lane", f],
-    queryFn: () => apiFetch<XrayDfwLaneRow[]>(`custom/xray-dfw/by-lane${dfwQs(f)}`),
+    queryKey: [prefix, "by-lane", f],
+    queryFn: () => apiFetch<XrayDfwLaneRow[]>(`${prefix}/by-lane${dfwQs(f)}`),
   })
 }
 
@@ -364,14 +398,13 @@ export function useXrayDfwAttrition(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "attrition", f],
+    queryKey: [prefix, "attrition", f],
     queryFn: () =>
-      apiFetch<XrayDfwAttritionRow[]>(
-        `custom/xray-dfw/attrition${dfwQs({ range: "full", ...f })}`,
-      ),
+      apiFetch<XrayDfwAttritionRow[]>(`${prefix}/attrition${dfwQs({ range: "full", ...f })}`),
   })
 }
 
@@ -379,13 +412,14 @@ export function useXrayDfwTeamsBreakdown(
   f: Pick<XrayDfwFilters, "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "teams-breakdown", f],
+    queryKey: [prefix, "teams-breakdown", f],
     queryFn: () =>
       apiFetch<XrayDfwTeamBreakdown>(
-        `custom/xray-dfw/teams-breakdown${dfwQs({ range: "full", ...f })}`,
+        `${prefix}/teams-breakdown${dfwQs({ range: "full", ...f })}`,
       ),
   })
 }
@@ -394,12 +428,13 @@ export function useXrayDfwTrends(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "trends", f],
+    queryKey: [prefix, "trends", f],
     queryFn: () =>
-      apiFetch<XrayDfwTrends>(`custom/xray-dfw/trends${dfwQs({ range: "full", ...f })}`),
+      apiFetch<XrayDfwTrends>(`${prefix}/trends${dfwQs({ range: "full", ...f })}`),
     staleTime: 5 * 60 * 1000,
   })
 }
@@ -408,24 +443,26 @@ export function useXrayDfwSummaryTable(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "summary-table", f],
+    queryKey: [prefix, "summary-table", f],
     queryFn: () =>
       apiFetch<XrayDfwSummaryTable>(
-        `custom/xray-dfw/summary-table${dfwQs({ range: "full", ...f })}`,
+        `${prefix}/summary-table${dfwQs({ range: "full", ...f })}`,
       ),
     staleTime: 5 * 60 * 1000,
   })
 }
 
 export function useXrayDfwRisk(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "risk", f],
-    queryFn: () => apiFetch<XrayDfwRisk>(`custom/xray-dfw/risk${dfwQs(f)}`),
+    queryKey: [prefix, "risk", f],
+    queryFn: () => apiFetch<XrayDfwRisk>(`${prefix}/risk${dfwQs(f)}`),
   })
 }
 
@@ -433,34 +470,36 @@ export function useXrayDfwContractSpot(
   f: Pick<XrayDfwFilters, "subTeams" | "customer">,
   enabled = true,
 ) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "contract-spot", f],
+    queryKey: [prefix, "contract-spot", f],
     queryFn: () =>
       apiFetch<XrayDfwContractSpot>(
-        `custom/xray-dfw/contract-spot${dfwQs({ range: "full", ...f })}`,
+        `${prefix}/contract-spot${dfwQs({ range: "full", ...f })}`,
       ),
     staleTime: 5 * 60 * 1000,
   })
 }
 
 export function useXrayDfwAllOrders(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "all-orders", f],
-    queryFn: () => apiFetch<XrayDfwAllOrder[]>(`custom/xray-dfw/all-orders${dfwQs(f)}`),
+    queryKey: [prefix, "all-orders", f],
+    queryFn: () => apiFetch<XrayDfwAllOrder[]>(`${prefix}/all-orders${dfwQs(f)}`),
   })
 }
 
 export function useXrayDfwLaneAnalysis(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: ["xray-dfw", "lane-analysis", f],
-    queryFn: () =>
-      apiFetch<XrayDfwLaneAnalysisRow[]>(`custom/xray-dfw/lane-analysis${dfwQs(f)}`),
+    queryKey: [prefix, "lane-analysis", f],
+    queryFn: () => apiFetch<XrayDfwLaneAnalysisRow[]>(`${prefix}/lane-analysis${dfwQs(f)}`),
   })
 }
 

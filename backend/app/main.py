@@ -40,6 +40,7 @@ from app.routers import (
     voip_calls,
     xray_corp,
     xray_dfw,
+    xray_dfw_team,
 )
 
 logger = logging.getLogger(__name__)
@@ -645,6 +646,8 @@ app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")
 app.include_router(xray_corp.router, prefix="/api")
 app.include_router(xray_dfw.router, prefix="/api")
+for _team_router in xray_dfw_team.team_routers:
+    app.include_router(_team_router, prefix="/api")
 app.include_router(ceo_executive.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")
