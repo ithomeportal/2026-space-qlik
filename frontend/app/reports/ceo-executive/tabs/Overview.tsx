@@ -11,6 +11,7 @@ import {
   type CeoTeamRow,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+import { marginCellClass } from "../margin-color"
 
 interface Props {
   filters: CeoFilters
@@ -30,8 +31,8 @@ export function Overview({ filters }: Props) {
     <div className="space-y-6">
       <CeoErrorBanner label="Overview" errors={[error]} />
 
-      {/* 6 primary KPIs */}
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      {/* 6 compact KPIs — sized to leave room for a 7th element on the row */}
+      <section className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6 xl:grid-cols-7">
         <Kpi label="Revenue" value={fmtUsd(d?.kpis.revenue)} tone="blue" loading={isLoading} />
         <Kpi label="Profit" value={fmtUsd(d?.kpis.profit)} tone="yellow" loading={isLoading} />
         <Kpi label="Loads" value={fmtCount(d?.kpis.loads)} tone="red" loading={isLoading} />
@@ -40,7 +41,13 @@ export function Overview({ filters }: Props) {
         <Kpi label="AVG P / L" value={fmtUsd(d?.kpis.avg_p_per_l)} tone="yellow" loading={isLoading} />
       </section>
 
-      {/* Profit-TM gauge */}
+      {/* Summary by Team + All Teams Performance side-by-side */}
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <SummaryByTeam rows={d?.summary_by_team ?? []} loading={isLoading} />
+        <AllTeamsPerformance rows={d?.all_teams_performance ?? []} loading={isLoading} />
+      </section>
+
+      {/* Profit-TM gauge — moved to end per Bruno feedback (2026-05-07) */}
       <section className="rounded-lg border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="flex items-baseline justify-between">
           <div className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
@@ -60,12 +67,6 @@ export function Overview({ filters }: Props) {
           {filters.team ? ` · Team: ${filters.team}` : " · All teams"}
         </div>
       </section>
-
-      {/* Summary by Team */}
-      <SummaryByTeam rows={d?.summary_by_team ?? []} loading={isLoading} />
-
-      {/* All Teams Performance */}
-      <AllTeamsPerformance rows={d?.all_teams_performance ?? []} loading={isLoading} />
     </div>
   )
 }
@@ -94,50 +95,46 @@ function SummaryByTeam({ rows, loading }: { rows: CeoTeamRow[]; loading?: boolea
           <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
         </div>
       ) : (
-        <table className="w-full text-[11px] tabular-nums">
-          <thead className="bg-[#D1FAE5] text-[#065F46]">
-            <tr>
-              <th className="px-2 py-1 text-left">Team</th>
-              <th className="px-1 py-1 text-right"># Customer</th>
-              <th className="px-1 py-1 text-right">Loads</th>
-              <th className="px-1 py-1 text-right">Revenue</th>
-              <th className="px-1 py-1 text-right">Profit</th>
-              <th className="px-1 py-1 text-right">Margin %</th>
-              <th className="px-1 py-1 text-right">AVG R / L</th>
-              <th className="px-1 py-1 text-right">AVG P / L</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="bg-[#A7F3D0] font-semibold">
-              <td className="px-2 py-1">Totals</td>
-              <td className="px-1 py-1 text-right">{fmtCount(tot.cust)}</td>
-              <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
-              <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
-              <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-              <td className="px-1 py-1 text-right">{fmtPct(margin)}</td>
-              <td className="px-1 py-1 text-right">{fmtUsd(rpl)}</td>
-              <td className="px-1 py-1 text-right">{fmtUsd(ppl)}</td>
-            </tr>
-            {rows.map((r) => {
-              const margBg =
-                r.margin_pct >= 15 ? "bg-[#D1FAE5] text-[#065F46]"
-                : r.margin_pct < 5 ? "bg-[#FEE2E2] text-[#991B1B]"
-                : ""
-              return (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10.5px] tabular-nums">
+            <thead className="bg-[#D1FAE5] text-[#065F46]">
+              <tr>
+                <th className="px-2 py-1 text-left">Team</th>
+                <th className="px-1 py-1 text-right"># Cust</th>
+                <th className="px-1 py-1 text-right">Loads</th>
+                <th className="px-1 py-1 text-right">Revenue</th>
+                <th className="px-1 py-1 text-right">Profit</th>
+                <th className="px-1 py-1 text-right">Margin %</th>
+                <th className="px-1 py-1 text-right">AVG R / L</th>
+                <th className="px-1 py-1 text-right">AVG P / L</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="bg-[#A7F3D0] font-semibold">
+                <td className="px-2 py-1">Totals</td>
+                <td className="px-1 py-1 text-right">{fmtCount(tot.cust)}</td>
+                <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
+                <td className={`px-1 py-1 text-right ${marginCellClass(margin)}`}>{fmtPct(margin)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(rpl)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(ppl)}</td>
+              </tr>
+              {rows.map((r) => (
                 <tr key={r.team} className="border-t border-[#F3F4F6]">
                   <td className="px-2 py-1">{r.team}</td>
                   <td className="px-1 py-1 text-right">{fmtCount(r.cust)}</td>
                   <td className="px-1 py-1 text-right">{fmtCount(r.loads)}</td>
                   <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
                   <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
-                  <td className={`px-1 py-1 text-right ${margBg}`}>{fmtPct(r.margin_pct)}</td>
+                  <td className={`px-1 py-1 text-right ${marginCellClass(r.margin_pct)}`}>{fmtPct(r.margin_pct)}</td>
                   <td className="px-1 py-1 text-right">{fmtUsd(r.avg_r_per_l)}</td>
                   <td className="px-1 py-1 text-right">{fmtUsd(r.avg_p_per_l)}</td>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   )
@@ -166,20 +163,20 @@ function AllTeamsPerformance({ rows, loading }: { rows: CeoAtpRow[]; loading?: b
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-[11px] tabular-nums">
+          <table className="w-full min-w-[760px] text-[10.5px] tabular-nums">
             <thead className="bg-[#DBEAFE] text-[#1E3A8A]">
               <tr>
                 <th className="px-2 py-1 text-left">Team</th>
                 <th className="px-1 py-1 text-right">Yd # L</th>
                 <th className="px-1 py-1 text-right">Yd $P</th>
                 <th className="px-1 py-1 text-right">%M (Ye)</th>
-                <th className="px-1 py-1 text-right">Week # L</th>
-                <th className="px-1 py-1 text-right">Week $P</th>
+                <th className="px-1 py-1 text-right">Wk # L</th>
+                <th className="px-1 py-1 text-right">Wk $P</th>
                 <th className="px-1 py-1 text-right">%M (We)</th>
-                <th className="px-1 py-1 text-right">Month # L</th>
-                <th className="px-1 py-1 text-right">Month $P</th>
+                <th className="px-1 py-1 text-right">Mo # L</th>
+                <th className="px-1 py-1 text-right">Mo $P</th>
                 <th className="px-1 py-1 text-right">%M (Mo)</th>
-                <th className="px-1 py-1 text-right">$P × # L</th>
+                <th className="px-1 py-1 text-right">$P × #L</th>
               </tr>
             </thead>
             <tbody>
@@ -239,10 +236,10 @@ function Kpi({
   loading?: boolean
 }) {
   return (
-    <div className={`rounded-lg border-2 ${KPI_TONES[tone]} bg-white p-3 text-center shadow-sm`}>
-      <div className="text-xs uppercase tracking-wider text-[#6B7280]">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums">
-        {loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : value}
+    <div className={`rounded-md border ${KPI_TONES[tone]} bg-white px-2 py-2 text-center shadow-sm`}>
+      <div className="text-[10px] uppercase tracking-wider text-[#6B7280]">{label}</div>
+      <div className="mt-0.5 text-base font-bold tabular-nums leading-tight">
+        {loading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : value}
       </div>
     </div>
   )

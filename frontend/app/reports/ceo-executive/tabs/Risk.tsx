@@ -12,6 +12,7 @@ import {
   type CeoWorstLane,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+import { SortableTh, useSortable } from "../sortable"
 
 interface Props {
   filters: CeoFilters
@@ -33,6 +34,7 @@ export function Risk({ filters }: Props) {
 }
 
 function WorstLanesTable({ rows, loading }: { rows: CeoWorstLane[]; loading?: boolean }) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<CeoWorstLane>(rows, "profit", "asc")
   const tot = rows.reduce(
     (acc, r) => ({
       loads: acc.loads + (r.loads ?? 0),
@@ -49,7 +51,7 @@ function WorstLanesTable({ rows, loading }: { rows: CeoWorstLane[]; loading?: bo
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">
-        Worst Margins by Lanes <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0</span>
+        Worst Margins by Lanes <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0 · click headers to sort</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -60,16 +62,16 @@ function WorstLanesTable({ rows, loading }: { rows: CeoWorstLane[]; loading?: bo
           <table className="w-full min-w-[1100px] text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-[#FEE2E2] text-[#991B1B]">
               <tr>
-                <th className="px-2 py-1 text-left">Customer</th>
-                <th className="px-2 py-1 text-left">Origin</th>
-                <th className="px-2 py-1 text-left">Destination</th>
-                <th className="px-1 py-1 text-right"># Loads</th>
-                <th className="px-1 py-1 text-right">$ Revenue</th>
-                <th className="px-1 py-1 text-right">$ Profit</th>
-                <th className="px-1 py-1 text-right">Margin %</th>
-                <th className="px-1 py-1 text-right">15% Diff+</th>
-                <th className="px-1 py-1 text-right">18% Diff+</th>
-                <th className="px-1 py-1 text-right">20% Diff+</th>
+                <SortableTh<CeoWorstLane> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Customer</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="origin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Origin</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="destination" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Destination</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="loads" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}># Loads</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="margin_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin %</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="diff_15" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>15% Diff+</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="diff_18" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>18% Diff+</SortableTh>
+                <SortableTh<CeoWorstLane> columnKey="diff_20" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>20% Diff+</SortableTh>
               </tr>
             </thead>
             <tbody>
@@ -83,7 +85,7 @@ function WorstLanesTable({ rows, loading }: { rows: CeoWorstLane[]; loading?: bo
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_18)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_20)}</td>
               </tr>
-              {rows.map((r, i) => (
+              {sorted.map((r, i) => (
                 <tr key={i} className="border-t border-[#F3F4F6]">
                   <td className="px-2 py-1 truncate max-w-[180px]">{r.customer}</td>
                   <td className="px-2 py-1 truncate max-w-[160px]">{r.origin}</td>
@@ -106,6 +108,7 @@ function WorstLanesTable({ rows, loading }: { rows: CeoWorstLane[]; loading?: bo
 }
 
 function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: boolean }) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<CeoNegOrder>(rows, "profit", "asc")
   const tot = rows.reduce(
     (acc, r) => ({
       revenue: acc.revenue + (r.revenue ?? 0),
@@ -119,7 +122,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">
-        Negative Loads Totals by Order <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0</span>
+        Negative Loads Totals by Order <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0 · click headers to sort</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -130,15 +133,15 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
           <table className="w-full min-w-[1100px] text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-[#FEE2E2] text-[#991B1B]">
               <tr>
-                <th className="px-2 py-1 text-left">Order</th>
-                <th className="px-2 py-1 text-left">Customer</th>
-                <th className="px-2 py-1 text-left">Carrier</th>
-                <th className="px-2 py-1 text-left">Origin</th>
-                <th className="px-2 py-1 text-left">Destination</th>
-                <th className="px-1 py-1 text-right">$ Revenue</th>
-                <th className="px-1 py-1 text-right">$ Profit</th>
-                <th className="px-1 py-1 text-right">Margin %</th>
-                <th className="px-1 py-1 text-right">Conc %</th>
+                <SortableTh<CeoNegOrder> columnKey="id" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Order</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Customer</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="carrier" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Carrier</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="origin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Origin</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="destination" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Destination</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="margin_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin %</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="conc_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Conc %</SortableTh>
               </tr>
             </thead>
             <tbody>
@@ -149,7 +152,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
                 <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
                 <td className="px-1 py-1 text-right">{fmtPct(tot.conc_pct)}</td>
               </tr>
-              {rows.map((r) => (
+              {sorted.map((r) => (
                 <tr key={r.id} className="border-t border-[#F3F4F6]">
                   <td className="px-2 py-1">{r.id}</td>
                   <td className="px-2 py-1 truncate max-w-[180px]">{r.customer}</td>
@@ -171,6 +174,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
 }
 
 function NegCustomersTable({ rows, loading }: { rows: CeoNegCustomer[]; loading?: boolean }) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<CeoNegCustomer>(rows, "profit", "asc")
   const tot = rows.reduce(
     (acc, r) => ({
       loads: acc.loads + (r.loads ?? 0),
@@ -183,7 +187,7 @@ function NegCustomersTable({ rows, loading }: { rows: CeoNegCustomer[]; loading?
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">
-        Negative Loads Total Amount by Customer <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0</span>
+        Negative Loads Total Amount by Customer <span className="text-xs font-normal opacity-75">· margin_amt &lt; 0 · click headers to sort</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -194,11 +198,11 @@ function NegCustomersTable({ rows, loading }: { rows: CeoNegCustomer[]; loading?
           <table className="w-full text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-[#FEE2E2] text-[#991B1B]">
               <tr>
-                <th className="px-2 py-1 text-left">Customer</th>
-                <th className="px-1 py-1 text-right"># Loads</th>
-                <th className="px-1 py-1 text-right">$ Revenue</th>
-                <th className="px-1 py-1 text-right">$ Profit</th>
-                <th className="px-1 py-1 text-right">Conc %</th>
+                <SortableTh<CeoNegCustomer> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Customer</SortableTh>
+                <SortableTh<CeoNegCustomer> columnKey="loads" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}># Loads</SortableTh>
+                <SortableTh<CeoNegCustomer> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
+                <SortableTh<CeoNegCustomer> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
+                <SortableTh<CeoNegCustomer> columnKey="conc_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Conc %</SortableTh>
               </tr>
             </thead>
             <tbody>
@@ -209,7 +213,7 @@ function NegCustomersTable({ rows, loading }: { rows: CeoNegCustomer[]; loading?
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
                 <td className="px-1 py-1 text-right">{fmtPct(tot.conc_pct)}</td>
               </tr>
-              {rows.map((r) => (
+              {sorted.map((r) => (
                 <tr key={r.customer} className="border-t border-[#F3F4F6]">
                   <td className="px-2 py-1 truncate max-w-[260px]">{r.customer}</td>
                   <td className="px-1 py-1 text-right">{fmtCount(r.loads)}</td>

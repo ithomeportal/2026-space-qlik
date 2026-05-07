@@ -19,6 +19,7 @@ import {
   type CeoTop5Row,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+import { marginCellClass } from "../margin-color"
 
 interface Props {
   filters: CeoFilters
@@ -125,27 +126,21 @@ function CustomerTable({
                 <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
+                <td className={`px-1 py-1 text-right ${marginCellClass(totMargin)}`}>{fmtPct(totMargin)}</td>
                 <td className="px-1 py-1 text-right">{fmtPct(tot.conc_pct)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(totPerL)}</td>
               </tr>
-              {rows.map((r) => {
-                const margBg =
-                  r.margin_pct >= 15 ? "text-[#065F46] font-semibold"
-                  : r.margin_pct < 5 ? "text-[#991B1B] font-semibold"
-                  : ""
-                return (
-                  <tr key={r.customer} className="border-t border-[#F3F4F6]">
-                    <td className="px-2 py-1 truncate max-w-[260px]">{r.customer}</td>
-                    <td className="px-1 py-1 text-right">{fmtCount(r.loads)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
-                    <td className={`px-1 py-1 text-right ${margBg}`}>{fmtPct(r.margin_pct)}</td>
-                    <td className="px-1 py-1 text-right">{fmtPct(r.conc_pct)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.avg_p_per_l)}</td>
-                  </tr>
-                )
-              })}
+              {rows.map((r) => (
+                <tr key={r.customer} className="border-t border-[#F3F4F6]">
+                  <td className="px-2 py-1 truncate max-w-[260px]">{r.customer}</td>
+                  <td className="px-1 py-1 text-right">{fmtCount(r.loads)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
+                  <td className={`px-1 py-1 text-right ${marginCellClass(r.margin_pct)}`}>{fmtPct(r.margin_pct)}</td>
+                  <td className="px-1 py-1 text-right">{fmtPct(r.conc_pct)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.avg_p_per_l)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

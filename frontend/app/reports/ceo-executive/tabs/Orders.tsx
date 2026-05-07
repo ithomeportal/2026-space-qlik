@@ -11,6 +11,8 @@ import {
   type CeoLaneAnalysis,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+import { marginCellClass } from "../margin-color"
+import { SortableTh, useSortable } from "../sortable"
 
 interface Props {
   filters: CeoFilters
@@ -30,6 +32,7 @@ export function Orders({ filters }: Props) {
 }
 
 function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boolean }) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<CeoLaneAnalysis>(rows, "profit", "desc")
   const tot = rows.reduce(
     (acc, r) => ({
       loads: acc.loads + (r.loads ?? 0),
@@ -48,7 +51,7 @@ function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boole
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#EDE9FE] px-3 py-2 text-sm font-semibold text-[#5B21B6]">
-        Lane Production Analysis
+        Lane Production Analysis <span className="text-xs font-normal opacity-75">· click headers to sort</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -59,19 +62,19 @@ function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boole
           <table className="w-full min-w-[1400px] text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-[#EDE9FE] text-[#5B21B6]">
               <tr>
-                <th className="px-2 py-1 text-left">Customer</th>
-                <th className="px-2 py-1 text-left">Origin</th>
-                <th className="px-2 py-1 text-left">Destination</th>
-                <th className="px-1 py-1 text-right">Conc %</th>
-                <th className="px-1 py-1 text-right"># Loads</th>
-                <th className="px-1 py-1 text-right">$ Revenue</th>
-                <th className="px-1 py-1 text-right">$ Profit</th>
-                <th className="px-1 py-1 text-right">Margin %</th>
+                <SortableTh<CeoLaneAnalysis> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Customer</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="origin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Origin</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="destination" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Destination</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="conc_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Conc %</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="loads" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}># Loads</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="margin_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin %</SortableTh>
                 <th className="px-1 py-1 text-right">AVG R / L</th>
                 <th className="px-1 py-1 text-right">AVG P / L</th>
-                <th className="px-1 py-1 text-right">15% Diff+</th>
-                <th className="px-1 py-1 text-right">18% Diff+</th>
-                <th className="px-1 py-1 text-right">20% Diff+</th>
+                <SortableTh<CeoLaneAnalysis> columnKey="diff_15" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>15% Diff+</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="diff_18" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>18% Diff+</SortableTh>
+                <SortableTh<CeoLaneAnalysis> columnKey="diff_20" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>20% Diff+</SortableTh>
               </tr>
             </thead>
             <tbody>
@@ -81,18 +84,14 @@ function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boole
                 <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
+                <td className={`px-1 py-1 text-right ${marginCellClass(totMargin)}`}>{fmtPct(totMargin)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(rpl)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(ppl)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_15)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_18)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_20)}</td>
               </tr>
-              {rows.map((r, i) => {
-                const margBg =
-                  r.margin_pct >= 15 ? "text-[#065F46] font-semibold"
-                  : r.margin_pct < 5 ? "text-[#991B1B] font-semibold"
-                  : ""
+              {sorted.map((r, i) => {
                 const avgRpl = r.loads > 0 ? r.revenue / r.loads : 0
                 const avgPpl = r.loads > 0 ? r.profit / r.loads : 0
                 return (
@@ -104,7 +103,7 @@ function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boole
                     <td className="px-1 py-1 text-right">{fmtCount(r.loads)}</td>
                     <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
                     <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
-                    <td className={`px-1 py-1 text-right ${margBg}`}>{fmtPct(r.margin_pct)}</td>
+                    <td className={`px-1 py-1 text-right ${marginCellClass(r.margin_pct)}`}>{fmtPct(r.margin_pct)}</td>
                     <td className="px-1 py-1 text-right">{fmtUsd(avgRpl)}</td>
                     <td className="px-1 py-1 text-right">{fmtUsd(avgPpl)}</td>
                     <td className="px-1 py-1 text-right">{fmtUsd(r.diff_15)}</td>
@@ -122,6 +121,7 @@ function LanePanel({ rows, loading }: { rows: CeoLaneAnalysis[]; loading?: boole
 }
 
 function AllOrdersPanel({ rows, loading }: { rows: CeoAllOrder[]; loading?: boolean }) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<CeoAllOrder>(rows, "departure", "desc")
   const fmtDeparture = (iso: string | null) => {
     if (!iso) return "—"
     const d = new Date(iso)
@@ -142,7 +142,7 @@ function AllOrdersPanel({ rows, loading }: { rows: CeoAllOrder[]; loading?: bool
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEF3C7] px-3 py-2 text-sm font-semibold text-[#92400E]">
-        All Orders <span className="text-xs font-normal opacity-75">· first 1,000 rows by departure desc</span>
+        All Orders <span className="text-xs font-normal opacity-75">· first 1,000 rows by departure desc · click headers to sort</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -153,19 +153,19 @@ function AllOrdersPanel({ rows, loading }: { rows: CeoAllOrder[]; loading?: bool
           <table className="w-full min-w-[1600px] text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-[#FEF3C7] text-[#92400E]">
               <tr>
-                <th className="px-2 py-1 text-left">Team</th>
-                <th className="px-2 py-1 text-left">Order</th>
-                <th className="px-2 py-1 text-left">Customer</th>
-                <th className="px-2 py-1 text-left">Carrier</th>
-                <th className="px-2 py-1 text-left">Origin</th>
-                <th className="px-2 py-1 text-left">Destination</th>
-                <th className="px-2 py-1 text-left">Departure</th>
-                <th className="px-1 py-1 text-right">$ Revenue</th>
-                <th className="px-1 py-1 text-right">$ Profit</th>
-                <th className="px-1 py-1 text-right">Margin %</th>
-                <th className="px-1 py-1 text-right">15% Diff+</th>
-                <th className="px-1 py-1 text-right">18% Diff+</th>
-                <th className="px-1 py-1 text-right">20% Diff+</th>
+                <SortableTh<CeoAllOrder> columnKey="team" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Team</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="id" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Order</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Customer</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="carrier" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Carrier</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="origin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Origin</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="destination" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Destination</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="departure" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Departure</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="margin_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin %</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="diff_15" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>15% Diff+</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="diff_18" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>18% Diff+</SortableTh>
+                <SortableTh<CeoAllOrder> columnKey="diff_20" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>20% Diff+</SortableTh>
               </tr>
             </thead>
             <tbody>
@@ -173,34 +173,28 @@ function AllOrdersPanel({ rows, loading }: { rows: CeoAllOrder[]; loading?: bool
                 <td className="px-2 py-1" colSpan={7}>Totals ({rows.length})</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
+                <td className={`px-1 py-1 text-right ${marginCellClass(totMargin)}`}>{fmtPct(totMargin)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_15)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_18)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_20)}</td>
               </tr>
-              {rows.map((r) => {
-                const margBg =
-                  r.margin_pct < 0 ? "text-[#991B1B] font-semibold"
-                  : r.margin_pct >= 15 ? "text-[#065F46] font-semibold"
-                  : ""
-                return (
-                  <tr key={r.id} className="border-t border-[#F3F4F6]">
-                    <td className="px-2 py-1">{r.team}</td>
-                    <td className="px-2 py-1">{r.id}</td>
-                    <td className="px-2 py-1 truncate max-w-[180px]">{r.customer}</td>
-                    <td className="px-2 py-1 truncate max-w-[160px]">{r.carrier}</td>
-                    <td className="px-2 py-1 truncate max-w-[130px]">{r.origin}</td>
-                    <td className="px-2 py-1 truncate max-w-[130px]">{r.destination}</td>
-                    <td className="px-2 py-1">{fmtDeparture(r.departure)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
-                    <td className={`px-1 py-1 text-right ${margBg}`}>{fmtPct(r.margin_pct)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.diff_15)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.diff_18)}</td>
-                    <td className="px-1 py-1 text-right">{fmtUsd(r.diff_20)}</td>
-                  </tr>
-                )
-              })}
+              {sorted.map((r) => (
+                <tr key={r.id} className="border-t border-[#F3F4F6]">
+                  <td className="px-2 py-1">{r.team}</td>
+                  <td className="px-2 py-1">{r.id}</td>
+                  <td className="px-2 py-1 truncate max-w-[180px]">{r.customer}</td>
+                  <td className="px-2 py-1 truncate max-w-[160px]">{r.carrier}</td>
+                  <td className="px-2 py-1 truncate max-w-[130px]">{r.origin}</td>
+                  <td className="px-2 py-1 truncate max-w-[130px]">{r.destination}</td>
+                  <td className="px-2 py-1">{fmtDeparture(r.departure)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.profit)}</td>
+                  <td className={`px-1 py-1 text-right ${marginCellClass(r.margin_pct)}`}>{fmtPct(r.margin_pct)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.diff_15)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.diff_18)}</td>
+                  <td className="px-1 py-1 text-right">{fmtUsd(r.diff_20)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

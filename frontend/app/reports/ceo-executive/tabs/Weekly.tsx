@@ -5,6 +5,7 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   ResponsiveContainer,
@@ -20,6 +21,26 @@ import {
   useCeoWeekly,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+
+// Compact label formatters for Recharts <LabelList />. Recharts v3 typed
+// the formatter signature loosely (string | number | undefined), so accept any.
+const fmtKLabel = (v: unknown) => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n === 0) return ""
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (Math.abs(n) >= 1_000) return `${Math.round(n / 1000)}k`
+  return `${Math.round(n)}`
+}
+const fmtIntLabel = (v: unknown) => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n === 0) return ""
+  return String(Math.round(n))
+}
+const fmtPct1Label = (v: unknown) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ""
+  return `${n.toFixed(1)}%`
+}
 
 export function Weekly() {
   const { data, isLoading, error } = useCeoWeekly()
@@ -41,8 +62,8 @@ export function Weekly() {
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Panel title="Loads vs Revenue by Week — Last 10 Weeks" loading={isLoading}>
-          <ResponsiveContainer width="100%" height={260}>
-            <ComposedChart data={weeks}>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={weeks} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis
@@ -55,7 +76,9 @@ export function Weekly() {
                 name === "Revenue" ? fmtUsd(Number(v)) : String(v)
               } />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="left" dataKey="revenue" fill="#0F766E" name="Revenue" barSize={32} />
+              <Bar yAxisId="left" dataKey="revenue" fill="#0F766E" name="Revenue" barSize={32}>
+                <LabelList dataKey="revenue" position="top" fontSize={10} fill="#134E4A" formatter={fmtKLabel} />
+              </Bar>
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -63,14 +86,16 @@ export function Weekly() {
                 stroke="#DC2626"
                 name="Loads"
                 dot={{ r: 3 }}
-              />
+              >
+                <LabelList dataKey="loads" position="top" fontSize={10} fill="#991B1B" formatter={fmtIntLabel} />
+              </Line>
             </ComposedChart>
           </ResponsiveContainer>
         </Panel>
 
         <Panel title="Profit & Margin % by Week — Last 10 Weeks" loading={isLoading}>
-          <ResponsiveContainer width="100%" height={260}>
-            <ComposedChart data={weeks}>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={weeks} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis
@@ -88,7 +113,9 @@ export function Weekly() {
                 name === "Profit" ? fmtUsd(Number(v)) : `${Number(v).toFixed(2)}%`
               } />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="left" dataKey="profit" fill="#CA8A04" name="Profit" barSize={32} />
+              <Bar yAxisId="left" dataKey="profit" fill="#CA8A04" name="Profit" barSize={32}>
+                <LabelList dataKey="profit" position="top" fontSize={10} fill="#854D0E" formatter={fmtKLabel} />
+              </Bar>
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -96,7 +123,9 @@ export function Weekly() {
                 stroke="#9333EA"
                 name="% Margin"
                 dot={{ r: 3 }}
-              />
+              >
+                <LabelList dataKey="margin_pct" position="top" fontSize={10} fill="#6B21A8" formatter={fmtPct1Label} />
+              </Line>
             </ComposedChart>
           </ResponsiveContainer>
         </Panel>
