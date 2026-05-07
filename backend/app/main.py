@@ -39,6 +39,7 @@ from app.routers import (
     track_award_loads,
     voip_calls,
     xray_corp,
+    xray_dfw,
 )
 
 logger = logging.getLogger(__name__)
@@ -643,6 +644,7 @@ app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")
 app.include_router(xray_corp.router, prefix="/api")
+app.include_router(xray_dfw.router, prefix="/api")
 app.include_router(ceo_executive.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")

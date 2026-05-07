@@ -16,6 +16,7 @@ export const REPORT_ACCESS = {
   "esavings-carriers": ["CEO", "Executive", "Procurement", "Finance", "CORP"],
   "budget-followup-2026": ["CEO", "Executive", "Operations", "Finance", "CORP", "DFW"],
   "xray-corp-mng": ["CEO", "Executive", "CORP", "Operations", "Finance"],
+  "xray-dfw-mng": ["CEO", "Executive", "DFW", "Operations", "Finance"],
   "ceo-executive": ["CEO"],
   "hr-access-doors": ["CEO", "Executive", "HR", "IT"],
   "dfw-access-doors": ["DFW", "DFW-Assistent", "DFW KAM", "Assitent OPs manager"],

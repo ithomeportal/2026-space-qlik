@@ -62,6 +62,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "Operations", "Finance"],
     },
     {
+        "key": "xray-dfw-mng",  # -> /reports/xray-dfw-mng
+        "title": "XRay DFW Mng",
+        "description": "DFW management X-Ray — KPIs, sub-teams TM1–TM4, lanes, trends, risk and contract/spot split",
+        "note": "Scope: TEAM-DFW · sub-teams TM1–TM4 · company TMS/TMS3 · excludes UNILINK & OILTEX · Profit-TM from v4 directly · 6 tabs",
+        "category": "Executive",
+        "tags": ["dfw", "x-ray", "management", "kpi", "otp", "otd", "lanes", "teams"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "DFW", "Operations", "Finance"],
+    },
+    {
         "key": "ceo-executive",  # -> /reports/ceo-executive
         "title": "CEO Executive",
         "description": "Executive 6-tab view: KPIs, trends, customers, weekly, risk, orders",
