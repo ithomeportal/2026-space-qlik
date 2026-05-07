@@ -36,9 +36,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-ATTRITION_ROLES = ("CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance")
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2025, 1, 1)  # PDF base filter
 
@@ -194,7 +192,7 @@ def _weekly_cte(scope_where: str, weeks_back: int = WEEKS_HISTORY) -> str:
 async def filters(
     request: Request,
     response: Response,
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -242,7 +240,7 @@ async def filters(
 async def freshness(
     request: Request,
     response: Response,
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = "public, max-age=120"
@@ -293,7 +291,7 @@ async def summary(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -459,7 +457,7 @@ async def weekly_trends(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -579,7 +577,7 @@ async def pivot(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -681,7 +679,7 @@ async def reactive_summary(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Returns per (team, customer) row:
        - avg_loads_l8w / l2_4w / l5_9w
@@ -871,7 +869,7 @@ async def lane_summary(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Per (team, customer, lane, contract_type) reactive aggregation.
 
@@ -1029,7 +1027,7 @@ async def wow_variation(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ATTRITION_ROLES)),
+    _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Profit variation: SUM(margin LW) − SUM(margin LW-1) per team + customer.
 

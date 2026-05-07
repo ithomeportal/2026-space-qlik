@@ -44,9 +44,7 @@ import {
   type VoipFilters,
   type VoipRange,
 } from "@/lib/voip-calls-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -82,9 +80,9 @@ const PAGE_LIMIT = 200
 
 export default function VoipCallsLogsPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["voip-calls-logs"]]}>
+    <ReportGuard reportKey="voip-calls-logs">
       <VoipCallsLogsContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

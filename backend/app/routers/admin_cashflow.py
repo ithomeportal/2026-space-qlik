@@ -52,18 +52,8 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-
-ADMIN_CASHFLOW_ROLES = (
-    "CEO",
-    "Executive",
-    "Finance",
-    "CORP",
-    "DFW",
-    "Operations",
-    "AdminFinance",
-)
 
 # Bruno's scope tuples — kept verbatim from the PDF.
 ALL_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
@@ -221,7 +211,7 @@ def _date_fragment(alias: str, s: date, e: date, params: list) -> str:
 @router.get("/facets")
 async def facets(
     request: Request,
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     today = _today_clamped()
@@ -294,7 +284,7 @@ async def kpis(
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract_type: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -422,7 +412,7 @@ async def sparklines(
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract_type: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     """12 ISO-week trend for the 3 % KPIs.
 
@@ -541,7 +531,7 @@ async def delivered_not_billed(
     sort: str = Query("delivered_asc"),  # oldest unbilled first = most actionable
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -662,7 +652,7 @@ async def ready_not_billed(
     sort: str = Query("ship_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -799,7 +789,7 @@ async def aging_delivery_vs_bill(
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -871,7 +861,7 @@ async def aging_bol_vs_bill(
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -942,7 +932,7 @@ async def aging_carrinv_vs_bill(
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -1015,7 +1005,7 @@ async def aging_buckets(
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract_type: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     """Bucket the delivery-to-bill day delta into 0-3 / 4-7 / 8-10 / 11-15 / >15."""
     pool = get_datalake_gold_pool(request)
@@ -1081,7 +1071,7 @@ async def top_delayed_customers(
     customer: Optional[str] = Query(None),
     contract_type: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=50),
-    _user: dict = Depends(require_tag_role(*ADMIN_CASHFLOW_ROLES)),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
     """Customers ranked by $ revenue on loads where bill - delivery > 10 days."""
     pool = get_datalake_gold_pool(request)

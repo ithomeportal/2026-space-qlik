@@ -38,7 +38,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.ops_margins import (
     ALL_COMPANIES,
     ALL_TEAMS,
@@ -46,7 +46,6 @@ from app.routers.ops_margins import (
     DFW_SUB_TEAMS,
     DFW_TEAM,
     OPEN_STATUSES,
-    OPS_ROLES,
     YEAR_END,
     YEAR_START,
     _bind_scope,
@@ -113,7 +112,7 @@ async def filters(
     division: Optional[str] = Query(None),
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     """Static filter shape — no customer/origin/destination dropdowns here."""
     return {
@@ -145,7 +144,7 @@ async def panel_summary(
     division: Optional[str] = Query(None),
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -209,7 +208,7 @@ async def concentration(
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
     top: int = Query(5, ge=3, le=20),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -318,7 +317,7 @@ async def by_customer(
     sort: str = Query("profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -400,7 +399,7 @@ async def by_customer_diff(
     sort: str = Query("p2_profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -530,7 +529,7 @@ async def by_lane(
     sort: str = Query("profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -613,7 +612,7 @@ async def by_lane_diff(
     sort: str = Query("p2_profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -730,7 +729,7 @@ def _last_12m_bounds(today: date) -> tuple[date, date]:
 @router.get("/trend-12m")
 async def trend_12m(
     request: Request,
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     today = cst_today()
     cache_key = today.isoformat()
@@ -807,7 +806,7 @@ async def customer_revenue_margin(
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
     top: int = Query(20, ge=5, le=50),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -876,7 +875,7 @@ async def orders_window(
     sort: str = Query("date_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -980,7 +979,7 @@ async def orders_window(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-direct-compare")),
 ):
     pool = get_datalake_gold_pool(request)
     row = await pool.fetchrow(

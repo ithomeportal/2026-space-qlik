@@ -34,9 +34,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-ROLES = ("CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance")
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 ALL_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
 COMPANIES = ("TMS", "TMS3")
@@ -147,7 +145,7 @@ def _days_bucket_having(bucket: Optional[str]) -> Optional[str]:
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("sales-attrition-to-ops")),
 ):
     """Available teams + distinct customer list (within scope, 13-month floor)."""
     pool = get_datalake_gold_pool(request)
@@ -198,7 +196,7 @@ async def details(
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("sales-attrition-to-ops")),
 ):
     """Per-customer aggregate rows + grand totals + 8-week #Loads sparkline.
 
@@ -389,7 +387,7 @@ async def trend(
     response: Response,
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("sales-attrition-to-ops")),
 ):
     """Last 13 months (incl. current) — #Loads / $Profit / %Margin.
 

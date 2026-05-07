@@ -26,9 +26,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_admin, require_tag_role
-
-LOSSES_ROLES = ("CEO", "Executive", "CORP", "DFW", "Operations", "Finance")
+from app.routers.deps import get_datalake_gold_pool, require_admin, require_report_access
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -148,7 +146,7 @@ def _lane_expr(alias: str) -> str:
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Available teams + distinct customer list (within scope, year-limited)."""
     pool = get_datalake_gold_pool(request)
@@ -195,7 +193,7 @@ async def summary(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -276,7 +274,7 @@ async def by_lane(
     threshold_1: float = Query(0.15, ge=0.0, le=1.0),
     threshold_2: float = Query(0.18, ge=0.0, le=1.0),
     threshold_3: float = Query(0.20, ge=0.0, le=1.0),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Per-customer + per-lane leak view.
 
@@ -413,7 +411,7 @@ async def by_customer(
     sort: str = Query("profit_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -492,7 +490,7 @@ async def top_lanes_combo(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=50),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -552,7 +550,7 @@ async def by_day(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Daily revenue/profit/loads. Respects the user's date window."""
     pool = get_datalake_gold_pool(request)
@@ -602,7 +600,7 @@ async def by_week(
     request: Request,
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Weekly series — STICKY last 8 weeks (matches Bruno's Qlik expression)."""
     pool = get_datalake_gold_pool(request)
@@ -656,7 +654,7 @@ async def by_month(
     request: Request,
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Monthly series — STICKY last 6 months (matches Bruno's Qlik expression)."""
     pool = get_datalake_gold_pool(request)
@@ -726,7 +724,7 @@ async def orders(
     sort: str = Query("date_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -818,7 +816,7 @@ async def orders(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Latest ``updated_dt`` and row count across the whole scope.
 
@@ -867,7 +865,7 @@ async def lane_trend(
     days: int = Query(60, ge=7, le=365),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Per-day totals for a single lane over the last ``days`` days.
 
@@ -1060,7 +1058,7 @@ async def weekly_movers(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     top_n: int = Query(10, ge=3, le=50),
-    _user: dict = Depends(require_tag_role(*LOSSES_ROLES)),
+    _user: dict = Depends(require_report_access("losses-lanes")),
 ):
     """Customer+Lane pairs whose rank in top-N losses changed week-over-week.
 

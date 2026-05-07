@@ -41,19 +41,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
-from app.routers.deps import get_automations_pool, require_tag_role
-
-# Approved by Diego 2026-04-27 (PDF spec review).
-ROLES = (
-    "CEO",
-    "Executive",
-    "Sales",
-    "Procurement",
-    "Operations",
-    "Finance",
-    "CORP",
-    "DFW",
-)
+from app.routers.deps import get_automations_pool, require_report_access
 
 router = APIRouter(
     tags=["track-award-loads"],
@@ -169,7 +157,7 @@ def _cache_key(*parts) -> str:
 async def filters(
     request: Request,
     response: Response,
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     """Distinct values for the 4 filter pills (single round-trip)."""
     cached = _cache_get("filters")
@@ -220,7 +208,7 @@ async def kpis(
     division: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     award_name: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     """Compact KPI payload covering all four containers (Lanes / Volume / Profit / Carrier Cost)."""
     s_list = _parse_csv(status)
@@ -349,7 +337,7 @@ async def by_division(
     division: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     award_name: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     s_list = _parse_csv(status)
     d_list = _parse_csv(division)
@@ -404,7 +392,7 @@ async def by_customer(
     division: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     award_name: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     s_list = _parse_csv(status)
     d_list = _parse_csv(division)
@@ -461,7 +449,7 @@ async def by_customer_award(
     division: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     award_name: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     s_list = _parse_csv(status)
     d_list = _parse_csv(division)
@@ -531,7 +519,7 @@ async def by_award_lane(
     customer_id: Optional[str] = Query(None),
     award_name: Optional[str] = Query(None),
     sort: str = Query("days_asc"),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     s_list = _parse_csv(status)
     d_list = _parse_csv(division)
@@ -745,7 +733,7 @@ async def by_award_lane(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("track-award-loads")),
 ):
     """Returns the latest snapshot date and count of primary-award rows."""
     pool = get_automations_pool(request)

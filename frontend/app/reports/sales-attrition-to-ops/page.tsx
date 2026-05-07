@@ -16,9 +16,7 @@ import {
 } from "@/lib/sales-attrition-to-ops-api"
 import { ErrorBanner } from "./ErrorBanner"
 import { fmtInt, fmtMoney, fmtPct, fmtDate } from "./format"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 const ALL_TEAMS = [
   "TEAM1",
   "TEAM2",
@@ -764,7 +762,7 @@ function KpiCard({
 
 export default function SaopPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["sales-attrition-to-ops"]]}>
+    <ReportGuard reportKey="sales-attrition-to-ops">
       <Suspense
         fallback={
           <div className="flex min-h-[60vh] items-center justify-center text-xs text-[#6B7280]">
@@ -775,6 +773,6 @@ export default function SaopPage() {
       >
         <SaopContent />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }

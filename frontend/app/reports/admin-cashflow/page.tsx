@@ -10,8 +10,7 @@ import {
   Truck,
   X,
 } from "lucide-react"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
+import { ReportGuard } from "@/components/ReportGuard"
 import {
   useAdminCashflowFacets,
   useAdminCashflowKpis,
@@ -392,7 +391,7 @@ function AdminCashflowContent() {
 
 export default function AdminCashflowPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["admin-cashflow"]]}>
+    <ReportGuard reportKey="admin-cashflow">
       <Suspense
         fallback={
           <div className="flex h-[60vh] items-center justify-center text-[#6B7280]">
@@ -402,6 +401,6 @@ export default function AdminCashflowPage() {
       >
         <AdminCashflowContent />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }

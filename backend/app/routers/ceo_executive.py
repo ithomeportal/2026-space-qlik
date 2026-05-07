@@ -63,10 +63,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-# Roles allowed. Admin is always bypassed by require_tag_role.
-CEO_ROLES = ("CEO",)
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -343,7 +340,7 @@ def _production_cte(start_pos: int, end_pos: int) -> str:
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     rows = await pool.fetch(
@@ -399,7 +396,7 @@ async def overview(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -682,7 +679,7 @@ async def overview(
 @router.get("/trends")
 async def trends(
     request: Request,
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -788,7 +785,7 @@ async def customers(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -987,7 +984,7 @@ async def customers(
 @router.get("/weekly")
 async def weekly(
     request: Request,
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -1089,7 +1086,7 @@ async def risk(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -1280,7 +1277,7 @@ async def orders(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CEO_ROLES)),
+    _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)

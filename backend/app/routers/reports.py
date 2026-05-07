@@ -80,6 +80,49 @@ async def list_reports(
     }
 
 
+@router.get("/reports/access/{report_key}")
+async def report_access(
+    report_key: str,
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    """Return whether the current user can view a code-made report and which TagRoles grant access.
+
+    Powers the frontend ``<ReportGuard reportKey="..."/>`` so the access banner
+    always reflects the live role list managed via ``/admin/reports``.
+    """
+    pool = get_pool(request)
+    rows = await pool.fetch(
+        """
+        SELECT ro.name
+        FROM reports r
+        JOIN role_report_access rra ON rra.report_id = r.id
+        JOIN roles ro ON ro.id = rra.role_id
+        WHERE r.custom_path = $1 AND r.is_active = TRUE
+        ORDER BY ro.name
+        """,
+        f"/reports/{report_key}",
+    )
+    allowed_names = [r["name"] for r in rows]
+    user_roles_lower = {r.lower() for r in user.get("roles", [])}
+    is_admin = "admin" in user_roles_lower
+    allowed_lower = {n.lower() for n in allowed_names}
+    has_access = is_admin or bool(user_roles_lower & allowed_lower)
+    # Hide internal singletons from the displayed banner so we don't tell users
+    # to "ask for admin access".
+    display_roles = [
+        n for n in allowed_names if n.lower() not in ("admin", "super_admin")
+    ]
+    return {
+        "success": True,
+        "data": {
+            "key": report_key,
+            "allowed": has_access,
+            "roles": display_roles,
+        },
+    }
+
+
 @router.get("/reports/trending")
 async def trending_reports(
     request: Request,

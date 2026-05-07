@@ -33,9 +33,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-XRAY_ROLES = ("CEO", "Executive", "CORP", "Operations", "Finance")
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -237,7 +235,7 @@ def _week_bounds(today: date) -> tuple[date, date, date, date]:
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Teams + distinct customer list in scope."""
     pool = get_datalake_gold_pool(request)
@@ -283,7 +281,7 @@ async def kpis(
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Top KPIs + Profit-TM + Savings trio.
 
@@ -451,7 +449,7 @@ async def trio_tables(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Yesterday / This Week / This Month team-summary triplet.
 
@@ -550,7 +548,7 @@ async def projection(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Customers / Lanes / AVG Vol/Profit per day/week / Projected month totals.
 
@@ -669,7 +667,7 @@ async def by_customer(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Profit by Customer — one row per customer in the applied window."""
     pool = get_datalake_gold_pool(request)
@@ -725,7 +723,7 @@ async def by_lane(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Profit by Lane — one row per origin→destination pair in window."""
     pool = get_datalake_gold_pool(request)
@@ -779,7 +777,7 @@ async def attrition(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Attrition by customer×lane — last load date + days since today. Ignores RANGE."""
     pool = get_datalake_gold_pool(request)
@@ -849,7 +847,7 @@ async def attrition(
 async def teams_breakdown(
     request: Request,
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Per-team Loads / Profit / Margin across TM, TW, LW, L2W..L5W. Ignores RANGE+team."""
     pool = get_datalake_gold_pool(request)
@@ -957,7 +955,7 @@ async def trends(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Daily / weekly / monthly rollups for all trend charts. Ignores RANGE.
 
@@ -1078,7 +1076,7 @@ async def summary_table(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Summary by Month (last 15) + Summary by Week (last 16) tables for the Trends tab."""
     pool = get_datalake_gold_pool(request)
@@ -1161,7 +1159,7 @@ async def risk(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Worst Margins by Lane + Negative Loads by Order + Negative Loads by Customer.
 
@@ -1336,7 +1334,7 @@ async def contract_spot(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Contract vs Spot weekly breakdown — last 9 ISO weeks. Ignores RANGE."""
     pool = get_datalake_gold_pool(request)
@@ -1393,7 +1391,7 @@ async def all_orders(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Order-level detail with 15/18/20% profit target + diff columns."""
     pool = get_datalake_gold_pool(request)
@@ -1455,7 +1453,7 @@ async def lane_analysis(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     limit: int = Query(300, ge=1, le=1000),
-    _user: dict = Depends(require_tag_role(*XRAY_ROLES)),
+    _user: dict = Depends(require_report_access("xray-corp-mng")),
 ):
     """Lane Production Analysis — per customer×origin×destination with target diffs."""
     pool = get_datalake_gold_pool(request)

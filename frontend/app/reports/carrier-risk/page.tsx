@@ -13,8 +13,7 @@ import {
   Users,
   X,
 } from "lucide-react"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
+import { ReportGuard } from "@/components/ReportGuard"
 import {
   useCarrierRiskFacets,
   useCarrierRiskKpis,
@@ -393,7 +392,7 @@ function KpiCard({
 
 export default function CarrierRiskPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["carrier-risk"]]}>
+    <ReportGuard reportKey="carrier-risk">
       <Suspense
         fallback={
           <div className="flex h-[60vh] items-center justify-center text-[#6B7280]">
@@ -403,6 +402,6 @@ export default function CarrierRiskPage() {
       >
         <CarrierRiskContent />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }

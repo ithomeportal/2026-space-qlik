@@ -13,8 +13,7 @@ import { Overview } from "./tabs/Overview"
 import { Trends } from "./tabs/Trends"
 import { Customers } from "./tabs/Customers"
 import { Weekly } from "./tabs/Weekly"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
+import { ReportGuard } from "@/components/ReportGuard"
 import { Risk } from "./tabs/Risk"
 import { Orders } from "./tabs/Orders"
 
@@ -55,9 +54,9 @@ function clampToYear(iso: string) {
 
 export default function CeoExecutivePage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["ceo-executive"]]}>
+    <ReportGuard reportKey="ceo-executive">
       <CeoExecutiveContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

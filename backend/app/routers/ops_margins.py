@@ -33,9 +33,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-OPS_ROLES = ("CEO", "Executive", "CORP", "DFW", "Operations", "Finance")
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -216,7 +214,7 @@ async def filters(
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Cascading filter options.
 
@@ -387,7 +385,7 @@ async def summary(
     customer: Optional[str] = Query(None),
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -468,7 +466,7 @@ async def trend(
     customer: Optional[str] = Query(None),
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Margin %, Loads, Loss Loads bucketed by day / week / month."""
     pool = get_datalake_gold_pool(request)
@@ -544,7 +542,7 @@ async def customers_margin(
     sort: str = Query("margin_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Customer · # Lanes · Loads · Margin % (sorted by best margin first).
 
@@ -648,7 +646,7 @@ async def lanes_margin(
     sort: str = Query("margin_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Customer · Origin · Destination · Margin % (best lanes first)."""
     pool = get_datalake_gold_pool(request)
@@ -753,7 +751,7 @@ async def by_lane(
     threshold_1: float = Query(0.15, ge=0.0, le=1.0),
     threshold_2: float = Query(0.18, ge=0.0, le=1.0),
     threshold_3: float = Query(0.20, ge=0.0, le=1.0),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Worst-lane leak (margin_amt < 0) with target-gap columns."""
     pool = get_datalake_gold_pool(request)
@@ -883,7 +881,7 @@ async def negative_orders(
     sort: str = Query("profit_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Order-level rows with margin_amt<0, including Carrier (payee_name).
 
@@ -1029,7 +1027,7 @@ async def loss_customers(
     sort: str = Query("profit_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Per-customer aggregate of negative-margin loads with concentration."""
     pool = get_datalake_gold_pool(request)
@@ -1132,7 +1130,7 @@ async def losses_by_month(
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
     months: int = Query(8, ge=3, le=24),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -1191,7 +1189,7 @@ async def losses_by_week(
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
     weeks: int = Query(8, ge=3, le=52),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -1253,7 +1251,7 @@ async def distribution(
     customer: Optional[str] = Query(None),
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Customer count + revenue per margin bucket: <0 / 0-5 / 5-10 / 10-15 / 15-20 / 20+."""
     pool = get_datalake_gold_pool(request)
@@ -1352,7 +1350,7 @@ async def customer_spark(
     sub_teams: Optional[str] = Query(None),
     origin: Optional[str] = Query(None),
     destination: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     """Per-customer weekly margin % series, last N weeks (default 8).
 
@@ -1440,7 +1438,7 @@ async def customer_spark(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*OPS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-margins")),
 ):
     pool = get_datalake_gold_pool(request)
     row = await pool.fetchrow(

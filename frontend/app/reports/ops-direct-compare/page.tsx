@@ -22,9 +22,7 @@ import { CustomerTable } from "./sections/CustomerTable"
 import { LaneTable } from "./sections/LaneTable"
 import { OrdersTable } from "./sections/OrdersTable"
 import { Trend12m } from "./sections/Trend12m"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
@@ -324,7 +322,7 @@ function DirectCompareContent() {
 
 export default function OpsDirectComparePage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["ops-direct-compare"]]}>
+    <ReportGuard reportKey="ops-direct-compare">
       <Suspense
         fallback={
           <div className="flex min-h-[calc(100vh-64px)] items-center justify-center">
@@ -334,6 +332,6 @@ export default function OpsDirectComparePage() {
       >
         <DirectCompareContent />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }

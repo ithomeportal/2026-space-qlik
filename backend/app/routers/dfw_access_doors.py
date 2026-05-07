@@ -21,22 +21,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.hr_access_doors import (
     _CHECK_MINUTES_EXPR,
     _first_punch_cte,
     _resolve_window,
     _scored_cte,
-)
-
-# TagRoles allowed to view this report (admin bypasses automatically).
-# Strict DFW audience per Diego's call (2026-04-28). Spelling matches the
-# admin-UI role names exactly — match is case-insensitive but spelling-exact.
-DFW_ACCESS_ROLES = (
-    "DFW",
-    "DFW-Assistent",
-    "DFW KAM",
-    "Assitent OPs manager",
 )
 
 # The fixed department gate — applied as an extra AND clause on `scored` in
@@ -54,7 +44,7 @@ router = APIRouter(tags=["dfw-access-doors"], prefix="/custom/dfw-access-doors")
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*DFW_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-access-doors")),
 ):
     """Distinct job titles + employee names seen in Operations (DFW) over the
     last 90 days. Department dropdown intentionally omitted — the report is
@@ -95,7 +85,7 @@ async def kpis(
     end_date: Optional[date] = Query(None, description="YYYY-MM-DD, default today"),
     name: Optional[str] = Query(None),
     job_title: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*DFW_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-access-doors")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_window(start_date, end_date)
@@ -146,7 +136,7 @@ async def rows(
     sort: str = Query("event_time_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*DFW_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-access-doors")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_window(start_date, end_date)
@@ -232,7 +222,7 @@ async def trend_30d(
     request: Request,
     name: Optional[str] = Query(None),
     job_title: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*DFW_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-access-doors")),
 ):
     """On-Time vs Out-of-Time per day, fixed-window last 30 days, scoped to
     Operations (DFW). Ignores the user-selected date filter (rolling 30d) but
@@ -277,7 +267,7 @@ async def by_job_title(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     name: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*DFW_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-access-doors")),
 ):
     """On-Time vs Out-of-Time per job title within Operations (DFW) for the
     selected window. Ignores the job-title filter (so the chart never

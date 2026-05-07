@@ -31,9 +31,7 @@ import {
   useBudgetTop5,
   useBudgetWeekly,
 } from "@/lib/api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
@@ -135,9 +133,9 @@ function clampToYear(iso: string) {
 
 export default function BudgetFollowUp2026Page() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["budget-followup-2026"]]}>
+    <ReportGuard reportKey="budget-followup-2026">
       <BudgetFollowUp2026Content />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

@@ -4,7 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from app.routers.deps import get_pool, require_user
+from app.routers.deps import (
+    get_pool,
+    invalidate_report_access_cache,
+    require_user,
+)
 
 from app.config import settings
 
@@ -136,6 +140,7 @@ async def admin_create_report(
                 role_name,
                 report_id,
             )
+        invalidate_report_access_cache()
 
     return {"success": True, "data": dict(row)}
 
@@ -183,6 +188,7 @@ async def admin_delete_report(
         "UPDATE reports SET is_active = FALSE, updated_at = NOW() WHERE id = $1",
         report_id,
     )
+    invalidate_report_access_cache()
     return {"success": True, "data": {"deleted": True}}
 
 
@@ -208,6 +214,7 @@ async def admin_update_report_roles(
             role_name,
             report_id,
         )
+    invalidate_report_access_cache()
     return {"success": True, "data": {"updated": True}}
 
 
@@ -300,6 +307,7 @@ async def admin_update_role(
                 role_id,
                 report_id,
             )
+        invalidate_report_access_cache()
 
     return {"success": True, "data": {"updated": True}}
 
@@ -312,6 +320,7 @@ async def admin_delete_role(
 ):
     pool = get_pool(request)
     await pool.execute("DELETE FROM roles WHERE id = $1", role_id)
+    invalidate_report_access_cache()
     return {"success": True, "data": {"deleted": True}}
 
 
@@ -672,6 +681,7 @@ async def admin_dedupe_roles(request: Request, secret: str = Query(...)):
 
     pool = get_pool(request)
     merged = await dedupe_roles(pool)
+    invalidate_report_access_cache()
     return {"success": True, "data": {"merged": merged, "count": len(merged)}}
 
 
@@ -686,6 +696,7 @@ async def admin_seed(request: Request, secret: str = Query(...)):
     from app.services.seed import seed_all
 
     await seed_all()
+    invalidate_report_access_cache()
     return {"success": True, "data": {"seeded": True}}
 
 

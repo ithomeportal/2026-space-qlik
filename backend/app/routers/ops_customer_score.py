@@ -58,13 +58,11 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-OCS_ROLES = ("CEO", "Executive", "CORP", "DFW", "Operations", "Finance")
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -307,7 +305,7 @@ async def filters(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     """Cascading filter options.
 
@@ -652,7 +650,7 @@ async def pu_pinned(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     payload = await _get_pinned(
         request, "pu", division, teams, companies, sub_teams, customer, carrier
@@ -670,7 +668,7 @@ async def del_pinned(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     payload = await _get_pinned(
         request, "del", division, teams, companies, sub_teams, customer, carrier
@@ -831,7 +829,7 @@ async def pu_overview(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _overview(
         request, "pu", range, start_date, end_date, division, teams, companies,
@@ -851,7 +849,7 @@ async def del_overview(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _overview(
         request, "del", range, start_date, end_date, division, teams, companies,
@@ -1034,7 +1032,7 @@ async def pu_detail(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _detail(
         request, "pu", range, start_date, end_date, division, teams, companies,
@@ -1054,7 +1052,7 @@ async def del_detail(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _detail(
         request, "del", range, start_date, end_date, division, teams, companies,
@@ -1200,7 +1198,7 @@ async def pu_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _fault_rows(
         request, "pu", "our", range, start_date, end_date, division, teams,
@@ -1222,7 +1220,7 @@ async def pu_not_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _fault_rows(
         request, "pu", "not", range, start_date, end_date, division, teams,
@@ -1244,7 +1242,7 @@ async def del_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _fault_rows(
         request, "del", "our", range, start_date, end_date, division, teams,
@@ -1266,7 +1264,7 @@ async def del_not_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     return await _fault_rows(
         request, "del", "not", range, start_date, end_date, division, teams,
@@ -1282,7 +1280,7 @@ async def del_not_our_fault(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*OCS_ROLES)),
+    _user: dict = Depends(require_report_access("ops-customer-score")),
 ):
     pool = get_datalake_gold_pool(request)
     row = await pool.fetchrow(

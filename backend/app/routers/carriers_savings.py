@@ -25,7 +25,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.routers.deps import get_savings_pool, require_tag_role
+from app.routers.deps import get_savings_pool, require_report_access
 from app.services.lane_rates import (
     Lane,
     fetch_lb123_history,
@@ -36,10 +36,6 @@ from app.services.lane_rates import (
 )
 
 _logger = logging.getLogger(__name__)
-
-# TagRoles that can view eSavings from Carriers (admin bypasses).
-# DFW added 2026-04-17 so DFW users can filter by their own division.
-SAVINGS_ROLES = ("CEO", "Executive", "Procurement", "Finance", "CORP", "DFW")
 
 # Division → McLeod team_id mapping. Kept in sync with budget_followup_2026.
 DIVISION_TEAMS: dict[str, tuple[str, ...]] = {
@@ -138,7 +134,7 @@ def _build_team_clauses(
 @router.get("/months")
 async def list_months(
     request: Request,
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Distinct months available in the report table, newest first."""
     pool = get_savings_pool(request)
@@ -165,7 +161,7 @@ async def summary(
     team: Optional[str] = Query(None, description="TEAM1..TEAM5 | TEAM-DFW"),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """4 main KPIs for a given month: loads, savings, overpay, net variance.
 
@@ -230,7 +226,7 @@ async def by_customer(
     team: Optional[str] = Query(None),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
     limit: int = Query(50, ge=1, le=500),
 ):
     """Aggregate savings per customer for a given month, biggest savings first."""
@@ -292,7 +288,7 @@ async def lanes(
     sort: str = Query("variance_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Detail rows — one row per lane for the selected month, with filters + paging."""
     pool = get_savings_pool(request)
@@ -381,7 +377,7 @@ async def by_team(
     team: Optional[str] = Query(None),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """One row per (division, team_id) for the selected month.
 
@@ -468,7 +464,7 @@ async def monthly_totals(
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     months_window: int = Query(9, ge=1, le=36, alias="window"),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Rolling time series for the trend chart. Ignores the month picker.
 
@@ -598,7 +594,7 @@ async def lane_rates(
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
     equipment: str = Query("VAN"),
-    _user: dict = Depends(require_tag_role(*SAVINGS_ROLES)),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Return SONAR + 123LB monthly benchmark rates for the same lanes /lanes returns.
 

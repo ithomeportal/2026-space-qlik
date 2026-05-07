@@ -31,8 +31,7 @@ import {
   type RfpStatusBlock,
   type RfpWonBlock,
 } from "@/lib/rfp-performance-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
+import { ReportGuard } from "@/components/ReportGuard"
 import { ErrorBanner } from "./ErrorBanner"
 import {
   daysBetween,
@@ -51,7 +50,7 @@ import {
 
 export default function RfpPerformancePage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["rfp-performance"]]}>
+    <ReportGuard reportKey="rfp-performance">
       <Suspense
         fallback={
           <div className="flex min-h-[60vh] items-center justify-center text-xs text-[#6B7280]">
@@ -62,7 +61,7 @@ export default function RfpPerformancePage() {
       >
         <Content />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

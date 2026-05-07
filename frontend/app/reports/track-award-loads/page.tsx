@@ -18,8 +18,7 @@ import {
   type TalByCustomerRow,
   type TalByDivisionRow,
 } from "@/lib/track-award-loads-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
+import { ReportGuard } from "@/components/ReportGuard"
 import { ErrorBanner } from "./ErrorBanner"
 import { daysExpClass, fmtDate, fmtInt, fmtMoney, fmtPct } from "./format"
 
@@ -38,7 +37,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export default function TrackAwardLoadsPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["track-award-loads"]]}>
+    <ReportGuard reportKey="track-award-loads">
       <Suspense
         fallback={
           <div className="flex min-h-[60vh] items-center justify-center text-xs text-[#6B7280]">
@@ -49,7 +48,7 @@ export default function TrackAwardLoadsPage() {
       >
         <Content />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

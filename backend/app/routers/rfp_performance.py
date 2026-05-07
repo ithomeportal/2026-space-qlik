@@ -69,19 +69,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
-from app.routers.deps import get_automations_pool, require_tag_role
-
-# Approved by Diego 2026-04-28 (PDF spec review).
-ROLES = (
-    "CEO",
-    "Executive",
-    "Sales",
-    "Procurement",
-    "CORP",
-    "DFW",
-    "Operations",
-    "Finance",
-)
+from app.routers.deps import get_automations_pool, require_report_access
 
 router = APIRouter(
     tags=["rfp-performance"],
@@ -253,7 +241,7 @@ def _filter_signature(f: dict, *, apply_date: bool = True) -> str:
 async def filter_options(
     request: Request,
     response: Response,
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Distinct values for the 6 filter pills + the table's submitted_date bounds."""
     cached = _cache_get("filter-options")
@@ -311,7 +299,7 @@ async def summary(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """All KPI numbers for the page header in one round-trip.
 
@@ -461,7 +449,7 @@ async def convertio_ratio(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """The 0.5%→5% sensitivity table.
 
@@ -550,7 +538,7 @@ async def trend_12m(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Last 12 months of monthly Volume+Revenue Awarded vs ratios.
 
@@ -627,7 +615,7 @@ async def potential_by_month(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Full-history monthly Potential Closed + Revenue Awarded."""
     key = _cache_key("potential-by-month", _filter_signature(f, apply_date=False))
@@ -684,7 +672,7 @@ async def summary_by_tab(
     response: Response,
     tab: str = Query("division"),
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Summary table tabbed by Operations / Sales / Division.
 
@@ -770,7 +758,7 @@ async def summary_by_customer(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Customer-level summary table (10 metric columns)."""
     key = _cache_key("summary-by-customer", _filter_signature(f))
@@ -842,7 +830,7 @@ async def summary_by_customer_detail(
     request: Request,
     response: Response,
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Customer × YearMonth × type_quotation pivot (14 metric columns)."""
     key = _cache_key("summary-by-customer-detail", _filter_signature(f))
@@ -927,7 +915,7 @@ async def details(
     page_size: int = Query(100, ge=10, le=500),
     sort: str = Query("submitted_desc"),
     f: dict = Depends(_common_params),
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     """Row-level RFP Details, paginated."""
     pool = get_automations_pool(request)
@@ -1048,7 +1036,7 @@ async def details(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_tag_role(*ROLES)),
+    _user: dict = Depends(require_report_access("rfp-performance")),
 ):
     pool = get_automations_pool(request)
     row = await pool.fetchrow(

@@ -22,9 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-BUDGET_ROLES = ("CEO", "Executive", "Operations", "Finance", "CORP", "DFW")
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # Scope of this report.
 YEAR_START = date(2026, 1, 1)
@@ -112,7 +110,7 @@ def _where_and_params(
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Distinct teams and customers in the 2026 window — powers the dropdowns."""
     pool = get_datalake_gold_pool(request)
@@ -158,7 +156,7 @@ async def summary(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None, description="Comma-separated team IDs"),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Primary KPIs: Loads / Revenue / Profit / Margin — actuals vs budget vs variance."""
     pool = get_datalake_gold_pool(request)
@@ -252,7 +250,7 @@ async def by_customer(
     sort: str = Query("revenue_actual_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Rollup per customer — one row per customer in the filtered window."""
     pool = get_datalake_gold_pool(request)
@@ -328,7 +326,7 @@ async def by_team(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Rollup per Team ID in the window (no teams filter — we want all team cards)."""
     pool = get_datalake_gold_pool(request)
@@ -363,7 +361,7 @@ async def monthly(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """12-point monthly series — actual and budget for loads/revenue/profit."""
     pool = get_datalake_gold_pool(request)
@@ -477,7 +475,7 @@ async def by_customer_detail(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Per-customer trajectory rows for the Revenue/Profit/Loads tabs.
 
@@ -646,7 +644,7 @@ async def top5(
     end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Five small leaderboards: Top/Worst Volume, Top/Worst Profit, Non-Budget Active.
 
@@ -723,7 +721,7 @@ async def weekly(
     request: Request,
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*BUDGET_ROLES)),
+    _user: dict = Depends(require_report_access("budget-followup-2026")),
 ):
     """Last 12 ISO weeks (Mon–Sun, current excluded — Attrition WoW convention)."""
     pool = get_datalake_gold_pool(request)

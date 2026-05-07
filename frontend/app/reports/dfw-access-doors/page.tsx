@@ -21,9 +21,7 @@ import {
 import { DfwErrorBanner } from "./ErrorBanner"
 import { DfwTrendChart } from "./TrendChart"
 import { JobTitleBarChart } from "./JobTitleBarChart"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -31,9 +29,9 @@ function todayIso() {
 
 export default function DfwAccessDoorsPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["dfw-access-doors"]]}>
+    <ReportGuard reportKey="dfw-access-doors">
       <DfwAccessDoorsContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

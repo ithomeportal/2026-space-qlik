@@ -45,11 +45,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-# TagRoles allowed to view this report (admin bypasses automatically).
-HR_ACCESS_ROLES = ("CEO", "Executive", "HR", "IT")
-
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # --------------------------------------------------------------------------
 # SQL fragments (kept at module level, reused by every endpoint)
@@ -177,7 +173,7 @@ router = APIRouter(tags=["hr-access-doors"], prefix="/custom/hr-access-doors")
 @router.get("/filters")
 async def filters(
     request: Request,
-    _user: dict = Depends(require_tag_role(*HR_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("hr-access-doors")),
 ):
     """Distinct departments, job titles, and employee names seen in the last
     90 days. Scoped to 90d so the dropdowns stay tight (ex-employees age out).
@@ -220,7 +216,7 @@ async def kpis(
     department: Optional[str] = Query(None),
     name: Optional[str] = Query(None),
     job_title: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*HR_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("hr-access-doors")),
 ):
     """KPI counts for the selected window + filters.
 
@@ -277,7 +273,7 @@ async def rows(
     sort: str = Query("event_time_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*HR_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("hr-access-doors")),
 ):
     """Per-row table: Name, Event Date, Access Log Door, Job Title, Check,
     On Time Reference. Paginated + sortable."""
@@ -365,7 +361,7 @@ async def trend_30d(
     request: Request,
     name: Optional[str] = Query(None),
     job_title: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*HR_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("hr-access-doors")),
 ):
     """On-Time vs Out-of-Time per day, fixed-window last 30 days.
 
@@ -413,7 +409,7 @@ async def by_department(
     end_date: Optional[date] = Query(None),
     name: Optional[str] = Query(None),
     job_title: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*HR_ACCESS_ROLES)),
+    _user: dict = Depends(require_report_access("hr-access-doors")),
 ):
     """On-Time vs Out-of-Time per department for the selected window.
 

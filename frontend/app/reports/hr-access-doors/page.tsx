@@ -21,9 +21,7 @@ import {
 import { HrErrorBanner } from "./ErrorBanner"
 import { HrTrendChart } from "./TrendChart"
 import { HrDeptBarChart } from "./DeptBarChart"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -31,9 +29,9 @@ function todayIso() {
 
 export default function HrAccessDoorsPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["hr-access-doors"]]}>
+    <ReportGuard reportKey="hr-access-doors">
       <HrAccessDoorsContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

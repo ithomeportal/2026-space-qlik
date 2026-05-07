@@ -34,9 +34,7 @@ import {
   type ItTicketsRange,
   type ItTicketsType,
 } from "@/lib/it-tickets-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -119,9 +117,9 @@ function colorForPriority(name: string): string {
 
 export default function ItTicketsMgmtPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["it-tickets-mgmt"]]}>
+    <ReportGuard reportKey="it-tickets-mgmt">
       <ItTicketsMgmtContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

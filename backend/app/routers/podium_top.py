@@ -29,10 +29,9 @@ import json
 from fastapi import APIRouter, Depends, Request
 
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 
-PODIUM_TOP_ROLES = ("DFW",)
 PODIUM_TOP_TEAMS = ("TEAM-DFW",)
 
 
@@ -67,7 +66,7 @@ router = APIRouter(tags=["dfw-podium-top"], prefix="/custom/dfw-podium-top")
 @router.get("/podiums")
 async def podiums(
     request: Request,
-    _user: dict = Depends(require_tag_role(*PODIUM_TOP_ROLES)),
+    _user: dict = Depends(require_report_access("dfw-podium-top")),
 ):
     pool = get_datalake_gold_pool(request)
     params = [_pad_variants(list(PODIUM_TOP_TEAMS), width=8)]

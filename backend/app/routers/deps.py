@@ -1,3 +1,5 @@
+import time
+
 import asyncpg
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -49,7 +51,12 @@ def get_freshservice_pool(request: Request) -> asyncpg.Pool:
 
 
 def require_tag_role(*allowed: str):
-    """Factory: require the user to have at least one of the given tag roles (admin bypasses)."""
+    """Factory: require the user to have at least one of the given tag roles (admin bypasses).
+
+    DEPRECATED for code-made reports — use ``require_report_access(report_key)`` instead so the
+    DB (`role_report_access`) is the single source of truth and admin-UI changes take effect
+    without redeploying. Kept for callers that aren't tied to a specific report row.
+    """
 
     async def _check(user: dict = Depends(require_user)) -> dict:
         roles = {r.lower() for r in user.get("roles", [])}
@@ -58,6 +65,86 @@ def require_tag_role(*allowed: str):
             return user
         raise HTTPException(
             status_code=403, detail="You do not have access to this report"
+        )
+
+    return _check
+
+
+# ---------------------------------------------------------------------------
+# DB-backed report access — single source of truth for code-made reports.
+#
+# Every custom report has a stable key (e.g. ``"hr-access-doors"``) that maps
+# to ``reports.custom_path = '/reports/<key>'``. Allowed TagRoles for that
+# report live in ``role_report_access`` and are managed through the admin UI
+# (``/admin/reports``). Routers depend on ``require_report_access(<key>)``,
+# the frontend ``<ReportGuard reportKey="<key>"/>`` calls
+# ``GET /api/reports/access/<key>``, and both resolve to the same DB rows so
+# updates take effect within ~60s without a redeploy.
+# ---------------------------------------------------------------------------
+
+# In-process TTL cache keyed by report_key. Avoids hitting the DB on every
+# protected request while still honouring admin-UI updates promptly. The cache
+# is invalidated explicitly from admin mutations (see ``invalidate_report_access_cache``).
+_ACCESS_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
+_ACCESS_CACHE_TTL = 60.0  # seconds
+
+
+def invalidate_report_access_cache(report_key: str | None = None) -> None:
+    """Invalidate the cache for a single report key, or globally when ``None``."""
+    if report_key is None:
+        _ACCESS_CACHE.clear()
+    else:
+        _ACCESS_CACHE.pop(report_key, None)
+
+
+async def get_allowed_roles_for_report(pool, report_key: str) -> frozenset[str]:
+    """Return the set of TagRole names (lower-cased) that grant access to a custom report.
+
+    Uses ``reports.custom_path = '/reports/<key>'`` as the lookup. Returns an
+    empty frozenset when the report doesn't exist or has no role assignments.
+    """
+    now = time.monotonic()
+    cached = _ACCESS_CACHE.get(report_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    rows = await pool.fetch(
+        """
+        SELECT lower(ro.name) AS name
+        FROM reports r
+        JOIN role_report_access rra ON rra.report_id = r.id
+        JOIN roles ro ON ro.id = rra.role_id
+        WHERE r.custom_path = $1 AND r.is_active = TRUE
+        """,
+        f"/reports/{report_key}",
+    )
+    allowed = frozenset(r["name"] for r in rows)
+    _ACCESS_CACHE[report_key] = (now + _ACCESS_CACHE_TTL, allowed)
+    return allowed
+
+
+def require_report_access(report_key: str):
+    """Factory: gate a custom-report endpoint by its DB role assignments.
+
+    Admin always bypasses. Allowed roles come from ``role_report_access`` for the
+    matching ``reports.custom_path`` row, refreshed on a 60s TTL (or sooner via
+    ``invalidate_report_access_cache``).
+    """
+
+    async def _check(
+        request: Request,
+        user: dict = Depends(require_user),
+    ) -> dict:
+        roles = {r.lower() for r in user.get("roles", [])}
+        if "admin" in roles:
+            return user
+        pool = get_pool(request)
+        allowed = await get_allowed_roles_for_report(pool, report_key)
+        if roles & allowed:
+            return user
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this report",
         )
 
     return _check

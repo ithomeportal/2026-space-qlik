@@ -46,12 +46,7 @@ them through (frontend renders an em-dash) -- matches the Qlik app behavior.
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-# --------------------------------------------------------------------------
-# Access control: admin bypasses automatically (require_tag_role handles it).
-# --------------------------------------------------------------------------
-PODIUM_ROLES = ("DFW",)
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # --------------------------------------------------------------------------
 # Scope
@@ -112,7 +107,7 @@ router = APIRouter(tags=["podium-dfw"], prefix="/custom/podium-dfw")
 async def overview(
     request: Request,
     range: str = Query("today", pattern="^(today|wtd|mtd)$"),
-    _user: dict = Depends(require_tag_role(*PODIUM_ROLES)),
+    _user: dict = Depends(require_report_access("podium-dfw")),
 ):
     """KPIs + row-level table for the Podium Set DFW report.
 

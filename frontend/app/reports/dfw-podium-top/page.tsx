@@ -7,14 +7,12 @@ import {
   type PodiumLeaderboards,
 } from "@/lib/podium-top-api"
 import { fmtCurrency, fmtInt, fmtPct } from "@/lib/podium-dfw-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 export default function DfwPodiumTopPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["dfw-podium-top"]]}>
+    <ReportGuard reportKey="dfw-podium-top">
       <DfwPodiumTopContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 

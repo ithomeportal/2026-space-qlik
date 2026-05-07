@@ -14,9 +14,7 @@ import { OverviewTab } from "./tabs/OverviewTab"
 import { ReactiveTab } from "./tabs/ReactiveTab"
 import { PivotsTab } from "./tabs/PivotsTab"
 import { TrendsTab } from "./tabs/TrendsTab"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"]
 const DFW_TEAMS = ["TEAM-DFW"]
@@ -343,7 +341,7 @@ function TeamModeBtn({
 
 export default function AttritionWowPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["attrition-wow"]]}>
+    <ReportGuard reportKey="attrition-wow">
       <Suspense
         fallback={
           <div className="flex min-h-[calc(100vh-64px)] items-center justify-center bg-[#F9FAFB]">
@@ -353,6 +351,6 @@ export default function AttritionWowPage() {
       >
         <AttritionContent />
       </Suspense>
-    </RoleGuard>
+    </ReportGuard>
   )
 }

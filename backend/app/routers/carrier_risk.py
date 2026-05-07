@@ -52,17 +52,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_tag_role
-
-CARRIER_RISK_ROLES = (
-    "CEO",
-    "Executive",
-    "Procurement",
-    "CORP",
-    "DFW",
-    "Operations",
-    "Finance",
-)
+from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # Soft year floor — dispatchers data goes back to 2014, but realistically
 # nobody is running carrier-risk reports on 5-year-old data. Ignore noise
@@ -198,7 +188,7 @@ def _scope_where(
 @router.get("/facets")
 async def facets(
     request: Request,
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     """Distinct customers + top lanes (by movement count, last 12 months)."""
     pool = get_datalake_gold_pool(request)
@@ -252,7 +242,7 @@ async def kpis(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -372,7 +362,7 @@ async def by_lane(
     sort: str = Query("n_mov_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -523,7 +513,7 @@ async def by_carrier_lane(
     sort: str = Query("mov_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -616,7 +606,7 @@ async def details(
     sort: str = Query("departure_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -694,7 +684,7 @@ async def lane_trend(
     lane: str = Query(..., min_length=1),
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
-    _user: dict = Depends(require_tag_role(*CARRIER_RISK_ROLES)),
+    _user: dict = Depends(require_report_access("carrier-risk")),
 ):
     """Distinct-carrier count and movement count per ISO week (Mon-Sun)
     over the last 8 completed weeks for one lane. Powers the sparkline

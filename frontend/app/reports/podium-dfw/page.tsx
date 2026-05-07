@@ -12,9 +12,7 @@ import {
   type PodiumRange,
   type PodiumRow,
 } from "@/lib/podium-dfw-api"
-import { RoleGuard } from "@/components/RoleGuard"
-import { REPORT_ACCESS } from "@/lib/report-access"
-
+import { ReportGuard } from "@/components/ReportGuard"
 const RANGE_OPTIONS: { key: PodiumRange; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "wtd", label: "Week to date" },
@@ -37,9 +35,9 @@ function normalizeTeam(v: string | null | undefined): string {
 
 export default function PodiumDfwPage() {
   return (
-    <RoleGuard roles={[...REPORT_ACCESS["podium-dfw"]]}>
+    <ReportGuard reportKey="podium-dfw">
       <PodiumDfwContent />
-    </RoleGuard>
+    </ReportGuard>
   )
 }
 
