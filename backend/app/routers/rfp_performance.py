@@ -62,6 +62,7 @@ since the data only changes once per day.
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import date
 from typing import Any, Optional
@@ -70,6 +71,39 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
 from app.routers.deps import get_automations_pool, require_report_access
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Coerce a Postgres NUMERIC/INT to float, mapping NaN/±Inf to ``default``.
+
+    The Pricing Portal upstream (``rfp_results_history``) lets users key raw
+    numbers, so a NUMERIC column can occasionally carry ``Decimal('NaN')`` or
+    ``Decimal('Infinity')``. Both cast cleanly to Python floats but crash the
+    JSON encoder downstream (``ValueError: Out of range float values``). Same
+    defensive pattern as the ``effective_end_date`` year clamp — assume the
+    upstream produces garbage and harden every per-row conversion.
+    """
+    if value is None:
+        return default
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(f) or math.isinf(f):
+        return default
+    return f
+
+
+def _safe_ratio(num: Any, den: Any) -> Optional[float]:
+    """``num/den`` with NaN/Inf/zero guards, returning ``None`` for invalid."""
+    n = _safe_float(num, default=float("nan"))
+    d = _safe_float(den, default=float("nan"))
+    if math.isnan(n) or math.isnan(d) or d == 0:
+        return None
+    r = n / d
+    if math.isnan(r) or math.isinf(r):
+        return None
+    return r
 
 router = APIRouter(
     tags=["rfp-performance"],
@@ -265,8 +299,19 @@ async def filter_options(
                 WHERE type_quotation  IS NOT NULL AND type_quotation  <> '' ORDER BY 1) AS types,
           ARRAY(SELECT DISTINCT status          FROM rfp_results_history
                 WHERE status          IS NOT NULL AND status          <> '' ORDER BY 1) AS statuses,
-          (SELECT MIN(submitted_date)::date FROM rfp_results_history) AS min_date,
-          (SELECT MAX(submitted_date)::date FROM rfp_results_history) AS max_date,
+          -- Emit MIN/MAX as text with a sane-year clamp, same defensive
+          -- pattern as ``/details``. A single 5-digit-year typo in
+          -- ``submitted_date`` would otherwise crash asyncpg decoding the
+          -- aggregate result and take down the whole page (filter-options
+          -- is the first request the page fires).
+          (SELECT to_char(MIN(submitted_date), 'YYYY-MM-DD')
+             FROM rfp_results_history
+             WHERE submitted_date IS NOT NULL
+               AND EXTRACT(YEAR FROM submitted_date) BETWEEN 1900 AND 2200) AS min_date,
+          (SELECT to_char(MAX(submitted_date), 'YYYY-MM-DD')
+             FROM rfp_results_history
+             WHERE submitted_date IS NOT NULL
+               AND EXTRACT(YEAR FROM submitted_date) BETWEEN 1900 AND 2200) AS max_date,
           (SELECT MAX(etl_loaded_at) FROM rfp_results_history)         AS as_of
         """,
     )
@@ -279,8 +324,8 @@ async def filter_options(
             "customers": list(row["customers"]) if row else [],
             "types": list(row["types"]) if row else [],
             "statuses": list(row["statuses"]) if row else [],
-            "min_date": row["min_date"].isoformat() if row and row["min_date"] else None,
-            "max_date": row["max_date"].isoformat() if row and row["max_date"] else None,
+            "min_date": row["min_date"] if row and row["min_date"] else None,
+            "max_date": row["max_date"] if row and row["max_date"] else None,
             "as_of": row["as_of"].isoformat() if row and row["as_of"] else None,
         },
     }
@@ -967,7 +1012,22 @@ async def details(
       rfp_revenue,
       status,
       rfp_created_by,
-      submitted_date::date  AS submitted_date,
+      -- Same year-clamp treatment as ``end_date`` below. Pricing Portal
+      -- lets users key raw date strings; bad values surface as out-of-range
+      -- timestamps that crash asyncpg's date_decode mid-iteration on this
+      -- per-row endpoint. ``filter-options``' MIN/MAX aggregates skip the
+      -- bad row so the static cache never sees the failure — only the
+      -- materialized ``/details`` page does. Emit as text so the protocol
+      -- never tries to decode a bad date. (Bug surfaced 2026-05-07 on the
+      -- /details endpoint after the prior ``effective_end_date`` clamp in
+      -- commit ``af4af8a`` proved insufficient — additional column was
+      -- vulnerable to the same class of typo.)
+      CASE
+        WHEN submitted_date IS NULL THEN NULL
+        WHEN EXTRACT(YEAR FROM submitted_date) BETWEEN 1900 AND 2200
+          THEN to_char(submitted_date, 'YYYY-MM-DD')
+        ELSE NULL
+      END AS submitted_date,
       -- Pricing-Portal data-entry typos have produced 5-digit years
       -- ('32027-03-10', '20226-04-24') in `effective_end_date`. asyncpg's
       -- date_decode then raises `ValueError: year out of range`. Clamp to
@@ -987,6 +1047,10 @@ async def details(
     rows = await pool.fetch(sql, *params)
 
     total = int(rows[0]["total_count"]) if rows else 0
+    # All numeric fields go through ``_safe_float`` / ``_safe_ratio`` to absorb
+    # NaN/Inf values that the Pricing Portal can plant in NUMERIC columns —
+    # ``float(Decimal('NaN'))`` succeeds but the JSON encoder raises later,
+    # which would surface as a per-row 500 indistinguishable from a date typo.
     out = [
         {
             "rfp_id": int(r["rfp_id"]) if r["rfp_id"] is not None else None,
@@ -995,27 +1059,21 @@ async def details(
             "customer": r["customer_name"],
             "division": r["division"],
             "type_quotation": r["type_quotation"],
-            "total_lanes": float(r["no_lanes"] or 0),
-            "lanes_quoted": float(r["lanes_quoted"] or 0),
-            "lane_participation_pct": (
-                float(r["lanes_quoted"]) / float(r["no_lanes"])
-                if r["no_lanes"] and float(r["no_lanes"]) > 0 else None
-            ),
-            "lanes_awarded": float(r["awarded_lanes"] or 0),
-            "total_volume": float(r["no_loads"] or 0),
-            "volume_quoted": float(r["volume_quoted"] or 0),
-            "volume_participation_pct": (
-                float(r["volume_quoted"]) / float(r["no_loads"])
-                if r["no_loads"] and float(r["no_loads"]) > 0 else None
-            ),
-            "loads_awarded": float(r["rfp_volume"] or 0),
-            "potential_revenue": float(r["potential_revenue"] or 0),
-            "revenue_awarded": float(r["rfp_revenue"] or 0),
+            "total_lanes": _safe_float(r["no_lanes"]),
+            "lanes_quoted": _safe_float(r["lanes_quoted"]),
+            "lane_participation_pct": _safe_ratio(r["lanes_quoted"], r["no_lanes"]),
+            "lanes_awarded": _safe_float(r["awarded_lanes"]),
+            "total_volume": _safe_float(r["no_loads"]),
+            "volume_quoted": _safe_float(r["volume_quoted"]),
+            "volume_participation_pct": _safe_ratio(r["volume_quoted"], r["no_loads"]),
+            "loads_awarded": _safe_float(r["rfp_volume"]),
+            "potential_revenue": _safe_float(r["potential_revenue"]),
+            "revenue_awarded": _safe_float(r["rfp_revenue"]),
             "status": r["status"],
             "sales_executive": r["rfp_created_by"],
-            "submitted_date": r["submitted_date"].isoformat() if r["submitted_date"] else None,
-            # end_date already a 'YYYY-MM-DD' string from the SQL CASE (or NULL);
-            # see the comment in the query for the typo-year guard.
+            # submitted_date and end_date are both clamped to text via SQL
+            # CASE (see the SELECT above); just pass through the string.
+            "submitted_date": r["submitted_date"],
             "end_date": r["end_date"],
         }
         for r in rows
