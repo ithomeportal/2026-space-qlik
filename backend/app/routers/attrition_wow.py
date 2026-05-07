@@ -570,7 +570,7 @@ async def weekly_trends(
 async def pivot(
     request: Request,
     response: Response,
-    dim: str = Query("customer", regex="^(customer|team)$"),
+    dim: str = Query("customer", regex="^(customer|team|customer_lane)$"),
     metric: str = Query("loads", regex="^(loads|revenue|profit|margin)$"),
     weeks: int = Query(12, ge=4, le=24),
     teams: Optional[str] = Query(None),
@@ -588,7 +588,19 @@ async def pivot(
     params.append(weeks)
     p_weeks = len(params)
 
-    dim_sql = "TRIM(br4.customer_name)" if dim == "customer" else "TRIM(br4.team_id)"
+    # Bruno round-3 (2026-05-07): added "customer_lane" dim so users can drill
+    # into per-(customer, lane) trend pivots. Concat with " · " so the wide
+    # cell stays readable in the sticky-left column.
+    if dim == "customer":
+        dim_sql = "TRIM(br4.customer_name)"
+    elif dim == "team":
+        dim_sql = "TRIM(br4.team_id)"
+    else:  # customer_lane
+        dim_sql = (
+            "TRIM(br4.customer_name) || ' · ' || "
+            "(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || "
+            " TRIM(COALESCE(br4.dest_name,'')))"
+        )
 
     if metric == "loads":
         agg_sql = "COUNT(*) FILTER (WHERE br4.total_charge <> 0)::numeric"
@@ -706,8 +718,11 @@ async def reactive_summary(
     # L5-9W = 5 weeks averaged: weeks -5..-9
     l59_end = l24_start - timedelta(days=1)
     l59_start = l59_end - timedelta(days=5 * 7 - 1)
-    # Earliest week we need to read for any of the above:
-    earliest = l59_start
+    # Bruno round-3 (2026-05-07): widen the read window to 540d so customers
+    # whose last load was 64-365+ days ago still appear (Spot Recent / Stale
+    # Spot / >1y buckets were empty before because earliest=l59_start excluded
+    # them entirely). Aggregate FILTERs still scope to L8W/L2-4W/L5-9W.
+    earliest = today - timedelta(days=540)
 
     params: list = []
     where = _scope_where("br4", team_list, customer, contract, None, params)
@@ -731,6 +746,26 @@ async def reactive_summary(
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.origin_actual_departure::date >= ${p_earliest}
+        ),
+        -- Bruno round-3: identify the gap between a customer's most-recent and
+        -- second-most-recent paying load. Powers the "Reactive LW?" column —
+        -- if the gap was 8-63d AND last_load is within last 7d, the customer
+        -- "came back" from the 2-4W or 5-9W stale bucket.
+        ranked AS (
+          SELECT
+            team_id, customer_name, dep_date,
+            ROW_NUMBER() OVER (PARTITION BY team_id, customer_name ORDER BY dep_date DESC) AS rn
+          FROM base
+          WHERE total_charge <> 0
+        ),
+        last_two AS (
+          SELECT
+            team_id, customer_name,
+            MAX(dep_date) FILTER (WHERE rn = 1) AS last_dep,
+            MAX(dep_date) FILTER (WHERE rn = 2) AS prev_dep
+          FROM ranked
+          WHERE rn <= 2
+          GROUP BY team_id, customer_name
         ),
         per_cust AS (
           SELECT
@@ -758,17 +793,19 @@ async def reactive_summary(
             COUNT(*) FILTER (WHERE total_charge <> 0 AND dep_date BETWEEN ${p_lws} AND ${p_lwe}) AS lw_loads,
             COALESCE(SUM(total_charge) FILTER (WHERE dep_date BETWEEN ${p_lws} AND ${p_lwe}), 0) AS lw_rev,
             COALESCE(SUM(margin_amt)   FILTER (WHERE dep_date BETWEEN ${p_lws} AND ${p_lwe}), 0) AS lw_profit,
-            -- Last load date
-            MAX(dep_date) AS last_load_date,
+            -- Last load date (across full 540d read window so spot buckets populate)
+            MAX(dep_date) FILTER (WHERE total_charge <> 0) AS last_load_date,
             -- Reactive flag: had at least 1 paying load this current (in-progress) week
             BOOL_OR(total_charge <> 0 AND dep_date >= date_trunc('week', CURRENT_DATE)::date) AS reactive_this_week
           FROM base
           GROUP BY team_id, customer_name
         )
-        SELECT *,
-          (${p_today} - last_load_date) AS days_since_last_load
-        FROM per_cust
-        WHERE customer_name IS NOT NULL AND customer_name <> ''
+        SELECT pc.*,
+          (${p_today} - pc.last_load_date) AS days_since_last_load,
+          (lt.last_dep - lt.prev_dep)      AS gap_before_last
+        FROM per_cust pc
+        LEFT JOIN last_two lt USING (team_id, customer_name)
+        WHERE pc.customer_name IS NOT NULL AND pc.customer_name <> ''
         """,
         *params,
     )
@@ -797,6 +834,16 @@ async def reactive_summary(
     out = []
     for r in rows:
         days = int(r["days_since_last_load"]) if r["days_since_last_load"] is not None else None
+        # Bruno round-3: a customer is "reactive LW" if last load was within 7d
+        # AND the prior load was 8-63 days before that (i.e. they hopped back
+        # from the 2-4W or 5-9W stale bucket). Customers who load every week
+        # (gap < 8d) don't get the badge — they were never stale.
+        gap = r["gap_before_last"]
+        gap_days = int(gap.days if hasattr(gap, "days") else gap) if gap is not None else None
+        reactive_lw_returning = bool(
+            days is not None and days <= 7
+            and gap_days is not None and 8 <= gap_days <= 63
+        )
         out.append({
             "team":              r["team_id"],
             "customer":          r["customer_name"],
@@ -840,8 +887,10 @@ async def reactive_summary(
             "pct_var_profit_l5_9_vs_l8w": _pct_var(float(r["avg_profit_l5_9w"] or 0), float(r["avg_profit_l8w"] or 0)),
             "last_load_date":    r["last_load_date"].isoformat() if r["last_load_date"] else None,
             "days_since_last_load": days,
+            "gap_before_last":   gap_days,
             "bucket":            _bucket(days),
             "reactive_this_week": bool(r["reactive_this_week"]) if r["reactive_this_week"] is not None else False,
+            "reactive_lw_returning": reactive_lw_returning,
         })
 
     out.sort(key=lambda x: (x["team"] or "", x["customer"] or ""))

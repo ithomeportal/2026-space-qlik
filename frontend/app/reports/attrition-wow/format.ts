@@ -118,3 +118,14 @@ export function fmtSignedCount(v: number | null | undefined): {
   }
   return { text: "0", className: "text-[#B45309]" }
 }
+
+// Bruno round-3 (2026-05-07): variance-column bg band for the Reactive
+// Customers summary tables. Caller passes the ratio (e.g. 0.17 for +17%).
+// Bands: ≥0.17 green, [0.12, 0.17) yellow, <0.12 (incl. negatives) red.
+export function varianceBandClass(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return ""
+  const n = Number(v)
+  if (n >= 0.17) return "bg-[#D1FAE5]"
+  if (n >= 0.12) return "bg-[#FEF3C7]"
+  return "bg-[#FEE2E2]"
+}

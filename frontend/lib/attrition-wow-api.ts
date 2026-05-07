@@ -136,7 +136,11 @@ export interface PivotRow {
 
 export interface AttritionPivot {
   data: PivotRow[]
-  meta: { dim: "customer" | "team"; metric: "loads" | "revenue" | "profit" | "margin"; weeks: number }
+  meta: {
+    dim: "customer" | "team" | "customer_lane"
+    metric: "loads" | "revenue" | "profit" | "margin"
+    weeks: number
+  }
 }
 
 export interface ReactiveRow {
@@ -170,6 +174,7 @@ export interface ReactiveRow {
   pct_var_profit_l5_9_vs_l8w: number | null
   last_load_date: string | null
   days_since_last_load: number | null
+  gap_before_last: number | null
   bucket:
     | "lw"
     | "l2_4w"
@@ -179,6 +184,9 @@ export interface ReactiveRow {
     | "gt_1y"
     | "no_load"
   reactive_this_week: boolean
+  // Bruno round-3 (2026-05-07): true when last load is within 7d AND the prior
+  // load was 8-63 days before — i.e. customer hopped back from L2-4W or L5-9W.
+  reactive_lw_returning: boolean
 }
 
 export interface AttritionReactive {
@@ -288,7 +296,7 @@ export function useAttritionTrends(f: AttritionFilters, weeks = 15) {
 
 export function useAttritionPivot(
   f: AttritionFilters,
-  dim: "customer" | "team",
+  dim: "customer" | "team" | "customer_lane",
   metric: "loads" | "revenue" | "profit" | "margin",
   weeks = 12,
 ) {

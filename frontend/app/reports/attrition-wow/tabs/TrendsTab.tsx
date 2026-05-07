@@ -1,26 +1,23 @@
 "use client"
 
 import { Loader2 } from "lucide-react"
-import { useMemo } from "react"
 import {
   useAttritionTrends,
   type AttritionFilters,
-  type WeekRow,
 } from "@/lib/attrition-wow-api"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import { fmtCount, fmtPct, fmtUsd } from "../format"
+import { BarPanel, type BarField } from "./BarPanel"
 
 interface Props {
   filters: AttritionFilters
 }
 
-type Field = "loads" | "customers" | "revenue" | "profit" | "margin_pct"
-
 const FIELDS: {
-  key: Field
+  key: BarField
   title: string
   fmt: (v: number | null | undefined) => string
-  color: string  // bar fill
+  color: string
   axisColor: string
   isPct?: boolean
 }[] = [
@@ -74,119 +71,4 @@ export function TrendsTab({ filters }: Props) {
       )}
     </div>
   )
-}
-
-function BarPanel({
-  title,
-  data,
-  field,
-  fmt,
-  color,
-  axisColor,
-  isPct,
-  refValue,
-}: {
-  title: string
-  data: WeekRow[]
-  field: Field
-  fmt: (v: number | null | undefined) => string
-  color: string
-  axisColor: string
-  isPct: boolean
-  refValue: number | null
-}) {
-  const values = useMemo(
-    () =>
-      data.map((d) => {
-        const raw = d[field]
-        return typeof raw === "number" ? raw : 0
-      }),
-    [data, field],
-  )
-  const max = Math.max(0, ...values, refValue ?? 0)
-  const safeMax = max === 0 ? 1 : max
-
-  return (
-    <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold" style={{ color: axisColor }}>
-          {title}
-        </div>
-        {refValue !== null && (
-          <div className="text-[10px] text-[#6B7280]">
-            <span className="font-semibold" style={{ color: axisColor }}>
-              ━━
-            </span>{" "}
-            8w avg: {fmt(refValue)}
-          </div>
-        )}
-      </div>
-      <div
-        className="mt-3 grid gap-1"
-        style={{
-          minHeight: 200,
-          gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
-        }}
-      >
-        {data.map((d, i) => {
-          const v = values[i]
-          const h = (Math.abs(v) / safeMax) * 180
-          // Bruno (2026-04-27): bars at-or-above the 8w avg use the panel
-          // color; bars below the average drop to a softer gray so the
-          // above-avg weeks pop visually.
-          const aboveAvg = refValue !== null && v >= refValue
-          const fill = v < 0 ? "#DC2626" : aboveAvg ? color : "#D1D5DB"
-          return (
-            <div
-              key={d.week_start}
-              className="flex flex-col items-center justify-end"
-              style={{ height: 200 }}
-              title={`${d.week_start}: ${fmt(v)}`}
-            >
-              <div className="text-[8px] font-mono text-[#374151]">
-                {compact(v, isPct)}
-              </div>
-              <div
-                className="w-full rounded-t"
-                style={{
-                  height: `${h}px`,
-                  backgroundColor: fill,
-                  opacity: v === 0 ? 0.2 : 1,
-                }}
-              />
-            </div>
-          )
-        })}
-      </div>
-      <div
-        className="mt-1 grid gap-1 text-[8px] text-[#6B7280]"
-        style={{
-          gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
-        }}
-      >
-        {data.map((d) => (
-          <div key={d.week_start} className="truncate text-center">
-            {weekLabel(d.week_start)}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function compact(v: number | null, isPct: boolean): string {
-  if (v === null || v === undefined) return ""
-  if (isPct) return `${(v * 100).toFixed(1)}%`
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(0)}k`
-  return Math.round(v).toString()
-}
-
-function weekLabel(iso: string): string {
-  try {
-    const d = new Date(iso + "T00:00:00")
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-  } catch {
-    return iso
-  }
 }

@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react"
 import {
   useAttritionSummary,
+  useAttritionTrends,
   useAttritionWowVariation,
   type AttritionFilters,
   type CountBlock,
@@ -19,9 +20,15 @@ import {
   fmtUsd,
   fmtWeekRange,
 } from "../format"
+import { BarPanel } from "./BarPanel"
 
 // Cream tint applied to the L8W avg column (Bruno's request, 2026-04-27).
 const L8W_BG = "bg-[#FFFBEB]"
+// Bruno round-3 (2026-05-07): light blue for the L2W comparison cluster,
+// light green for the LW cluster — picks up which window each column belongs
+// to at a glance without reading the headers.
+const L2W_BG = "bg-[#EFF6FF]"
+const LW_BG = "bg-[#ECFDF5]"
 
 interface Props {
   filters: AttritionFilters
@@ -32,12 +39,18 @@ export function OverviewTab({ filters }: Props) {
     useAttritionSummary(filters)
   const { data: wowRes, isLoading: loadingWow, error: wowErr } =
     useAttritionWowVariation(filters)
+  const { data: trendsRes, isLoading: loadingTrends, error: trendsErr } =
+    useAttritionTrends(filters, 15)
   const s = summaryRes?.data
   const w = wowRes?.data
+  const t = trendsRes?.data
 
   return (
     <div className="space-y-6">
-      <AttritionErrorBanner errors={[summaryErr, wowErr]} label="Overview" />
+      <AttritionErrorBanner
+        errors={[summaryErr, wowErr, trendsErr]}
+        label="Overview"
+      />
 
       {/* Window labels */}
       {s && (
@@ -66,27 +79,45 @@ export function OverviewTab({ filters }: Props) {
 
       {/* Metric grid: # Loads, $ Revenue, $ Profit, % Margin, $/Load */}
       <div className="rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
-        <table className="w-full text-xs">
-          <thead className="bg-[#F9FAFB] text-[#6B7280]">
+        <table className="w-full text-sm">
+          <thead className="bg-[#F9FAFB] text-[10px] text-[#6B7280]">
             <tr>
               <th className="w-32 px-3 py-2 text-left font-semibold uppercase tracking-wider">
                 Metric
               </th>
-              <th className={`px-3 py-2 text-right font-semibold ${L8W_BG}`}>
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${L8W_BG}`}
+              >
                 L8W avg
               </th>
-              <th className="px-3 py-2 text-right font-semibold">L2W avg</th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${L2W_BG}`}
+              >
+                L2W avg
+              </th>
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${L2W_BG}`}
+              >
                 Δ (L2W vs L8W)
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${L2W_BG}`}
+              >
                 % (L2W vs L8W)
               </th>
-              <th className="px-3 py-2 text-right font-semibold">Last Week</th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${LW_BG}`}
+              >
+                Last Week
+              </th>
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${LW_BG}`}
+              >
                 Δ (LW vs L8W)
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th
+                className={`px-3 py-2 text-right font-semibold uppercase tracking-wider ${LW_BG}`}
+              >
                 % (LW vs L8W)
               </th>
             </tr>
@@ -126,6 +157,40 @@ export function OverviewTab({ filters }: Props) {
             />
           </tbody>
         </table>
+      </div>
+
+      {/* Bruno round-3 (2026-05-07): duplicate # Loads by Week + # Customers
+          by Week from Trends & Pivots so the headline cadence sits next to
+          the KPI table without a tab change. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {loadingTrends && !t ? (
+          <div className="col-span-full flex h-48 items-center justify-center rounded-xl border border-[#E5E7EB] bg-white">
+            <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
+          </div>
+        ) : (
+          <>
+            <BarPanel
+              title="# Loads by Week"
+              data={t?.weeks ?? []}
+              field="loads"
+              fmt={fmtCount}
+              color="#DC2626"
+              axisColor="#DC2626"
+              isPct={false}
+              refValue={t?.reference?.l8w_avg_loads ?? null}
+            />
+            <BarPanel
+              title="# Customers by Week"
+              data={t?.weeks ?? []}
+              field="customers"
+              fmt={fmtCount}
+              color="#0891B2"
+              axisColor="#0891B2"
+              isPct={false}
+              refValue={t?.reference?.l8w_avg_customers ?? null}
+            />
+          </>
+        )}
       </div>
 
       {/* WoW Total $Var headline + by-team line */}
@@ -249,7 +314,7 @@ function CountCell({
       <div className="text-[9px] font-semibold uppercase tracking-wider text-[#6B7280]">
         {label}
       </div>
-      <div className={`mt-1 text-lg font-semibold ${accent}`}>{value}</div>
+      <div className={`mt-1 text-xl font-semibold ${accent}`}>{value}</div>
     </div>
   )
 }
@@ -298,28 +363,28 @@ function MetricRow({
 
   return (
     <tr>
-      <td className="px-3 py-2 text-left font-semibold text-[#374151]">
+      <td className="px-3 py-2.5 text-left text-xs font-semibold text-[#374151]">
         {label}
       </td>
-      <td className={`px-3 py-2 text-right font-mono text-[#111827] ${L8W_BG}`}>
+      <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L8W_BG}`}>
         {cell(block?.l8w_avg)}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-[#111827]">
+      <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L2W_BG}`}>
         {cell(block?.l2w_avg)}
       </td>
-      <td className={`px-3 py-2 text-right font-mono ${l2wDiff.absCls}`}>
+      <td className={`px-3 py-2.5 text-right font-mono text-base ${L2W_BG} ${l2wDiff.absCls}`}>
         {l2wDiff.abs}
       </td>
-      <td className={`px-3 py-2 text-right font-mono ${l2wDiff.pctCls}`}>
+      <td className={`px-3 py-2.5 text-right font-mono text-base ${L2W_BG} ${l2wDiff.pctCls}`}>
         {l2wDiff.pct}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-[#111827]">
+      <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${LW_BG}`}>
         {cell(block?.lw)}
       </td>
-      <td className={`px-3 py-2 text-right font-mono ${lwDiff.absCls}`}>
+      <td className={`px-3 py-2.5 text-right font-mono text-base ${LW_BG} ${lwDiff.absCls}`}>
         {lwDiff.abs}
       </td>
-      <td className={`px-3 py-2 text-right font-mono ${lwDiff.pctCls}`}>
+      <td className={`px-3 py-2.5 text-right font-mono text-base ${LW_BG} ${lwDiff.pctCls}`}>
         {lwDiff.pct}
       </td>
     </tr>

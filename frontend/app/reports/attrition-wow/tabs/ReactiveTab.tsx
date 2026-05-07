@@ -10,14 +10,20 @@ import {
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
+  fmtCount1,
   fmtPct,
   fmtSignedPct,
   fmtTimestamp,
   fmtUsd,
+  varianceBandClass,
 } from "../format"
 
 interface Props {
   filters: AttritionFilters
+  // Bruno round-3 (2026-05-07): clicking a customer cell applies the filter
+  // bar's Customer dropdown — props bubble up to page.tsx so the URL stays
+  // the source of truth for filter state.
+  onCustomerClick?: (customer: string) => void
 }
 
 type Bucket = ReactiveRow["bucket"]
@@ -71,7 +77,7 @@ const BUCKET_ORDER: Bucket[] = [
   "gt_1y",
 ]
 
-export function ReactiveTab({ filters }: Props) {
+export function ReactiveTab({ filters, onCustomerClick }: Props) {
   const { data: res, isLoading, error } = useAttritionReactive(filters)
   const rows = res?.data ?? []
 
@@ -138,7 +144,13 @@ export function ReactiveTab({ filters }: Props) {
                 {open ? "▾" : "▸"}
               </div>
             </button>
-            {open && total > 0 && <ReactiveTable bucket={b} data={data} />}
+            {open && total > 0 && (
+              <ReactiveTable
+                bucket={b}
+                data={data}
+                onCustomerClick={onCustomerClick}
+              />
+            )}
             {open && total === 0 && (
               <div className="px-4 py-6 text-center text-xs text-[#9CA3AF]">
                 No customers in this bucket.
@@ -154,9 +166,11 @@ export function ReactiveTab({ filters }: Props) {
 function ReactiveTable({
   bucket,
   data,
+  onCustomerClick,
 }: {
   bucket: Bucket
   data: ReactiveRow[]
+  onCustomerClick?: (customer: string) => void
 }) {
   // Pick the comparison window per bucket. Mirrors Bruno's PDF.
   const variant: "lw" | "l2_4w" | "l5_9w" =
@@ -229,16 +243,33 @@ function ReactiveTable({
                 <td className="sticky left-0 bg-white px-3 py-1.5 font-mono text-[#374151]">
                   {r.team || "—"}
                 </td>
-                <td className="sticky left-[80px] bg-white px-3 py-1.5 truncate max-w-[240px] text-[#111827]" title={r.customer ?? ""}>
-                  {r.customer || "—"}
+                <td
+                  className="sticky left-[80px] bg-white px-3 py-1.5 truncate max-w-[240px]"
+                  title={r.customer ?? ""}
+                >
+                  {r.customer && onCustomerClick ? (
+                    <button
+                      type="button"
+                      onClick={() => onCustomerClick(r.customer!)}
+                      className="text-left text-[#1D4ED8] hover:underline"
+                    >
+                      {r.customer}
+                    </button>
+                  ) : (
+                    <span className="text-[#111827]">{r.customer || "—"}</span>
+                  )}
                 </td>
+                {/* Bruno round-3: AVG LOADS columns now show 1 decimal so the
+                    user can see that "1" is really 1.25 vs 2.0 (= +60%, not
+                    +100%). The math was always right; the integer rounding
+                    made it look wrong. */}
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {fmtCount(r.avg_loads_l8w)}
+                  {fmtCount1(r.avg_loads_l8w)}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">
                   {variant === "lw"
                     ? fmtCount(r.lw_loads)
-                    : fmtCount(v.loads)}
+                    : fmtCount1(v.loads)}
                 </td>
                 <PctCell v={v.pct_loads} />
                 <td className="px-3 py-1.5 text-right font-mono">
@@ -272,13 +303,7 @@ function ReactiveTable({
                   {r.days_since_last_load ?? "—"}
                 </td>
                 <td className="px-3 py-1.5 text-right">
-                  {r.reactive_this_week ? (
-                    <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] font-semibold text-[#1E40AF]">
-                      ●
-                    </span>
-                  ) : (
-                    <span className="text-[#9CA3AF]">—</span>
-                  )}
+                  <ReactiveLwBadge row={r} />
                 </td>
               </tr>
             )
@@ -322,16 +347,35 @@ function pickVariant(r: ReactiveRow, variant: "lw" | "l2_4w" | "l5_9w") {
 
 function PctCell({ v }: { v: number | null }) {
   const s = fmtSignedPct(v)
-  // Bg shade for ≤-50%, ≥+50%, around-0
-  let bg = ""
-  if (v !== null) {
-    if (v <= -0.5) bg = "bg-[#FEE2E2]"
-    else if (v >= 0.5) bg = "bg-[#DCFCE7]"
-    else if (v > -0.05 && v < 0.05) bg = "bg-[#FEF3C7]"
-  }
+  // Bruno round-3 (2026-05-07): tiered variance band — green ≥17% growth,
+  // yellow [12%, 17%) growth, red <12% (incl. negatives). Replaces the old
+  // ±50% / around-zero shading.
+  const bg = varianceBandClass(v)
   return (
     <td className={`px-3 py-1.5 text-right font-mono ${bg} ${s.className}`}>
       {s.text}
     </td>
   )
+}
+
+// Bruno round-3 (2026-05-07): the "Reactive LW?" column now flags any
+// customer whose last load was within 7 days AND whose prior load was 8-63
+// days before — i.e. they hopped back from the 2-4W or 5-9W stale bucket.
+// Customers who load every week aren't reactive (no gap to bridge).
+function ReactiveLwBadge({ row }: { row: ReactiveRow }) {
+  if (row.reactive_lw_returning) {
+    return (
+      <span
+        className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] font-semibold text-[#1E40AF]"
+        title={
+          row.gap_before_last !== null
+            ? `Returned after ${row.gap_before_last}d gap`
+            : "Returned after a stale period"
+        }
+      >
+        ●
+      </span>
+    )
+  }
+  return <span className="text-[#9CA3AF]">—</span>
 }

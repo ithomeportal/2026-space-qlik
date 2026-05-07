@@ -304,10 +304,16 @@ function AttritionContent() {
       {/* Tab body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
         {activeTab === "overview" && <OverviewTab filters={filters} />}
-        {activeTab === "reactive" && <ReactiveTab filters={filters} />}
+        {activeTab === "reactive" && (
+          <ReactiveTab filters={filters} onCustomerClick={setCustomer} />
+        )}
         {activeTab === "pivots" && (
           <div className="space-y-6">
-            <PivotsTab filters={filters} />
+            <PivotsTab
+              filters={filters}
+              onCustomerClick={setCustomer}
+              onLaneClick={setLane}
+            />
             <TrendsTab filters={filters} />
           </div>
         )}
