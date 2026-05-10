@@ -311,6 +311,20 @@ CUSTOM_REPORTS = [
         ],
     },
     {
+        "key": "ops-portal-overview",  # -> /reports/ops-portal-overview
+        "title": "Ops Portal - Overview",
+        "description": "Single-page Ops landing: Production+Budget+Savings merged — KPI combo, Team Budget Variance, Customer Variance, Customer Losses, Team Performance, Team Projection + per-customer Actuals",
+        "note": "Round 1 (2026-05-10) · CORP scope (excludes TEAM-DFW) · TEAM1-5 + Customer typeahead filters · merges xray-corp-mng (Production), budget-followup-2026 (Budget) and esavings-carriers (Savings) · combo chart + Projected-TM ignore Date filter · sources: mcleod_gld_budget_report_v4 + mcleod_gld_scorecard + daily_production_budget_report + carriers_savings_results_report (all on aivn_datalake_gold)",
+        "category": "Operations",
+        "tags": [
+            "ops", "overview", "landing", "kpi", "combo",
+            "budget", "production", "savings", "variance",
+            "projection", "loss", "actuals",
+        ],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "CORP", "Operations"],
+    },
+    {
         "key": "admin-cashflow",  # -> /reports/admin-cashflow
         "title": "Admin Aging Cashflow",
         "description": "A/R cashflow discipline — delivery-vs-bill / BOL-vs-bill / carrier-invoice-vs-bill aging, delivered-not-billed and ready-not-billed inventory",

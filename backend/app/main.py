@@ -29,6 +29,7 @@ from app.routers import (
     ops_customer_score,
     ops_direct_compare,
     ops_margins,
+    ops_portal_overview,
     podium_dfw,
     podium_top,
     preferences,
@@ -660,6 +661,7 @@ app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
 app.include_router(ops_customer_score.router, prefix="/api")
+app.include_router(ops_portal_overview.router, prefix="/api")
 app.include_router(sales_attrition_to_ops.router, prefix="/api")
 app.include_router(voip_calls.router, prefix="/api")
 app.include_router(track_award_loads.router, prefix="/api")
