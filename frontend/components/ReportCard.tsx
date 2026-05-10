@@ -12,9 +12,9 @@ interface ReportCardProps {
   view?: "tiles" | "list"
 }
 
-/** Tile view — square app-icon style */
+/** Tile view — square app-icon style with 3-band family gradient + sibling tag */
 function TileView({ report }: ReportCardProps) {
-  const { icon: Icon, bg } = getReportIcon(report.title, report.category)
+  const { icon: Icon, gradient, tag, tagBg } = getReportIcon(report.title, report.category)
 
   return (
     <motion.div
@@ -24,9 +24,21 @@ function TileView({ report }: ReportCardProps) {
       <Link href={`/reports/${report.id}`} className="block">
         <div className="group flex cursor-pointer flex-col items-center text-center">
           <div
-            className={`flex h-20 w-20 items-center justify-center rounded-[22px] bg-gradient-to-br ${bg} shadow-md transition-shadow group-hover:shadow-xl`}
+            className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-[22px] shadow-md transition-shadow group-hover:shadow-xl"
+            style={{ background: gradient }}
           >
-            <Icon className="h-9 w-9 text-white" />
+            <Icon
+              className="h-9 w-9 text-white"
+              style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}
+            />
+            {tag && (
+              <span
+                className="absolute bottom-1 right-1 rounded px-1 py-0.5 text-[9px] font-bold leading-none text-white shadow-sm"
+                style={{ backgroundColor: tagBg }}
+              >
+                {tag}
+              </span>
+            )}
           </div>
           <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
             {report.title}
@@ -39,15 +51,27 @@ function TileView({ report }: ReportCardProps) {
 
 /** List view — row with icon, title, and note */
 function ListView({ report }: ReportCardProps) {
-  const { icon: Icon, bg } = getReportIcon(report.title, report.category)
+  const { icon: Icon, gradient, tag, tagBg } = getReportIcon(report.title, report.category)
 
   return (
     <Link href={`/reports/${report.id}`}>
       <div className="group flex cursor-pointer items-center gap-4 rounded-lg border border-transparent px-4 py-3 transition-colors hover:border-[#E5E7EB] hover:bg-[#F9FAFB]">
         <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${bg} shadow-sm`}
+          className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-sm"
+          style={{ background: gradient }}
         >
-          <Icon className="h-5 w-5 text-white" />
+          <Icon
+            className="h-5 w-5 text-white"
+            style={{ filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.4))" }}
+          />
+          {tag && (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 rounded px-1 text-[8px] font-bold leading-tight text-white shadow-sm"
+              style={{ backgroundColor: tagBg }}
+            >
+              {tag}
+            </span>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[#111827]">
