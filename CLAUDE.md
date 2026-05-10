@@ -1,6 +1,7 @@
 # UNILINK Space (Analytics Hub) — Role-Based Qlik Dashboard Portal
 
-> For detailed specs see `docs/SPEC-*.md` (local only, not in git).
+> Detailed specs live in `docs/SPEC-*.md` (local only — fully gitignored).
+> See [Spec Files](#spec-files) at the bottom for the index.
 
 ---
 
@@ -20,7 +21,7 @@
 - Validate inputs with Zod (frontend) and Pydantic (backend)
 - Next.js proxy sends user info as JSON in Authorization header (NOT a JWT) — backend parses with `json.loads`
 - Proxy retries GET on 502/503/504 up to 3× (5s, 10s); mutations never retry; returns 503+`Retry-After:30` on total failure
-- See `docs/SPEC-RELIABILITY.md` for full cold-start + retry strategy
+- See `docs/SPEC-RELIABILITY.md` for the full cold-start + retry strategy
 
 ### Security (Non-Negotiable)
 - NO hardcoded secrets — all via environment variables
@@ -37,6 +38,11 @@
 - Never run `vercel --prod` from repo root — use git push for auto-deploy
 - After changing env vars, push empty commit to trigger redeploy
 
+### Render Env Vars — Always URL-Encode `$` in Connection Strings
+- Render silently strips one `$` from values containing `$$` during env-var injection. See `docs/SPEC-CODE-RULES.md` §10.
+- Always percent-encode special chars in DB URLs: `$` → `%24`, `*` → `%2A`, `@` → `%40`, `#` → `%23`, `?` → `%3F`
+- Single-key PUT only — bulk PUT wipes the env-var list
+
 ### NextAuth v5 Gotchas
 - Provider ID is `"resend"` not `"email"` — affects `signIn()` and callback URLs
 - Requires `AUTH_SECRET` (not just `NEXTAUTH_SECRET`) + `AUTH_TRUST_HOST=true`
@@ -50,8 +56,20 @@
 - ONLY light mode — block dark mode
 - shadcn/ui Dialog uses `@base-ui/react` (React 19) — avoid Base UI in any interactive component on React 18
 - Search bar is pure React/HTML (no cmdk / Base UI / Radix)
-- Never name a custom prop `ref` (e.g. for a chart's reference/baseline/avg value) — React reserves it and validates the value at element-creation; passing a non-callback throws minified error #284. Use `refValue`/`baseline`/`avg` instead. Bit us twice on Attrition WoW: Trends tab `<BarPanel ref={…}>` (commit `0112ddf`), then the merged Pivots tab `<StatusDot ref={…}>` only crashed on the *By Customer* view because *by Team* didn't render the dot (commit `2d86800`). Audit small inline children — status dots, delta arrows, sparkline tips — not just the chart panels
-- Every code-made report wraps its default export in `<ReportGuard reportKey="<key>">` (`frontend/components/ReportGuard.tsx`) so users without an allowed TagRole see a single clean access-denied banner instead of every panel firing its own 403. Backend endpoints use `Depends(require_report_access("<key>"))` (`backend/app/routers/deps.py`). Both look up `role_report_access` for the matching `reports.custom_path = '/reports/<key>'` row, so **the admin UI at `/admin/reports` is the single source of truth** — adding/removing a role takes effect within ~60s (in-process cache, invalidated on admin mutations). `seed.py::CUSTOM_REPORTS.roles` is the *initial* seed only (`ON CONFLICT DO NOTHING`), never authoritative. Match is case-insensitive; admin always bypasses. Replaces the old 3-place mirror (`lib/report-access.ts` + `*_ROLES` tuples + `seed.py`) — that whole class of "I added a role in admin UI but it still says Access Denied" bugs is gone (Iris/Jesus/Angel cases, 2026-05-07).
+- Never name a custom prop `ref` (React reserves it; minified error #284). Use `refValue`/`baseline`/`avg`. See `docs/SPEC-CODE-RULES.md` §13
+- `next build` is stricter than `tsc` — always `npm run build` before pushing. See `docs/SPEC-CODE-RULES.md` §14
+
+### Code-Made Reports (cross-cutting)
+- Report-type column: `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route); `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
+- Pools: external sources get their own `asyncpg` pool + env var; reports hitting the same DB share a pool via `get_*_pool` helpers in `routers/deps.py`
+- Endpoints under `/api/custom/<feature>/...`, guarded by `Depends(require_report_access("<key>"))`
+- ReportGuard: every default export wraps in `<ReportGuard reportKey="<key>">` — `role_report_access` table is the single source of truth (admin UI at `/admin/reports`). See `docs/SPEC-CODE-RULES.md` §15
+- Sargability: never `TRIM()` McLeod text columns in WHERE/JOIN; use `_pad_variants(values, width=N)`. See `docs/SPEC-CODE-RULES.md` §1
+- v4 sparseness: executive roll-ups read `daily_production_budget_report` (CORP-only) `UNION ALL` v4-DFW. See `docs/SPEC-CODE-RULES.md` §3
+- CST clock pin: `from app.clock import cst_today` in Python; bare `CURRENT_DATE`/`now()` in SQL — pools `init=_set_cst_session`. See `docs/SPEC-CODE-RULES.md` §2
+- LATERAL > ROW_NUMBER: `LEFT JOIN LATERAL ... LIMIT 1` for first-match-per-key. See `docs/SPEC-CODE-RULES.md` §5
+- Date-decode clamp: every user-editable date col needs `CASE … to_char(…, 'YYYY-MM-DD') … ELSE NULL` + NaN/Inf guards on per-row numerics. See `docs/SPEC-CODE-RULES.md` §4
+- Full report catalog + per-report specifics: `docs/SPEC-CUSTOM-REPORTS.md`
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
 - Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `"jwt"` (invalid)
@@ -82,46 +100,8 @@
 - Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent (partial index on `qlik_app_id IS NOT NULL`)
 - Never `dict.pop()` on module-level constants — use `.get()`
 - Auto-seed on startup if `role_report_access` is empty
-- **Custom reports upsert runs on every startup** regardless of the empty-check above — adding a new entry to `CUSTOM_REPORTS` in `seed.py` is enough, the next Render deploy will insert the row via `seed_custom_reports(pool)` (called from `main.py` lifespan). No manual `POST /api/admin/seed` needed.
+- Custom reports upsert runs on every startup — adding a new entry to `CUSTOM_REPORTS` in `seed.py` is enough; `seed_custom_reports(pool)` is called from the `main.py` lifespan
 - FastAPI router order matters: search router BEFORE reports router
-
-### Code-Made Reports (see `docs/SPEC-CUSTOM-REPORTS.md` for full spec + lessons)
-- `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route); `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
-- External data sources get their own `asyncpg` pool + env var; reports hitting the same DB share a pool via `get_datalake_gold_pool` in `routers/deps.py`
-- Endpoints live under `/api/custom/<feature>/...`, guarded by `require_tag_role(*allowed)` (admin bypasses, case-insensitive)
-- **Sargability rule** — McLeod `aivn_datalake_gold` text columns (`team_id varchar(8)`, `company_id varchar(4)`, `status`, `stop_type`, `edi_standard_code`) arrive padded to the column's declared width. Never `TRIM()` in WHERE/JOIN; use `col = ANY(_pad_variants(values, width=<N>))`. TRIM is fine in SELECT/GROUP BY output. If one side of a JOIN trims, the other must trim too. (Full pattern + worked example: SPEC-CUSTOM-REPORTS.md)
-- **v4 sparseness rule** — `mcleod_gld_budget_report_v4` lags current month; executive roll-ups read `daily_production_budget_report` joined to a v4 customer→team map. **Caveat**: `daily_production_budget_report` is CORP-only — any Overview that needs DFW must `UNION ALL` v4-DFW production (`_production_cte()` in `ceo_executive.py`). Zero customer overlap CORP↔DFW so no double-count.
-- **Sargability for `origin_actual_departure`** — never `origin_actual_departure::date BETWEEN $s AND $e` (kills `idx_v4_dep`). Use half-open `origin_actual_departure >= $s AND origin_actual_departure < ($e::date + 1)`. ~30× faster.
-- **First-match-per-key joins** — use `LEFT JOIN LATERAL (... ORDER BY ... LIMIT 1) ON TRUE` not `ROW_NUMBER() WHERE rn=1` CTE; ~40× faster with a supporting `(key1, key2, sort_col)` btree. Movement ⇒ `idx_movement_order_company_mv`.
-- **Placeholder rule** — seed CTE-leading `$1` into `params` **before** calling `_scope_where`; never pass extra positional at `pool.fetch` time, or downstream `BETWEEN $N-1 AND $N` placeholders shift.
-- **CST clock rule** — Render runs containers in UTC and Aiven defaults sessions to UTC. Datalake is already CST. To keep the app's notion of "today" aligned with the data: Python side use `from app.clock import cst_today` (never `date.today()`); SQL side use bare `CURRENT_DATE` / `now()` / `date_trunc(...)` — every asyncpg pool runs `init=_set_cst_session` (`SET TIME ZONE 'America/Chicago'`) at connect time, so they all resolve to CST without per-query `AT TIME ZONE` rewrites. Bruno caught this on XRay CORP Mng on 2026-04-27 (commit `123e5b0`): "Yesterday=Apr 27" while CST clock was still on Apr 27. Affects every code-made report between 18:00–23:59 CST.
-- **Current catalog** (one-line; full specs/lessons in `docs/SPEC-CUSTOM-REPORTS.md`):
-
-| Report | Path | Roles | Primary source |
-|---|---|---|---|
-| eSavings from Carriers | `/reports/esavings-carriers` | CEO, Executive, Procurement, Finance, CORP, DFW | `carriers_savings_results_report` + `lane_market_rates` (SONAR + 123LB monthly cache). Quarterly base = simple avg of prior-quarter non-zero monthly avgs; **no prior-quarter activity → base=0, variance=0** (refined 2026-04-28 — replaced the silent 2025-fallback that produced fake overpays). UI shows `base_month` chip under BASE $ with a red dot on stale rows. |
-| 2026 Official Budget Follow Up | `/reports/budget-followup-2026` | CEO, Executive, Operations, Finance, CORP, DFW | `daily_production_budget_report` + v4 team map. **Bruno feedback round 1 (2026-04-28)**: Range presets `Full 2026 / YTD / MTD / Custom` (MTD = 1st-of-month → today). Monthly chart + Last-12-Weeks chart (ISO Mon-Sun, current excluded). 5 leaderboard cards between By-Team and By-Customer (Top/Worst Volume + Top/Worst Profit `where budget>0` + Non-Budget Active `where profit_budget=0 AND profit_actual>0`). Trajectory tabs use **Mon-Fri working days, no holidays** (`_count_workdays`) for AVG×LastMonth divisor + Projected days-remaining; numerator sums stay calendar-day. AVG×Week=/3, AVG×Day=/14. Avg+Projected always anchor to *now*, ignore Range filter. **Bruno feedback round 2 (2026-04-30)**: KPI strip is now 5 cards in this exact order — `Active Days · Pending Days · Days Elapsed · Days Remaining · Holidays Days`. Days Elapsed/Remaining now respect the filter window (was full year). Pending Days = Mon-Fri non-holiday workdays remaining (today→window-end). Holidays Days = US federal holidays in the window. **Active Customers KPI removed** from the strip. `US_HOLIDAYS_2026` constant in `budget_followup.py` is the single source of truth for holiday math (also used by `_count_workdays`). Monthly chart is **pinned to full year 2026** (frontend passes `YEAR_START..YEAR_END` regardless of Date filter). Both Monthly + Weekly bars now show **two value labels per column** (Actual on top, Budget below). Each By-Team card replaces "Rev variance" with **Load variance + Profit variance**. **By-Customer Overview** column order is now Budget → Actual → Var for every metric group: `Loads B/A/Var · Revenue B/A/Var · Profit B/A/Var · Margin B/A/Var`; new **Margin Var** column = `margin_actual_pct − margin_budget_pct` (pp, computed client-side). **Loads tab restored** (Overview / Revenue / Profit / Loads). In Revenue/Profit/Loads tabs: first three columns reordered to Budget → Actual → Var with **cream-tint background** (`bg-[#FEF7E6]`); column "AVG × Last Month" renamed to **"AVG per day Last Month"**; Projected font is green if >0, red if <0; sticky **Totals row at top** of each detail table sums every numeric column over the displayed rows. |
-| XRay CORP Mng | `/reports/xray-corp-mng` | CEO, Executive, CORP, Operations, Finance | v4 + scorecard + movement + budget_report + savings |
-| XRay DFW Mng | `/reports/xray-dfw-mng` | CEO, Executive, DFW, Operations, Finance | Sibling of XRay CORP Mng (2026-05-07). Scope `team_id='TEAM-DFW'` with TM1..TM4 multi-select sub-team pills (`v4.team` / `scorecard.team_dfw`); excludes UNILINK + OILTEX (CORP only excludes OILTEX). Profit-TM card sums `v4.margin_amt` directly (`daily_production_budget_report` is CORP-only per SPEC-CUSTOM-REPORTS v4 sparseness rule); savings trio remaps customer→team via TEAM-DFW; TU% capacity defaults to 4 sub-teams when `All` selected. Backend `/api/custom/xray-dfw/*` (mirrors all 13 CORP endpoints with `sub_teams=CSV` query param replacing the single-team pill). |
-| XRay DFW TM1..TM4 | `/reports/xray-dfw-tm{1..4}` | DFW-TM{n} + CEO + Executive | Per-team siblings of XRay DFW Mng (2026-05-07). Same engine, **server-locked** to a single TM via the `xray_dfw_team.py` factory (4 APIRouters under `/api/custom/xray-dfw-tm{1..4}` that delegate to `xray_dfw.py` functions with `sub_teams=TMn` injected — clients cannot override). UI hides the team-pill row and shows a static `TM{n}` badge; Date + Customer filters remain functional. Frontend uses React Context (`XrayDfwApiProvider`) for the API prefix so all 5 reports share the same hooks (`lib/xray-dfw-api.ts`) and tabs (under `app/reports/xray-dfw-mng/tabs/`). The 4 page files (`app/reports/xray-dfw-tm{1..4}/page.tsx`) are ~10 lines each, wrapping the shared `XrayDfwReportContent` component. New TagRoles `DFW-TM1..DFW-TM4` must be created/assigned via `/admin/roles` + `/admin/users/[id]`. |
-| CEO Executive | `/reports/ceo-executive` | **admin + CEO only** | v4-direct everywhere — Overview KPIs/Summary by Team/Profit-TM rewritten 2026-05-07 to match `/customers` "Profit by Customer" (`SUM(margin_amt)`/`SUM(total_charge)` from raw v4 via `_scope_where`); Bruno called out the prior `_production_cte` UNION (`daily_production_budget_report` CORP + v4 DFW) as inconsistent with the customer table. `_production_cte` is now used **only** by `All Teams Performance` (date-immutable, ignores filters). Perf indexes: `idx_v4_dep`, `idx_movement_order_company_mv`. **Bruno feedback round 2 (2026-05-07)**: shrunk KPI cards to a 7-col grid + moved Profit-TM gauge to end of Overview tab; Summary by Team & All Teams Performance side-by-side; margin color band (≥17% green / ≥12% yellow / <12% red) via `margin-color.ts` helper applied to Summary by Team / Profit by Customer / Worst Profit by Customer / Lane Production Analysis / All Orders; LabelList value labels on the 4 month/week charts; 80-day Trends charts now aggregate per ISO week and plot one point at each week-ending Sunday on a continuous daily x-axis (`bucketDailyToWeekly` in Trends.tsx); sortable headers (`useSortable` + `<SortableTh>` in `sortable.tsx`) on Worst Margins by Lanes / Negative Loads Totals by Order / Negative Loads Total Amount by Customer / Lane Production Analysis / All Orders. See SPEC-CUSTOM-REPORTS.md |
-| Podium Set DFW | `/reports/podium-dfw` | admin + DFW | `mcleod_gld_order_post_hist` ⨝ v4; replaces Qlik `0a0c7a49-…`; 15-min auto-refresh; client-side Team pill filter. **Bruno feedback round 1 (2026-04-30, commit `5a3b11d`)**: added 5 podium leaderboards between KPI strip and detail table — **This Week (Mon-Sun)** Top-3 by Profit / Margin / Loads + **Today** Top-3 by Loads / Profit. Single round-trip `/podiums` endpoint with 5 `json_agg` subqueries on `weekly`/`daily` CTEs. Margin uses `WHERE revenue>0`. **Totals row sums only the 3 displayed rows** (Bruno Q1, NOT full universe — the PDF mock's 187 was misleading); Margin total = ΣProfit/ΣRevenue across the 3. Mon-Sun via `date_trunc('week', CURRENT_DATE)` (Postgres ISO Mon) + half-open `+ 7`. Cream-tint sticky Totals at top, medals 🥇🥈🥉 in lead column. **Bruno feedback round 2 (2026-05-05)**: 5 podium leaderboards moved out into a new sibling report `DFW Podium Top`; this report keeps only the date filter + Booking detail table. |
-| DFW Podium Top | `/reports/dfw-podium-top` | admin + DFW | Sibling to Podium Set DFW (round 2, 2026-05-05). Identical rate-conf base CTE (`routers/podium_top.py` mirrors the SQL from `podium_dfw.py`) but **no date filter**, no booking table — only the 5 top-3 leaderboards (This Week Top-3 Profit/Margin/Loads + Today Top-3 Loads/Profit). Same totals/medal rules as round 1. |
-| Top Losses Lanes | `/reports/losses-lanes` | CEO, Executive, CORP, DFW, Operations, Finance | v4; scope TEAM1-5 + TEAM-DFW / TMS,TMS3 / status D,P; excludes UNILINK + OILTEX; `margin_amt<0`; daily 7 AM CST weekly-movers email |
-| OPs Margins | `/reports/ops-margins` | CEO, Executive, CORP, DFW, Operations, Finance | v4 (+ movement for carrier name); 6 tabs; always-on Trend + Margin histogram; same scope as Losses Lanes |
-| OPs Direct Compare | `/reports/ops-direct-compare` | CEO, Executive, CORP, DFW, Operations, Finance | v4; two independent data1/data2 panels with center delta; cached 12-month trend; same scope as OPs Margins |
-| Sales- Attrition to OPs | `/reports/sales-attrition-to-ops` | CEO, Executive, Sales, CORP, DFW, Operations, Finance | v4; per-customer attrition w/ days-since color band; fixed 13-month strip ignores Date filter |
-| Attrition WoW | `/reports/attrition-wow` | CEO, Executive, Sales, CORP, DFW, Operations, Finance | v4; ISO Mon-Sun weeks (current excluded); **3 tabs (post-Bruno 2026-04-27)**: Overview · Reactive Customers · Trends & Pivots (merged). Cream-bg L8W avg col; by-Customer pivot has red/yellow/green status dot vs 8w avg; Trends bars use panel color above-avg, gray below. Reactive bucket order: 2-4W before LW. **Bruno round-3 (2026-05-07)**: Overview-table cluster bg — `L8W avg` cream, `L2W avg/Δ/%` light-blue (`bg-[#EFF6FF]`), `LW/Δ/%` light-green (`bg-[#ECFDF5]`); numbers bumped to `text-base`; **# Loads by Week + # Customers by Week duplicated below the metric table** (shared `BarPanel.tsx` re-used from Trends tab, includes color/gray legend). Reactive Customers tables: customer cells are now click-to-filter buttons (links to `?customer=...` URL); variance cols (% LOADS/REV/PROFIT VAR) bg-band — green ≥17%, yellow [12%, 17%), red <12% incl. negatives (`varianceBandClass` in `format.ts`); AVG LOADS columns now show **1 decimal** (`fmtCount1`) so the user can see the math is correct (1.25 → 2.0 = +60%, not the integer-rounded 1 → 2 = +100% it looked like). Backend `/reactive-summary` widened to **540-day read window** (was l59_start ≈ 63d) so Recent Spot / Stale Spot / >1Y buckets actually populate. New backend field `reactive_lw_returning` = true when `days_since_last_load ≤ 7` AND `gap_before_last ∈ [8, 63]` (computed via ROW_NUMBER OVER (PARTITION BY team, customer) ranked CTE → last_two CTE → LEFT JOIN); the "Reactive LW?" badge now flags customers who hopped back from a 2-4W or 5-9W stale period (not just current-in-progress-week activity). Trends & Pivots: bigger legend (`text-[11px]` → with G/R cell-shade swatches + "current week excluded" note); pivot status-dot now applies to **all views** (was customer-only — now Team and Customer-Lane too); **new `by Customer and Lane` view** (backend `/pivot?dim=customer_lane` adds `customer_name || ' · ' || (origin - dest)` dim_sql); customer/lane cells in pivot are click-to-filter; Trends bar panels gained a per-panel "≥ 8w avg / below 8w avg" legend strip via `showLegend` prop. |
-| VoIP Calls Logs | `/reports/voip-calls-logs` | **everyone** | `vonage_gld_by_user` (1 GB, ~1.6M rows, fresh through current minute, no n8n); WTD default; indexes `idx_vonage_gld_by_user_start{,_dir}` |
-| OPs Customer Score | `/reports/ops-customer-score` | CEO, Executive, CORP, DFW, Operations, Finance | `mcleod_gld_scorecard`; 4 tabs (PU/DEL × Overview/Detail); KPI cards + 12mo/10wk charts ignore Date filter and cache 10 min. **Bruno feedback round 1 (2026-04-30, commit `60d547e`)**: CORP sub-team pills (TEAM1-5) mirror the DFW sub-team UX (`?corp=` URL key, threads through existing backend `teams` param); compact 4-card top KPI strip on PU+DEL Overview (Month/Qtr/Year + filtered Service-Fail KPI all on one `lg:grid-cols-4` row); Team & Customer tables side-by-side with 380px scroll cap; Rolling 12mo + 10wk charts replaced with Recharts `<ComposedChart>` (red Service-Fail bars left axis + colored % On Time line right axis 0-100, `<LabelList position="top">` keeps per-bar counts visible). Backend untouched — all UI changes. Full spec: SPEC-CUSTOM-REPORTS.md §18.7 |
-| Track Award Loads | `/reports/track-award-loads` | CEO, Executive, Sales, Procurement, Operations, Finance, CORP, DFW | `contract_performance_analysis` in **`automations_db`** (NOT `aivn_datalake_gold` — own pool, `AUTOMATIONS_DATABASE_URL` env var) ⨝ `awards_tracker_registration_source` (per-lane RPM/Min Chg/All-in rates via natural-key LEFT JOIN). Replaces legacy Qlik `949cafc8-…` (unilink.us tenant — not embeddable). n8n daily 02:25 (`3XkU4PfCm4EBYgTl Contract Performance Analysis`) keeps 15-day rolling window; **always pin to `analysis_date = MAX` snapshot** or aggregates inflate by ~15×. 4 filter pills · 4 KPI containers · 4 detail tables. Partial index `idx_cpa_primary_latest` covers the snapshot+filter path. Days-to-Exp red banner + WoW Δ on Total Actual Volume (joins natural key — destination `audit_id` is SERIAL, not stable across snapshots) |
-| Performance for RFPs | `/reports/rfp-performance` | CEO, Executive, Sales, Procurement, CORP, DFW, Operations, Finance | `rfp_results_history` in **`automations_db`** (n8n workflow `Pgpg097swOFyjFT9`, daily 01:00 CST — already excludes test customer 59 + inactive RFPs, latest active round per RFP). Replaces legacy Qlik `6df25048-…`. Filter pills: Date / Division / Department / Bussiness Type / Customer / Type / Status (default Date = YTD). KPI blocks: Potential Revenue grand total + Open / Closed / Lost / Won (Won block adds Lane/Load/Awarded ratios). Convertio Ratio sensitivity table (0.5%–5%, current calendar year, dynamic — replaces Bruno's hardcoded 2026). Two combo charts (Volume Awarded, Revenue Awarded — last 12 mo, ignore Date filter). Tabbed Summary by Operations / Sales / Division. Potential Revenue Per Month (full history, ignore Date). Tabbed Customer Summary + Convertio detail. Paginated RFP Details. **Conv = Awarded / Potential W/O** (Bruno's quirky definition — preserved verbatim). **Lane Awarded Ratio % denominator = no_lanes WHERE status='Won'**, **Awarded Convertio Ratio denominator = grand-total potential_revenue** (no status filter — explicit in the PDF). Recommended indexes (avnadmin): `(submitted_date)`, `(status, submitted_date)`, `(customer_name)`. **Pricing-Portal-typo hardening (2026-05-07, post-Melany report)**: extend the existing `effective_end_date` year-clamp (commit `5af0866`, 2026-04-28) to **every user-editable column** the row endpoint surfaces — `submitted_date` in `/details` and `MIN/MAX(submitted_date)` in `/filter-options` go through `CASE … to_char(…, 'YYYY-MM-DD') … ELSE NULL`; numeric per-row outputs go through new `_safe_float` / `_safe_ratio` helpers that map `Decimal('NaN')` / `±Infinity` → `0` / `None` (otherwise `float(NaN)` succeeds but the JSON encoder later raises). Today's 01:00 ETL inserted a row whose unclamped `submitted_date` (or NaN numeric) crashed `/details` only — every aggregate endpoint with the same filter still returned 200, confirming the failure is per-row materialization. Audit confirmed no other code-made report has this class of vulnerability (see SPEC-CUSTOM-REPORTS §24 lessons #9 & #10). |
-| HR Access Log Doors | `/reports/hr-access-doors` | CEO, Executive, HR, IT | `zk_gld_onlyfingerprint` ⨝ `timeoff_employee`; first-punch/day, expected-arrival rule per dept+job_title; integer minute delta. Replaces Bruno's legacy Qlik `4573ff42-…` (unilink.us tenant). |
-| Risk Asss for Carriers | `/reports/carrier-risk` | CEO, Executive, Procurement, CORP, DFW, Operations, Finance | `mcleod_gld_dispatchers` ⨝ `mcleod_gld_budget_report_v4` (revenue/profit only). **First portal report on dispatchers**. **`carrier_cost = override_pay_amt + driver_extra_pay`** — verified against Bruno's $1,372 grand-total avg (matches to $1,371.84). Do NOT use `b.total_carrier_pay` ($1,485 avg, wrong). 4 filter pills (Date / Lane / Customer / Team) · 6 KPI cards (last one = % single-carrier lanes + % volume in single-carrier lanes) · 3 panels: by-Lane (#Carrier / #Mov / Avg Cost + Top1 share / HHI / Cost CV / % Margin / red-amber-green risk band) · by-Carrier+Lane · order-level Details. Server-side pagination + sort. Dispatchers PK is `(movement_id, id, company_id)` — useless for date queries; recommended index on `(origin_actual_departure)` (avnadmin DDL only). Replaces Qlik `d7b9deb0-…` (legacy unilink.us tenant — not embeddable). |
-| IT Tickets Mgmt | `/reports/it-tickets-mgmt` | **everyone** | `fresh_services_unlk."Tickets" ⨝ "Agents"` (own pool, `FRESHSERVICE_DATABASE_URL`, fed by an external Spark ETL — **NOT n8n**). **First portal report on FreshService data**. Replaces Qlik `86da731f-…` (sheets `RqXzx` Incidents + `8aae69c7-…` Service Request) — single page with **Type tabs** (Service Request / Incident) so the two near-identical Qlik sheets share one filter/KPI surface. Default `Last 30d` (Today / WTD / Last 7d / Last 30d / MTD / Last Month / YTD / Custom). KPIs: Pending Now / % Open / Closed / % Closed; charts: Pending-by-Month (last 12 mo, ignores filter), Status & Priority donuts, Pending-by-Week, Pending-by-Day, Agents-Assignments, History (Status/Category sub-tabs). Detail tables: Pending (oldest first, aging color band 0–3d / 4–7d / 8–14d / >14d) and Closed (newest UpdatedDate first), server-side paginated + sortable. **Bruno's PDF SQL has a JOIN bug** — `LEFT JOIN Agents a ON t.Id = a.Id` matches **0 rows** (ticket Ids 17xxx vs agent Ids 21000xxx); corrected to `ON t."ResponderId" = a."Id"` (15,647 matches). **Status code mapping** mirrored: `'6'`→`In Progress`, `'8'`→`Waiting for user response`. Excludes Onboarding/Offboarding/Cancelled/Canceled/Test (IT) categories and any subject ILIKE `%test%` (Bruno's domain rules). Indexes added 2026-04-28 via avnadmin: `idx_tickets_created`, `idx_tickets_type_status_active` (partial), `idx_tickets_responder`, `idx_tickets_updated`. |
-| DFW Access Log Doors | `/reports/dfw-access-doors` | DFW, DFW-Assistent, DFW KAM, Assitent OPs manager | Department-locked clone of HR Access Log Doors — server-side gate `dep = 'Operations (DFW)'` (not a query param, can't be widened); imports SQL fragments from `hr_access_doors.py` (single source of truth for the on-time rule); replaces by-department bar with by-job-title bar; 30-day trend also locked to Operations (DFW). |
-| Admin Access Log Doors | `/reports/admin-access-doors` | AdminFinance | Department-locked sibling of DFW Access Log Doors (2026-05-07). Server-side gate `dep = 'Admin'` so AdminFinance role-holders (e.g. Jesus Ovalle) only ever see the Admin department, can't widen the scope by tampering with query strings. Same engine/imports from `hr_access_doors.py`; by-job-title bar; 30-day trend locked to Admin. |
-| Admin Aging Cashflow | `/reports/admin-cashflow` | CEO, Executive, Finance, CORP, DFW, Operations, AdminFinance | `mcleod_gld_cashflow` (Spark ETL — already in datalake, no n8n). Replaces Bruno's legacy Admin CashFlow Qlik dashboard. **First portal report on `mcleod_gld_cashflow`** — column widths mirror v4 (team_id varchar(8), company_id varchar(4), status varchar(1), ready_to_bill varchar(512)) so the same `_pad_variants` pattern applies. Default `MTD` (Today / WTD / Last 7d / MTD / Last Month / YTD / Custom). 5 filter pills (Date / Team / Company / Customer / Contract Type). Top KPI strip (5): 3 discipline % (Delivery≤10d / BOL≤2d / CarrInv≤2d) each with 12-week sparkline + green/amber/red threshold band, plus Delivered-not-billed $ + Ready-not-billed $ (warn-tinted >$1M). Aging-buckets bar chart (0-3 / 4-7 / 8-10 / 11-15 / >15). Top-delayed-customers leaderboard ($ revenue at risk where bill-to-delivery >10d). Banner when Delivered+Ready unbilled total > $3M. 2 unbilled tables (paginated, oldest-delivered-first / oldest-shipped-first). Aging detail in 3 tabs (Delivery vs Bill / BOL vs Bill / CarrInv vs Bill (C-B)) with sub-KPI cards (≤threshold / >threshold counts) and Days color-band column. **Bug fixes vs Bruno's PDF (verified with user 2026-04-30)**: real calendar-day diff `(a::date - b::date)` everywhere — Bruno's Qlik `day(a) - day(b)` only returned day-of-month and silently broke Apr-30→May-2 (computed -28 instead of 2); "Delivery vs Bill" detail uses `dest_actual_arrival > '2000'` (delivered) not the PDF typo `< '2000'`; "CarrInv vs Bill" direction = `invoice_recv_date - bill_date` (matches "C-B" card title and PDF page-6 detail-table); "Orig Sched Early" column = `orig_orig_sched_early` (raw pickup window early). Indexes added 2026-04-30 via avnadmin: `idx_cashflow_arrival(origin_actual_arrival)`, `idx_cashflow_bill_date(bill_date)`, `idx_cashflow_unbilled(status, ready_to_bill, origin_actual_arrival) WHERE bill_date < '2000-01-01'`. |
 
 ### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
 - Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
@@ -129,15 +109,10 @@
 - Seed uses `role_ids_ci` (lowercased-key dict) for case-insensitive lookup
 - `POST /api/admin/dedupe-roles?secret=<SEED_SECRET>` merges case duplicates and migrates all refs
 
-### Render Env Vars — Always URL-Encode `$` in Connection Strings
-- Render silently strips one `$` from values containing `$$` during env-var injection (length on dashboard ≠ length in container — verified 2026-04-28 with `FRESHSERVICE_DATABASE_URL`: dashboard 121 chars, container 120). Auth fails with no log, pool stays None, endpoint 503s, frontend spins forever
-- **Always percent-encode special chars in DB URLs**: `$` → `%24`, `*` → `%2A`, `@` → `%40`, `#` → `%23`, `?` → `%3F`. asyncpg accepts encoded URLs identically to raw ones — no downside
-- After setting an env var via `PUT /v1/services/{id}/env-vars/{KEY}`, hit `GET /api/_pool_diag` (or any endpoint that exercises the pool) on the next deploy and confirm `fs_url_len` matches the encoded length you sent
-
 ### Scheduled Email Digests (see `docs/SPEC-RELIABILITY.md` §Scheduled Jobs)
-- **`daily_losses_alert`** — 07:00 CST daily, Resend → `noreply@unilinkportal.com`, Top Losses Lanes weekly-movers (`app/services/losses_alerts.py`).
-- **`daily_rfp_digest`** — 17:30 CST Mon-Fri, **MS Graph** → `ithome@unilinktransportation.com`, RFP Performance summary (`app/services/rfp_daily_digest.py`). Recipients hard-coded in `_scheduled_rfp_digest()` in `main.py:46-71`. Uses the existing `admin-ms-api` Entra app (Mail.Send Application perm + admin consent). Token POST is hand-rolled in `app/services/msgraph_mailer.py` — **no `msal` dep** (httpx is enough). Test endpoint: `POST /api/admin/rfp-digest/test?secret=$SEED_SECRET&to=...&cc=...&bcc=...`. **Outlook font fix (2026-05-07, commit `8caea1d`)**: `font-family` declared inline on EVERY wrapper (body / table / td / div / span / h1 / a / th / strong) using `FONT_STACK = "'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,Helvetica,Verdana,sans-serif"`. Outlook 365 desktop on Windows resets `font-family` at every nested `<table>` boundary, so a single `<body>` declaration leaks back to Times New Roman for KPI numbers + headings (CEO Erick Mendoza feedback 2026-05-06). Don't "clean up" the redundant inline declarations. NEVER add Google Fonts (Outlook strips the `<link>`). Full spec: `docs/SPEC-RFP-DAILY-DIGEST.md` (local).
-- Adding a new digest: copy `rfp_daily_digest.py` shape (data-fetch via existing pool + `render_html` + `send_mail`), register a new `_scheduled_*` wrapper in `main.py` lifespan, document in SPEC-RELIABILITY.md table. **Reuse `FONT_STACK` / `MONO_STACK` constants from `rfp_daily_digest.py`** for any HTML email — same Outlook reset problem applies.
+- `daily_losses_alert` — 07:00 CST daily, Resend → `noreply@unilinkportal.com`, Top Losses Lanes weekly-movers (`app/services/losses_alerts.py`)
+- `daily_rfp_digest` — 17:30 CST Mon-Fri, MS Graph → `ithome@unilinktransportation.com`, RFP Performance summary (`app/services/rfp_daily_digest.py`). Reuses `admin-ms-api` Entra app (Mail.Send Application perm, admin consent). See `docs/SPEC-RFP-DAILY-DIGEST.md`
+- Reuse `FONT_STACK` / `MONO_STACK` constants from `rfp_daily_digest.py` for any new HTML email — Outlook font reset rule. See `docs/SPEC-CODE-RULES.md` §21
 
 ### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
 - Free tier spins down after ~15 min inactivity — cold starts 30–60s
@@ -168,7 +143,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`; current: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1, XRay DFW TM2, XRay DFW TM3, XRay DFW TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
 ---
 
@@ -181,11 +156,11 @@
 | State | React Query (TanStack) |
 | Backend | FastAPI (Python) on Render |
 | Auth | NextAuth.js v5 beta-30 (Resend, JWT strategy) |
-| Scheduler | APScheduler (daily user sync) + Vercel Cron (keep-alive) |
+| Scheduler | APScheduler (daily user sync + email digests) + Vercel Cron (keep-alive) |
 | Qlik Embed | `@qlik/embed-web-components` with cookie auth |
 | Database | PostgreSQL (Aiven) |
 | Search | PostgreSQL ILIKE |
-| Email | Resend |
+| Email | Resend + MS Graph (admin-ms-api app) |
 
 ---
 
@@ -197,6 +172,7 @@ frontend/
     layout.tsx
     page.tsx                     # Home: search + 3-column grid
     reports/[id]/page.tsx        # Full-screen Qlik embed
+    reports/<custom>/page.tsx    # Code-made report (one folder per report)
     admin/
       layout.tsx                 # Admin sidebar
       page.tsx                   # Usage analytics
@@ -214,6 +190,7 @@ frontend/
     SearchBar.tsx
     ReportGrid.tsx
     ReportCard.tsx
+    ReportGuard.tsx              # role_report_access gate
     QlikEmbed.tsx                # Session exchange + retry + singleton
     Providers.tsx                # React Query w/ 5× retry, skip 401/403
   lib/
@@ -228,16 +205,21 @@ backend/
   app/
     main.py                      # FastAPI, CORS, lifespan, APScheduler
     config.py                    # Pydantic Settings
+    clock.py                     # cst_today() + _set_cst_session pool init
     routers/
-      deps.py                    # require_user / require_admin
+      deps.py                    # require_user / require_admin / require_report_access / pool factories
       reports.py                 # /api/reports, /api/apps
       qlik.py                    # Viewer + TV token endpoints
       search.py                  # /api/reports/search
       preferences.py             # /api/user/preferences
       admin.py                   # Admin CRUD + seed + sync
+      <feature>.py               # One file per code-made report (see SPEC-CUSTOM-REPORTS)
     services/
       seed.py                    # Idempotent seeding
       sync_users.py              # Daily user sync
+      losses_alerts.py           # 07:00 CST Resend digest
+      rfp_daily_digest.py        # 17:30 CST MS-Graph digest
+      msgraph_mailer.py          # Hand-rolled MS Graph send-mail (no msal)
 ```
 
 ---
@@ -260,10 +242,11 @@ TV_SECRET=<shared with backend>
 
 ### Backend (Render)
 ```
-DATABASE_URL=<Aiven Postgres URL>
-SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — powers MOST code-made reports (eSavings, Budget Follow Up, XRay CORP Mng, CEO Executive, HR Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins/Direct Compare/Customer Score, Sales-Attrition to OPs, VoIP Calls Logs)>
-AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — powers Track Award Loads (n8n's contract_performance_analysis) and Performance for RFPs (n8n's rfp_results_history). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=automations_db. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here.>
-FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — powers IT Tickets Mgmt (Tickets/Agents tables fed by an external Spark ETL, NOT n8n). Same Aiven cluster as SAVINGS_DATABASE_URL, just dbname=fresh_services_unlk. Use the same read-only role you use for SAVINGS_DATABASE_URL — do NOT bake avnadmin in here. **Percent-encode `$` → `%24` and `*` → `%2A` in the password** (Render strips one `$` from `$$` during env-var injection — silently breaks auth).>
+DATABASE_URL=<Aiven Postgres URL — analytics_hub>
+SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — most code-made reports>
+AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — Track Award Loads, Performance for RFPs>
+FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — IT Tickets Mgmt; percent-encode $ → %24>
+TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
 QLIK_ISSUER=https://analytics-hub.unilinkportal.com
@@ -271,19 +254,21 @@ QLIK_KEY_ID=analytics-hub-key-1
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app
 SEED_SECRET=<secret>
 TV_SECRET=<shared with frontend>
-TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
-RESEND_API_KEY=<shared with frontend — powers daily Losses Lanes weekly-movers email at 7 AM CST>
-SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>          # eSavings SONAR $ column
-# SONAR_USERNAME / SONAR_PASSWORD — fallback if SONAR_TOKEN is not set
-LB123_CLIENT_ID=<123LoadBoard OAuth client id>                       # eSavings 123LB $ column
+RESEND_API_KEY=<shared with frontend — daily Losses Lanes email>
+SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>
+LB123_CLIENT_ID=<123LoadBoard OAuth client id>
 LB123_CLIENT_SECRET=<123LoadBoard OAuth client secret>
-# Microsoft Graph (admin-ms-api app) — powers RFP Performance daily digest at 5:30 PM CST Mon-Fri
-# from ithome@unilinktransportation.com. Same Entra app as /BOT/admin-ms; needs Mail.Send Application permission with admin consent.
-MS_TENANT_ID=<Unilink Entra tenant id, same as /BOT/admin-ms>
+# MS Graph — admin-ms-api app (Mail.Send Application perm + admin consent)
+MS_TENANT_ID=<Unilink Entra tenant id>
 MS_CLIENT_ID=<admin-ms-api client id>
 MS_CLIENT_SECRET=<admin-ms-api secret — expires 2027-12-30>
 MS_SEND_FROM=ithome@unilinktransportation.com
 ```
+
+> **Note**: Use the same read-only role (`sa_dfrodriguez`) for
+> `SAVINGS_DATABASE_URL`, `AUTOMATIONS_DATABASE_URL`, and
+> `FRESHSERVICE_DATABASE_URL`. **Never bake `avnadmin` master creds into
+> Render env vars** — DDL is local psql only. See `docs/SPEC-CODE-RULES.md` §8.
 
 ---
 
@@ -296,6 +281,7 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 - **Home filters** — TagRoles act as filter buttons (not access control)
 - **No auto-assign** — TagRoles are 100% manual
 - **Admins** — dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned); can edit Qlik App/Sheet IDs
+- **Single source of truth** — `role_report_access` table (admin UI at `/admin/reports`); both `<ReportGuard>` and backend `require_report_access(...)` read it. See `docs/SPEC-CODE-RULES.md` §15
 
 ---
 
@@ -332,6 +318,8 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints |
 | `docs/SPEC-SEARCH.md` | Search engine, PostgreSQL ILIKE |
 | `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
-| `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, incidents, lessons |
+| `docs/SPEC-RELIABILITY.md` | Cold starts, proxy retry, keep-alive, scheduled jobs, incidents |
 | `docs/SPEC-ROADMAP.md` | Phased delivery, success metrics, lessons learned |
-| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports: pattern, checklist, eSavings spec, Track Award Loads spec, audit_id SERIAL trap, CST clock pin |
+| `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports — full per-report spec + checklist |
+| `docs/SPEC-CODE-RULES.md` | Cross-cutting code rules (sargability, CST clock, asyncpg, Render env, Outlook fonts, etc.) |
+| `docs/SPEC-RFP-DAILY-DIGEST.md` | RFP Performance daily email digest details |
