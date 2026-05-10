@@ -64,6 +64,7 @@
 - Pools: external sources get their own `asyncpg` pool + env var; reports hitting the same DB share a pool via `get_*_pool` helpers in `routers/deps.py`
 - Endpoints under `/api/custom/<feature>/...`, guarded by `Depends(require_report_access("<key>"))`
 - ReportGuard: every default export wraps in `<ReportGuard reportKey="<key>">` — `role_report_access` table is the single source of truth (admin UI at `/admin/reports`). See `docs/SPEC-CODE-RULES.md` §15
+- Tile icon: every new `CUSTOM_REPORTS` row also needs a `REPORT_MAP` entry in `frontend/components/ReportIcons.tsx` (icon + family + optional sibling tag). 10 family palettes, 3-band gradient per tile. See `docs/SPEC-UI.md` §9 + `docs/SPEC-CODE-RULES.md` §32
 - Sargability: never `TRIM()` McLeod text columns in WHERE/JOIN; use `_pad_variants(values, width=N)`. See `docs/SPEC-CODE-RULES.md` §1
 - v4 sparseness: executive roll-ups read `daily_production_budget_report` (CORP-only) `UNION ALL` v4-DFW. See `docs/SPEC-CODE-RULES.md` §3
 - CST clock pin: `from app.clock import cst_today` in Python; bare `CURRENT_DATE`/`now()` in SQL — pools `init=_set_cst_session`. See `docs/SPEC-CODE-RULES.md` §2
