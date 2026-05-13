@@ -307,11 +307,11 @@ function CeoExecutiveContent() {
         {activeTab === "overview" && (
           <div className="space-y-10">
             <Overview filters={filters} />
-            <Trends />
+            <Trends filters={filters} />
             <Customers filters={filters} />
           </div>
         )}
-        {activeTab === "weekly" && <Weekly />}
+        {activeTab === "weekly" && <Weekly filters={filters} />}
         {activeTab === "risk" && <Risk filters={filters} />}
         {activeTab === "orders" && <Orders filters={filters} />}
       </div>

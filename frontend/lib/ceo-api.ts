@@ -268,12 +268,22 @@ export function useCeoOverview(f: CeoFilters, enabled = true) {
   })
 }
 
-export function useCeoTrends(enabled = true) {
+// Bruno R4 (2026-05-12): Trends panels now honor Division + Team.
+// Range and Customer stay date-immutable / scope-immutable.
+function ceoTeamQs(f: Pick<CeoFilters, "division" | "team">) {
+  const q = new URLSearchParams()
+  if (f.division) q.set("division", f.division)
+  if (f.team) q.set("team", f.team)
+  const s = q.toString()
+  return s ? `?${s}` : ""
+}
+
+export function useCeoTrends(f: Pick<CeoFilters, "division" | "team">, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "trends"],
-    queryFn: () => apiFetch<CeoTrends>("custom/ceo-executive/trends"),
+    queryKey: ["ceo", "trends", f.division ?? "", f.team ?? ""],
+    queryFn: () => apiFetch<CeoTrends>(`custom/ceo-executive/trends${ceoTeamQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
 }
@@ -287,12 +297,12 @@ export function useCeoCustomers(f: CeoFilters, enabled = true) {
   })
 }
 
-export function useCeoWeekly(enabled = true) {
+export function useCeoWeekly(f: Pick<CeoFilters, "division" | "team">, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "weekly"],
-    queryFn: () => apiFetch<CeoWeekly>("custom/ceo-executive/weekly"),
+    queryKey: ["ceo", "weekly", f.division ?? "", f.team ?? ""],
+    queryFn: () => apiFetch<CeoWeekly>(`custom/ceo-executive/weekly${ceoTeamQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
 }

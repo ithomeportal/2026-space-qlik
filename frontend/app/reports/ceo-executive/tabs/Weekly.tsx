@@ -19,6 +19,7 @@ import {
   fmtUsd,
   fmtWeekRange,
   useCeoWeekly,
+  type CeoFilters,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
 
@@ -42,8 +43,15 @@ const fmtPct1Label = (v: unknown) => {
   return `${n.toFixed(1)}%`
 }
 
-export function Weekly() {
-  const { data, isLoading, error } = useCeoWeekly()
+interface WeeklyProps {
+  filters: CeoFilters
+}
+
+export function Weekly({ filters }: WeeklyProps) {
+  const { data, isLoading, error } = useCeoWeekly({
+    division: filters.division,
+    team: filters.team,
+  })
   const d = data?.data
 
   const weeks = (d?.weeks ?? []).map((r) => ({
@@ -56,8 +64,8 @@ export function Weekly() {
       <CeoErrorBanner label="Weekly" errors={[error]} />
 
       <div className="rounded-md border border-[#E5E7EB] bg-white p-3 text-xs text-[#6B7280]">
-        All Weekly panels are <strong>date-immutable</strong> — last 10 weeks / 12 weeks regardless
-        of filters.
+        Weekly panels are <strong>date-immutable</strong> — last 10 weeks / 12 weeks regardless
+        of Range. Division and Team filters are honored.
       </div>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">

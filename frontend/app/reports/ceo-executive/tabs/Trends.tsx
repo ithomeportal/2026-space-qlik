@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { fmtDay, fmtMonth, fmtUsd, useCeoTrends } from "@/lib/ceo-api"
+import { fmtDay, fmtMonth, fmtUsd, useCeoTrends, type CeoFilters } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
 
 // Compact label formatters used by Recharts <LabelList />. Recharts v3 typed
@@ -129,8 +129,15 @@ function bucketDailyToWeekly(daily: { bucket: string; customers: number; margin_
   })
 }
 
-export function Trends() {
-  const { data, isLoading, error } = useCeoTrends()
+interface TrendsProps {
+  filters: CeoFilters
+}
+
+export function Trends({ filters }: TrendsProps) {
+  const { data, isLoading, error } = useCeoTrends({
+    division: filters.division,
+    team: filters.team,
+  })
   const d = data?.data
 
   const monthly = (d?.monthly ?? []).map((r) => ({
@@ -147,8 +154,8 @@ export function Trends() {
       <CeoErrorBanner label="Trends" errors={[error]} />
 
       <div className="rounded-md border border-[#E5E7EB] bg-white p-3 text-xs text-[#6B7280]">
-        All Trends panels are <strong>date-immutable</strong> — they ignore the Range / Team /
-        Customer filters and always show the fixed windows below.
+        Trends panels are <strong>date-immutable</strong> — they ignore Range and Customer
+        and always show the fixed windows below. Division and Team filters are honored.
       </div>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">

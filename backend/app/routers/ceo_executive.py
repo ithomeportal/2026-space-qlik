@@ -666,6 +666,8 @@ async def overview(
 @router.get("/trends")
 async def trends(
     request: Request,
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -673,7 +675,13 @@ async def trends(
     fifteen_months_start = _shift_months(_month_start(today), -14)
     eighty_days_start = today - timedelta(days=79)
 
-    scope = _global_scope_where("br4")
+    # Bruno R4 (2026-05-12): Trends panels now honor the Team filter (date
+    # windows stay fixed at 15 months / 80 days). Separate param lists per
+    # task — different placeholder counts per asyncpg.gather call.
+    monthly_params: list = []
+    monthly_scope = _scope_where("br4", team, None, monthly_params, division=division)
+    monthly_params.extend([fifteen_months_start, today])
+    m_s, m_e = len(monthly_params) - 1, len(monthly_params)
 
     # Monthly 15m: customer count + margin %, and profit + loads
     monthly_task = pool.fetch(
@@ -687,14 +695,19 @@ async def trends(
           COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
           COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {scope}
-          AND br4.origin_actual_departure::date >= $1
-          AND br4.origin_actual_departure::date <= $2
+        WHERE {monthly_scope}
+          AND br4.origin_actual_departure::date >= ${m_s}
+          AND br4.origin_actual_departure::date <= ${m_e}
         GROUP BY 1
         ORDER BY 1
         """,
-        fifteen_months_start, today,
+        *monthly_params,
     )
+
+    daily_params: list = []
+    daily_scope = _scope_where("br4", team, None, daily_params, division=division)
+    daily_params.extend([eighty_days_start, today])
+    d_s, d_e = len(daily_params) - 1, len(daily_params)
 
     # Daily 80d: customer count + margin %, and profit + loads
     daily_task = pool.fetch(
@@ -708,13 +721,13 @@ async def trends(
           COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
           COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {scope}
-          AND br4.origin_actual_departure::date >= $1
-          AND br4.origin_actual_departure::date <= $2
+        WHERE {daily_scope}
+          AND br4.origin_actual_departure::date >= ${d_s}
+          AND br4.origin_actual_departure::date <= ${d_e}
         GROUP BY 1
         ORDER BY 1
         """,
-        eighty_days_start, today,
+        *daily_params,
     )
 
     monthly, daily = await asyncio.gather(monthly_task, daily_task)
@@ -971,6 +984,8 @@ async def customers(
 @router.get("/weekly")
 async def weekly(
     request: Request,
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -979,7 +994,12 @@ async def weekly(
     ten_weeks_start = this_week_mon - timedelta(weeks=9)
     summary_start = today - timedelta(weeks=12)  # ~12 weeks for Summary by Week
 
-    scope = _global_scope_where("br4")
+    # Bruno R4 (2026-05-12): Weekly tab now honors the Team filter (date
+    # windows stay fixed at 10 weeks / 12 weeks).
+    weekly_params: list = []
+    weekly_scope = _scope_where("br4", team, None, weekly_params, division=division)
+    weekly_params.extend([ten_weeks_start, today])
+    w_s, w_e = len(weekly_params) - 1, len(weekly_params)
 
     # Last 10 weeks — loads + revenue + profit + margin
     weekly_task = pool.fetch(
@@ -994,14 +1014,19 @@ async def weekly(
                THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
                ELSE 0 END AS margin_pct
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {scope}
-          AND br4.origin_actual_departure::date >= $1
-          AND br4.origin_actual_departure::date <= $2
+        WHERE {weekly_scope}
+          AND br4.origin_actual_departure::date >= ${w_s}
+          AND br4.origin_actual_departure::date <= ${w_e}
         GROUP BY 1
         ORDER BY 1
         """,
-        ten_weeks_start, today,
+        *weekly_params,
     )
+
+    summary_params: list = []
+    summary_scope = _scope_where("br4", team, None, summary_params, division=division)
+    summary_params.extend([summary_start, today])
+    s_s, s_e = len(summary_params) - 1, len(summary_params)
 
     # Summary by Week — wider window, with lane count
     summary_task = pool.fetch(
@@ -1017,13 +1042,13 @@ async def weekly(
                THEN SUM(br4.margin_amt)::numeric / SUM(br4.total_charge)::numeric
                ELSE 0 END AS margin_pct
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {scope}
-          AND br4.origin_actual_departure::date >= $1
-          AND br4.origin_actual_departure::date <= $2
+        WHERE {summary_scope}
+          AND br4.origin_actual_departure::date >= ${s_s}
+          AND br4.origin_actual_departure::date <= ${s_e}
         GROUP BY 1
         ORDER BY 1 DESC
         """,
-        summary_start, today,
+        *summary_params,
     )
 
     weekly_rows, summary_rows = await asyncio.gather(weekly_task, summary_task)
