@@ -1,7 +1,7 @@
 "use client"
 
 import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts"
-import { CheckCircle2, ClipboardList, FileText, PackageCheck, Receipt } from "lucide-react"
+import { CalendarClock, CheckCircle2, ClipboardList, FileText, PackageCheck, Receipt } from "lucide-react"
 import type {
   AdminCashflowKpis,
   AdminCashflowSparklines,
@@ -14,9 +14,14 @@ interface Props {
   sparklines: AdminCashflowSparklines | undefined
 }
 
+function fmtDays(v: number | undefined) {
+  if (v === undefined || v === null || Number.isNaN(v)) return "—"
+  return `${v.toFixed(1)}d`
+}
+
 export function KpiStrip({ kpis, loading, sparklines }: Props) {
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-7">
       <PctKpiCard
         icon={<CheckCircle2 className="h-4 w-4 text-[#1B3A5C]" />}
         label="Delivery vs Bill ≤10d"
@@ -26,6 +31,13 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         spark={sparklines?.del_bill_le10 ?? []}
         weeks={sparklines?.weeks ?? []}
       />
+      <AvgDaysKpiCard
+        icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
+        label="Avg Days Del → Bill"
+        value={loading ? "…" : fmtDays(kpis?.avg_days_del_bill)}
+        actual={kpis?.avg_days_del_bill}
+        warnAbove={10}
+      />
       <PctKpiCard
         icon={<FileText className="h-4 w-4 text-[#1B3A5C]" />}
         label="BOL vs Bill ≤2d"
@@ -34,6 +46,13 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         actual={kpis?.pct_bol_bill_le2}
         spark={sparklines?.bol_bill_le2 ?? []}
         weeks={sparklines?.weeks ?? []}
+      />
+      <AvgDaysKpiCard
+        icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
+        label="Avg Days BOL → Bill"
+        value={loading ? "…" : fmtDays(kpis?.avg_days_bol_bill)}
+        actual={kpis?.avg_days_bol_bill}
+        warnAbove={2}
       />
       <PctKpiCard
         icon={<Receipt className="h-4 w-4 text-[#1B3A5C]" />}
@@ -62,6 +81,44 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
           kpis.ready_not_billed_usd > 1_000_000
         }
       />
+    </div>
+  )
+}
+
+interface AvgDaysKpiProps {
+  icon: React.ReactNode
+  label: string
+  value: string
+  actual: number | undefined
+  warnAbove: number
+}
+
+function AvgDaysKpiCard({ icon, label, value, actual, warnAbove }: AvgDaysKpiProps) {
+  // green if at/below target days; amber within 50% over; red beyond.
+  let tone = "border-[#E5E7EB] bg-white"
+  let valueColor = "text-[#1B3A5C]"
+  if (actual !== undefined && !Number.isNaN(actual)) {
+    if (actual <= warnAbove) {
+      tone = "border-[#A7F3D0] bg-[#ECFDF5]"
+      valueColor = "text-[#065F46]"
+    } else if (actual <= warnAbove * 1.5) {
+      tone = "border-[#FCD34D] bg-[#FFFBEB]"
+      valueColor = "text-[#92400E]"
+    } else {
+      tone = "border-[#FCA5A5] bg-[#FEF2F2]"
+      valueColor = "text-[#991B1B]"
+    }
+  }
+  return (
+    <div className={`rounded-xl border p-3 shadow-sm ${tone}`}>
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-[#6B7280]">
+        {icon}
+        {label}
+      </div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums ${valueColor}`}>
+        {value}
+      </div>
+      <div className="mt-1 text-[10px] text-[#6B7280]">target ≤{warnAbove}d</div>
     </div>
   )
 }

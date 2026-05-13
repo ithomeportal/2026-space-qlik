@@ -63,6 +63,7 @@ function DeliveredNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
+              <th className="px-2 py-1.5">Customer</th>
               <SortableTh
                 label="Orig Sched Early"
                 col="ship_asc"
@@ -98,13 +99,13 @@ function DeliveredNotBilledCard({ filters }: Props) {
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center">
+                <td colSpan={7} className="py-8 text-center">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-[#9CA3AF]">
+                <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
                   No delivered-but-unbilled loads in current filters 🎉
                 </td>
               </tr>
@@ -115,27 +116,16 @@ function DeliveredNotBilledCard({ filters }: Props) {
                   className="border-b border-[#F3F4F6] last:border-0"
                 >
                   <td className="px-2 py-1.5 font-mono text-[11px]">{r.id}</td>
+                  <td className="max-w-[200px] truncate px-2 py-1.5" title={r.customer_name}>
+                    {r.customer_name || "—"}
+                  </td>
                   <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
                   <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
                   <td className="px-2 py-1.5">
                     {fmtDate(r.dest_actual_arrival)}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
-                    {r.days_since_delivery !== null ? (
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[11px] ${
-                          r.days_since_delivery <= 3
-                            ? "text-[#065F46] bg-[#ECFDF5]"
-                            : r.days_since_delivery <= 7
-                            ? "text-[#92400E] bg-[#FEF3C7]"
-                            : "text-[#991B1B] bg-[#FEE2E2] font-semibold"
-                        }`}
-                      >
-                        {r.days_since_delivery}d
-                      </span>
-                    ) : (
-                      <span className="text-[#9CA3AF]">—</span>
-                    )}
+                    <DaysBadge days={r.days_since_delivery} />
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
                     {fmtUsd(r.total_charge)}
@@ -194,6 +184,7 @@ function ReadyNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
+              <th className="px-2 py-1.5">Customer</th>
               <SortableTh
                 label="Ship Date"
                 col="ship_asc"
@@ -209,6 +200,7 @@ function ReadyNotBilledCard({ filters }: Props) {
                 onChange={setSort}
               />
               <th className="px-2 py-1.5">Status</th>
+              <th className="px-2 py-1.5 text-right">Days</th>
               <SortableTh
                 label="$ Revenue"
                 col="revenue_asc"
@@ -222,13 +214,13 @@ function ReadyNotBilledCard({ filters }: Props) {
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={5} className="py-8 text-center">
+                <td colSpan={7} className="py-8 text-center">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
+                <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
                   No ready-but-unbilled loads in current filters 🎉
                 </td>
               </tr>
@@ -239,12 +231,18 @@ function ReadyNotBilledCard({ filters }: Props) {
                   className="border-b border-[#F3F4F6] last:border-0"
                 >
                   <td className="px-2 py-1.5 font-mono text-[11px]">{r.id}</td>
+                  <td className="max-w-[200px] truncate px-2 py-1.5" title={r.customer_name}>
+                    {r.customer_name || "—"}
+                  </td>
                   <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
                   <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
                   <td className="px-2 py-1.5">
                     <span className="rounded bg-[#F3F4F6] px-1.5 py-0.5 text-[10px] text-[#374151]">
                       {r.status}
                     </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
+                    <DaysBadge days={r.days_since_ship} />
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
                     {fmtUsd(r.total_charge)}
@@ -264,6 +262,19 @@ function ReadyNotBilledCard({ filters }: Props) {
       />
     </div>
   )
+}
+
+function DaysBadge({ days }: { days: number | null | undefined }) {
+  if (days === null || days === undefined) {
+    return <span className="text-[#9CA3AF]">—</span>
+  }
+  const cls =
+    days <= 3
+      ? "text-[#065F46] bg-[#ECFDF5]"
+      : days <= 7
+      ? "text-[#92400E] bg-[#FEF3C7]"
+      : "text-[#991B1B] bg-[#FEE2E2] font-semibold"
+  return <span className={`rounded px-1.5 py-0.5 text-[11px] ${cls}`}>{days}d</span>
 }
 
 interface SortableThProps {

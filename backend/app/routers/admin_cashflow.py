@@ -159,6 +159,12 @@ def _parse_companies(companies: Optional[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _parse_customers(customers: Optional[str]) -> list[str]:
+    if not customers:
+        return []
+    return [c.strip() for c in customers.split(",") if c.strip()]
+
+
 def _scope_where(
     alias: str,
     teams: list[str],
@@ -167,10 +173,15 @@ def _scope_where(
     customer: Optional[str],
     contract_type: Optional[str],
     params: list,
+    *,
+    customers: Optional[list[str]] = None,
+    customer_mode: str = "include",
 ) -> str:
     """Build the shared WHERE fragment for mcleod_gld_cashflow.
 
     Padded-variant ``= ANY($N)`` predicates keep btree indexes usable.
+    Customer filter supports either single ``customer=`` (legacy) or
+    multi-value ``customers=`` with ``customer_mode`` in {include, exclude}.
     """
     params.append(_pad_variants(teams, width=8))
     p_teams = len(params)
@@ -184,9 +195,11 @@ def _scope_where(
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
     ]
-    if customer:
-        params.append(customer)
-        parts.append(f"{alias}.customer_name = ${len(params)}")
+    cust_list = customers if customers else ([customer] if customer else [])
+    if cust_list:
+        params.append(cust_list)
+        op = "<> ALL" if customer_mode == "exclude" else "= ANY"
+        parts.append(f"{alias}.customer_name {op}(${len(params)})")
     if contract_type:
         params.append(contract_type)
         parts.append(f"{alias}.contract_type_descr = ${len(params)}")
@@ -283,6 +296,8 @@ async def kpis(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
@@ -293,7 +308,8 @@ async def kpis(
 
     params: list = []
     where_open = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
 
@@ -357,6 +373,22 @@ async def kpis(
           AND invoice_recv_date > '2000-01-01'::date
       ) AS pct_carrinv_bill_le2,
 
+      -- Avg KPI #A: Avg Days Delivery → Bill (bill_date - dest_actual_departure)
+      (
+        SELECT COALESCE(AVG(bill_date::date - dest_actual_departure::date)::numeric, 0)
+        FROM base
+        WHERE bill_date              > '2000-01-01'::date
+          AND dest_actual_departure  > '2000-01-01'::date
+      )::numeric AS avg_days_del_bill,
+
+      -- Avg KPI #B: Avg Days BOL Rec → Bill (bill_date - bol_recv_date)
+      (
+        SELECT COALESCE(AVG(bill_date::date - bol_recv_date::date)::numeric, 0)
+        FROM base
+        WHERE bill_date    > '2000-01-01'::date
+          AND bol_recv_date > '2000-01-01'::date
+      )::numeric AS avg_days_bol_bill,
+
       -- $ KPI #1: Delivered but not billed
       (
         SELECT COALESCE(SUM(total_charge), 0)
@@ -389,6 +421,8 @@ async def kpis(
             "pct_del_bill_le10": float(row["pct_del_bill_le10"] or 0) * 100.0,
             "pct_bol_bill_le2": float(row["pct_bol_bill_le2"] or 0) * 100.0,
             "pct_carrinv_bill_le2": float(row["pct_carrinv_bill_le2"] or 0) * 100.0,
+            "avg_days_del_bill": float(row["avg_days_del_bill"] or 0),
+            "avg_days_bol_bill": float(row["avg_days_bol_bill"] or 0),
             "delivered_not_billed_usd": delivered_not_billed,
             "ready_not_billed_usd": ready_not_billed,
             "total_unbilled_usd": total_unbilled,
@@ -411,6 +445,8 @@ async def sparklines(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
@@ -431,7 +467,8 @@ async def sparklines(
 
     params: list = []
     where_open = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
 
@@ -527,6 +564,8 @@ async def delivered_not_billed(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     sort: str = Query("delivered_asc"),  # oldest unbilled first = most actionable
     page: int = Query(1, ge=1),
@@ -542,7 +581,8 @@ async def delivered_not_billed(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, DELIVERED_ONLY, customer, contract_type, params
+        "c", team_list, company_list, DELIVERED_ONLY, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.extend([limit, offset])
@@ -648,6 +688,8 @@ async def ready_not_billed(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     sort: str = Query("ship_asc"),
     page: int = Query(1, ge=1),
@@ -663,7 +705,8 @@ async def ready_not_billed(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.extend([limit, offset])
@@ -679,7 +722,13 @@ async def ready_not_billed(
         c.customer_name,
         c.team_id,
         c.company_id,
-        c.total_charge
+        c.total_charge,
+        CASE
+          WHEN c.origin_actual_arrival > '2000-01-01'::date
+          THEN ((now() AT TIME ZONE 'America/Chicago')::date
+                - c.origin_actual_arrival::date)
+          ELSE NULL
+        END AS days_since_ship
       FROM public.mcleod_gld_cashflow c
       WHERE {where} AND {date_frag}
         AND c.bill_date < '2000-01-01'::date
@@ -687,7 +736,7 @@ async def ready_not_billed(
     )
     SELECT
       id, orig_sched_early, ship_date, status,
-      customer_name, team_id, company_id, total_charge,
+      customer_name, team_id, company_id, total_charge, days_since_ship,
       COUNT(*)          OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -708,6 +757,7 @@ async def ready_not_billed(
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
+            "days_since_ship": int(r["days_since_ship"]) if r["days_since_ship"] is not None else None,
         }
         for r in rows
     ]
@@ -785,6 +835,8 @@ async def aging_delivery_vs_bill(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
@@ -801,7 +853,8 @@ async def aging_delivery_vs_bill(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.extend([limit, offset])
@@ -857,6 +910,8 @@ async def aging_bol_vs_bill(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
@@ -873,7 +928,8 @@ async def aging_bol_vs_bill(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.extend([limit, offset])
@@ -928,6 +984,8 @@ async def aging_carrinv_vs_bill(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     sort: str = Query("days_desc"),
     page: int = Query(1, ge=1),
@@ -944,7 +1002,8 @@ async def aging_carrinv_vs_bill(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.extend([limit, offset])
@@ -1004,6 +1063,8 @@ async def aging_buckets(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
@@ -1015,7 +1076,8 @@ async def aging_buckets(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
 
@@ -1069,6 +1131,8 @@ async def top_delayed_customers(
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=50),
     _user: dict = Depends(require_report_access("admin-cashflow")),
@@ -1081,7 +1145,8 @@ async def top_delayed_customers(
 
     params: list = []
     where = _scope_where(
-        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
     params.append(limit)

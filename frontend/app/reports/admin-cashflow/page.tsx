@@ -17,6 +17,7 @@ import {
   useAdminCashflowSparklines,
   type AdminCashflowFilters,
   type AdminCashflowRange,
+  type CustomerFilterMode,
 } from "@/lib/admin-cashflow-api"
 import { KpiStrip } from "./KpiStrip"
 import { AlarmBanner } from "./AlarmBanner"
@@ -77,7 +78,12 @@ function AdminCashflowContent() {
       .filter((c) => (ALL_COMPANIES as readonly string[]).includes(c))
   }, [companiesParam])
 
-  const customer = searchParams.get("customer") || ""
+  const customersParam = searchParams.get("customers")
+  const customers = useMemo<string[]>(() => {
+    if (!customersParam) return []
+    return customersParam.split(",").map((c) => c.trim()).filter(Boolean)
+  }, [customersParam])
+  const customerMode = (searchParams.get("customer_mode") as CustomerFilterMode) || "include"
   const contractType = searchParams.get("contract_type") || ""
 
   const updateUrl = useCallback(
@@ -96,7 +102,14 @@ function AdminCashflowContent() {
     updateUrl({ range: r === "mtd" ? null : r })
   const setStartDate = (d: string) => updateUrl({ s: d })
   const setEndDate = (d: string) => updateUrl({ e: d })
-  const setCustomer = (c: string) => updateUrl({ customer: c || null })
+  const setCustomers = (next: string[]) =>
+    updateUrl({ customers: next.length ? next.join(",") : null })
+  const toggleCustomer = (c: string) => {
+    if (!c) return
+    setCustomers(customers.includes(c) ? customers.filter((x) => x !== c) : [...customers, c])
+  }
+  const setCustomerMode = (m: CustomerFilterMode) =>
+    updateUrl({ customer_mode: m === "include" ? null : m })
   const setContractType = (t: string) =>
     updateUrl({ contract_type: t || null })
 
@@ -125,10 +138,11 @@ function AdminCashflowContent() {
       endDate: range === "custom" ? endDate : undefined,
       teams,
       companies,
-      customer: customer || undefined,
+      customers: customers.length ? customers : undefined,
+      customerMode,
       contractType: contractType || undefined,
     }),
-    [range, startDate, endDate, teams, companies, customer, contractType],
+    [range, startDate, endDate, teams, companies, customers, customerMode, contractType],
   )
 
   // ---- Data ----------------------------------------------------------------
@@ -145,14 +159,17 @@ function AdminCashflowContent() {
     const q = customerInput.trim().toLowerCase()
     if (!q || !facets?.customers) return []
     return facets.customers
-      .filter((c) => c.toLowerCase().includes(q))
+      .filter((c) => c.toLowerCase().includes(q) && !customers.includes(c))
       .slice(0, 8)
-  }, [customerInput, facets])
+  }, [customerInput, facets, customers])
 
   const allTeamsSelected = teams.length === ALL_TEAMS.length
   const windowLabel = k?.window
     ? `${k.window.start} → ${k.window.end}`
     : range.replace("_", " ").toUpperCase()
+  const customerSummary = customers.length
+    ? `${customerMode === "exclude" ? "Excl." : "Incl."} ${customers.length} cust.`
+    : "All customers"
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
@@ -180,7 +197,7 @@ function AdminCashflowContent() {
           {" · "}
           Teams: {allTeamsSelected ? "All" : teams.join(", ") || "None"}
           {" · "}
-          {customer ? `Customer: ${customer}` : "All customers"}
+          {customerSummary}
         </div>
       </div>
 
@@ -276,49 +293,97 @@ function AdminCashflowContent() {
             </div>
           </div>
 
-          {/* Customer */}
-          <div className="relative flex items-center gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+          {/* Customer — multi-select with Include/Exclude toggle */}
+          <div className="relative flex items-start gap-2">
+            <label className="mt-1 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
               Customer
             </label>
-            <input
-              type="text"
-              value={customer || customerInput}
-              placeholder="Type to filter…"
-              onChange={(e) => {
-                setCustomerInput(e.target.value)
-                if (!e.target.value) setCustomer("")
-              }}
-              className="w-56 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
-            />
-            {customer && (
-              <button
-                onClick={() => {
-                  setCustomer("")
-                  setCustomerInput("")
-                }}
-                className="rounded-md p-1 text-[#6B7280] hover:bg-[#F9FAFB]"
-                title="Clear customer"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-            {customerSuggestions.length > 0 && !customer && (
-              <div className="absolute left-[80px] top-7 z-20 max-h-60 w-56 overflow-auto rounded-md border border-[#E5E7EB] bg-white shadow-md">
-                {customerSuggestions.map((s) => (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1">
+                <div className="flex overflow-hidden rounded-md border border-[#E5E7EB] text-[10px]">
                   <button
-                    key={s}
+                    onClick={() => setCustomerMode("include")}
+                    className={`px-2 py-1 ${
+                      customerMode === "include"
+                        ? "bg-[#1B3A5C] text-white"
+                        : "bg-white text-[#6B7280] hover:bg-[#F9FAFB]"
+                    }`}
+                    title="Match only the selected customers"
+                  >
+                    Include
+                  </button>
+                  <button
+                    onClick={() => setCustomerMode("exclude")}
+                    className={`px-2 py-1 ${
+                      customerMode === "exclude"
+                        ? "bg-[#991B1B] text-white"
+                        : "bg-white text-[#6B7280] hover:bg-[#F9FAFB]"
+                    }`}
+                    title="Hide the selected customers"
+                  >
+                    Exclude
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={customerInput}
+                  placeholder="Type to filter…"
+                  onChange={(e) => setCustomerInput(e.target.value)}
+                  className="w-56 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
+                />
+                {customers.length > 0 && (
+                  <button
                     onClick={() => {
-                      setCustomer(s)
+                      setCustomers([])
                       setCustomerInput("")
                     }}
-                    className="block w-full px-3 py-1.5 text-left text-xs hover:bg-[#F9FAFB]"
+                    className="rounded-md p-1 text-[#6B7280] hover:bg-[#F9FAFB]"
+                    title="Clear all customers"
                   >
-                    {s}
+                    <X className="h-3 w-3" />
                   </button>
-                ))}
+                )}
               </div>
-            )}
+              {customers.length > 0 && (
+                <div className="flex max-w-[420px] flex-wrap gap-1">
+                  {customers.map((c) => (
+                    <span
+                      key={c}
+                      className={`inline-flex max-w-[200px] items-center gap-1 truncate rounded-full px-2 py-0.5 text-[10px] ${
+                        customerMode === "exclude"
+                          ? "bg-[#FEE2E2] text-[#991B1B]"
+                          : "bg-[#DBEAFE] text-[#1E40AF]"
+                      }`}
+                      title={c}
+                    >
+                      <span className="truncate">{c}</span>
+                      <button
+                        onClick={() => toggleCustomer(c)}
+                        className="rounded-full hover:bg-black/10"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {customerSuggestions.length > 0 && (
+                <div className="absolute left-[80px] top-9 z-20 max-h-60 w-72 overflow-auto rounded-md border border-[#E5E7EB] bg-white shadow-md">
+                  {customerSuggestions.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        toggleCustomer(s)
+                        setCustomerInput("")
+                      }}
+                      className="block w-full px-3 py-1.5 text-left text-xs hover:bg-[#F9FAFB]"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Contract Type */}

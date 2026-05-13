@@ -47,6 +47,8 @@ export type AdminCashflowRange =
   | "ytd"
   | "custom"
 
+export type CustomerFilterMode = "include" | "exclude"
+
 export interface AdminCashflowFilters {
   range: AdminCashflowRange
   startDate?: string
@@ -54,6 +56,8 @@ export interface AdminCashflowFilters {
   teams?: string[]
   companies?: string[]
   customer?: string
+  customers?: string[]
+  customerMode?: CustomerFilterMode
   contractType?: string
 }
 
@@ -67,7 +71,12 @@ function buildQs(
   if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
   if (f.teams && f.teams.length) q.set("teams", f.teams.join(","))
   if (f.companies && f.companies.length) q.set("companies", f.companies.join(","))
-  if (f.customer) q.set("customer", f.customer)
+  if (f.customers && f.customers.length) {
+    q.set("customers", f.customers.join(","))
+    q.set("customer_mode", f.customerMode ?? "include")
+  } else if (f.customer) {
+    q.set("customer", f.customer)
+  }
   if (f.contractType) q.set("contract_type", f.contractType)
   if (extra) {
     for (const [k, v] of Object.entries(extra)) q.set(k, String(v))
@@ -84,6 +93,8 @@ function keyFromFilters(f: AdminCashflowFilters) {
     (f.teams ?? []).slice().sort().join(","),
     (f.companies ?? []).slice().sort().join(","),
     f.customer ?? "",
+    (f.customers ?? []).slice().sort().join(","),
+    f.customerMode ?? "include",
     f.contractType ?? "",
   ]
 }
@@ -106,6 +117,8 @@ export interface AdminCashflowKpis {
   pct_del_bill_le10: number
   pct_bol_bill_le2: number
   pct_carrinv_bill_le2: number
+  avg_days_del_bill: number
+  avg_days_bol_bill: number
   delivered_not_billed_usd: number
   ready_not_billed_usd: number
   total_unbilled_usd: number
@@ -143,6 +156,7 @@ export interface ReadyNotBilledRow {
   team_id: string
   company_id: string
   total_charge: number
+  days_since_ship: number | null
 }
 
 export interface AgingRow {
@@ -202,13 +216,20 @@ export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
       (f.teams ?? []).slice().sort().join(","),
       (f.companies ?? []).slice().sort().join(","),
       f.customer ?? "",
+      (f.customers ?? []).slice().sort().join(","),
+      f.customerMode ?? "include",
       f.contractType ?? "",
     ],
     queryFn: () => {
       const q = new URLSearchParams()
       if (f.teams?.length) q.set("teams", f.teams.join(","))
       if (f.companies?.length) q.set("companies", f.companies.join(","))
-      if (f.customer) q.set("customer", f.customer)
+      if (f.customers && f.customers.length) {
+        q.set("customers", f.customers.join(","))
+        q.set("customer_mode", f.customerMode ?? "include")
+      } else if (f.customer) {
+        q.set("customer", f.customer)
+      }
       if (f.contractType) q.set("contract_type", f.contractType)
       const s = q.toString()
       return apiFetch<AdminCashflowSparklines>(
