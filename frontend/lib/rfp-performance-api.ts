@@ -125,6 +125,22 @@ export interface RfpSummary {
   won: RfpWonBlock
 }
 
+/**
+ * Bruno round-2 (2026-05-13): potential revenue + awarded conv ratio per
+ * business_type bucket. Containers 2 + 3 ignore the user's business_type
+ * filter pill (server-side override).
+ */
+export interface RfpBusinessTypeBucket {
+  potential_revenue: number
+  awarded_conv_ratio: number | null
+}
+
+export interface RfpBusinessTypeSummary {
+  all: RfpBusinessTypeBucket
+  new: RfpBusinessTypeBucket
+  existing: RfpBusinessTypeBucket
+}
+
 export interface RfpConvertioRow {
   ratio: number
   revenue_awarded_at_ratio: number
@@ -252,6 +268,17 @@ export function useRfpSummary(f: RfpFilters) {
     queryKey: ["rfp", "summary", ...keyFilters(f)],
     queryFn: () =>
       apiFetch<RfpSummary>(`custom/rfp-performance/summary${qs(f)}`),
+    ...RETRY,
+  })
+}
+
+export function useRfpBusinessTypeSummary(f: RfpFilters) {
+  return useQuery({
+    queryKey: ["rfp", "business-type-summary", ...keyFilters(f)],
+    queryFn: () =>
+      apiFetch<RfpBusinessTypeSummary>(
+        `custom/rfp-performance/business-type-summary${qs(f)}`,
+      ),
     ...RETRY,
   })
 }

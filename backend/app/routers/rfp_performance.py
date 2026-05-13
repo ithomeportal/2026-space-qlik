@@ -62,6 +62,7 @@ since the data only changes once per day.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from datetime import date
@@ -485,6 +486,94 @@ async def summary(
 
 
 # ---------------------------------------------------------------------------
+# /business-type-summary — Bruno round-2 (2026-05-13)
+# Potential Revenue + Awarded Conv Ratio for All / New / Existing customer
+# Containers 2 + 3 ignore the user's business_type filter pill.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/business-type-summary")
+async def business_type_summary(
+    request: Request,
+    response: Response,
+    f: dict = Depends(_common_params),
+    _user: dict = Depends(require_report_access("rfp-performance")),
+):
+    """3 KPI containers next to the Potential Revenue banner.
+
+    Each container reports:
+      - ``potential_revenue``: SUM(potential_revenue) in scope.
+      - ``awarded_conv_ratio``: SUM(rfp_revenue WHERE status='Won')
+        divided by the same potential_revenue (mirrors the "Won" block's
+        Awarded Convertio Ratio).
+
+    Bucket scopes:
+      - **all**: honors every filter (same as the Potential Revenue banner).
+      - **new**: forces ``opportunity = 'New'``; ignores the user's
+        ``business_type`` filter pill.
+      - **existing**: forces ``opportunity = 'Existing customer'``;
+        ignores the user's ``business_type`` filter pill.
+    """
+    key = _cache_key("business-type-summary", _filter_signature(f))
+    cached = _cache_get(key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "private, max-age=60"
+        return cached
+
+    pool = get_automations_pool(request)
+
+    async def _bucket(business_type_override: Optional[list[str]]) -> dict:
+        params: list = []
+        # When override is set, IGNORE the user's business_type filter pill.
+        bt_filter = (
+            business_type_override
+            if business_type_override is not None
+            else f["business_type"]
+        )
+        where = _apply_filters(
+            f["date_from"], f["date_to"],
+            f["division"], f["department"],
+            bt_filter,
+            f["customer"], f["type_quotation"], f["status"],
+            params,
+        )
+        row = await pool.fetchrow(
+            f"""
+            SELECT
+              COALESCE(SUM(potential_revenue), 0)::numeric            AS pot_rev,
+              COALESCE(SUM(rfp_revenue) FILTER (WHERE status='Won'), 0)::numeric AS rev_won
+            FROM rfp_results_history
+            WHERE {where}
+            """,
+            *params,
+        )
+        pot = float(row["pot_rev"] or 0)
+        won = float(row["rev_won"] or 0)
+        return {
+            "potential_revenue": pot,
+            "awarded_conv_ratio": (won / pot) if pot else None,
+        }
+
+    all_b, new_b, existing_b = await asyncio.gather(
+        _bucket(None),
+        _bucket(["New"]),
+        _bucket(["Existing customer"]),
+    )
+
+    payload = {
+        "success": True,
+        "data": {
+            "all": all_b,
+            "new": new_b,
+            "existing": existing_b,
+        },
+    }
+    _cache_set(key, payload)
+    response.headers["Cache-Control"] = "private, max-age=60"
+    return payload
+
+
+# ---------------------------------------------------------------------------
 # /convertio-ratio — sensitivity table, current calendar year, ignore date filter
 # ---------------------------------------------------------------------------
 
@@ -585,20 +674,22 @@ async def trend_12m(
     f: dict = Depends(_common_params),
     _user: dict = Depends(require_report_access("rfp-performance")),
 ):
-    """Last 12 months of monthly Volume+Revenue Awarded vs ratios.
+    """YTD monthly Volume+Revenue Awarded vs Convertio ratios.
 
-    Anchor is ``date_trunc('month', MAX(submitted_date))`` per Bruno's
-    Qlik AddMonths(Max(...), -12) — i.e. relative to the data, not to
-    today, so the chart still shows the latest 12 months on the day
-    after a holiday gap.
+    Bruno round-2 (2026-05-13): switched from "rolling last 12 months
+    anchored at MAX(submitted_date)" to "Year-To-Date only", still
+    ignoring the user's Date filter. Endpoint name is preserved so the
+    React Query cache key stays stable across the deploy.
     """
-    key = _cache_key("trend-12m", _filter_signature(f, apply_date=False))
+    key = _cache_key("trend-12m-ytd", _filter_signature(f, apply_date=False))
     cached = _cache_get(key)
     if cached is not None:
         response.headers["Cache-Control"] = "private, max-age=600"
         return cached
 
     pool = get_automations_pool(request)
+    today = cst_today()
+    year_start = date(today.year, 1, 1)
     params: list = []
     where = _apply_filters(
         None, None,
@@ -606,13 +697,14 @@ async def trend_12m(
         f["customer"], f["type_quotation"], f["status"],
         params, apply_date=False,
     )
+    params.append(year_start)
+    p_ys = len(params)
+    params.append(today)
+    p_today = len(params)
 
     sql = f"""
     WITH base AS (
       SELECT * FROM rfp_results_history WHERE {where} AND submitted_date IS NOT NULL
-    ),
-    anchor AS (
-      SELECT date_trunc('month', MAX(submitted_date)) AS m FROM base
     ),
     months AS (
       SELECT
@@ -621,9 +713,9 @@ async def trend_12m(
         COALESCE(SUM(no_loads), 0)::numeric                                       AS no_loads_total,
         COALESCE(SUM(rfp_revenue)      FILTER (WHERE status = 'Won'), 0)::numeric AS revenue_won,
         COALESCE(SUM(potential_revenue), 0)::numeric                              AS pot_rev_total
-      FROM base, anchor
-      WHERE submitted_date >= anchor.m - INTERVAL '11 months'
-        AND submitted_date <  anchor.m + INTERVAL '1 month'
+      FROM base
+      WHERE submitted_date >= ${p_ys}
+        AND submitted_date <  (${p_today}::date + 1)
       GROUP BY 1
     )
     SELECT * FROM months ORDER BY ym

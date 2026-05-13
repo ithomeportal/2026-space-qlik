@@ -17,6 +17,7 @@ import {
 } from "recharts"
 import {
   EMPTY_FILTERS,
+  useRfpBusinessTypeSummary,
   useRfpConvertioRatio,
   useRfpDetails,
   useRfpFilterOptions,
@@ -26,6 +27,7 @@ import {
   useRfpSummaryByCustomerDetail,
   useRfpSummaryByTab,
   useRfpTrend12m,
+  type RfpBusinessTypeBucket,
   type RfpDetailSort,
   type RfpFilters,
   type RfpStatusBlock,
@@ -144,6 +146,7 @@ function Content() {
   const optionsRes = useRfpFilterOptions()
   const opts = optionsRes.data?.data
   const summaryQ = useRfpSummary(filters)
+  const btSummaryQ = useRfpBusinessTypeSummary(filters)
   const convertioQ = useRfpConvertioRatio(filters)
   const trendQ = useRfpTrend12m(filters)
   const monthQ = useRfpPotentialByMonth(filters)
@@ -266,6 +269,7 @@ function Content() {
           errors={[
             optionsRes.error,
             summaryQ.error,
+            btSummaryQ.error,
             convertioQ.error,
             trendQ.error,
             monthQ.error,
@@ -276,8 +280,31 @@ function Content() {
           ]}
         />
 
-        {/* Grand total */}
-        <PotentialRevenueBanner value={summary?.grand_total_pot_rev} loading={summaryQ.isLoading} />
+        {/* Grand total + Bruno round-2 three-container KPI strip */}
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr_1fr_1fr]">
+          <PotentialRevenueBanner value={summary?.grand_total_pot_rev} loading={summaryQ.isLoading} />
+          <BusinessTypeContainer
+            title="All Potential"
+            subtitle="All business types · respects filters"
+            bucket={btSummaryQ.data?.data?.all}
+            loading={btSummaryQ.isLoading}
+            tone={openTone}
+          />
+          <BusinessTypeContainer
+            title="Business Type: New"
+            subtitle="business_type = 'New' · ignores Bussiness Type pill"
+            bucket={btSummaryQ.data?.data?.new}
+            loading={btSummaryQ.isLoading}
+            tone={wonTone}
+          />
+          <BusinessTypeContainer
+            title="Business Type: Existing customer"
+            subtitle="business_type = 'Existing customer' · ignores Bussiness Type pill"
+            bucket={btSummaryQ.data?.data?.existing}
+            loading={btSummaryQ.isLoading}
+            tone={closedTone}
+          />
+        </section>
 
         {/* Status blocks */}
         <StatusBlock
@@ -307,36 +334,16 @@ function Content() {
           loading={summaryQ.isLoading}
         />
 
-        {/* Convertio Ratio table + 12-mo combos */}
+        {/* Convertio Ratio table + tabbed YTD combo (Bruno round-2 2026-05-13) */}
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ConvertioRatioTable
             data={convertioQ.data?.data}
             loading={convertioQ.isLoading}
           />
-          <div className="grid grid-cols-1 gap-4">
-            <TrendComboPanel
-              title="Volume Awarded / Convertio Ratio"
-              subtitle="Bars: Volume Won (rfp_volume) · Line: Volume Won / Total Loads · last 12 months · ignores Date filter"
-              data={trendQ.data?.data?.rows ?? []}
-              valueKey="volume_won"
-              ratioKey="volume_conv_ratio"
-              valueLabel="Volume Won"
-              ratioLabel="Conv Ratio"
-              loading={trendQ.isLoading}
-              fmt="int"
-            />
-            <TrendComboPanel
-              title="Revenue Awarded / Convertio Ratio"
-              subtitle="Bars: Revenue Won (rfp_revenue) · Line: Revenue Won / Potential Revenue · last 12 months · ignores Date filter"
-              data={trendQ.data?.data?.rows ?? []}
-              valueKey="revenue_won"
-              ratioKey="revenue_conv_ratio"
-              valueLabel="Revenue Won"
-              ratioLabel="Conv Ratio"
-              loading={trendQ.isLoading}
-              fmt="money"
-            />
-          </div>
+          <TabbedTrendPanel
+            rows={trendQ.data?.data?.rows ?? []}
+            loading={trendQ.isLoading}
+          />
         </section>
 
         {/* RFP Summary tabbed */}
@@ -499,6 +506,48 @@ function PotentialRevenueBanner({
       <div className="mt-0.5 text-[10px] text-[#9CA3AF]">
         Sum(potential_revenue) · respects all filter pills
       </div>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Business-type container — Bruno round-2 (2026-05-13)
+// Three side-by-side mini-cards next to the Potential Revenue banner.
+// ---------------------------------------------------------------------------
+
+function BusinessTypeContainer({
+  title,
+  subtitle,
+  bucket,
+  loading,
+  tone,
+}: {
+  title: string
+  subtitle: string
+  bucket: RfpBusinessTypeBucket | undefined
+  loading: boolean
+  tone: Tone
+}) {
+  return (
+    <section className={`rounded-xl border-2 ${tone.border} bg-white px-4 py-3`}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+        {title}
+      </div>
+      <div className="mt-1 text-xl font-semibold tabular-nums text-[#1B3A5C]">
+        {loading ? (
+          <Loader2 className="inline h-4 w-4 animate-spin" />
+        ) : (
+          fmtMoney(bucket?.potential_revenue, { compact: true })
+        )}
+      </div>
+      <div className="mt-0.5 text-[9px] text-[#9CA3AF]">Potential Revenue</div>
+      <div className="mt-2 border-t border-[#F3F4F6] pt-2">
+        <div className={`text-base font-semibold tabular-nums ${tone.text}`}>
+          {loading ? "…" : fmtPct(bucket?.awarded_conv_ratio)}
+        </div>
+        <div className="text-[9px] text-[#9CA3AF]">Awarded Convertio Ratio</div>
+      </div>
+      <div className="mt-1.5 text-[9px] leading-tight text-[#9CA3AF]">{subtitle}</div>
     </section>
   )
 }
@@ -679,7 +728,7 @@ function ConvertioRatioTable({
 }
 
 // ---------------------------------------------------------------------------
-// Trend combo chart
+// Trend combo chart — tabbed Volume / Revenue (Bruno round-2 2026-05-13)
 // ---------------------------------------------------------------------------
 
 interface TrendRow {
@@ -690,9 +739,71 @@ interface TrendRow {
   revenue_conv_ratio: number | null
 }
 
-function TrendComboPanel({
-  title,
-  subtitle,
+function TabbedTrendPanel({
+  rows,
+  loading,
+}: {
+  rows: TrendRow[]
+  loading: boolean
+}) {
+  const [tab, setTab] = useState<"volume" | "revenue">("volume")
+  return (
+    <Panel
+      title={tab === "volume" ? "Volume Awarded / Convertio Ratio" : "Revenue Awarded / Convertio Ratio"}
+      subtitle={
+        tab === "volume"
+          ? "Bars: Volume Won (rfp_volume) · Line: Volume Won / Total Loads · YTD · ignores Date filter"
+          : "Bars: Revenue Won (rfp_revenue) · Line: Revenue Won / Potential Revenue · YTD · ignores Date filter"
+      }
+    >
+      <div className="-mt-2 mb-2 flex gap-1 border-b border-[#E5E7EB]">
+        <button
+          onClick={() => setTab("volume")}
+          className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium ${
+            tab === "volume"
+              ? "border-[#1B3A5C] text-[#1B3A5C]"
+              : "border-transparent text-[#6B7280] hover:text-[#111827]"
+          }`}
+        >
+          Volume Awarded
+        </button>
+        <button
+          onClick={() => setTab("revenue")}
+          className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium ${
+            tab === "revenue"
+              ? "border-[#1B3A5C] text-[#1B3A5C]"
+              : "border-transparent text-[#6B7280] hover:text-[#111827]"
+          }`}
+        >
+          Revenue Awarded
+        </button>
+      </div>
+      {tab === "volume" ? (
+        <TrendComboBody
+          data={rows}
+          valueKey="volume_won"
+          ratioKey="volume_conv_ratio"
+          valueLabel="Volume Won"
+          ratioLabel="Conv Ratio"
+          loading={loading}
+          fmt="int"
+        />
+      ) : (
+        <TrendComboBody
+          data={rows}
+          valueKey="revenue_won"
+          ratioKey="revenue_conv_ratio"
+          valueLabel="Revenue Won"
+          ratioLabel="Conv Ratio"
+          loading={loading}
+          fmt="money"
+        />
+      )}
+    </Panel>
+  )
+}
+
+function TrendComboBody({
   data,
   valueKey,
   ratioKey,
@@ -701,8 +812,6 @@ function TrendComboPanel({
   loading,
   fmt,
 }: {
-  title: string
-  subtitle: string
   data: TrendRow[]
   valueKey: "volume_won" | "revenue_won"
   ratioKey: "volume_conv_ratio" | "revenue_conv_ratio"
@@ -724,54 +833,56 @@ function TrendComboPanel({
     [data, valueKey, ratioKey],
   )
 
+  if (loading) {
+    return (
+      <div className="flex h-[260px] items-center justify-center text-[11px] text-[#6B7280]">
+        <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Loading…
+      </div>
+    )
+  }
+  if (chart.length === 0) {
+    return (
+      <div className="flex h-[260px] items-center justify-center text-[11px] text-[#6B7280]">
+        No data year-to-date.
+      </div>
+    )
+  }
   return (
-    <Panel title={title} subtitle={subtitle}>
-      {loading ? (
-        <div className="flex h-[260px] items-center justify-center text-[11px] text-[#6B7280]">
-          <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Loading…
-        </div>
-      ) : chart.length === 0 ? (
-        <div className="flex h-[260px] items-center justify-center text-[11px] text-[#6B7280]">
-          No data in the last 12 months.
-        </div>
-      ) : (
-        <ResponsiveContainer width="100%" height={260}>
-          <ComposedChart data={chart}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-            <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-            <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tick={{ fontSize: 10 }}
-              tickFormatter={(v) => `${v}%`}
-            />
-            <Tooltip
-              formatter={(v, name) => {
-                if (name === ratioLabel) return `${Number(v).toFixed(2)}%`
-                return fmt === "money" ? fmtMoney(Number(v)) : fmtCount(Number(v))
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar
-              yAxisId="left"
-              dataKey="value"
-              fill="#1B3A5C"
-              name={valueLabel}
-              barSize={20}
-            />
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="ratio"
-              stroke="#7C2D12"
-              name={ratioLabel}
-              dot={{ r: 2 }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      )}
-    </Panel>
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={chart}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+        <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+        <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
+        <YAxis
+          yAxisId="right"
+          orientation="right"
+          tick={{ fontSize: 10 }}
+          tickFormatter={(v) => `${v}%`}
+        />
+        <Tooltip
+          formatter={(v, name) => {
+            if (name === ratioLabel) return `${Number(v).toFixed(2)}%`
+            return fmt === "money" ? fmtMoney(Number(v)) : fmtCount(Number(v))
+          }}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Bar
+          yAxisId="left"
+          dataKey="value"
+          fill="#1B3A5C"
+          name={valueLabel}
+          barSize={20}
+        />
+        <Line
+          yAxisId="right"
+          type="monotone"
+          dataKey="ratio"
+          stroke="#7C2D12"
+          name={ratioLabel}
+          dot={{ r: 2 }}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
   )
 }
 
