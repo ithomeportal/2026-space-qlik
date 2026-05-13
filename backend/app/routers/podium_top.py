@@ -87,6 +87,9 @@ async def podiums(
           AND posted_by IS NOT NULL AND posted_by <> ''
         GROUP BY posted_by
     ),
+    -- Bruno R4 (2026-05-12): Today cards now expose BOTH loads + profit so
+    -- each leaderboard row shows both numbers regardless of which metric was
+    -- the primary sort.
     daily AS (
         SELECT posted_by,
                COUNT(*)::int                            AS loads,
@@ -95,6 +98,20 @@ async def podiums(
         WHERE posted_date::date = CURRENT_DATE
           AND posted_by IS NOT NULL AND posted_by <> ''
         GROUP BY posted_by
+    ),
+    -- Bruno R4 (2026-05-12): same daily aggregation broken out by team
+    -- (TM1..TM4 within TEAM-DFW). Powers the per-team duplicate of the
+    -- Today cards stacked below the overall ones.
+    daily_by_team AS (
+        SELECT TRIM(COALESCE(team, '')) AS team,
+               posted_by,
+               COUNT(*)::int                            AS loads,
+               COALESCE(SUM(profit), 0)::float          AS profit
+        FROM rate_conf
+        WHERE posted_date::date = CURRENT_DATE
+          AND posted_by IS NOT NULL AND posted_by <> ''
+          AND TRIM(COALESCE(team, '')) <> ''
+        GROUP BY TRIM(COALESCE(team, '')), posted_by
     )
     SELECT
         (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
@@ -108,11 +125,37 @@ async def podiums(
            FROM (SELECT posted_by, loads FROM weekly
                  ORDER BY loads DESC LIMIT 3) t)                    AS week_top_loads,
         (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
-           FROM (SELECT posted_by, loads FROM daily
-                 ORDER BY loads DESC LIMIT 3) t)                    AS today_top_loads,
+           FROM (SELECT posted_by, loads, profit FROM daily
+                 ORDER BY loads DESC, profit DESC NULLS LAST LIMIT 3) t)
+                                                                    AS today_top_loads,
         (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
-           FROM (SELECT posted_by, profit FROM daily
-                 ORDER BY profit DESC NULLS LAST LIMIT 3) t)        AS today_top_profit
+           FROM (SELECT posted_by, profit, loads FROM daily
+                 ORDER BY profit DESC NULLS LAST, loads DESC LIMIT 3) t)
+                                                                    AS today_top_profit,
+        (SELECT COALESCE(
+                  json_agg(
+                    json_build_object(
+                      'team', d.team,
+                      'today_top_loads', (
+                        SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
+                        FROM (SELECT posted_by, loads, profit
+                              FROM daily_by_team d2
+                              WHERE d2.team = d.team
+                              ORDER BY loads DESC, profit DESC NULLS LAST LIMIT 3) t
+                      ),
+                      'today_top_profit', (
+                        SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
+                        FROM (SELECT posted_by, profit, loads
+                              FROM daily_by_team d2
+                              WHERE d2.team = d.team
+                              ORDER BY profit DESC NULLS LAST, loads DESC LIMIT 3) t
+                      )
+                    )
+                    ORDER BY d.team
+                  ),
+                  '[]'::json
+                )
+           FROM (SELECT DISTINCT team FROM daily_by_team) d)        AS by_team
     """
 
     row = await pool.fetchrow(sql, *params)
@@ -132,5 +175,6 @@ async def podiums(
             "week_top_loads":   _parse(row["week_top_loads"])   if row else [],
             "today_top_loads":  _parse(row["today_top_loads"])  if row else [],
             "today_top_profit": _parse(row["today_top_profit"]) if row else [],
+            "by_team":          _parse(row["by_team"])          if row else [],
         },
     }

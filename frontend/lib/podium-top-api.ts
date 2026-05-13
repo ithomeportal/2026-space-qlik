@@ -48,17 +48,27 @@ export interface PodiumLoadsRow {
   loads: number
 }
 
-export interface PodiumTodayProfitRow {
+// Bruno R4 (2026-05-12): Today rows now expose both loads + profit so each
+// leaderboard renders both numbers regardless of primary sort.
+export interface PodiumTodayRow {
   posted_by: string
+  loads: number
   profit: number | null
+}
+
+export interface PodiumByTeamEntry {
+  team: string
+  today_top_loads: PodiumTodayRow[]
+  today_top_profit: PodiumTodayRow[]
 }
 
 export interface PodiumLeaderboards {
   week_top_profit: PodiumWeekProfitRow[]
   week_top_margin: PodiumWeekMarginRow[]
   week_top_loads:  PodiumLoadsRow[]
-  today_top_loads: PodiumLoadsRow[]
-  today_top_profit: PodiumTodayProfitRow[]
+  today_top_loads: PodiumTodayRow[]
+  today_top_profit: PodiumTodayRow[]
+  by_team: PodiumByTeamEntry[]
 }
 
 const FIFTEEN_MIN = 15 * 60 * 1000

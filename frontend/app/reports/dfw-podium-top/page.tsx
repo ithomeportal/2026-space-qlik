@@ -166,17 +166,77 @@ function Podiums({
           subtitle="Today"
           rows={data.today_top_loads as unknown as Record<string, unknown>[]}
           accent="#DC2626"
-          columns={[postedByCol, loadsCol]}
+          columns={[postedByCol, loadsCol, profitCol]}
         />
         <PodiumTable
           title="TOP Bookers by Profit"
           subtitle="Today"
           rows={data.today_top_profit as unknown as Record<string, unknown>[]}
           accent="#C2410C"
-          columns={[postedByCol, profitCol]}
+          columns={[postedByCol, profitCol, loadsCol]}
         />
       </div>
+
+      {/* Bruno R4 (2026-05-12): same two Today cards duplicated per DFW
+          sub-team (TM1..TM4). Use the canonical sub-team order; render
+          empty cards for teams with no activity today. */}
+      <ByTeamSection
+        byTeam={data.by_team ?? []}
+        columnsLoads={[postedByCol, loadsCol, profitCol]}
+        columnsProfit={[postedByCol, profitCol, loadsCol]}
+      />
     </section>
+  )
+}
+
+const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
+
+function ByTeamSection({
+  byTeam,
+  columnsLoads,
+  columnsProfit,
+}: {
+  byTeam: PodiumLeaderboards["by_team"]
+  columnsLoads: PodiumColumn[]
+  columnsProfit: PodiumColumn[]
+}) {
+  const lookup = new Map(byTeam.map((e) => [e.team, e]))
+  return (
+    <div className="space-y-2 pt-2">
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-px flex-1 bg-[#E5E7EB]" />
+        <h2 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B7280]">
+          By DFW Sub-Team · Today
+        </h2>
+        <div className="h-px flex-1 bg-[#E5E7EB]" />
+      </div>
+      {DFW_SUB_TEAMS.map((team) => {
+        const e = lookup.get(team)
+        return (
+          <div key={team} className="space-y-1">
+            <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-[#1B3A5C]">
+              {team}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <PodiumTable
+                title={`TOP Bookers by Loads · ${team}`}
+                subtitle="Today"
+                rows={(e?.today_top_loads ?? []) as unknown as Record<string, unknown>[]}
+                accent="#DC2626"
+                columns={columnsLoads}
+              />
+              <PodiumTable
+                title={`TOP Bookers by Profit · ${team}`}
+                subtitle="Today"
+                rows={(e?.today_top_profit ?? []) as unknown as Record<string, unknown>[]}
+                accent="#C2410C"
+                columns={columnsProfit}
+              />
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
