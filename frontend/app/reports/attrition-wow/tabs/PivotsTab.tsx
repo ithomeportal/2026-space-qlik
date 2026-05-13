@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
   useAttritionPivot,
@@ -9,6 +9,26 @@ import {
 } from "@/lib/attrition-wow-api"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import { fmtCount, fmtPct, fmtUsd } from "../format"
+
+type StatusKind = "Top" | "Stable" | "Critical" | "NA"
+
+// Bruno round-4 (2026-05-12): Status text column with explicit Top/Stable/
+// Critical labels. Same rule as the old inline dot — both LW & L2W ≥ ref →
+// Top, both below → Critical, one of each → Stable.
+function computeStatus(
+  lw: number | null,
+  l2w: number | null,
+  ref: number | null,
+): StatusKind {
+  if (ref === null || lw === null || l2w === null) return "NA"
+  const lwBelow = lw < ref
+  const l2wBelow = l2w < ref
+  if (!lwBelow && !l2wBelow) return "Top"
+  if (lwBelow && l2wBelow) return "Critical"
+  return "Stable"
+}
+
+const STATUS_ORDER: Record<StatusKind, number> = { Critical: 0, Stable: 1, Top: 2, NA: 3 }
 
 interface Props {
   filters: AttritionFilters
@@ -132,6 +152,19 @@ function PivotPanel({
   const rows = res?.data ?? []
   const fmt = METRICS.find((m) => m.key === metric)!.fmt
 
+  // Bruno round-4 (2026-05-12): every column sortable. Sort state is column
+  // key = "status" | "dim_key" | "ref" | `wk_${idx}` and a direction.
+  type SortDir = "asc" | "desc"
+  const [sortKey, setSortKey] = useState<string>("total")
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const toggleSort = (k: string) => {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    else {
+      setSortKey(k)
+      setSortDir("desc")
+    }
+  }
+
   // Build wide pivot: weeks (cols, latest first) × dim_keys (rows)
   const { weeksList, pivot } = useMemo(() => {
     const weekSet = new Set<string>()
@@ -152,11 +185,42 @@ function PivotPanel({
         return slice.reduce((a, b) => a + b, 0) / slice.length
       })()
       const total = values.reduce<number>((a, b) => a + (b ?? 0), 0)
-      return { dim_key: k, values, ref, total }
+      const status = computeStatus(values[0] ?? null, values[1] ?? null, ref)
+      return { dim_key: k, values, ref, total, status }
     })
-    pivotEntries.sort((a, b) => (b.total ?? 0) - (a.total ?? 0))
+    pivotEntries.sort((a, b) => {
+      if (sortKey === "status") {
+        const av = STATUS_ORDER[a.status]
+        const bv = STATUS_ORDER[b.status]
+        return sortDir === "asc" ? av - bv : bv - av
+      }
+      if (sortKey === "dim_key") {
+        const av = a.dim_key.toLowerCase()
+        const bv = b.dim_key.toLowerCase()
+        if (av < bv) return sortDir === "asc" ? -1 : 1
+        if (av > bv) return sortDir === "asc" ? 1 : -1
+        return 0
+      }
+      if (sortKey === "ref") {
+        const av = a.ref
+        const bv = b.ref
+        if (av === null) return 1
+        if (bv === null) return -1
+        return sortDir === "asc" ? av - bv : bv - av
+      }
+      if (sortKey.startsWith("wk_")) {
+        const idx = Number(sortKey.slice(3))
+        const av = a.values[idx]
+        const bv = b.values[idx]
+        if (av === null || av === undefined) return 1
+        if (bv === null || bv === undefined) return -1
+        return sortDir === "asc" ? av - bv : bv - av
+      }
+      // default: total desc (preserves prior behavior)
+      return (b.total ?? 0) - (a.total ?? 0)
+    })
     return { weeksList, pivot: pivotEntries }
-  }, [rows])
+  }, [rows, sortKey, sortDir])
 
   if (isLoading && pivot.length === 0) {
     return (
@@ -172,10 +236,6 @@ function PivotPanel({
       : dim === "customer"
         ? "Customer"
         : "Customer · Lane"
-  // Bruno round-3 (2026-05-07): the by-Team view now also shows the status
-  // icon (it was customer-only before). Same rule, applied to whichever row
-  // dimension the user chose.
-  const showStatusDot = true
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
@@ -184,33 +244,58 @@ function PivotPanel({
         <table className="w-full text-[11px]">
           <thead className="bg-[#F9FAFB] text-[10px] uppercase tracking-wider text-[#6B7280]">
             <tr>
-              <th className="sticky left-0 z-10 bg-[#F9FAFB] px-3 py-2 text-left">
+              <SortTh
+                k="status"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onToggle={toggleSort}
+                align="left"
+                className="sticky left-0 z-10 bg-[#F9FAFB]"
+              >
+                Status
+              </SortTh>
+              <SortTh
+                k="dim_key"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onToggle={toggleSort}
+                align="left"
+                className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+              >
                 {headerLabel}
-              </th>
-              <th className="bg-[#F9FAFB] px-3 py-2 text-right text-[#1B3A5C]">
+              </SortTh>
+              <SortTh
+                k="ref"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onToggle={toggleSort}
+                className="bg-[#F9FAFB] text-[#1B3A5C]"
+              >
                 8-week avg
-              </th>
-              {weeksList.map((w) => (
-                <th key={w} className="px-3 py-2 text-right">
+              </SortTh>
+              {weeksList.map((w, i) => (
+                <SortTh
+                  key={w}
+                  k={`wk_${i}`}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onToggle={toggleSort}
+                >
                   {fmtMonDay(w)}
-                </th>
+                </SortTh>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F3F4F6]">
             {pivot.map((row) => (
               <tr key={row.dim_key} className="hover:bg-[#FAFAFA]">
+                <td className="sticky left-0 z-10 bg-white px-3 py-1.5">
+                  <StatusBadge status={row.status} />
+                </td>
                 <td
-                  className="sticky left-0 z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]"
+                  className="sticky left-[100px] z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]"
                   title={row.dim_key}
                 >
-                  {showStatusDot && (
-                    <StatusDot
-                      lw={row.values[0] ?? null}
-                      l2w={row.values[1] ?? null}
-                      avg={row.ref}
-                    />
-                  )}
                   <DimKeyCell
                     dim={dim}
                     value={row.dim_key}
@@ -233,7 +318,7 @@ function PivotPanel({
             ))}
             {pivot.length === 0 && (
               <tr>
-                <td colSpan={weeksList.length + 2} className="py-8 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={weeksList.length + 3} className="py-8 text-center text-xs text-[#9CA3AF]">
                   No data in scope.
                 </td>
               </tr>
@@ -242,6 +327,64 @@ function PivotPanel({
         </table>
       </div>
     </div>
+  )
+}
+
+function SortTh({
+  k,
+  sortKey,
+  sortDir,
+  onToggle,
+  align = "right",
+  className = "",
+  children,
+}: {
+  k: string
+  sortKey: string
+  sortDir: "asc" | "desc"
+  onToggle: (k: string) => void
+  align?: "left" | "right"
+  className?: string
+  children: React.ReactNode
+}) {
+  const active = sortKey === k
+  const Icon = !active ? ArrowUpDown : sortDir === "asc" ? ArrowUp : ArrowDown
+  return (
+    <th
+      className={`px-3 py-2 ${align === "left" ? "text-left" : "text-right"} ${className}`}
+    >
+      <button
+        onClick={() => onToggle(k)}
+        className={`inline-flex items-center gap-1 hover:underline ${active ? "font-bold" : ""}`}
+      >
+        {align === "right" ? (
+          <>
+            <Icon className={`h-3 w-3 ${active ? "opacity-100" : "opacity-40"}`} />
+            <span>{children}</span>
+          </>
+        ) : (
+          <>
+            <span>{children}</span>
+            <Icon className={`h-3 w-3 ${active ? "opacity-100" : "opacity-40"}`} />
+          </>
+        )}
+      </button>
+    </th>
+  )
+}
+
+function StatusBadge({ status }: { status: StatusKind }) {
+  if (status === "NA") return <span className="text-[#9CA3AF]">—</span>
+  const cls =
+    status === "Top"
+      ? "bg-[#DCFCE7] text-[#15803D]"
+      : status === "Stable"
+        ? "bg-[#FEF3C7] text-[#92400E]"
+        : "bg-[#FEE2E2] text-[#991B1B]"
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>
+      {status}
+    </span>
   )
 }
 
@@ -320,43 +463,3 @@ function fmtMonDay(iso: string): string {
   }
 }
 
-// Bruno's status rule (2026-04-27, extended to all views in round-3 2026-05-07):
-//   both LW & L2W >= 8-week avg  → green
-//   one of LW or L2W <  8-week avg → yellow
-//   both LW & L2W <  8-week avg  → red
-function StatusDot({
-  lw,
-  l2w,
-  avg,
-}: {
-  lw: number | null
-  l2w: number | null
-  avg: number | null
-}) {
-  if (avg === null || lw === null || l2w === null) {
-    return (
-      <span
-        className="mr-2 inline-block h-2 w-2 rounded-full bg-[#D1D5DB] align-middle"
-        title="Insufficient data"
-      />
-    )
-  }
-  const lwBelow = lw < avg
-  const l2wBelow = l2w < avg
-  let color = "#15803D" // green: both at or above
-  let label = "Both LW & L2W ≥ 8-week avg"
-  if (lwBelow && l2wBelow) {
-    color = "#DC2626"
-    label = "Both LW & L2W below 8-week avg"
-  } else if (lwBelow || l2wBelow) {
-    color = "#CA8A04"
-    label = "LW or L2W below 8-week avg"
-  }
-  return (
-    <span
-      className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
-      style={{ backgroundColor: color }}
-      title={label}
-    />
-  )
-}

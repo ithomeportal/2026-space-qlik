@@ -52,6 +52,7 @@ export function SortableTh<T>({
   sortDir,
   onToggle,
   align = "right",
+  className = "",
   children,
 }: {
   columnKey: keyof T
@@ -59,12 +60,13 @@ export function SortableTh<T>({
   sortDir: SortDir
   onToggle: (key: keyof T) => void
   align?: "left" | "right"
+  className?: string
   children: React.ReactNode
 }) {
   const active = sortKey === columnKey
   const Icon = !active ? ArrowUpDown : sortDir === "asc" ? ArrowUp : ArrowDown
   return (
-    <th className={`px-1 py-1 ${align === "left" ? "text-left" : "text-right"}`}>
+    <th className={`px-1 py-1 ${align === "left" ? "text-left" : "text-right"} ${className}`}>
       <button
         onClick={() => onToggle(columnKey)}
         className={`inline-flex items-center gap-1 hover:underline ${active ? "font-bold" : ""}`}

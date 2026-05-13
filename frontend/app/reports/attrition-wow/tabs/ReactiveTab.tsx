@@ -7,6 +7,7 @@ import {
   type AttritionFilters,
   type ReactiveRow,
 } from "@/lib/attrition-wow-api"
+import { SortableTh, useSortable } from "../../ceo-executive/sortable"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
@@ -195,42 +196,74 @@ function ReactiveTable({
     },
   }[variant]
 
-  // Sort: most-attrited first (lowest pct_var_loads_lw_vs_l8w / l2_4 / l5_9)
-  const sorted = useMemo(() => {
-    const k =
-      variant === "lw"
-        ? "pct_var_loads_lw_vs_l8w"
-        : variant === "l2_4w"
-          ? "pct_var_loads_l2_4_vs_l8w"
-          : "pct_var_loads_l5_9_vs_l8w"
-    return [...data].sort((a, b) => {
-      const av = a[k] ?? 0
-      const bv = b[k] ?? 0
-      return av - bv
-    })
-  }, [data, variant])
+  // Bruno round-4 (2026-05-12): every column sortable. Default sort kept as
+  // most-attrited first (% loads var ascending — biggest drop on top).
+  const variantKeys: {
+    load: keyof ReactiveRow
+    rev: keyof ReactiveRow
+    profit: keyof ReactiveRow
+    margin: keyof ReactiveRow
+    pct_loads: keyof ReactiveRow
+    pct_rev: keyof ReactiveRow
+    pct_profit: keyof ReactiveRow
+  } =
+    variant === "lw"
+      ? {
+          load: "lw_loads",
+          rev: "lw_revenue",
+          profit: "lw_profit",
+          margin: "lw_margin",
+          pct_loads: "pct_var_loads_lw_vs_l8w",
+          pct_rev: "pct_var_rev_lw_vs_l8w",
+          pct_profit: "pct_var_profit_lw_vs_l8w",
+        }
+      : variant === "l2_4w"
+        ? {
+            load: "avg_loads_l2_4w",
+            rev: "avg_rev_l2_4w",
+            profit: "avg_profit_l2_4w",
+            margin: "avg_margin_l2_4w",
+            pct_loads: "pct_var_loads_l2_4_vs_l8w",
+            pct_rev: "pct_var_rev_l2_4_vs_l8w",
+            pct_profit: "pct_var_profit_l2_4_vs_l8w",
+          }
+        : {
+            load: "avg_loads_l5_9w",
+            rev: "avg_rev_l5_9w",
+            profit: "avg_profit_l5_9w",
+            margin: "avg_margin_l5_9w",
+            pct_loads: "pct_var_loads_l5_9_vs_l8w",
+            pct_rev: "pct_var_rev_l5_9_vs_l8w",
+            pct_profit: "pct_var_profit_l5_9_vs_l8w",
+          }
+
+  const { sorted, sortKey, sortDir, toggle } = useSortable<ReactiveRow>(
+    data,
+    variantKeys.pct_loads,
+    "asc",
+  )
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[1280px] text-[11px]">
         <thead className="bg-[#F0FDFA] text-[10px] uppercase tracking-wider text-[#0F766E]">
           <tr>
-            <th className="sticky left-0 bg-[#F0FDFA] px-3 py-2 text-left">Team</th>
-            <th className="sticky left-[80px] bg-[#F0FDFA] px-3 py-2 text-left">Customer</th>
-            <th className="px-3 py-2 text-right">Avg Loads (L8W)</th>
-            <th className="px-3 py-2 text-right">{variantLabel.load}</th>
-            <th className="px-3 py-2 text-right">% Loads Var</th>
-            <th className="px-3 py-2 text-right">Avg Rev (L8W)</th>
-            <th className="px-3 py-2 text-right">{variantLabel.rev}</th>
-            <th className="px-3 py-2 text-right">% Rev Var</th>
-            <th className="px-3 py-2 text-right">Avg Profit (L8W)</th>
-            <th className="px-3 py-2 text-right">{variantLabel.prof}</th>
-            <th className="px-3 py-2 text-right">% Profit Var</th>
-            <th className="px-3 py-2 text-right">Margin (L8W)</th>
-            <th className="px-3 py-2 text-right">{variantLabel.margin}</th>
-            <th className="px-3 py-2 text-right">Last Load Date</th>
-            <th className="px-3 py-2 text-right">Days Since</th>
-            <th className="px-3 py-2 text-right">Reactive&nbsp;LW?</th>
+            <SortableTh<ReactiveRow> columnKey="team" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left" className="sticky left-0 bg-[#F0FDFA]">Team</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left" className="sticky left-[80px] bg-[#F0FDFA]">Customer</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="avg_loads_l8w" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Avg Loads (L8W)</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.load} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>{variantLabel.load}</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.pct_loads} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>% Loads Var</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="avg_rev_l8w" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Avg Rev (L8W)</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.rev} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>{variantLabel.rev}</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.pct_rev} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>% Rev Var</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="avg_profit_l8w" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Avg Profit (L8W)</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.profit} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>{variantLabel.prof}</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.pct_profit} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>% Profit Var</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="avg_margin_l8w" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin (L8W)</SortableTh>
+            <SortableTh<ReactiveRow> columnKey={variantKeys.margin} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>{variantLabel.margin}</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="last_load_date" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Last Load Date</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="days_since_last_load" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Days Since</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="reactive_lw_returning" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Reactive&nbsp;LW?</SortableTh>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#F3F4F6]">
