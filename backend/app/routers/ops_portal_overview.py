@@ -150,15 +150,41 @@ def _resolve_range(
 
 
 def _count_workdays(start: date, end: date) -> int:
-    """Mon-Fri days in [start, end] excluding US 2026 federal holidays."""
+    """Mon-Sat days in [start, end].
+
+    Bruno round-2 (2026-05-13) — Total/Past/Pending working days are
+    Monday-Saturday (Sundays only). Holidays are NOT excluded per his
+    literal spec on the round-2 PDF; he didn't repeat the holiday clause
+    from Budget Follow Up here.
+    """
     if start > end:
         return 0
     n, d = 0, start
     while d <= end:
-        if d.weekday() < 5 and d not in US_HOLIDAYS_2026:
+        if d.weekday() < 6:  # Mon=0..Sat=5
             n += 1
         d += timedelta(days=1)
     return n
+
+
+def _last_n_business_days_start(today: date, n: int) -> date:
+    """Earliest Mon-Sat date such that ``[start, today-1]`` has exactly n Mon-Sat days.
+
+    Used by /team-projection and /actuals to anchor the "last 12 business
+    days" averages Bruno specified in round 2.
+    """
+    end = today - timedelta(days=1)
+    count = 0
+    d = end
+    while True:
+        if d.weekday() < 6:
+            count += 1
+            if count == n:
+                return d
+        d -= timedelta(days=1)
+        if (end - d).days > n * 3:
+            # Safety bail — shouldn't ever trip, but never spin forever.
+            return d
 
 
 def _month_bounds(today: date) -> tuple[date, date]:
@@ -494,9 +520,12 @@ async def team_variance(
 ):
     """Bruno's "Team Budget Monthly Variance" inverted table — single row.
 
-    Variance convention follows Bruno's literal spec: ``budget − actual``
-    (positive = under-performing actuals). The Volume formula was a typo
-    (``loads_budget − loads_budget``) — corrected to ``loads_budget − loads_actual``.
+    Bruno round-2 (2026-05-13) — flipped the variance convention to
+    ``actual − budget`` (positive = over-performing) to harmonise with the
+    bottom Actuals table. Customers KPI = count of customers in budget
+    that actually shipped (loads_actual > 0); his literal subtraction
+    formula reads negative, but the screenshot value (24) matches the
+    active count, so display that.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -541,9 +570,10 @@ async def team_variance(
         *params,
     )
 
-    loads_var   = _safe_float(row["loads_budget"])   - _safe_float(row["loads_actual"])
-    revenue_var = _safe_float(row["revenue_budget"]) - _safe_float(row["revenue_actual"])
-    profit_var  = _safe_float(row["profit_budget"])  - _safe_float(row["profit_actual"])
+    # Bruno round-2 (2026-05-13): actual − budget direction (positive = over-budget).
+    loads_var   = _safe_float(row["loads_actual"])   - _safe_float(row["loads_budget"])
+    revenue_var = _safe_float(row["revenue_actual"]) - _safe_float(row["revenue_budget"])
+    profit_var  = _safe_float(row["profit_actual"])  - _safe_float(row["profit_budget"])
     margin_var_pct = (profit_var / revenue_var * 100.0) if revenue_var else 0.0
     rev_x_l = (revenue_var / loads_var) if loads_var else 0.0
     prof_x_l = (profit_var / loads_var) if loads_var else 0.0
@@ -551,14 +581,10 @@ async def team_variance(
     return {
         "success": True,
         "data": {
-            # "Customers" = active_customers − inactive_customers (Bruno's spec).
-            # in_scope_customers − inactive_customers = active_customers, so
-            # the displayed "Customers" variance is ``active − (in_scope − active)``
-            # i.e. ``2*active − in_scope``. Mirrors his literal formula:
-            # count(customer_name) − count(customer_name where loads_actual=0).
-            "customers": (int(row["active_customers"] or 0)
-                          - (int(row["in_scope_customers"] or 0)
-                             - int(row["active_customers"] or 0))),
+            # Active customers = customers in budget that actually shipped.
+            # Bruno's literal "count(loads_actual=0) − count(*)" reads negative;
+            # his screenshot value (24) matches the active count, so we surface that.
+            "customers":      int(row["active_customers"] or 0),
             "volume_var":     _safe_float(loads_var),
             "revenue_var":    _safe_float(revenue_var),
             "profit_var":     _safe_float(profit_var),
@@ -599,24 +625,25 @@ async def customer_variance(
         extra += f' AND budget."Customer Name" = ${len(params)}'
     params.append(limit)
 
+    # Bruno round-2 (2026-05-13): actual − budget direction (positive = over-budget).
     rows = await pool.fetch(
         f"""
         WITH {CUSTOMER_TEAM_CTE}
         SELECT
           budget."Customer Name" AS customer_name,
-          COALESCE(SUM(budget."Loads Budget"),    0)
-            - COALESCE(SUM(budget."Loads Actual"),    0) AS volume_var,
-          COALESCE(SUM(budget."Profit Budget"),   0)
-            - COALESCE(SUM(budget."Profit Actual"),   0) AS profit_var,
-          COALESCE(SUM(budget."Revenue Budget"),  0)
-            - COALESCE(SUM(budget."Revenue Actual"),  0) AS revenue_var
+          COALESCE(SUM(budget."Loads Actual"),    0)
+            - COALESCE(SUM(budget."Loads Budget"),    0) AS volume_var,
+          COALESCE(SUM(budget."Profit Actual"),   0)
+            - COALESCE(SUM(budget."Profit Budget"),   0) AS profit_var,
+          COALESCE(SUM(budget."Revenue Actual"),  0)
+            - COALESCE(SUM(budget."Revenue Budget"),  0) AS revenue_var
         FROM public.daily_production_budget_report budget
         JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         {extra}
         GROUP BY budget."Customer Name"
-        ORDER BY ABS(COALESCE(SUM(budget."Profit Budget"),0)
-                   - COALESCE(SUM(budget."Profit Actual"),0)) DESC NULLS LAST
+        ORDER BY ABS(COALESCE(SUM(budget."Profit Actual"),0)
+                   - COALESCE(SUM(budget."Profit Budget"),0)) DESC NULLS LAST
         LIMIT ${len(params)}
         """,
         *params,
@@ -872,39 +899,47 @@ async def team_projection(
     load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """§6 Team Monthly Projection — last 14 calendar days extrapolated to EoM.
+    """§6 Team Monthly Projection — last 12 Mon-Sat business days extrapolated to EoM.
 
-    Date filter intentionally ignored (the projection always uses the rolling
-    14-day window from yesterday). Team + Customer apply.
+    Bruno round-2 (2026-05-13): switched divisor from 14 calendar days to
+    12 business days (Mon-Sat). The SQL still scans a calendar window
+    ending yesterday, but filters out Sundays so the divisor is exact.
+
+    Date filter intentionally ignored (projection always uses the rolling
+    business-day window). Team + Customer apply.
     """
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
-    win14_start = today - timedelta(days=14)
-    win14_end = today - timedelta(days=1)
+    win_start = _last_n_business_days_start(today, 12)
+    win_end = today - timedelta(days=1)
     pending_workdays = _count_workdays(today, m_end)
 
     params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, params)
-    params.extend([win14_start, win14_end, m_start, win14_end, m_start, m_end])
-    p_w14s = len(params) - 5
-    p_w14e = len(params) - 4
+    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
+    p_ws = len(params) - 5
+    p_we = len(params) - 4
     p_ms1  = len(params) - 3
-    p_w14e2 = len(params) - 2
+    p_we2  = len(params) - 2
     p_ms2  = len(params) - 1
     p_me   = len(params)
 
+    # Bruno's "last 12 business days" = Mon-Sat only; EXTRACT(DOW)=0 is Sunday.
     row = await pool.fetchrow(
         f"""
         SELECT
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                              AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS vol_14,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
-                            THEN br4.total_charge END), 0)::numeric AS rev_14,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
-                            THEN br4.margin_amt END), 0)::numeric AS prof_14,
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_w14e2}
+                             AND br4.total_charge <> 0) AS vol_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.total_charge END), 0)::numeric AS rev_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.margin_amt END), 0)::numeric AS prof_12,
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
                              AND br4.total_charge IS NOT NULL
                              AND br4.total_charge <> 0) AS vol_mtd,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
@@ -918,9 +953,9 @@ async def team_projection(
         *params,
     )
 
-    avg_vol_day  = _safe_float(row["vol_14"]) / 14.0
-    avg_rev_day  = _safe_float(row["rev_14"]) / 14.0
-    avg_prof_day = _safe_float(row["prof_14"]) / 14.0
+    avg_vol_day  = _safe_float(row["vol_12"]) / 12.0
+    avg_rev_day  = _safe_float(row["rev_12"]) / 12.0
+    avg_prof_day = _safe_float(row["prof_12"]) / 12.0
 
     proj_volume = avg_vol_day * pending_workdays + _safe_float(row["vol_mtd"])
     proj_revenue = avg_rev_day * pending_workdays + _safe_float(row["rev_mtd"])

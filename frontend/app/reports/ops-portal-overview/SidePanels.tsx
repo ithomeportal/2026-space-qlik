@@ -65,10 +65,16 @@ function TeamBudgetVariance({ filters }: { filters: OppFilters }) {
 function CustomerVariance({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppCustomerVariance(filters)
   const rows = data?.data ?? []
+  // Bruno round-2 (2026-05-13): no horizontal scroll, vertical scroll OK.
   return (
     <PanelCard title="Customer Monthly Variance" icon="" loading={isLoading} error={error}>
-      <div className="max-h-[260px] overflow-auto">
-        <table className="w-full text-xs">
+      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
+        <table className="w-full table-fixed text-xs">
+          <colgroup>
+            <col className="w-[60%]" />
+            <col className="w-[18%]" />
+            <col className="w-[22%]" />
+          </colgroup>
           <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
             <tr>
               <th className="px-2 py-1 text-left">Customer Name</th>
@@ -81,11 +87,13 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
               <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No data</td></tr>
             ) : rows.map((r) => (
               <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
-                <td className="px-2 py-1 truncate text-[#374151]">{r.customer_name}</td>
-                <td className={`px-2 py-1 text-right ${r.volume_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+                <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
+                  {r.customer_name}
+                </td>
+                <td className={`px-2 py-1 text-right tabular-nums ${r.volume_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
                   {fmtCount(r.volume_var)}
                 </td>
-                <td className={`px-2 py-1 text-right ${r.profit_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+                <td className={`px-2 py-1 text-right tabular-nums ${r.profit_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
                   {fmtUsdSigned(r.profit_var)}
                 </td>
               </tr>
@@ -104,10 +112,16 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
 function CustomerLosses({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppCustomerLosses(filters)
   const rows = data?.data ?? []
+  // Bruno round-2 (2026-05-13): no horizontal scroll, vertical scroll OK.
   return (
     <PanelCard title="Customer Monthly Losses" icon="" loading={isLoading} error={error}>
-      <div className="max-h-[260px] overflow-auto">
-        <table className="w-full text-xs">
+      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
+        <table className="w-full table-fixed text-xs">
+          <colgroup>
+            <col className="w-[60%]" />
+            <col className="w-[18%]" />
+            <col className="w-[22%]" />
+          </colgroup>
           <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
             <tr>
               <th className="px-2 py-1 text-left">Customer Name</th>
@@ -120,9 +134,11 @@ function CustomerLosses({ filters }: { filters: OppFilters }) {
               <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No losses</td></tr>
             ) : rows.map((r) => (
               <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
-                <td className="px-2 py-1 truncate text-[#374151]">{r.customer_name}</td>
-                <td className="px-2 py-1 text-right text-[#374151]">{fmtCount(r.loss_loads)}</td>
-                <td className="px-2 py-1 text-right text-[#DC2626]">{fmtUsdSigned(r.loss_profit)}</td>
+                <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
+                  {r.customer_name}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums text-[#374151]">{fmtCount(r.loss_loads)}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-[#DC2626]">{fmtUsdSigned(r.loss_profit)}</td>
               </tr>
             ))}
           </tbody>
@@ -139,22 +155,23 @@ function CustomerLosses({ filters }: { filters: OppFilters }) {
 function TeamPerformance({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppTeamPerformance(filters)
   const v = data?.data
+  // Bruno round-2 (2026-05-13): OTP/OTD coloured bands + highlight Volume/Profit/Margin.
   return (
     <PanelCard title="Team Monthly Performance" icon="📈" loading={isLoading} error={error}>
       <table className="w-full text-xs">
         <tbody>
           <Row label="Customers"   value={v ? fmtCount(v.customers)   : "—"} />
           <Row label="Lanes"       value={v ? fmtCount(v.lanes)       : "—"} />
-          <Row label="Volume"      value={v ? fmtCount(v.volume)      : "—"} />
+          <Row label="Volume"      value={v ? fmtCount(v.volume)      : "—"} highlight />
           <Row label="Revenue"     value={v ? fmtUsd(v.revenue)       : "—"} />
-          <Row label="Profit"      value={v ? fmtUsd(v.profit)        : "—"} signed numeric={v?.profit ?? 0} />
-          <Row label="Margin P %"  value={v ? fmtPct(v.margin_pct)    : "—"} signed numeric={v?.margin_pct ?? 0} />
+          <Row label="Profit"      value={v ? fmtUsd(v.profit)        : "—"} signed numeric={v?.profit ?? 0} highlight />
+          <Row label="Margin P %"  value={v ? fmtPct(v.margin_pct)    : "—"} signed numeric={v?.margin_pct ?? 0} highlight />
           <Row label="Rev. x L."   value={v ? fmtUsd(v.rev_x_l)       : "—"} />
           <Row label="Prf. X L."   value={v ? fmtUsd(v.prof_x_l)      : "—"} signed numeric={v?.prof_x_l ?? 0} />
           <Row label="Team Ut."    value={v ? fmtPct(v.team_ut)       : "—"} />
-          <Row label="OTP."        value={v ? fmtPct(v.otp_pct)       : "—"} />
+          <Row label="OTP."        value={v ? fmtPct(v.otp_pct)       : "—"} bandPct={v?.otp_pct} />
           <Row label="Lates PU"    value={v ? fmtCount(v.lates_pu)    : "—"} />
-          <Row label="OTD."        value={v ? fmtPct(v.otd_pct)       : "—"} />
+          <Row label="OTD."        value={v ? fmtPct(v.otd_pct)       : "—"} bandPct={v?.otd_pct} />
           <Row label="Lates DEL."  value={v ? fmtCount(v.lates_del)   : "—"} />
           <Row label="Savings."    value={v ? fmtUsd(v.savings)       : "—"} />
           <Row label="Over Pay"    value={v ? fmtUsd(v.over_pay)      : "—"} signed numeric={v?.over_pay ?? 0} />
@@ -238,18 +255,47 @@ function Row({
   value,
   signed,
   numeric,
+  highlight,
+  bandPct,
 }: {
   label: string
   value: string
   signed?: boolean
   numeric?: number
+  /** Bold + soft background — Bruno round-2 marker for Volume/Profit/Margin. */
+  highlight?: boolean
+  /**
+   * OTP/OTD coloured-band swatch (Bruno round-2): >=95.5% green,
+   * >=93% & <95.5% yellow, <93% red. Pass the percentage value.
+   */
+  bandPct?: number
 }) {
   const isNeg = signed && (numeric ?? 0) < 0
+  const bandCls =
+    bandPct === undefined
+      ? ""
+      : bandPct >= 95.5
+      ? "bg-[#DCFCE7] text-[#166534]"
+      : bandPct >= 93
+      ? "bg-[#FEF9C3] text-[#854D0E]"
+      : "bg-[#FEE2E2] text-[#991B1B]"
   return (
-    <tr className="border-t border-[#F3F4F6] first:border-t-0">
-      <td className="px-1 py-1 text-[#6B7280]">{label}</td>
-      <td className={`px-1 py-1 text-right tabular-nums ${isNeg ? "text-[#DC2626]" : "text-[#374151]"}`}>
-        {value}
+    <tr className={`border-t border-[#F3F4F6] first:border-t-0 ${highlight ? "bg-[#F0F9FF]" : ""}`}>
+      <td className={`px-1 py-1 ${highlight ? "font-semibold text-[#1B3A5C]" : "text-[#6B7280]"}`}>
+        {label}
+      </td>
+      <td className="px-1 py-1 text-right tabular-nums">
+        {bandPct !== undefined ? (
+          <span className={`rounded px-1.5 py-0.5 font-semibold ${bandCls}`}>{value}</span>
+        ) : (
+          <span
+            className={`${
+              isNeg ? "text-[#DC2626]" : "text-[#374151]"
+            } ${highlight ? "font-bold text-[#1B3A5C]" : ""}`}
+          >
+            {value}
+          </span>
+        )}
       </td>
     </tr>
   )
