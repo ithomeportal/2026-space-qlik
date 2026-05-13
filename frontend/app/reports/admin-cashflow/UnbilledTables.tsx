@@ -3,12 +3,14 @@
 import { useState } from "react"
 import { ChevronDown, ChevronUp, Loader2, Package, Stamp } from "lucide-react"
 import {
+  adminCashflowCsvUrl,
   useDeliveredNotBilled,
   useReadyNotBilled,
   type AdminCashflowFilters,
   type DeliveredNotBilledRow,
   type ReadyNotBilledRow,
 } from "@/lib/admin-cashflow-api"
+import { DownloadCsvButton } from "./DownloadCsvButton"
 import { fmtCount, fmtDate, fmtUsd } from "./format"
 
 interface Props {
@@ -41,15 +43,19 @@ function DeliveredNotBilledCard({ filters }: Props) {
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-      <div className="mb-2 flex items-baseline justify-between">
+      <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Package className="h-4 w-4 text-[#B45309]" />
           <div className="text-sm font-semibold text-[#1B3A5C]">
             Delivered but not billed
           </div>
         </div>
-        <div className="text-xs text-[#6B7280]">
-          {fmtCount(total)} loads · {fmtUsd(grand)}
+        <div className="flex items-center gap-2 text-xs text-[#6B7280]">
+          <span>{fmtCount(total)} loads · {fmtUsd(grand)}</span>
+          <DownloadCsvButton
+            href={adminCashflowCsvUrl("delivered-not-billed", filters, { sort })}
+            title="Download all delivered-but-not-billed rows in current filters as CSV"
+          />
         </div>
       </div>
       <div className="overflow-auto">
@@ -162,15 +168,19 @@ function ReadyNotBilledCard({ filters }: Props) {
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-      <div className="mb-2 flex items-baseline justify-between">
+      <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Stamp className="h-4 w-4 text-[#B45309]" />
           <div className="text-sm font-semibold text-[#1B3A5C]">
             Ready to bill but not billed
           </div>
         </div>
-        <div className="text-xs text-[#6B7280]">
-          {fmtCount(total)} loads · {fmtUsd(grand)}
+        <div className="flex items-center gap-2 text-xs text-[#6B7280]">
+          <span>{fmtCount(total)} loads · {fmtUsd(grand)}</span>
+          <DownloadCsvButton
+            href={adminCashflowCsvUrl("ready-not-billed", filters, { sort })}
+            title="Download all ready-but-not-billed rows in current filters as CSV"
+          />
         </div>
       </div>
       <div className="overflow-auto">

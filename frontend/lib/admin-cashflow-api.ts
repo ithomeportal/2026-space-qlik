@@ -339,6 +339,25 @@ export function useAgingBuckets(f: AdminCashflowFilters) {
   })
 }
 
+/**
+ * Build a same-origin CSV-download URL for one of the 5 Bruno-requested tables.
+ * The proxy passes non-JSON bodies through; the backend emits
+ * `Content-Disposition: attachment` so the browser saves the file directly.
+ */
+export function adminCashflowCsvUrl(
+  endpoint:
+    | "delivered-not-billed"
+    | "ready-not-billed"
+    | "aging/delivery-vs-bill"
+    | "aging/bol-vs-bill"
+    | "aging/carrinv-vs-bill",
+  f: AdminCashflowFilters,
+  extra?: { sort?: string },
+): string {
+  const qs = buildQs(f, extra?.sort ? { sort: extra.sort } : undefined)
+  return `/api/proxy/custom/admin-cashflow/${endpoint}.csv${qs}`
+}
+
 export function useTopDelayedCustomers(f: AdminCashflowFilters, limit = 10) {
   return useQuery({
     queryKey: [

@@ -3,11 +3,13 @@
 import { useState } from "react"
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react"
 import {
+  adminCashflowCsvUrl,
   useAging,
   type AdminCashflowFilters,
   type AgingRow,
   type AgingTab,
 } from "@/lib/admin-cashflow-api"
+import { DownloadCsvButton } from "./DownloadCsvButton"
 import { daysBandClass, fmtCount, fmtDate, fmtUsd } from "./format"
 
 interface Props {
@@ -89,8 +91,14 @@ export function AgingTabs({ filters }: Props) {
             {t.label}
           </button>
         ))}
-        <div className="ml-auto text-[11px] text-[#6B7280]">
-          Days = {tab.daysLabel}
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-[11px] text-[#6B7280]">
+            Days = {tab.daysLabel}
+          </span>
+          <DownloadCsvButton
+            href={adminCashflowCsvUrl(`aging/${active}`, filters, { sort })}
+            title={`Download all ${tab.label} rows in current filters as CSV`}
+          />
         </div>
       </div>
 

@@ -45,10 +45,13 @@ Indexes created via avnadmin 2026-04-30:
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date, timedelta
-from typing import Optional
+from typing import Iterable, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
@@ -1194,3 +1197,342 @@ async def top_delayed_customers(
             for r in rows
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# CSV exports — one per Bruno-requested table (round-2 feedback 2026-05-13)
+# ---------------------------------------------------------------------------
+
+
+def _csv_response(filename: str, header: list[str], rows: Iterable[list]) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(header)
+    for r in rows:
+        writer.writerow(r)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _iso(d) -> str:
+    return d.isoformat() if d else ""
+
+
+def _csv_filename(stub: str, s: date, e: date) -> str:
+    return f"admin-cashflow_{stub}_{s.isoformat()}_to_{e.isoformat()}.csv"
+
+
+@router.get("/delivered-not-billed.csv")
+async def delivered_not_billed_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    sort: str = Query("delivered_asc"),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    team_list = _parse_teams(teams)
+    company_list = _parse_companies(companies)
+    order_by = _DELIVERED_NOT_BILLED_SORTS.get(sort, "dest_actual_arrival ASC NULLS LAST")
+
+    params: list = []
+    where = _scope_where(
+        "c", team_list, company_list, DELIVERED_ONLY, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    date_frag = _date_fragment("c", s, e, params)
+
+    sql = f"""
+    SELECT
+      c.id,
+      c.company_id,
+      c.team_id,
+      c.customer_name,
+      c.orig_orig_sched_early                  AS orig_sched_early,
+      c.origin_actual_arrival                  AS ship_date,
+      c.dest_actual_arrival,
+      c.total_charge,
+      CASE
+        WHEN c.dest_actual_arrival > '2000-01-01'::date
+        THEN ((now() AT TIME ZONE 'America/Chicago')::date
+              - c.dest_actual_arrival::date)
+        ELSE NULL
+      END AS days_since_delivery
+    FROM public.mcleod_gld_cashflow c
+    WHERE {where} AND {date_frag}
+      AND c.bill_date < '2000-01-01'::date
+    ORDER BY {order_by}
+    """
+    rows = await pool.fetch(sql, *params)
+    header = [
+        "Order", "Company", "Team", "Customer",
+        "Orig Sched Early", "Ship Date", "Delivered",
+        "Days Since Delivery", "Revenue (USD)",
+    ]
+    body = (
+        [
+            (r["id"] or "").strip(),
+            (r["company_id"] or "").strip(),
+            (r["team_id"] or "").strip(),
+            (r["customer_name"] or "").strip(),
+            _iso(r["orig_sched_early"]),
+            _iso(r["ship_date"]),
+            _iso(r["dest_actual_arrival"]),
+            r["days_since_delivery"] if r["days_since_delivery"] is not None else "",
+            float(r["total_charge"] or 0),
+        ]
+        for r in rows
+    )
+    return _csv_response(_csv_filename("delivered-not-billed", s, e), header, body)
+
+
+@router.get("/ready-not-billed.csv")
+async def ready_not_billed_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    sort: str = Query("ship_asc"),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    team_list = _parse_teams(teams)
+    company_list = _parse_companies(companies)
+    order_by = _READY_NOT_BILLED_SORTS.get(sort, "ship_date ASC NULLS LAST")
+
+    params: list = []
+    where = _scope_where(
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    date_frag = _date_fragment("c", s, e, params)
+
+    sql = f"""
+    SELECT
+      c.id,
+      c.company_id,
+      c.team_id,
+      c.customer_name,
+      c.orig_orig_sched_early   AS orig_sched_early,
+      c.origin_actual_arrival   AS ship_date,
+      c.status,
+      c.total_charge,
+      CASE
+        WHEN c.origin_actual_arrival > '2000-01-01'::date
+        THEN ((now() AT TIME ZONE 'America/Chicago')::date
+              - c.origin_actual_arrival::date)
+        ELSE NULL
+      END AS days_since_ship
+    FROM public.mcleod_gld_cashflow c
+    WHERE {where} AND {date_frag}
+      AND c.bill_date < '2000-01-01'::date
+      AND TRIM(c.ready_to_bill) = 'Y'
+    ORDER BY {order_by}
+    """
+    rows = await pool.fetch(sql, *params)
+    header = [
+        "Order", "Company", "Team", "Customer",
+        "Ship Date", "Orig Sched Early", "Status",
+        "Days Since Ship", "Revenue (USD)",
+    ]
+    body = (
+        [
+            (r["id"] or "").strip(),
+            (r["company_id"] or "").strip(),
+            (r["team_id"] or "").strip(),
+            (r["customer_name"] or "").strip(),
+            _iso(r["ship_date"]),
+            _iso(r["orig_sched_early"]),
+            (r["status"] or "").strip(),
+            r["days_since_ship"] if r["days_since_ship"] is not None else "",
+            float(r["total_charge"] or 0),
+        ]
+        for r in rows
+    )
+    return _csv_response(_csv_filename("ready-not-billed", s, e), header, body)
+
+
+async def _aging_csv(
+    pool,
+    *,
+    s: date,
+    e: date,
+    team_list: list[str],
+    company_list: list[str],
+    customer: Optional[str],
+    customers: Optional[str],
+    customer_mode: str,
+    contract_type: Optional[str],
+    sort: str,
+    left_col_sql: str,
+    days_sql: str,
+    extra_filters: str,
+    left_col_label: str,
+    stub: str,
+) -> Response:
+    order_by = _AGING_SORTS.get(sort, "days DESC NULLS LAST")
+    params: list = []
+    where = _scope_where(
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    date_frag = _date_fragment("c", s, e, params)
+
+    sql = f"""
+    SELECT
+      c.id, c.company_id, c.team_id, c.customer_name,
+      {left_col_sql}                       AS left_date,
+      c.bill_date,
+      c.origin_actual_arrival,
+      c.total_charge,
+      {days_sql}                           AS days
+    FROM public.mcleod_gld_cashflow c
+    WHERE {where} AND {date_frag} {extra_filters}
+    ORDER BY {order_by}
+    """
+    rows = await pool.fetch(sql, *params)
+    header = [
+        "Company", "Team", "Order", "Customer",
+        left_col_label, "Bill Date", "Days", "Revenue (USD)",
+    ]
+    body = (
+        [
+            (r["company_id"] or "").strip(),
+            (r["team_id"] or "").strip(),
+            (r["id"] or "").strip(),
+            (r["customer_name"] or "").strip(),
+            _iso(r["left_date"]),
+            _iso(r["bill_date"]),
+            int(r["days"]) if r["days"] is not None else "",
+            float(r["total_charge"] or 0),
+        ]
+        for r in rows
+    )
+    return _csv_response(_csv_filename(stub, s, e), header, body)
+
+
+@router.get("/aging/delivery-vs-bill.csv")
+async def aging_delivery_vs_bill_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    sort: str = Query("days_desc"),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    return await _aging_csv(
+        pool,
+        s=s, e=e,
+        team_list=_parse_teams(teams),
+        company_list=_parse_companies(companies),
+        customer=customer, customers=customers, customer_mode=customer_mode,
+        contract_type=contract_type,
+        sort=sort,
+        left_col_sql="c.dest_actual_departure",
+        days_sql="(c.bill_date::date - c.dest_actual_departure::date)",
+        extra_filters=(
+            " AND c.bill_date              > '2000-01-01'::date"
+            " AND c.dest_actual_arrival    > '2000-01-01'::date"
+            " AND c.dest_actual_departure  > '2000-01-01'::date"
+        ),
+        left_col_label="Dest Departure",
+        stub="delivery-vs-bill",
+    )
+
+
+@router.get("/aging/bol-vs-bill.csv")
+async def aging_bol_vs_bill_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    sort: str = Query("days_desc"),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    return await _aging_csv(
+        pool,
+        s=s, e=e,
+        team_list=_parse_teams(teams),
+        company_list=_parse_companies(companies),
+        customer=customer, customers=customers, customer_mode=customer_mode,
+        contract_type=contract_type,
+        sort=sort,
+        left_col_sql="c.bol_recv_date",
+        days_sql="(c.bill_date::date - c.bol_recv_date::date)",
+        extra_filters=(
+            " AND c.bill_date     > '2000-01-01'::date"
+            " AND c.bol_recv_date > '2000-01-01'::date"
+        ),
+        left_col_label="BOL Recv",
+        stub="bol-vs-bill",
+    )
+
+
+@router.get("/aging/carrinv-vs-bill.csv")
+async def aging_carrinv_vs_bill_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    sort: str = Query("days_desc"),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    return await _aging_csv(
+        pool,
+        s=s, e=e,
+        team_list=_parse_teams(teams),
+        company_list=_parse_companies(companies),
+        customer=customer, customers=customers, customer_mode=customer_mode,
+        contract_type=contract_type,
+        sort=sort,
+        left_col_sql="c.invoice_recv_date",
+        days_sql="(c.invoice_recv_date::date - c.bill_date::date)",
+        extra_filters=(
+            " AND c.bill_date         > '2000-01-01'::date"
+            " AND c.invoice_recv_date > '2000-01-01'::date"
+        ),
+        left_col_label="Inv Recv",
+        stub="carrinv-vs-bill",
+    )

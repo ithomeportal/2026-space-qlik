@@ -76,6 +76,17 @@ async function proxyRequest(
         continue
       }
 
+      // Pass through non-JSON bodies untouched (CSV downloads, files, etc.)
+      const contentType = res.headers.get("content-type") || ""
+      if (!contentType.includes("application/json")) {
+        const body = await res.arrayBuffer()
+        const passHeaders = new Headers()
+        if (contentType) passHeaders.set("Content-Type", contentType)
+        const cd = res.headers.get("content-disposition")
+        if (cd) passHeaders.set("Content-Disposition", cd)
+        return new NextResponse(body, { status: res.status, headers: passHeaders })
+      }
+
       const data = await res.json().catch(() => ({
         success: false,
         error: `Backend responded ${res.status}`,
