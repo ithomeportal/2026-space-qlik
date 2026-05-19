@@ -114,9 +114,9 @@ export interface AdminCashflowFacets {
 }
 
 export interface AdminCashflowKpis {
-  pct_del_bill_le10: number
-  pct_bol_bill_le2: number
-  pct_carrinv_bill_le2: number
+  pct_del_bill_le2: number
+  pct_bol_bill_le1: number
+  pct_carrinv_bill_le1: number
   avg_days_del_bill: number
   avg_days_bol_bill: number
   delivered_not_billed_usd: number
@@ -130,9 +130,9 @@ export interface AdminCashflowKpis {
 
 export interface AdminCashflowSparklines {
   weeks: string[]
-  del_bill_le10: (number | null)[]
-  bol_bill_le2: (number | null)[]
-  carrinv_bill_le2: (number | null)[]
+  del_bill_le2: (number | null)[]
+  bol_bill_le1: (number | null)[]
+  carrinv_bill_le1: (number | null)[]
 }
 
 export interface DeliveredNotBilledRow {
@@ -151,12 +151,13 @@ export interface ReadyNotBilledRow {
   id: string | null
   orig_sched_early: string | null
   ship_date: string | null
+  bol_recv_date: string | null
   status: string
   customer_name: string
   team_id: string
   company_id: string
   total_charge: number
-  days_since_ship: number | null
+  days_since_bol_recv: number | null
 }
 
 export interface AgingRow {

@@ -26,27 +26,29 @@ interface TabSpec {
   daysLabel: string
 }
 
+// Thresholds match the KPI strip (Bruno R3 PDF 2026-05-19):
+// Delivery ≤2d, BOL ≤1d, Carrier Inv ≤1d. C-B direction flipped.
 const TABS: TabSpec[] = [
   {
     key: "delivery-vs-bill",
     label: "Delivery → Bill",
-    threshold: 10,
+    threshold: 2,
     leftLabel: "Dest Departure",
     daysLabel: "bill_date − dest_actual_departure",
   },
   {
     key: "bol-vs-bill",
     label: "BOL → Bill",
-    threshold: 2,
+    threshold: 1,
     leftLabel: "BOL Recv",
     daysLabel: "bill_date − bol_recv_date",
   },
   {
     key: "carrinv-vs-bill",
     label: "Carrier Inv → Bill (C-B)",
-    threshold: 2,
+    threshold: 1,
     leftLabel: "Inv Recv",
-    daysLabel: "invoice_recv_date − bill_date",
+    daysLabel: "bill_date − invoice_recv_date",
   },
 ]
 

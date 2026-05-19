@@ -183,6 +183,9 @@ function ReadyNotBilledCard({ filters }: Props) {
           />
         </div>
       </div>
+      <div className="mb-1 text-[10px] text-[#6B7280]">
+        Days = Today − BOL Recv
+      </div>
       <div className="overflow-auto">
         <table className="w-full text-xs">
           <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
@@ -209,6 +212,7 @@ function ReadyNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
+              <th className="px-2 py-1.5">BOL Recv</th>
               <th className="px-2 py-1.5">Status</th>
               <th className="px-2 py-1.5 text-right">Days</th>
               <SortableTh
@@ -224,13 +228,13 @@ function ReadyNotBilledCard({ filters }: Props) {
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center">
+                <td colSpan={8} className="py-8 text-center">
                   <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
+                <td colSpan={8} className="py-8 text-center text-[#9CA3AF]">
                   No ready-but-unbilled loads in current filters 🎉
                 </td>
               </tr>
@@ -246,13 +250,14 @@ function ReadyNotBilledCard({ filters }: Props) {
                   </td>
                   <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
                   <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
+                  <td className="px-2 py-1.5">{fmtDate(r.bol_recv_date)}</td>
                   <td className="px-2 py-1.5">
                     <span className="rounded bg-[#F3F4F6] px-1.5 py-0.5 text-[10px] text-[#374151]">
                       {r.status}
                     </span>
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
-                    <DaysBadge days={r.days_since_ship} />
+                    <DaysBadge days={r.days_since_bol_recv} />
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
                     {fmtUsd(r.total_charge)}

@@ -333,12 +333,12 @@ async def kpis(
       WHERE {where_open} AND {date_frag}
     )
     SELECT
-      -- discipline KPI #1: Delivery vs Bill, ≤10 days, status=D, billed
+      -- discipline KPI #1: Delivery vs Bill, ≤2 days (Bruno R3 PDF 2026-05-19)
       (
         SELECT
           COALESCE(
             COUNT(DISTINCT id) FILTER (
-              WHERE (bill_date::date - dest_actual_departure::date) <= 10
+              WHERE (bill_date::date - dest_actual_departure::date) <= 2
             )::numeric
             / NULLIF(COUNT(DISTINCT id), 0),
           0)
@@ -346,35 +346,36 @@ async def kpis(
         WHERE status = 'D'
           AND bill_date              > '2000-01-01'::date
           AND dest_actual_departure  > '2000-01-01'::date
-      ) AS pct_del_bill_le10,
+      ) AS pct_del_bill_le2,
 
-      -- discipline KPI #2: BOL vs Bill, ≤2 days, status in (D,P), billed
+      -- discipline KPI #2: BOL vs Bill, ≤1 day (Bruno R3 PDF 2026-05-19)
       (
         SELECT
           COALESCE(
             COUNT(DISTINCT id) FILTER (
-              WHERE (bill_date::date - bol_recv_date::date) <= 2
+              WHERE (bill_date::date - bol_recv_date::date) <= 1
             )::numeric
             / NULLIF(COUNT(DISTINCT id), 0),
           0)
         FROM base
         WHERE bill_date    > '2000-01-01'::date
           AND bol_recv_date > '2000-01-01'::date
-      ) AS pct_bol_bill_le2,
+      ) AS pct_bol_bill_le1,
 
-      -- discipline KPI #3: Carrier Invoice vs Bill, ≤2 days (invoice_recv - bill)
+      -- discipline KPI #3: Carrier Invoice vs Bill, ≤1 day (Bruno R3 PDF 2026-05-19)
+      -- Direction flipped: bill_date - invoice_recv_date (was invoice_recv - bill).
       (
         SELECT
           COALESCE(
             COUNT(DISTINCT id) FILTER (
-              WHERE (invoice_recv_date::date - bill_date::date) <= 2
+              WHERE (bill_date::date - invoice_recv_date::date) <= 1
             )::numeric
             / NULLIF(COUNT(DISTINCT id), 0),
           0)
         FROM base
         WHERE bill_date         > '2000-01-01'::date
           AND invoice_recv_date > '2000-01-01'::date
-      ) AS pct_carrinv_bill_le2,
+      ) AS pct_carrinv_bill_le1,
 
       -- Avg KPI #A: Avg Days Delivery → Bill (bill_date - dest_actual_departure)
       (
@@ -421,9 +422,9 @@ async def kpis(
     return {
         "success": True,
         "data": {
-            "pct_del_bill_le10": float(row["pct_del_bill_le10"] or 0) * 100.0,
-            "pct_bol_bill_le2": float(row["pct_bol_bill_le2"] or 0) * 100.0,
-            "pct_carrinv_bill_le2": float(row["pct_carrinv_bill_le2"] or 0) * 100.0,
+            "pct_del_bill_le2": float(row["pct_del_bill_le2"] or 0) * 100.0,
+            "pct_bol_bill_le1": float(row["pct_bol_bill_le1"] or 0) * 100.0,
+            "pct_carrinv_bill_le1": float(row["pct_carrinv_bill_le1"] or 0) * 100.0,
             "avg_days_del_bill": float(row["avg_days_del_bill"] or 0),
             "avg_days_bol_bill": float(row["avg_days_bol_bill"] or 0),
             "delivered_not_billed_usd": delivered_not_billed,
@@ -498,8 +499,8 @@ async def sparklines(
       COUNT(DISTINCT id) FILTER (
         WHERE status='D' AND bill_date>'2000-01-01'::date
           AND dest_actual_departure>'2000-01-01'::date
-          AND (bill_date::date - dest_actual_departure::date) <= 10
-      ) AS d_le10_del,
+          AND (bill_date::date - dest_actual_departure::date) <= 2
+      ) AS d_le_del,
       COUNT(DISTINCT id) FILTER (
         WHERE bill_date>'2000-01-01'::date
           AND bol_recv_date>'2000-01-01'::date
@@ -507,8 +508,8 @@ async def sparklines(
       COUNT(DISTINCT id) FILTER (
         WHERE bill_date>'2000-01-01'::date
           AND bol_recv_date>'2000-01-01'::date
-          AND (bill_date::date - bol_recv_date::date) <= 2
-      ) AS d_le2_bol,
+          AND (bill_date::date - bol_recv_date::date) <= 1
+      ) AS d_le_bol,
       COUNT(DISTINCT id) FILTER (
         WHERE bill_date>'2000-01-01'::date
           AND invoice_recv_date>'2000-01-01'::date
@@ -516,8 +517,8 @@ async def sparklines(
       COUNT(DISTINCT id) FILTER (
         WHERE bill_date>'2000-01-01'::date
           AND invoice_recv_date>'2000-01-01'::date
-          AND (invoice_recv_date::date - bill_date::date) <= 2
-      ) AS d_le2_inv
+          AND (bill_date::date - invoice_recv_date::date) <= 1
+      ) AS d_le_inv
     FROM base
     GROUP BY wk
     ORDER BY wk
@@ -535,9 +536,9 @@ async def sparklines(
         "success": True,
         "data": {
             "weeks": [r["wk"].isoformat() for r in rows],
-            "del_bill_le10": [pct(r["d_le10_del"], r["d_n_del"]) for r in rows],
-            "bol_bill_le2": [pct(r["d_le2_bol"], r["d_n_bol"]) for r in rows],
-            "carrinv_bill_le2": [pct(r["d_le2_inv"], r["d_n_inv"]) for r in rows],
+            "del_bill_le2": [pct(r["d_le_del"], r["d_n_del"]) for r in rows],
+            "bol_bill_le1": [pct(r["d_le_bol"], r["d_n_bol"]) for r in rows],
+            "carrinv_bill_le1": [pct(r["d_le_inv"], r["d_n_inv"]) for r in rows],
         },
     }
 
@@ -715,31 +716,34 @@ async def ready_not_billed(
     params.extend([limit, offset])
     p_lim, p_off = len(params) - 1, len(params)
 
+    # Bruno R3 PDF 2026-05-19: DAYS column reflects today - bol_recv_date
+    # (aging of the BOL document, not aging of the ship date).
     sql = f"""
     WITH base AS (
       SELECT
         c.id,
         c.orig_orig_sched_early   AS orig_sched_early,
         c.origin_actual_arrival   AS ship_date,
+        c.bol_recv_date,
         c.status,
         c.customer_name,
         c.team_id,
         c.company_id,
         c.total_charge,
         CASE
-          WHEN c.origin_actual_arrival > '2000-01-01'::date
+          WHEN c.bol_recv_date > '2000-01-01'::date
           THEN ((now() AT TIME ZONE 'America/Chicago')::date
-                - c.origin_actual_arrival::date)
+                - c.bol_recv_date::date)
           ELSE NULL
-        END AS days_since_ship
+        END AS days_since_bol_recv
       FROM public.mcleod_gld_cashflow c
       WHERE {where} AND {date_frag}
         AND c.bill_date < '2000-01-01'::date
         AND TRIM(c.ready_to_bill) = 'Y'
     )
     SELECT
-      id, orig_sched_early, ship_date, status,
-      customer_name, team_id, company_id, total_charge, days_since_ship,
+      id, orig_sched_early, ship_date, bol_recv_date, status,
+      customer_name, team_id, company_id, total_charge, days_since_bol_recv,
       COUNT(*)          OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -755,12 +759,13 @@ async def ready_not_billed(
             "id": r["id"].strip() if r["id"] else None,
             "orig_sched_early": r["orig_sched_early"].isoformat() if r["orig_sched_early"] else None,
             "ship_date": r["ship_date"].isoformat() if r["ship_date"] else None,
+            "bol_recv_date": r["bol_recv_date"].isoformat() if r["bol_recv_date"] else None,
             "status": (r["status"] or "").strip(),
             "customer_name": (r["customer_name"] or "").strip(),
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
-            "days_since_ship": int(r["days_since_ship"]) if r["days_since_ship"] is not None else None,
+            "days_since_bol_recv": int(r["days_since_bol_recv"]) if r["days_since_bol_recv"] is not None else None,
         }
         for r in rows
     ]
@@ -852,7 +857,7 @@ async def aging_delivery_vs_bill(
     company_list = _parse_companies(companies)
     offset = (page - 1) * limit
     order_by = _AGING_SORTS.get(sort, "days DESC NULLS LAST")
-    threshold = 10
+    threshold = 2  # Bruno R3 PDF 2026-05-19: KPI now ≤2d (was ≤10d)
 
     params: list = []
     where = _scope_where(
@@ -927,7 +932,7 @@ async def aging_bol_vs_bill(
     company_list = _parse_companies(companies)
     offset = (page - 1) * limit
     order_by = _AGING_SORTS.get(sort, "days DESC NULLS LAST")
-    threshold = 2
+    threshold = 1  # Bruno R3 PDF 2026-05-19: KPI now ≤1d (was ≤2d)
 
     params: list = []
     where = _scope_where(
@@ -1001,7 +1006,7 @@ async def aging_carrinv_vs_bill(
     company_list = _parse_companies(companies)
     offset = (page - 1) * limit
     order_by = _AGING_SORTS.get(sort, "days DESC NULLS LAST")
-    threshold = 2
+    threshold = 1  # Bruno R3 PDF 2026-05-19: KPI now ≤1d (was ≤2d); direction flipped below
 
     params: list = []
     where = _scope_where(
@@ -1012,6 +1017,7 @@ async def aging_carrinv_vs_bill(
     params.extend([limit, offset])
     p_lim, p_off = len(params) - 1, len(params)
 
+    # Direction flipped (Bruno R3 PDF): days(bill_date) - days(inv_recv_date).
     sql = f"""
     WITH base AS (
       SELECT
@@ -1020,7 +1026,7 @@ async def aging_carrinv_vs_bill(
         c.bill_date,
         c.origin_actual_arrival,
         c.total_charge,
-        (c.invoice_recv_date::date - c.bill_date::date)      AS days
+        (c.bill_date::date - c.invoice_recv_date::date)      AS days
       FROM public.mcleod_gld_cashflow c
       WHERE {where} AND {date_frag}
         AND c.bill_date         > '2000-01-01'::date
@@ -1325,6 +1331,7 @@ async def ready_not_billed_csv(
     )
     date_frag = _date_fragment("c", s, e, params)
 
+    # Bruno R3 PDF 2026-05-19: DAYS column now = today - bol_recv_date.
     sql = f"""
     SELECT
       c.id,
@@ -1333,14 +1340,15 @@ async def ready_not_billed_csv(
       c.customer_name,
       c.orig_orig_sched_early   AS orig_sched_early,
       c.origin_actual_arrival   AS ship_date,
+      c.bol_recv_date,
       c.status,
       c.total_charge,
       CASE
-        WHEN c.origin_actual_arrival > '2000-01-01'::date
+        WHEN c.bol_recv_date > '2000-01-01'::date
         THEN ((now() AT TIME ZONE 'America/Chicago')::date
-              - c.origin_actual_arrival::date)
+              - c.bol_recv_date::date)
         ELSE NULL
-      END AS days_since_ship
+      END AS days_since_bol_recv
     FROM public.mcleod_gld_cashflow c
     WHERE {where} AND {date_frag}
       AND c.bill_date < '2000-01-01'::date
@@ -1350,8 +1358,8 @@ async def ready_not_billed_csv(
     rows = await pool.fetch(sql, *params)
     header = [
         "Order", "Company", "Team", "Customer",
-        "Ship Date", "Orig Sched Early", "Status",
-        "Days Since Ship", "Revenue (USD)",
+        "Ship Date", "Orig Sched Early", "BOL Recv", "Status",
+        "Days Since BOL Recv", "Revenue (USD)",
     ]
     body = (
         [
@@ -1361,8 +1369,9 @@ async def ready_not_billed_csv(
             (r["customer_name"] or "").strip(),
             _iso(r["ship_date"]),
             _iso(r["orig_sched_early"]),
+            _iso(r["bol_recv_date"]),
             (r["status"] or "").strip(),
-            r["days_since_ship"] if r["days_since_ship"] is not None else "",
+            r["days_since_bol_recv"] if r["days_since_bol_recv"] is not None else "",
             float(r["total_charge"] or 0),
         ]
         for r in rows
@@ -1528,7 +1537,8 @@ async def aging_carrinv_vs_bill_csv(
         contract_type=contract_type,
         sort=sort,
         left_col_sql="c.invoice_recv_date",
-        days_sql="(c.invoice_recv_date::date - c.bill_date::date)",
+        # Bruno R3 PDF 2026-05-19: direction flipped → days(bill_date) - days(inv_recv_date).
+        days_sql="(c.bill_date::date - c.invoice_recv_date::date)",
         extra_filters=(
             " AND c.bill_date         > '2000-01-01'::date"
             " AND c.invoice_recv_date > '2000-01-01'::date"

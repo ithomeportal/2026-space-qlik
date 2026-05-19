@@ -24,11 +24,11 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-7">
       <PctKpiCard
         icon={<CheckCircle2 className="h-4 w-4 text-[#1B3A5C]" />}
-        label="Delivery vs Bill ≤10d"
-        value={loading ? "…" : fmtPct(kpis?.pct_del_bill_le10)}
+        label="Delivery vs Bill ≤2d"
+        value={loading ? "…" : fmtPct(kpis?.pct_del_bill_le2)}
         threshold={95}
-        actual={kpis?.pct_del_bill_le10}
-        spark={sparklines?.del_bill_le10 ?? []}
+        actual={kpis?.pct_del_bill_le2}
+        spark={sparklines?.del_bill_le2 ?? []}
         weeks={sparklines?.weeks ?? []}
       />
       <AvgDaysKpiCard
@@ -36,15 +36,15 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         label="Avg Days Del → Bill"
         value={loading ? "…" : fmtDays(kpis?.avg_days_del_bill)}
         actual={kpis?.avg_days_del_bill}
-        warnAbove={10}
+        warnAbove={2}
       />
       <PctKpiCard
         icon={<FileText className="h-4 w-4 text-[#1B3A5C]" />}
-        label="BOL vs Bill ≤2d"
-        value={loading ? "…" : fmtPct(kpis?.pct_bol_bill_le2)}
+        label="BOL vs Bill ≤1d"
+        value={loading ? "…" : fmtPct(kpis?.pct_bol_bill_le1)}
         threshold={90}
-        actual={kpis?.pct_bol_bill_le2}
-        spark={sparklines?.bol_bill_le2 ?? []}
+        actual={kpis?.pct_bol_bill_le1}
+        spark={sparklines?.bol_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
       />
       <AvgDaysKpiCard
@@ -52,15 +52,15 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         label="Avg Days BOL → Bill"
         value={loading ? "…" : fmtDays(kpis?.avg_days_bol_bill)}
         actual={kpis?.avg_days_bol_bill}
-        warnAbove={2}
+        warnAbove={1}
       />
       <PctKpiCard
         icon={<Receipt className="h-4 w-4 text-[#1B3A5C]" />}
-        label="Carrier Inv vs Bill ≤2d"
-        value={loading ? "…" : fmtPct(kpis?.pct_carrinv_bill_le2)}
+        label="Carrier Inv vs Bill ≤1d"
+        value={loading ? "…" : fmtPct(kpis?.pct_carrinv_bill_le1)}
         threshold={80}
-        actual={kpis?.pct_carrinv_bill_le2}
-        spark={sparklines?.carrinv_bill_le2 ?? []}
+        actual={kpis?.pct_carrinv_bill_le1}
+        spark={sparklines?.carrinv_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
       />
       <UsdKpiCard
