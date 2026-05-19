@@ -11,7 +11,6 @@ import { SortableTh, useSortable } from "../../ceo-executive/sortable"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
-  fmtCount1,
   fmtPct,
   fmtSignedPct,
   fmtTimestamp,
@@ -36,7 +35,8 @@ const BUCKET_LABELS: Record<Bucket, { title: string; subtitle: string; days: str
     days: "1–7",
   },
   l2_4w: {
-    title: "Summary — 2 to 4 Weeks (8–28 days)",
+    // Bruno round-5 (2026-05-19): elevated to the primary attrition headline.
+    title: "CUSTOMER ATTRITION 2-4 weeks (8-28 days)",
     subtitle: "Last loaded 8–28 days ago",
     days: "8–28",
   },
@@ -292,17 +292,14 @@ function ReactiveTable({
                     <span className="text-[#111827]">{r.customer || "—"}</span>
                   )}
                 </td>
-                {/* Bruno round-3: AVG LOADS columns now show 1 decimal so the
-                    user can see that "1" is really 1.25 vs 2.0 (= +60%, not
-                    +100%). The math was always right; the integer rounding
-                    made it look wrong. */}
+                {/* Bruno round-5 (2026-05-19): reverted round-3's 1-decimal
+                    AVG LOADS — Bruno wants integers across every bucket so
+                    the columns read as plain counts. */}
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {fmtCount1(r.avg_loads_l8w)}
+                  {fmtCount(r.avg_loads_l8w)}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {variant === "lw"
-                    ? fmtCount(r.lw_loads)
-                    : fmtCount1(v.loads)}
+                  {fmtCount(variant === "lw" ? r.lw_loads : v.loads)}
                 </td>
                 <PctCell v={v.pct_loads} />
                 <td className="px-3 py-1.5 text-right font-mono">

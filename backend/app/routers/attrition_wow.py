@@ -634,6 +634,9 @@ async def pivot(
             """,
             *params,
         )
+        # Bruno round-5 (2026-05-19): expose revenue/profit alongside the
+        # margin ratio so the frontend can compute a weighted-avg margin in
+        # the Totals row (sum profit / sum revenue per column).
         data = []
         for r in rows:
             rev = float(r["revenue"] or 0)
@@ -642,6 +645,8 @@ async def pivot(
                 "week_start": r["week_start"].isoformat(),
                 "dim_key":    r["dim_key"],
                 "value":      (prof / rev) if rev else None,
+                "revenue":    rev,
+                "profit":     prof,
             })
     else:
         rows = await pool.fetch(

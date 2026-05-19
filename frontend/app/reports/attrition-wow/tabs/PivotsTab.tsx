@@ -10,11 +10,12 @@ import {
 import { AttritionErrorBanner } from "../ErrorBanner"
 import { fmtCount, fmtPct, fmtUsd } from "../format"
 
-type StatusKind = "Top" | "Stable" | "Critical" | "NA"
+// Bruno round-5 (2026-05-19): renamed Top/Stable/Critical to Strong/Need
+// Review/at Risk across all three views (by Team, by Customer, by Customer
+// and Lane). The classification rule is unchanged — both LW & L2W ≥ ref →
+// Strong, both below → at Risk, one of each → Need Review.
+type StatusKind = "Strong" | "Need Review" | "at Risk" | "NA"
 
-// Bruno round-4 (2026-05-12): Status text column with explicit Top/Stable/
-// Critical labels. Same rule as the old inline dot — both LW & L2W ≥ ref →
-// Top, both below → Critical, one of each → Stable.
 function computeStatus(
   lw: number | null,
   l2w: number | null,
@@ -23,12 +24,17 @@ function computeStatus(
   if (ref === null || lw === null || l2w === null) return "NA"
   const lwBelow = lw < ref
   const l2wBelow = l2w < ref
-  if (!lwBelow && !l2wBelow) return "Top"
-  if (lwBelow && l2wBelow) return "Critical"
-  return "Stable"
+  if (!lwBelow && !l2wBelow) return "Strong"
+  if (lwBelow && l2wBelow) return "at Risk"
+  return "Need Review"
 }
 
-const STATUS_ORDER: Record<StatusKind, number> = { Critical: 0, Stable: 1, Top: 2, NA: 3 }
+const STATUS_ORDER: Record<StatusKind, number> = {
+  "at Risk": 0,
+  "Need Review": 1,
+  "Strong": 2,
+  "NA": 3,
+}
 
 interface Props {
   filters: AttritionFilters
@@ -166,17 +172,37 @@ function PivotPanel({
   }
 
   // Build wide pivot: weeks (cols, latest first) × dim_keys (rows)
-  const { weeksList, pivot } = useMemo(() => {
+  const { weeksList, pivot, totals } = useMemo(() => {
     const weekSet = new Set<string>()
-    const byKey = new Map<string, Map<string, number | null>>()
+    const byKey = new Map<
+      string,
+      {
+        values: Map<string, number | null>
+        // Bruno round-5 (2026-05-19): track raw rev/prof per cell when the
+        // current metric is "margin" so the Totals row can compute the
+        // weighted-avg margin (sum profit / sum revenue) per column.
+        revenue: Map<string, number>
+        profit: Map<string, number>
+      }
+    >()
     for (const r of rows as PivotRow[]) {
       weekSet.add(r.week_start)
-      if (!byKey.has(r.dim_key)) byKey.set(r.dim_key, new Map())
-      byKey.get(r.dim_key)!.set(r.week_start, r.value)
+      let bucket = byKey.get(r.dim_key)
+      if (!bucket) {
+        bucket = { values: new Map(), revenue: new Map(), profit: new Map() }
+        byKey.set(r.dim_key, bucket)
+      }
+      bucket.values.set(r.week_start, r.value)
+      if (metric === "margin") {
+        bucket.revenue.set(r.week_start, r.revenue ?? 0)
+        bucket.profit.set(r.week_start, r.profit ?? 0)
+      }
     }
     const weeksList = Array.from(weekSet).sort().reverse() // latest first
-    const pivotEntries = Array.from(byKey.entries()).map(([k, weekMap]) => {
-      const values = weeksList.map((w) => weekMap.get(w) ?? null)
+    const pivotEntries = Array.from(byKey.entries()).map(([k, b]) => {
+      const values = weeksList.map((w) => b.values.get(w) ?? null)
+      const revenue = weeksList.map((w) => b.revenue.get(w) ?? 0)
+      const profit = weeksList.map((w) => b.profit.get(w) ?? 0)
       // 8-week ref: avg of the 8 most-recent NON-NULL completed weeks per row
       const ref = (() => {
         const nonNull = values.filter((v): v is number => v !== null)
@@ -186,7 +212,7 @@ function PivotPanel({
       })()
       const total = values.reduce<number>((a, b) => a + (b ?? 0), 0)
       const status = computeStatus(values[0] ?? null, values[1] ?? null, ref)
-      return { dim_key: k, values, ref, total, status }
+      return { dim_key: k, values, revenue, profit, ref, total, status }
     })
     pivotEntries.sort((a, b) => {
       if (sortKey === "status") {
@@ -219,8 +245,66 @@ function PivotPanel({
       // default: total desc (preserves prior behavior)
       return (b.total ?? 0) - (a.total ?? 0)
     })
-    return { weeksList, pivot: pivotEntries }
-  }, [rows, sortKey, sortDir])
+
+    // Bruno round-5 (2026-05-19): Totals row across every column. For
+    // loads/revenue/profit it's a straight column sum; for margin it's the
+    // weighted avg (Σ profit / Σ revenue). The 8-week avg total mirrors the
+    // per-row formula — mean of the 8 most-recent non-null per-week totals
+    // (or the weighted avg of the 8 most-recent weeks for margin).
+    const perWeek: (number | null)[] = weeksList.map((_, i) => {
+      if (metric === "margin") {
+        let rev = 0
+        let prof = 0
+        for (const row of pivotEntries) {
+          rev += row.revenue[i] ?? 0
+          prof += row.profit[i] ?? 0
+        }
+        return rev > 0 ? prof / rev : null
+      }
+      let any = false
+      let s = 0
+      for (const row of pivotEntries) {
+        const v = row.values[i]
+        if (v !== null && v !== undefined) {
+          any = true
+          s += v
+        }
+      }
+      return any ? s : null
+    })
+    const totalRef: number | null = (() => {
+      if (pivotEntries.length === 0) return null
+      if (metric === "margin") {
+        let rev = 0
+        let prof = 0
+        let weeksUsed = 0
+        for (let i = 0; i < weeksList.length && weeksUsed < 8; i += 1) {
+          let wRev = 0
+          let wProf = 0
+          for (const row of pivotEntries) {
+            wRev += row.revenue[i] ?? 0
+            wProf += row.profit[i] ?? 0
+          }
+          if (wRev > 0) {
+            rev += wRev
+            prof += wProf
+            weeksUsed += 1
+          }
+        }
+        return rev > 0 ? prof / rev : null
+      }
+      const nonNull = perWeek.filter((v): v is number => v !== null)
+      if (nonNull.length === 0) return null
+      const slice = nonNull.slice(0, 8)
+      return slice.reduce((a, b) => a + b, 0) / slice.length
+    })()
+
+    return {
+      weeksList,
+      pivot: pivotEntries,
+      totals: { perWeek, ref: totalRef },
+    }
+  }, [rows, sortKey, sortDir, metric])
 
   if (isLoading && pivot.length === 0) {
     return (
@@ -323,6 +407,31 @@ function PivotPanel({
                 </td>
               </tr>
             )}
+            {/* Bruno round-5 (2026-05-19): Totals row across every column.
+                Loads/revenue/profit sum naturally; margin is weighted (Σ profit
+                / Σ revenue) so the row reflects the same math as the Overview
+                KPI table. */}
+            {pivot.length > 0 && (
+              <tr className="border-t-2 border-[#1B3A5C] bg-[#F9FAFB] font-semibold">
+                <td className="sticky left-0 z-10 bg-[#F9FAFB] px-3 py-2 text-[10px] uppercase tracking-wider text-[#1B3A5C]">
+                  Totals
+                </td>
+                <td className="sticky left-[100px] z-10 bg-[#F9FAFB] px-3 py-2 text-[#1B3A5C]">
+                  {metric === "margin" ? "Weighted avg" : "All rows"}
+                </td>
+                <td className="bg-[#F9FAFB] px-3 py-2 text-right font-mono text-[#1B3A5C]">
+                  {totals.ref === null ? "—" : fmt(totals.ref)}
+                </td>
+                {totals.perWeek.map((v, i) => (
+                  <td
+                    key={i}
+                    className={`bg-[#F9FAFB] px-3 py-2 text-right font-mono ${cellShade(v, totals.ref)}`}
+                  >
+                    {v === null ? "—" : fmt(v)}
+                  </td>
+                ))}
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -376,9 +485,9 @@ function SortTh({
 function StatusBadge({ status }: { status: StatusKind }) {
   if (status === "NA") return <span className="text-[#9CA3AF]">—</span>
   const cls =
-    status === "Top"
+    status === "Strong"
       ? "bg-[#DCFCE7] text-[#15803D]"
-      : status === "Stable"
+      : status === "Need Review"
         ? "bg-[#FEF3C7] text-[#92400E]"
         : "bg-[#FEE2E2] text-[#991B1B]"
   return (

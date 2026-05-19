@@ -132,6 +132,10 @@ export interface PivotRow {
   week_start: string
   dim_key: string
   value: number | null
+  // Bruno round-5 (2026-05-19): backend includes raw rev/prof when metric is
+  // "margin" so the Totals row can compute a weighted-avg margin.
+  revenue?: number
+  profit?: number
 }
 
 export interface AttritionPivot {

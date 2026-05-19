@@ -64,13 +64,13 @@ export function OverviewTab({ filters }: Props) {
       {/* Active Lanes / Active Customers */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ActiveCard
-          title="Attrition — Active Lanes"
+          title="Lane Attrition"
           accent="text-[#1B3A5C]"
           loading={loadingSummary}
           block={s?.active_lanes}
         />
         <ActiveCard
-          title="Attrition — Active Customers"
+          title="Customer Attrition"
           accent="text-[#1B3A5C]"
           loading={loadingSummary}
           block={s?.active_customers}
@@ -170,7 +170,7 @@ export function OverviewTab({ filters }: Props) {
         ) : (
           <>
             <BarPanel
-              title="# Loads by Week"
+              title="Weekly Loads"
               data={t?.weeks ?? []}
               field="loads"
               fmt={fmtCount}
@@ -180,7 +180,7 @@ export function OverviewTab({ filters }: Props) {
               refValue={t?.reference?.l8w_avg_loads ?? null}
             />
             <BarPanel
-              title="# Customers by Week"
+              title="Weekly Customers"
               data={t?.weeks ?? []}
               field="customers"
               fmt={fmtCount}

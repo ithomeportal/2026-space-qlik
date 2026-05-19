@@ -22,10 +22,11 @@ const DFW_TEAMS = ["TEAM-DFW"]
 type TabKey = "overview" | "reactive" | "pivots"
 
 // Bruno (2026-04-27): merged "12-Week Pivots" + "Weekly Trends" into one tab.
+// Bruno round-5 (2026-05-19): renamed sibling tabs.
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
-  { key: "reactive", label: "Reactive Customers" },
-  { key: "pivots", label: "Trends & Pivots" },
+  { key: "reactive", label: "Customer Performance" },
+  { key: "pivots", label: "Performance Trends" },
 ]
 
 function AttritionContent() {
