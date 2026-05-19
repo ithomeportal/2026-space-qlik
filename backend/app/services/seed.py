@@ -325,6 +325,19 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "Operations"],
     },
     {
+        "key": "kam-performance-dfw",  # -> /reports/kam-performance-dfw
+        "title": "KAM Performance - DFW",
+        "description": "Per-KAM scratchpad: scorecard log, current-week service KPIs (OTP/OTD from ops-customer-score), top-10 lanes (xray-dfw-mng), customer development and team development tables",
+        "note": "Per-user editable rows in kam_scorecards / kam_customer_dev / kam_team_dev / kam_top_lanes_notes · Tab 1 metadata-only (no file blob) · Tab 2 calls ops-customer-score with division=DFW · Tab 3 calls xray-dfw-mng /by-lane limit=10 · scope: TEAM-DFW",
+        "category": "Sales",
+        "tags": [
+            "kam", "dfw", "scorecard", "service", "otp", "otd",
+            "lanes", "customer-development", "team-development",
+        ],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "DFW", "Operations", "Sales"],
+    },
+    {
         "key": "admin-cashflow",  # -> /reports/admin-cashflow
         "title": "Admin Aging Cashflow",
         "description": "A/R cashflow discipline — delivery-vs-bill / BOL-vs-bill / carrier-invoice-vs-bill aging, delivered-not-billed and ready-not-billed inventory",

@@ -25,6 +25,7 @@ from app.routers import (
     dfw_access_doors,
     hr_access_doors,
     it_tickets,
+    kam_performance_dfw,
     losses_lanes,
     ops_customer_score,
     ops_direct_compare,
@@ -231,6 +232,70 @@ async def lifespan(app: FastAPI):
             )
             await app.state.pool.execute(
                 "CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id, accessed_at DESC)"
+            )
+
+            # KAM Performance - DFW (2026-05-19): per-user scratchpad tables.
+            # Bruno's PDF: Tabs 1/4/5 are editable, Tab 3 has a free-text note.
+            # Tabs 2 & 3 read data through ops-customer-score / xray-dfw-mng.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_scorecards (
+                  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id             TEXT NOT NULL,
+                  customer            TEXT NOT NULL,
+                  scorecard_date      DATE NOT NULL,
+                  scorecard_frequency TEXT NOT NULL,
+                  uploaded_by_email   TEXT,
+                  uploaded_by_name    TEXT,
+                  created_at          TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_kam_scorecards_user ON kam_scorecards(user_id, scorecard_date DESC)"
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_customer_dev (
+                  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id           TEXT NOT NULL,
+                  contact_name      TEXT NOT NULL,
+                  last_day_spoke    DATE,
+                  opportunity_areas TEXT DEFAULT '',
+                  action_plan       TEXT DEFAULT '',
+                  created_at        TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at        TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_kam_customer_dev_user ON kam_customer_dev(user_id, last_day_spoke DESC NULLS LAST)"
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_team_dev (
+                  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id         TEXT NOT NULL,
+                  team_member     TEXT NOT NULL,
+                  last_one_on_one TEXT DEFAULT '',
+                  specific_area   TEXT DEFAULT '',
+                  action_plan     TEXT DEFAULT '',
+                  created_at      TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at      TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_kam_team_dev_user ON kam_team_dev(user_id, updated_at DESC)"
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_top_lanes_notes (
+                  user_id    TEXT PRIMARY KEY,
+                  notes      TEXT NOT NULL DEFAULT '',
+                  updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
             )
 
             # Auto-seed if no role-report mappings exist
@@ -669,6 +734,7 @@ app.include_router(rfp_performance.router, prefix="/api")
 app.include_router(carrier_risk.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
+app.include_router(kam_performance_dfw.router, prefix="/api")
 
 
 @app.get("/api/health")

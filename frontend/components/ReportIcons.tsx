@@ -27,6 +27,7 @@ import {
   ScanSearch,
   ShieldAlert,
   ShieldCheck,
+  Stethoscope,
   Target,
   TrendingDown,
   TrendingUp,
@@ -148,6 +149,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "IT Tickets Mgmt":                { icon: Headphones,     family: "it" },
   "Ops Portal - Overview":          { icon: LayoutGrid,     family: "operations" },
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },
+  "KAM Performance - DFW":          { icon: Stethoscope,    family: "dfw", tag: "KAM" },
 
   // ---- Legacy Qlik (still in catalog) ----
   "Executive Report":               { icon: BarChart3,      family: "executive" },
