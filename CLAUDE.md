@@ -74,6 +74,8 @@
 - Ratio pivots: any endpoint emitting a ratio per cell (margin, win-rate, conversion) MUST also expose the raw numerator + denominator so totals rows / re-aggregates can compute the weighted avg correctly. See `docs/SPEC-CODE-RULES.md` §33
 - Renaming a wire field (e.g. `pct_del_bill_le10` → `pct_del_bill_le2` in admin-cashflow R4): bump backend emitter + TS interface + every reader + sparkline keys + URL params as one diff so in-flight clients never render `—`. See `docs/SPEC-CODE-RULES.md` §34
 - Per-user editable reports (KAM Performance - DFW is the first): every table needs `user_id TEXT NOT NULL`; every read AND every update/delete WHERE includes `user_id = $current_user`; `INSERT`s pull the id from the session, never the body. See `docs/SPEC-CODE-RULES.md` §35
+- Measure-pill charts (Vol/Rev/Prof/Marg.%): return per-tab variants of every overlay series (`losses_vol`/`losses_rev`/`losses_prof`/`losses_margin_pct`, same for BDGT + Projected) so the chart is single-axis. Ratio variant guards `denominator > 0`. See `docs/SPEC-CODE-RULES.md` §36
+- Day/Week/Month grain toggle: backend fetches MAX window per grain (D=120/W=50/M=26), Recharts `<Brush>` positions visible default (30/13/13), `useEffect([grain, data.length])` resets brush. ISO week labels via "+4 day UTC" trick client-side. See `docs/SPEC-CODE-RULES.md` §37
 - Full report catalog + per-report specifics: `docs/SPEC-CUSTOM-REPORTS.md`
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
