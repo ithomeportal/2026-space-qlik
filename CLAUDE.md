@@ -72,6 +72,8 @@
 - LATERAL > ROW_NUMBER: `LEFT JOIN LATERAL ... LIMIT 1` for first-match-per-key. See `docs/SPEC-CODE-RULES.md` §5
 - Date-decode clamp: every user-editable date col needs `CASE … to_char(…, 'YYYY-MM-DD') … ELSE NULL` + NaN/Inf guards on per-row numerics. See `docs/SPEC-CODE-RULES.md` §4
 - Ratio pivots: any endpoint emitting a ratio per cell (margin, win-rate, conversion) MUST also expose the raw numerator + denominator so totals rows / re-aggregates can compute the weighted avg correctly. See `docs/SPEC-CODE-RULES.md` §33
+- Renaming a wire field (e.g. `pct_del_bill_le10` → `pct_del_bill_le2` in admin-cashflow R4): bump backend emitter + TS interface + every reader + sparkline keys + URL params as one diff so in-flight clients never render `—`. See `docs/SPEC-CODE-RULES.md` §34
+- Per-user editable reports (KAM Performance - DFW is the first): every table needs `user_id TEXT NOT NULL`; every read AND every update/delete WHERE includes `user_id = $current_user`; `INSERT`s pull the id from the session, never the body. See `docs/SPEC-CODE-RULES.md` §35
 - Full report catalog + per-report specifics: `docs/SPEC-CUSTOM-REPORTS.md`
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
