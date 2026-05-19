@@ -13,6 +13,7 @@ import {
 import { ComboChart } from "./Chart"
 import { SidePanels } from "./SidePanels"
 import { Actuals } from "./Actuals"
+import { ActualsByLane } from "./ActualsByLane"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -226,6 +227,7 @@ function OpsPortalOverviewContent() {
           <SidePanels filters={filters} />
         </div>
         <Actuals filters={filters} />
+        <ActualsByLane filters={filters} />
       </div>
     </div>
   )

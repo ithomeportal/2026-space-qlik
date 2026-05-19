@@ -75,21 +75,33 @@ export interface OppWorkdays {
   pending_workdays: number
 }
 
-export interface OppMonthBucket {
-  month_start: string
+export type OppGrain = "day" | "week" | "month"
+
+export interface OppBucket {
+  bucket_start: string
   volume: number
   revenue: number
   profit: number
   margin_pct: number
-  losses: number
+  // Per-tab losses variants (Bruno round 3, 2026-05-19).
+  losses_vol: number
+  losses_rev: number
+  losses_prof: number
+  losses_margin_pct: number
+  // Per-tab budget variants.
+  budget_loads: number
   budget_revenue: number
   budget_profit: number
-  budget_loads: number
+  budget_margin_pct: number
 }
 
 export interface OppCombo {
-  months: OppMonthBucket[]
-  projected_tm: number
+  grain: OppGrain
+  buckets: OppBucket[]
+  projected_vol: number
+  projected_revenue: number
+  projected_profit: number
+  projected_margin_pct: number
   today: string
   month_start: string
   month_end: string
@@ -193,6 +205,22 @@ export interface OppActualsRow {
   proj_eom_prof: number
 }
 
+export interface OppLaneRow {
+  lane: string
+  origin: string
+  dest: string
+  vol: number
+  rev: number
+  prof: number
+  margin_pct: number
+  loss_loads: number
+  loss_profit: number
+  otp_pct: number
+  otd_pct: number
+  rev_x_l: number
+  prof_x_l: number
+}
+
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
@@ -217,11 +245,14 @@ export function useOppWorkdays() {
   })
 }
 
-export function useOppCombo(f: Pick<OppFilters, "team" | "customer" | "loadType">) {
+export function useOppCombo(
+  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  grain: OppGrain = "month",
+) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-combo", f.team || "", f.customer || "", f.loadType || ""],
-    queryFn: () => apiFetch<OppCombo>(`${BASE}/combo${qs(filters)}`),
+    queryKey: ["opp-combo", grain, f.team || "", f.customer || "", f.loadType || ""],
+    queryFn: () => apiFetch<OppCombo>(`${BASE}/combo${qs(filters, { grain })}`),
     ...RETRY,
   })
 }
@@ -294,6 +325,27 @@ export function useOppActuals(f: OppFilters, opts?: { sort?: string; limit?: num
   })
 }
 
+export function useOppActualsByLane(
+  f: OppFilters,
+  opts?: { sort?: string; limit?: number },
+) {
+  const sort = opts?.sort ?? "revenue_desc"
+  const limit = opts?.limit ?? 100
+  return useQuery({
+    queryKey: [
+      "opp-actuals-by-lane",
+      f.range, f.startDate, f.endDate,
+      f.team, f.customer, f.loadType,
+      sort, limit,
+    ],
+    queryFn: () =>
+      apiFetch<OppLaneRow[]>(
+        `${BASE}/actuals-by-lane${qs(f, { sort, limit: String(limit) })}`,
+      ),
+    ...RETRY,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Formatters
 // ---------------------------------------------------------------------------
@@ -329,4 +381,23 @@ export function fmtPct(v: number): string {
 export function fmtMonth(iso: string): string {
   const d = new Date(`${iso}T00:00:00`)
   return d.toLocaleString("en-US", { month: "short", year: "2-digit" })
+}
+
+// Bruno round 3 (2026-05-19): bucket label depends on the chart grain.
+export function fmtBucket(iso: string, grain: OppGrain): string {
+  const d = new Date(`${iso}T00:00:00`)
+  if (grain === "day") {
+    return d.toLocaleString("en-US", { month: "short", day: "numeric" })
+  }
+  if (grain === "week") {
+    // ISO week number — same anchor (Monday of the week) the backend uses.
+    const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+    const dayNum = tmp.getUTCDay() || 7
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum)
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1))
+    const weekNo = Math.ceil(((+tmp - +yearStart) / 86400000 + 1) / 7)
+    const yy = String(tmp.getUTCFullYear()).slice(-2)
+    return `W${weekNo} '${yy}`
+  }
+  return fmtMonth(iso)
 }

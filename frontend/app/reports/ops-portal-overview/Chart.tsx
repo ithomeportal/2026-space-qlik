@@ -1,12 +1,12 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
 import {
   Bar,
+  Brush,
   CartesianGrid,
   ComposedChart,
-  Legend,
   Line,
   ReferenceLine,
   ResponsiveContainer,
@@ -15,14 +15,15 @@ import {
   YAxis,
 } from "recharts"
 import {
+  fmtBucket,
   fmtCount,
-  fmtMonth,
   fmtPct,
   fmtUsd,
   useOppCombo,
   useOppProfitTmGauge,
   useOppWorkdays,
   type LoadType,
+  type OppGrain,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
 
@@ -34,52 +35,105 @@ interface Props {
 
 type Measure = "volume" | "revenue" | "profit" | "margin_pct"
 
-const MEASURES: { k: Measure; label: string; color: string; fmt: (v: number) => string }[] = [
-  { k: "volume",     label: "Vol.",   color: "#7DD3FC", fmt: fmtCount },
-  { k: "revenue",    label: "Rev.",   color: "#7DD3FC", fmt: fmtUsd },
-  { k: "profit",     label: "Prof.",  color: "#7DD3FC", fmt: fmtUsd },
-  { k: "margin_pct", label: "Marg.%", color: "#7DD3FC", fmt: fmtPct },
+const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
+  { k: "volume",     label: "Vol.",   fmt: fmtCount },
+  { k: "revenue",    label: "Rev.",   fmt: fmtUsd },
+  { k: "profit",     label: "Prof.",  fmt: fmtUsd },
+  { k: "margin_pct", label: "Marg.%", fmt: fmtPct },
 ]
+
+const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
+  { k: "day",   label: "Day",   defaultVisible: 30 },
+  { k: "week",  label: "Week",  defaultVisible: 13 },
+  { k: "month", label: "Month", defaultVisible: 13 },
+]
+
+// Series legend keys — toggled on/off by clicking the legend pills.
+type SeriesKey = "bars" | "budget" | "avgLq" | "projected" | "losses"
 
 export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const cf = { team: filters.team, customer: filters.customer, loadType }
-  const { data: comboRes, isLoading, error } = useOppCombo(cf)
+  const [grain, setGrain] = useState<OppGrain>("month")
+  const [measure, setMeasure] = useState<Measure>("revenue")
+  const [hidden, setHidden] = useState<Set<SeriesKey>>(new Set())
+  const toggle = (k: SeriesKey) => {
+    setHidden((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }
+  const isHidden = (k: SeriesKey) => hidden.has(k)
+
+  const { data: comboRes, isLoading, error } = useOppCombo(cf, grain)
   const { data: workdaysRes } = useOppWorkdays()
   const { data: gaugeRes } = useOppProfitTmGauge(cf)
 
-  const [measure, setMeasure] = useState<Measure>("revenue")
+  const data = comboRes?.data
+  const buckets = useMemo(() => data?.buckets ?? [], [data])
 
-  const chartData = useMemo(() => {
-    const months = comboRes?.data?.months ?? []
-    return months.map((m) => ({
-      ...m,
-      label: fmtMonth(m.month_start),
-    }))
-  }, [comboRes])
+  const chartData = useMemo(
+    () => buckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
+    [buckets, grain],
+  )
 
-  const projectedTm = comboRes?.data?.projected_tm ?? 0
-  const wd = workdaysRes?.data
-  const gauge = gaugeRes?.data
+  // Brush position — default to the most recent N buckets per grain.
+  const defaultVisible =
+    GRAINS.find((g) => g.k === grain)?.defaultVisible ?? 13
+  const [brush, setBrush] = useState<{ start: number; end: number }>({
+    start: 0,
+    end: 0,
+  })
 
-  // Average-LQ line = mean of last 4 closed months for the chosen measure (excludes current).
+  // Reset brush whenever grain or data length changes.
+  useEffect(() => {
+    if (!chartData.length) return
+    const end = chartData.length - 1
+    const start = Math.max(0, end - defaultVisible + 1)
+    setBrush({ start, end })
+  }, [grain, chartData.length, defaultVisible])
+
+  // ------- Per-tab series keys (Bruno round 3) ----------------------------
+  // Bars / Budget / Losses each have a per-measure variant so the chart line
+  // is in the same unit as the bars (drops the dual-axis pre-r3 hack).
+  const budgetKey: keyof typeof chartData[number] = (
+    measure === "revenue"    ? "budget_revenue"
+    : measure === "profit"   ? "budget_profit"
+    : measure === "volume"   ? "budget_loads"
+    : "budget_margin_pct"
+  )
+  const lossesKey: keyof typeof chartData[number] = (
+    measure === "revenue"    ? "losses_rev"
+    : measure === "profit"   ? "losses_prof"
+    : measure === "volume"   ? "losses_vol"
+    : "losses_margin_pct"
+  )
+
+  const measureMeta = MEASURES.find((m) => m.k === measure)!
+  const fmt = measureMeta.fmt
+
+  // Average-LQ = mean of last 4 closed buckets (exclude latest, which is partial).
   const avgLq = useMemo(() => {
     if (chartData.length < 5) return 0
-    const closed = chartData.slice(-5, -1)
+    const closed = chartData.slice(brush.end - 4, brush.end)
     const vals = closed
-      .map((d) => Number(d[measure as keyof typeof d] || 0))
+      .map((d) => Number((d as Record<string, unknown>)[measure] ?? 0))
       .filter((v) => Number.isFinite(v))
     if (!vals.length) return 0
     return vals.reduce((a, b) => a + b, 0) / vals.length
-  }, [chartData, measure])
+  }, [chartData, measure, brush.end])
 
-  // Budget line value to overlay — match the toggled measure.
-  const budgetKey: keyof typeof chartData[number] | null =
-    measure === "revenue" ? "budget_revenue"
-    : measure === "profit" ? "budget_profit"
-    : measure === "volume" ? "budget_loads"
-    : null
+  // Projected — pick per-measure key from response.
+  const projected = (
+    measure === "revenue"    ? data?.projected_revenue
+    : measure === "profit"   ? data?.projected_profit
+    : measure === "volume"   ? data?.projected_vol
+    : data?.projected_margin_pct
+  ) ?? 0
 
-  const fmt = MEASURES.find((m) => m.k === measure)!.fmt
+  const wd = workdaysRes?.data
+  const gauge = gaugeRes?.data
 
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -103,53 +157,82 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
           value={loadType}
           onChange={setLoadType}
         />
-        <div className="ml-auto flex items-center gap-3 text-xs">
-          <Legend2 color="#7DD3FC" label={MEASURES.find((m) => m.k === measure)!.label} />
-          {budgetKey && <Legend2 color="#16A34A" label="BDGT" />}
-          <Legend2 color="#9333EA" label="Avg. LQ" dashed />
-          <Legend2 color="#2563EB" label="Projected TM" dashed />
-          <Legend2 color="#DC2626" label="losses x M" />
+        <div className="h-4 w-px bg-[#E5E7EB]" />
+        <PillGroup
+          options={GRAINS.map((g) => ({ k: g.k, label: g.label }))}
+          value={grain}
+          onChange={setGrain}
+        />
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          <LegendChip
+            label={measureMeta.label}
+            color="#7DD3FC"
+            active={!isHidden("bars")}
+            onClick={() => toggle("bars")}
+          />
+          <LegendChip
+            label="BDGT"
+            color="#16A34A"
+            active={!isHidden("budget")}
+            onClick={() => toggle("budget")}
+          />
+          <LegendChip
+            label="Avg. LQ"
+            color="#9333EA"
+            dashed
+            active={!isHidden("avgLq")}
+            onClick={() => toggle("avgLq")}
+          />
+          <LegendChip
+            label="Projected TM"
+            color="#2563EB"
+            dashed
+            active={!isHidden("projected")}
+            onClick={() => toggle("projected")}
+          />
+          <LegendChip
+            label="losses x M"
+            color="#DC2626"
+            active={!isHidden("losses")}
+            onClick={() => toggle("losses")}
+          />
         </div>
       </div>
 
       {/* Chart body */}
       <div className="px-3 py-3">
         {isLoading ? (
-          <div className="flex h-[360px] items-center justify-center">
+          <div className="flex h-[380px] items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
           </div>
         ) : error ? (
-          <div className="flex h-[360px] items-center justify-center text-sm text-[#DC2626]">
+          <div className="flex h-[380px] items-center justify-center text-sm text-[#DC2626]">
             Failed to load chart
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={360}>
+          <ResponsiveContainer width="100%" height={380}>
             <ComposedChart data={chartData} margin={{ top: 16, right: 24, bottom: 0, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis
-                yAxisId="left"
-                tick={{ fontSize: 10 }}
-                tickFormatter={(v) => fmt(Number(v))}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={{ fontSize: 10 }}
-                tickFormatter={(v) => fmtUsd(Number(v))}
-              />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmt(Number(v))} />
               <Tooltip
                 formatter={(v, name) => {
                   const num = Number(v)
-                  if (typeof name === "string" && name.includes("Margin")) return fmtPct(num)
+                  if (measure === "margin_pct") return fmtPct(num)
+                  if (measure === "volume" && (name === "Budget" || name === "Losses x M" || name === measureMeta.label))
+                    return fmtCount(num)
                   return fmtUsd(num)
                 }}
               />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Bar yAxisId="left" dataKey={measure} name={MEASURES.find((m) => m.k === measure)!.label} fill="#7DD3FC" />
-              {budgetKey && (
+              {!isHidden("bars") && (
+                <Bar
+                  dataKey={measure}
+                  name={measureMeta.label}
+                  fill="#7DD3FC"
+                />
+              )}
+              {!isHidden("budget") && (
                 <Line
-                  yAxisId="left"
                   type="monotone"
                   dataKey={budgetKey}
                   name="Budget"
@@ -158,33 +241,45 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   dot={{ r: 3 }}
                 />
               )}
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="losses"
-                name="Losses x M"
-                stroke="#DC2626"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-              />
-              {avgLq > 0 && (
+              {!isHidden("losses") && (
+                <Line
+                  type="monotone"
+                  dataKey={lossesKey}
+                  name="Losses x M"
+                  stroke="#DC2626"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                />
+              )}
+              {!isHidden("avgLq") && avgLq !== 0 && (
                 <ReferenceLine
-                  yAxisId="left"
                   y={avgLq}
                   stroke="#9333EA"
                   strokeDasharray="6 4"
                   label={{ value: `Avg. LQ ${fmt(avgLq)}`, fontSize: 10, fill: "#7C3AED", position: "right" }}
                 />
               )}
-              {projectedTm > 0 && measure === "revenue" && (
+              {!isHidden("projected") && projected !== 0 && (
                 <ReferenceLine
-                  yAxisId="left"
-                  y={projectedTm}
+                  y={projected}
                   stroke="#2563EB"
                   strokeDasharray="6 4"
-                  label={{ value: `Projected TM ${fmtUsd(projectedTm)}`, fontSize: 10, fill: "#2563EB", position: "right" }}
+                  label={{ value: `Projected TM ${fmt(projected)}`, fontSize: 10, fill: "#2563EB", position: "right" }}
                 />
               )}
+              <Brush
+                dataKey="label"
+                height={20}
+                stroke="#94A3B8"
+                travellerWidth={8}
+                startIndex={brush.start}
+                endIndex={brush.end}
+                onChange={(r) => {
+                  if (r && typeof r.startIndex === "number" && typeof r.endIndex === "number") {
+                    setBrush({ start: r.startIndex, end: r.endIndex })
+                  }
+                }}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -238,17 +333,40 @@ function PillGroup<T extends string>({
   )
 }
 
-function Legend2({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+function LegendChip({
+  label,
+  color,
+  dashed,
+  active,
+  onClick,
+}: {
+  label: string
+  color: string
+  dashed?: boolean
+  active: boolean
+  onClick: () => void
+}) {
   return (
-    <span className="flex items-center gap-1 text-[#374151]">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+        active
+          ? "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB]"
+          : "border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF] line-through"
+      }`}
+    >
       <span
         className="inline-block h-2 w-4 rounded-sm"
         style={{
-          background: dashed ? `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 8px)` : color,
+          background: dashed
+            ? `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 8px)`
+            : color,
+          opacity: active ? 1 : 0.4,
         }}
       />
       {label}
-    </span>
+    </button>
   )
 }
 

@@ -355,8 +355,47 @@ async def workdays(
 
 
 # ---------------------------------------------------------------------------
-# /combo — 12-month bars + lines (ignores Date filter)
+# /combo — Day / Week / Month bars + lines (Bruno round 3, 2026-05-19)
 # ---------------------------------------------------------------------------
+
+
+def _resolve_grain_window(grain: str, today: date) -> tuple[date, date, list[date]]:
+    """Build the bucket window and per-bucket anchor dates for a grain.
+
+    Bruno round 3 (2026-05-19): chart adds Day / Week / Month grain pickers
+    with scroll-bar zoom. Backend fetches the maximum window per grain (120 d
+    / 50 w / 26 m); frontend Brush positions the visible window.
+    """
+    if grain == "day":
+        n = 120
+        end = today
+        start = end - timedelta(days=n - 1)
+        anchors = [start + timedelta(days=i) for i in range(n)]
+        return start, end, anchors
+    if grain == "week":
+        n = 50
+        # Anchor on Monday of the current ISO week.
+        this_mon = today - timedelta(days=today.weekday())
+        start = this_mon - timedelta(weeks=n - 1)
+        anchors = [start + timedelta(weeks=i) for i in range(n)]
+        end = anchors[-1] + timedelta(days=6)
+        if end > today:
+            end = today
+        return start, end, anchors
+    # month
+    n = 26
+    cursor = today.replace(day=1)
+    anchors_desc: list[date] = [cursor]
+    for _ in range(n - 1):
+        prev_last = anchors_desc[-1] - timedelta(days=1)
+        anchors_desc.append(prev_last.replace(day=1))
+    anchors = list(reversed(anchors_desc))
+    last = anchors[-1]
+    end = last.replace(day=monthrange(last.year, last.month)[1])
+    if end > today:
+        # Cap window at today so we don't double-count partials.
+        end = today
+    return anchors[0], end, anchors
 
 
 @router.get("/combo")
@@ -365,32 +404,43 @@ async def combo(
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     load_type: Optional[str] = Query(None, description="'contract' | 'spot' | null"),
+    grain: str = Query("month", description="'day' | 'week' | 'month'"),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """Last-12-months combo. Bars carry vol/rev/prof/margin so the UI can swap
-    between them without re-fetching. Lines: losses_x_m, budget_revenue,
-    projected_tm (single value, last bucket only).
+    """Day/Week/Month combo. Bars carry vol/rev/prof/margin so the UI can swap
+    between them without re-fetching. Lines: losses_{vol,rev,prof,margin_pct},
+    budget_{loads,revenue,profit,margin_pct}, projected_{vol,revenue,profit,margin_pct}.
 
-    Bruno's "Use Production URL / Budget URL" split:
-      - Bars + losses_x_m  → mcleod_gld_budget_report_v4 (Production)
-      - budget_revenue     → daily_production_budget_report (Budget)
-      - projected_tm       → 14-day rolling Production extrapolated to EoM
+    Bruno's round-3 per-tab "Losses x M" formula spec (2026-05-19 PDF):
+      - Vol tab   → losses_vol         = COUNT(*) WHERE margin_amt < 0
+      - Rev tab   → losses_rev         = SUM(total_charge) WHERE margin_amt < 0
+      - Prof tab  → losses_prof        = SUM(margin_amt) WHERE margin_amt < 0
+      - Marg.% tab→ losses_margin_pct  = losses_prof / losses_rev * 100
+
+    BDGT line scales with the tab too — backend returns all four budget variants.
+    Frontend picks the matching key based on the active measure pill.
+
+    Source split unchanged:
+      - Bars + losses_*   → mcleod_gld_budget_report_v4 (Production)
+      - budget_*          → daily_production_budget_report (Budget)
+      - projected_*       → 14-day rolling Production extrapolated to EoM
     """
+    if grain not in ("day", "week", "month"):
+        grain = "month"
     pool = get_datalake_gold_pool(request)
     today = cst_today()
+    win_start, win_end, anchors = _resolve_grain_window(grain, today)
 
-    # Last 12 month buckets ending at the current month.
-    months: list[tuple[date, date]] = []
-    cursor = today.replace(day=1)
-    for _ in range(12):
-        m_end = cursor.replace(day=monthrange(cursor.year, cursor.month)[1])
-        months.append((cursor, m_end))
-        # step back one month
-        prev_last = cursor - timedelta(days=1)
-        cursor = prev_last.replace(day=1)
-    months.reverse()  # oldest → newest
-    win_start = months[0][0]
-    win_end = months[-1][1]
+    trunc_v4 = {
+        "day":   "br4.origin_actual_departure::date",
+        "week":  "DATE_TRUNC('week', br4.origin_actual_departure)::date",
+        "month": "DATE_TRUNC('month', br4.origin_actual_departure)::date",
+    }[grain]
+    trunc_bud = {
+        "day":   'budget."Date"::date',
+        "week":  'DATE_TRUNC(\'week\', budget."Date")::date',
+        "month": 'DATE_TRUNC(\'month\', budget."Date")::date',
+    }[grain]
 
     # ---- Production query (bars + losses) -------------------------------
     prod_params: list = []
@@ -400,18 +450,22 @@ async def combo(
     p_we = len(prod_params)
     prod_sql = f"""
         SELECT
-          DATE_TRUNC('month', br4.origin_actual_departure)::date AS month_start,
+          {trunc_v4} AS bucket_start,
           COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS volume,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
           COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
-          COALESCE(SUM(br4.margin_amt) FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses
+          COUNT(*) FILTER (WHERE br4.margin_amt < 0
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS losses_vol,
+          COALESCE(SUM(br4.total_charge) FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses_rev,
+          COALESCE(SUM(br4.margin_amt)   FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses_prof
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
           AND br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
         GROUP BY 1
     """
 
-    # ---- Budget revenue (Budget URL) ------------------------------------
+    # ---- Budget (Budget URL) --------------------------------------------
     bud_params: list = [win_start, win_end]
     bud_extra = ""
     if team:
@@ -423,7 +477,7 @@ async def combo(
     bud_sql = f"""
         WITH {CUSTOMER_TEAM_CTE}
         SELECT
-          DATE_TRUNC('month', budget."Date")::date AS month_start,
+          {trunc_bud} AS bucket_start,
           COALESCE(SUM(budget."Revenue Budget"), 0)::numeric AS budget_revenue,
           COALESCE(SUM(budget."Profit Budget"),  0)::numeric AS budget_profit,
           COALESCE(SUM(budget."Loads Budget"),   0)::numeric AS budget_loads
@@ -434,7 +488,7 @@ async def combo(
         GROUP BY 1
     """
 
-    # ---- Projected TM — last 14 calendar days extrapolated to EoM -------
+    # ---- Projected — last 14 calendar days extrapolated to EoM ----------
     m_start, m_end = _month_bounds(today)
     win14_start = today - timedelta(days=14)
     win14_end = today - timedelta(days=1)  # don't include today (partial)
@@ -449,10 +503,20 @@ async def combo(
     p_w14e2 = len(proj_params)
     proj_sql = f"""
         SELECT
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS vol_14,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
                             THEN br4.total_charge ELSE 0 END), 0)::numeric AS rev_14,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
+                            THEN br4.margin_amt  ELSE 0 END), 0)::numeric AS prof_14,
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS vol_mtd,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
-                            THEN br4.total_charge ELSE 0 END), 0)::numeric AS rev_mtd
+                            THEN br4.total_charge ELSE 0 END), 0)::numeric AS rev_mtd,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
+                            THEN br4.margin_amt  ELSE 0 END), 0)::numeric AS prof_mtd
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where_proj}
     """
@@ -463,38 +527,57 @@ async def combo(
         pool.fetchrow(proj_sql, *proj_params),
     )
 
-    prod_map = {r["month_start"]: r for r in prod_rows}
-    bud_map = {r["month_start"]: r for r in bud_rows}
+    prod_map = {r["bucket_start"]: r for r in prod_rows}
+    bud_map = {r["bucket_start"]: r for r in bud_rows}
 
+    vol_14 = _safe_float(proj_row["vol_14"]) if proj_row else 0.0
     rev_14 = _safe_float(proj_row["rev_14"]) if proj_row else 0.0
+    prof_14 = _safe_float(proj_row["prof_14"]) if proj_row else 0.0
+    vol_mtd = _safe_float(proj_row["vol_mtd"]) if proj_row else 0.0
     rev_mtd = _safe_float(proj_row["rev_mtd"]) if proj_row else 0.0
-    # ((rev_14 / 14) * pending_workdays) + rev_mtd → end-of-month projection.
-    projected_tm = (rev_14 / 14.0) * pending_workdays + rev_mtd if rev_14 else rev_mtd
+    prof_mtd = _safe_float(proj_row["prof_mtd"]) if proj_row else 0.0
+    projected_vol     = (vol_14  / 14.0) * pending_workdays + vol_mtd
+    projected_revenue = (rev_14  / 14.0) * pending_workdays + rev_mtd
+    projected_profit  = (prof_14 / 14.0) * pending_workdays + prof_mtd
+    projected_margin_pct = (projected_profit / projected_revenue * 100.0) if projected_revenue else 0.0
 
     out = []
-    for ms, _ in months:
-        p = prod_map.get(ms)
-        b = bud_map.get(ms)
+    for a in anchors:
+        p = prod_map.get(a)
+        b = bud_map.get(a)
+        p_rev   = _safe_float(p["revenue"]) if p else 0.0
+        p_prof  = _safe_float(p["profit"])  if p else 0.0
+        l_rev   = _safe_float(p["losses_rev"])  if p else 0.0
+        l_prof  = _safe_float(p["losses_prof"]) if p else 0.0
+        b_rev   = _safe_float(b["budget_revenue"]) if b else 0.0
+        b_prof  = _safe_float(b["budget_profit"])  if b else 0.0
         out.append({
-            "month_start": ms.isoformat(),
-            "volume": int(p["volume"]) if p else 0,
-            "revenue": _safe_float(p["revenue"]) if p else 0.0,
-            "profit": _safe_float(p["profit"]) if p else 0.0,
-            "margin_pct": (
-                _safe_float(p["profit"]) / _safe_float(p["revenue"]) * 100.0
-                if p and _safe_float(p["revenue"]) else 0.0
-            ),
-            "losses": _safe_float(p["losses"]) if p else 0.0,
-            "budget_revenue": _safe_float(b["budget_revenue"]) if b else 0.0,
-            "budget_profit":  _safe_float(b["budget_profit"])  if b else 0.0,
-            "budget_loads":   _safe_float(b["budget_loads"])   if b else 0.0,
+            "bucket_start": a.isoformat(),
+            "volume":     int(p["volume"]) if p else 0,
+            "revenue":    p_rev,
+            "profit":     p_prof,
+            "margin_pct": (p_prof / p_rev * 100.0) if p_rev else 0.0,
+            # Per-tab losses variants (Bruno round 3).
+            "losses_vol":        int(p["losses_vol"]) if p else 0,
+            "losses_rev":        l_rev,
+            "losses_prof":       l_prof,
+            "losses_margin_pct": (l_prof / l_rev * 100.0) if l_rev else 0.0,
+            # Per-tab budget variants.
+            "budget_loads":      _safe_float(b["budget_loads"]) if b else 0.0,
+            "budget_revenue":    b_rev,
+            "budget_profit":     b_prof,
+            "budget_margin_pct": (b_prof / b_rev * 100.0) if b_rev else 0.0,
         })
 
     return {
         "success": True,
         "data": {
-            "months": out,
-            "projected_tm": _safe_float(projected_tm),
+            "grain": grain,
+            "buckets": out,
+            "projected_vol":        _safe_float(projected_vol),
+            "projected_revenue":    _safe_float(projected_revenue),
+            "projected_profit":     _safe_float(projected_profit),
+            "projected_margin_pct": _safe_float(projected_margin_pct),
             "today": today.isoformat(),
             "month_start": m_start.isoformat(),
             "month_end": m_end.isoformat(),
@@ -1224,6 +1307,120 @@ async def actuals(
         "meta": {
             "window": {"start": s.isoformat(), "end": e.isoformat()},
             "pending_workdays": pending_workdays,
+            "total": len(out),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# /actuals-by-lane — Bruno round 3 (2026-05-19) Production-only per-lane roll-up
+# ---------------------------------------------------------------------------
+
+
+@router.get("/actuals-by-lane")
+async def actuals_by_lane(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    sort: str = Query("revenue_desc"),
+    limit: int = Query(100, ge=1, le=500),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Second table below Actuals — Production data only, grouped by lane.
+
+    Lane key = ``TRIM(origin_name) || ' - ' || TRIM(dest_name)`` (city-pair —
+    same shape as XRay CORP / Top Losses Lanes so the count matches §5).
+    No Budget join — Bruno's spec: "second table … just with Production Data".
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    p_params: list = []
+    where = _v4_scope_where("br4", team, customer, load_type, p_params)
+    p_params.extend([s, e])
+    p_s = len(p_params) - 1
+    p_e = len(p_params)
+
+    sql = f"""
+        WITH otp AS ({_scorecard_cte("otp")}),
+             otd AS ({_scorecard_cte("otd")}),
+             prod AS (
+                SELECT
+                    TRIM(br4.origin_name) AS origin,
+                    TRIM(br4.dest_name)   AS dest,
+                    br4.id, br4.company_id,
+                    br4.total_charge, br4.margin_amt,
+                    COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
+                    COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
+                FROM public.mcleod_gld_budget_report_v4 br4
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+                WHERE {where}
+                  AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  AND TRIM(br4.origin_name) <> ''
+                  AND TRIM(br4.dest_name)   <> ''
+             )
+        SELECT
+          origin || ' - ' || dest AS lane,
+          origin,
+          dest,
+          COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS vol,
+          COALESCE(SUM(total_charge), 0)::numeric AS rev,
+          COALESCE(SUM(margin_amt),  0)::numeric  AS prof,
+          COUNT(*) FILTER (WHERE margin_amt < 0
+                             AND total_charge IS NOT NULL
+                             AND total_charge <> 0) AS loss_loads,
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS loss_profit,
+          SUM(otp_cnt) AS otp_late,
+          SUM(otd_cnt) AS otd_late
+        FROM prod
+        GROUP BY origin, dest
+    """
+
+    rows = await pool.fetch(sql, *p_params)
+    out = []
+    for r in rows:
+        vol = int(r["vol"] or 0)
+        rev = _safe_float(r["rev"])
+        prof = _safe_float(r["prof"])
+        otp_late = int(r["otp_late"] or 0)
+        otd_late = int(r["otd_late"] or 0)
+        out.append({
+            "lane":       r["lane"],
+            "origin":     r["origin"],
+            "dest":       r["dest"],
+            "vol":        vol,
+            "rev":        rev,
+            "prof":       prof,
+            "margin_pct": (prof / rev * 100.0) if rev else 0.0,
+            "loss_loads":  int(r["loss_loads"] or 0),
+            "loss_profit": _safe_float(r["loss_profit"]),
+            "otp_pct":    (1.0 - otp_late / vol) * 100.0 if vol else 0.0,
+            "otd_pct":    (1.0 - otd_late / vol) * 100.0 if vol else 0.0,
+            "rev_x_l":    (rev / vol) if vol else 0.0,
+            "prof_x_l":   (prof / vol) if vol else 0.0,
+        })
+
+    sort_key = {
+        "revenue_desc": lambda r: -r["rev"],
+        "profit_desc":  lambda r: -r["prof"],
+        "volume_desc":  lambda r: -r["vol"],
+        "loss_desc":    lambda r: r["prof"],   # most negative first
+        "lane":         lambda r: (r["lane"] or "").upper(),
+        "margin_desc":  lambda r: -r["margin_pct"],
+    }.get(sort, lambda r: -r["rev"])
+    out.sort(key=sort_key)
+    out = out[:limit]
+
+    return {
+        "success": True,
+        "data": out,
+        "meta": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
             "total": len(out),
         },
     }
