@@ -21,6 +21,7 @@
 - Validate inputs with Zod (frontend) and Pydantic (backend)
 - Next.js proxy sends user info as JSON in Authorization header (NOT a JWT) — backend parses with `json.loads`
 - Proxy retries GET on 502/503/504 up to 3× (5s, 10s); mutations never retry; returns 503+`Retry-After:30` on total failure
+- Proxy passes non-JSON bodies (`text/csv`, future PDF/XLSX) through untouched — Content-Disposition is preserved so `<a href download>` works same-origin via the NextAuth session cookie. See `docs/SPEC-CODE-RULES.md` §31
 - See `docs/SPEC-RELIABILITY.md` for the full cold-start + retry strategy
 
 ### Security (Non-Negotiable)
@@ -70,6 +71,7 @@
 - CST clock pin: `from app.clock import cst_today` in Python; bare `CURRENT_DATE`/`now()` in SQL — pools `init=_set_cst_session`. See `docs/SPEC-CODE-RULES.md` §2
 - LATERAL > ROW_NUMBER: `LEFT JOIN LATERAL ... LIMIT 1` for first-match-per-key. See `docs/SPEC-CODE-RULES.md` §5
 - Date-decode clamp: every user-editable date col needs `CASE … to_char(…, 'YYYY-MM-DD') … ELSE NULL` + NaN/Inf guards on per-row numerics. See `docs/SPEC-CODE-RULES.md` §4
+- Ratio pivots: any endpoint emitting a ratio per cell (margin, win-rate, conversion) MUST also expose the raw numerator + denominator so totals rows / re-aggregates can compute the weighted avg correctly. See `docs/SPEC-CODE-RULES.md` §33
 - Full report catalog + per-report specifics: `docs/SPEC-CUSTOM-REPORTS.md`
 
 ### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
