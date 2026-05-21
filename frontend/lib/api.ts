@@ -217,6 +217,53 @@ export function useSavingsMonths() {
 export type SavingsDivision = "CORP" | "DFW"
 export type SavingsCorpTeam = "TEAM1" | "TEAM2" | "TEAM3" | "TEAM4" | "TEAM5"
 
+/**
+ * Multi-select include/exclude scope filters, shared by every useSavings* hook.
+ * The legacy single-value props (`customerId`, `team`) on the hook signatures
+ * remain valid; the backend folds them into the include lists.
+ */
+export interface SavingsScopeFilters {
+  teamIds?: string[]
+  excludeTeamIds?: string[]
+  customerIds?: string[]
+  excludeCustomerIds?: string[]
+}
+
+function appendScope(qs: URLSearchParams, scope?: SavingsScopeFilters) {
+  if (!scope) return
+  for (const v of scope.teamIds ?? []) qs.append("team_ids", v)
+  for (const v of scope.excludeTeamIds ?? []) qs.append("exclude_team_ids", v)
+  for (const v of scope.customerIds ?? []) qs.append("customer_ids", v)
+  for (const v of scope.excludeCustomerIds ?? []) qs.append("exclude_customer_ids", v)
+}
+
+function scopeKey(scope?: SavingsScopeFilters) {
+  if (!scope) return ""
+  return [
+    (scope.teamIds ?? []).join(","),
+    (scope.excludeTeamIds ?? []).join(","),
+    (scope.customerIds ?? []).join(","),
+    (scope.excludeCustomerIds ?? []).join(","),
+  ].join("|")
+}
+
+export interface SavingsCustomerOption {
+  customer_id: string
+  customer_name: string
+}
+
+export function useSavingsCustomers(division?: SavingsDivision) {
+  const qs = new URLSearchParams()
+  if (division) qs.set("division", division)
+  const suffix = qs.toString() ? `?${qs}` : ""
+  return useQuery({
+    queryKey: ["savings", "customers", division],
+    queryFn: () =>
+      apiFetch<SavingsCustomerOption[]>(`custom/carriers-savings/customers${suffix}`),
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
 export function useSavingsSummary(
   month?: string,
   customerId?: string,
@@ -224,6 +271,7 @@ export function useSavingsSummary(
   team?: SavingsCorpTeam,
   origin?: string,
   dest?: string,
+  scope?: SavingsScopeFilters,
 ) {
   const qs = new URLSearchParams()
   if (month) qs.set("month", month)
@@ -232,9 +280,10 @@ export function useSavingsSummary(
   if (team) qs.set("team", team)
   if (origin) qs.set("origin", origin)
   if (dest) qs.set("dest", dest)
+  appendScope(qs, scope)
   const suffix = qs.toString() ? `?${qs}` : ""
   return useQuery({
-    queryKey: ["savings", "summary", month, customerId, division, team, origin, dest],
+    queryKey: ["savings", "summary", month, customerId, division, team, origin, dest, scopeKey(scope)],
     queryFn: () => apiFetch<SavingsSummary>(`custom/carriers-savings/summary${suffix}`),
   })
 }
@@ -246,6 +295,7 @@ export function useSavingsByCustomer(
   team?: SavingsCorpTeam,
   origin?: string,
   dest?: string,
+  scope?: SavingsScopeFilters,
 ) {
   const qs = new URLSearchParams({ limit: String(limit) })
   if (month) qs.set("month", month)
@@ -253,8 +303,9 @@ export function useSavingsByCustomer(
   if (team) qs.set("team", team)
   if (origin) qs.set("origin", origin)
   if (dest) qs.set("dest", dest)
+  appendScope(qs, scope)
   return useQuery({
-    queryKey: ["savings", "by-customer", month, limit, division, team, origin, dest],
+    queryKey: ["savings", "by-customer", month, limit, division, team, origin, dest, scopeKey(scope)],
     queryFn: () => apiFetch<SavingsByCustomer[]>(`custom/carriers-savings/by-customer?${qs}`),
   })
 }
@@ -269,6 +320,7 @@ export interface SavingsLanesFilters {
   limit?: number
   division?: SavingsDivision
   team?: SavingsCorpTeam
+  scope?: SavingsScopeFilters
 }
 
 export interface SavingsTeamRow {
@@ -287,6 +339,7 @@ export function useSavingsByTeam(
   team?: SavingsCorpTeam,
   origin?: string,
   dest?: string,
+  scope?: SavingsScopeFilters,
 ) {
   const qs = new URLSearchParams()
   if (month) qs.set("month", month)
@@ -295,9 +348,10 @@ export function useSavingsByTeam(
   if (team) qs.set("team", team)
   if (origin) qs.set("origin", origin)
   if (dest) qs.set("dest", dest)
+  appendScope(qs, scope)
   const suffix = qs.toString() ? `?${qs}` : ""
   return useQuery({
-    queryKey: ["savings", "by-team", month, customerId, division, team, origin, dest],
+    queryKey: ["savings", "by-team", month, customerId, division, team, origin, dest, scopeKey(scope)],
     queryFn: () => apiFetch<SavingsTeamRow[]>(`custom/carriers-savings/by-team${suffix}`),
   })
 }
@@ -317,6 +371,7 @@ export function useSavingsMonthlyTotals(
   windowMonths = 9,
   origin?: string,
   dest?: string,
+  scope?: SavingsScopeFilters,
 ) {
   const qs = new URLSearchParams({ window: String(windowMonths) })
   if (customerId) qs.set("customer_id", customerId)
@@ -324,8 +379,9 @@ export function useSavingsMonthlyTotals(
   if (team) qs.set("team", team)
   if (origin) qs.set("origin", origin)
   if (dest) qs.set("dest", dest)
+  appendScope(qs, scope)
   return useQuery({
-    queryKey: ["savings", "monthly-totals", customerId, division, team, windowMonths, origin, dest],
+    queryKey: ["savings", "monthly-totals", customerId, division, team, windowMonths, origin, dest, scopeKey(scope)],
     queryFn: () =>
       apiFetch<SavingsMonthlyTotals[]>(`custom/carriers-savings/monthly-totals?${qs}`),
   })
@@ -340,6 +396,7 @@ export function useSavingsLanes(filters: SavingsLanesFilters) {
   if (filters.sort) qs.set("sort", filters.sort)
   if (filters.division) qs.set("division", filters.division)
   if (filters.team) qs.set("team", filters.team)
+  appendScope(qs, filters.scope)
   qs.set("page", String(filters.page ?? 1))
   qs.set("limit", String(filters.limit ?? 100))
   return useQuery({
@@ -380,6 +437,7 @@ export function useSavingsLaneRates(filters: SavingsLanesFilters) {
   if (filters.sort) qs.set("sort", filters.sort)
   if (filters.division) qs.set("division", filters.division)
   if (filters.team) qs.set("team", filters.team)
+  appendScope(qs, filters.scope)
   qs.set("page", String(filters.page ?? 1))
   qs.set("limit", String(filters.limit ?? 100))
   return useQuery({

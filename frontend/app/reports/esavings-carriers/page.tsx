@@ -1,38 +1,39 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
+  ChevronDown,
   Loader2,
   PiggyBank,
   TrendingDown,
   TrendingUp,
   Truck,
+  X,
 } from "lucide-react"
 import {
   useSavingsByCustomer,
   useSavingsByTeam,
+  useSavingsCustomers,
   useSavingsLaneRates,
   useSavingsLanes,
   useSavingsMonthlyTotals,
   useSavingsMonths,
   useSavingsSummary,
-  type SavingsCorpTeam,
   type SavingsDivision,
   type SavingsLaneRate,
+  type SavingsScopeFilters,
 } from "@/lib/api"
 import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
 import { MonthlyTotalsChart } from "./MonthlyTotalsChart"
 import { ReportGuard } from "@/components/ReportGuard"
-const CORP_TEAMS: readonly SavingsCorpTeam[] = [
-  "TEAM1",
-  "TEAM2",
-  "TEAM3",
-  "TEAM4",
-  "TEAM5",
-] as const
+
+const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"] as const
+const DFW_TEAMS = ["TEAM-DFW"] as const
+
+type FilterMode = "include" | "exclude"
 
 // Business target: $55,000 savings per division per month (CORP, DFW).
 // When no division filter is applied, we show the combined target so the
@@ -66,6 +67,19 @@ function fmtMonth(iso: string | null | undefined) {
   })
 }
 
+/**
+ * Display label for the source-table `base_month` value.
+ *  - `'Q1-2026'` → `'Q1-26'`        (Bruno R-2)
+ *  - `'2025-07'` → `'2025-07'`      (untouched)
+ *  - `null` / `'None'` → `'—'`
+ */
+function fmtBaseMonth(base: string | null | undefined): string {
+  if (!base || base === "None") return "—"
+  const m = base.match(/^(Q[1-4])-(\d{4})$/)
+  if (m) return `${m[1]}-${m[2].slice(2)}`
+  return base
+}
+
 export default function ESavingsFromCarriersPage() {
   return (
     <ReportGuard reportKey="esavings-carriers">
@@ -78,9 +92,14 @@ function ESavingsFromCarriersContent() {
   const [month, setMonth] = useState<string | undefined>(undefined)
   const [origin, setOrigin] = useState("")
   const [dest, setDest] = useState("")
-  const [customerId, setCustomerId] = useState<string | undefined>(undefined)
   const [division, setDivision] = useState<SavingsDivision | undefined>(undefined)
-  const [team, setTeam] = useState<SavingsCorpTeam | undefined>(undefined)
+  // Multi-select scope filters (Bruno R-2). The legacy single-value `customer_id`
+  // / `team` query params remain supported server-side; the UI no longer needs
+  // them now that everything goes through the picker.
+  const [teamIds, setTeamIds] = useState<string[]>([])
+  const [teamMode, setTeamMode] = useState<FilterMode>("include")
+  const [customerIds, setCustomerIds] = useState<string[]>([])
+  const [customerMode, setCustomerMode] = useState<FilterMode>("include")
   const [sort, setSort] = useState("variance_desc")
   const [page, setPage] = useState(1)
   const limit = 100
@@ -103,66 +122,99 @@ function ESavingsFromCarriersContent() {
   const debouncedOrigin = useDebounce(origin.trim(), 300)
   const debouncedDest = useDebounce(dest.trim(), 300)
 
+  const teamOptions = useMemo(() => {
+    const ids = division === "CORP"
+      ? CORP_TEAMS
+      : division === "DFW"
+        ? DFW_TEAMS
+        : [...CORP_TEAMS, ...DFW_TEAMS]
+    return ids.map((id) => ({ id, label: id }))
+  }, [division])
+
+  const { data: customersRes, isFetching: loadingCustomers } =
+    useSavingsCustomers(division)
+  const customerOptions = useMemo(
+    () =>
+      (customersRes?.data ?? []).map((c) => ({
+        id: c.customer_id,
+        label: c.customer_name || c.customer_id,
+        secondary: c.customer_id,
+      })),
+    [customersRes],
+  )
+
+  const scope = useMemo<SavingsScopeFilters>(
+    () => ({
+      teamIds: teamMode === "include" ? teamIds : undefined,
+      excludeTeamIds: teamMode === "exclude" ? teamIds : undefined,
+      customerIds: customerMode === "include" ? customerIds : undefined,
+      excludeCustomerIds: customerMode === "exclude" ? customerIds : undefined,
+    }),
+    [teamIds, teamMode, customerIds, customerMode],
+  )
+
   const { data: summaryRes, isLoading: loadingSummary } = useSavingsSummary(
     effectiveMonth,
-    customerId,
+    undefined,
     division,
-    team,
+    undefined,
     debouncedOrigin || undefined,
     debouncedDest || undefined,
+    scope,
   )
   const summary = summaryRes?.data
   const { data: byCustomerRes } = useSavingsByCustomer(
     effectiveMonth,
     25,
     division,
-    team,
+    undefined,
     debouncedOrigin || undefined,
     debouncedDest || undefined,
+    scope,
   )
   const customers = byCustomerRes?.data ?? []
 
   const { data: byTeamRes, isLoading: loadingByTeam } = useSavingsByTeam(
     effectiveMonth,
-    customerId,
+    undefined,
     division,
-    team,
+    undefined,
     debouncedOrigin || undefined,
     debouncedDest || undefined,
+    scope,
   )
   const teamRows = byTeamRes?.data ?? []
 
   const { data: monthlyRes, isLoading: loadingMonthly } = useSavingsMonthlyTotals(
-    customerId,
+    undefined,
     division,
-    team,
+    undefined,
     9,
     debouncedOrigin || undefined,
     debouncedDest || undefined,
+    scope,
   )
   const monthlyRows = monthlyRes?.data ?? []
 
   const lanesFilters = useMemo(
     () => ({
       month: effectiveMonth,
-      customerId,
       origin: debouncedOrigin || undefined,
       dest: debouncedDest || undefined,
       sort,
       page,
       limit,
       division,
-      team,
+      scope,
     }),
     [
       effectiveMonth,
-      customerId,
       debouncedOrigin,
       debouncedDest,
       sort,
       page,
       division,
-      team,
+      scope,
     ],
   )
   const { data: lanesRes, isLoading: loadingLanes } = useSavingsLanes(lanesFilters)
@@ -198,7 +250,7 @@ function ESavingsFromCarriersContent() {
           </span>
         </div>
         <div className="ml-auto text-xs text-[#6B7280]">
-          Base: {summary?.base_month ?? "—"}
+          Base: {fmtBaseMonth(summary?.base_month)}
           {" · "}
           Month: {fmtMonth(effectiveMonth)}
         </div>
@@ -240,8 +292,12 @@ function ESavingsFromCarriersContent() {
             onChange={(e) => {
               const next = (e.target.value || undefined) as SavingsDivision | undefined
               setDivision(next)
-              // Reset CORP team when leaving CORP (DFW has no team sub-filter).
-              if (next !== "CORP") setTeam(undefined)
+              // Drop team selections that no longer fit the new division universe.
+              if (next === "CORP") {
+                setTeamIds((prev) => prev.filter((t) => CORP_TEAMS.includes(t as (typeof CORP_TEAMS)[number])))
+              } else if (next === "DFW") {
+                setTeamIds((prev) => prev.filter((t) => DFW_TEAMS.includes(t as (typeof DFW_TEAMS)[number])))
+              }
               setPage(1)
             }}
             className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none"
@@ -251,26 +307,40 @@ function ESavingsFromCarriersContent() {
             <option value="DFW">DFW</option>
           </select>
 
-          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-            Corp Team
-          </label>
-          <select
-            value={team ?? ""}
-            disabled={division !== "CORP"}
-            onChange={(e) => {
-              setTeam((e.target.value || undefined) as SavingsCorpTeam | undefined)
+          <MultiSelectChips
+            label="Team"
+            options={teamOptions}
+            selected={teamIds}
+            mode={teamMode}
+            onSelectionChange={(next) => {
+              setTeamIds(next)
               setPage(1)
             }}
-            className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none disabled:cursor-not-allowed disabled:bg-[#F9FAFB] disabled:text-[#9CA3AF]"
-            title={division !== "CORP" ? "Select Division = CORP to filter by team" : undefined}
-          >
-            <option value="">All</option>
-            {CORP_TEAMS.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+            onModeChange={(next) => {
+              setTeamMode(next)
+              setPage(1)
+            }}
+            placeholder="All teams"
+            width={170}
+          />
+
+          <MultiSelectChips
+            label="Customer"
+            options={customerOptions}
+            selected={customerIds}
+            mode={customerMode}
+            onSelectionChange={(next) => {
+              setCustomerIds(next)
+              setPage(1)
+            }}
+            onModeChange={(next) => {
+              setCustomerMode(next)
+              setPage(1)
+            }}
+            placeholder={loadingCustomers ? "Loading…" : "All customers"}
+            searchable
+            width={260}
+          />
 
           <span className="h-5 w-px bg-[#E5E7EB]" aria-hidden />
 
@@ -312,15 +382,6 @@ function ESavingsFromCarriersContent() {
               Clear lanes
             </button>
           )}
-
-          {customerId && (
-            <button
-              onClick={() => setCustomerId(undefined)}
-              className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
-            >
-              Clear customer filter
-            </button>
-          )}
         </section>
 
         {/* 4 main KPIs */}
@@ -338,21 +399,6 @@ function ESavingsFromCarriersContent() {
             icon={<TrendingUp className="h-5 w-5" />}
             tone="positive"
             loading={loadingSummary}
-            goal={{
-              amount:
-                division === "CORP" || division === "DFW"
-                  ? MONTHLY_SAVINGS_GOAL_PER_DIVISION
-                  : MONTHLY_SAVINGS_GOAL_PER_DIVISION * 2,
-              actual: Number(summary?.total_savings ?? 0),
-              scopeLabel:
-                division === "CORP"
-                  ? team
-                    ? `${team} · CORP goal`
-                    : "CORP goal"
-                  : division === "DFW"
-                    ? "DFW goal"
-                    : "CORP + DFW goal",
-            }}
           />
           <KpiCard
             label="Total Overpay"
@@ -369,6 +415,19 @@ function ESavingsFromCarriersContent() {
               (summary?.net_variance ?? 0) >= 0 ? "positive" : "negative"
             }
             loading={loadingSummary}
+            goal={{
+              amount:
+                division === "CORP" || division === "DFW"
+                  ? MONTHLY_SAVINGS_GOAL_PER_DIVISION
+                  : MONTHLY_SAVINGS_GOAL_PER_DIVISION * 2,
+              actual: Number(summary?.net_variance ?? 0),
+              scopeLabel:
+                division === "CORP"
+                  ? "CORP goal"
+                  : division === "DFW"
+                    ? "DFW goal"
+                    : "CORP + DFW goal",
+            }}
           />
         </section>
 
@@ -416,15 +475,19 @@ function ESavingsFromCarriersContent() {
                       </td>
                     </tr>
                   )}
-                  {customers.map((c) => (
+                  {customers.map((c) => {
+                    const isActive =
+                      customerMode === "include" && customerIds.includes(c.customer_id)
+                    return (
                     <tr
                       key={c.customer_id}
                       onClick={() => {
-                        setCustomerId(c.customer_id)
+                        setCustomerMode("include")
+                        setCustomerIds([c.customer_id])
                         setPage(1)
                       }}
                       className={`cursor-pointer transition-colors ${
-                        customerId === c.customer_id
+                        isActive
                           ? "bg-[#EFF6FF]"
                           : "hover:bg-[#F9FAFB]"
                       }`}
@@ -450,7 +513,8 @@ function ESavingsFromCarriersContent() {
                         {fmtCurrency(c.net_variance)}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -725,11 +789,11 @@ function BaseMonthChip({
       title={
         stale
           ? `Stale base: this Apr–Dec 2026 row is using a ${baseMonth} carrier cost instead of Q1-2026 (no Q1 history)`
-          : `Base period applied to this row`
+          : `Base period applied to this row (source value: ${baseMonth})`
       }
     >
       {stale ? <span aria-hidden="true">●</span> : null}
-      {baseMonth}
+      {fmtBaseMonth(baseMonth)}
     </span>
   )
 }
@@ -794,6 +858,214 @@ function MiniKpi({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-lg font-semibold tabular-nums text-[#111827]">
         {value}
       </div>
+    </div>
+  )
+}
+
+interface MultiSelectOption {
+  id: string
+  label: string
+  secondary?: string
+}
+
+interface MultiSelectChipsProps {
+  label: string
+  options: MultiSelectOption[]
+  selected: string[]
+  mode: FilterMode
+  onSelectionChange: (next: string[]) => void
+  onModeChange: (next: FilterMode) => void
+  placeholder?: string
+  searchable?: boolean
+  width?: number
+  disabled?: boolean
+}
+
+/**
+ * Compact multi-select with an Include / Exclude toggle. Designed to live in
+ * the eSavings filter strip; uses only plain React + HTML (no Base UI / cmdk
+ * — see CLAUDE.md "Search bar is pure React/HTML").
+ *
+ * When nothing is selected, the trigger reads "All …" — the backend treats
+ * both empty arrays as "no filter" so the include/exclude mode is irrelevant
+ * until at least one option is checked.
+ */
+function MultiSelectChips({
+  label,
+  options,
+  selected,
+  mode,
+  onSelectionChange,
+  onModeChange,
+  placeholder,
+  searchable,
+  width = 200,
+  disabled = false,
+}: MultiSelectChipsProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [open])
+
+  const showSearch = searchable ?? options.length > 8
+  const lowerQuery = query.trim().toLowerCase()
+  const filtered = useMemo(() => {
+    if (!lowerQuery) return options
+    return options.filter((o) => {
+      const hay = `${o.label} ${o.secondary ?? ""}`.toLowerCase()
+      return hay.includes(lowerQuery)
+    })
+  }, [options, lowerQuery])
+
+  const selectedSet = useMemo(() => new Set(selected), [selected])
+  const summary = selected.length === 0
+    ? placeholder ?? `All ${label.toLowerCase()}s`
+    : selected.length === 1
+      ? options.find((o) => o.id === selected[0])?.label ?? selected[0]
+      : `${selected.length} selected`
+
+  const toggle = (id: string) => {
+    if (selectedSet.has(id)) {
+      onSelectionChange(selected.filter((x) => x !== id))
+    } else {
+      onSelectionChange([...selected, id])
+    }
+  }
+  const clear = () => {
+    onSelectionChange([])
+    setQuery("")
+  }
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center gap-1.5">
+      <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+        {label}
+      </label>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        style={{ width }}
+        className={`flex items-center justify-between gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-left text-sm text-[#111827] shadow-sm hover:bg-[#F9FAFB] focus:border-[#1B3A5C] focus:outline-none ${
+          disabled ? "cursor-not-allowed bg-[#F9FAFB] text-[#9CA3AF]" : ""
+        }`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {selected.length > 0 && (
+            <span
+              className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider ${
+                mode === "include"
+                  ? "bg-[#DBEAFE] text-[#1D4ED8]"
+                  : "bg-[#FEE2E2] text-[#991B1B]"
+              }`}
+            >
+              {mode === "include" ? "incl" : "excl"}
+            </span>
+          )}
+          <span className="truncate">{summary}</span>
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
+      </button>
+
+      {open && !disabled && (
+        <div
+          className="absolute left-0 top-full z-30 mt-1 min-w-[260px] rounded-lg border border-[#E5E7EB] bg-white shadow-lg"
+          style={{ width: Math.max(width, 260) }}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-[#F3F4F6] px-3 py-2">
+            <div className="inline-flex rounded-full bg-[#F3F4F6] p-0.5 text-[11px] font-medium">
+              <button
+                type="button"
+                onClick={() => onModeChange("include")}
+                className={`rounded-full px-2.5 py-0.5 transition ${
+                  mode === "include"
+                    ? "bg-[#1D4ED8] text-white shadow-sm"
+                    : "text-[#374151] hover:text-[#111827]"
+                }`}
+              >
+                Include
+              </button>
+              <button
+                type="button"
+                onClick={() => onModeChange("exclude")}
+                className={`rounded-full px-2.5 py-0.5 transition ${
+                  mode === "exclude"
+                    ? "bg-[#991B1B] text-white shadow-sm"
+                    : "text-[#374151] hover:text-[#111827]"
+                }`}
+              >
+                Exclude
+              </button>
+            </div>
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={clear}
+                className="flex items-center gap-1 text-[11px] text-[#6B7280] hover:text-[#111827]"
+              >
+                <X className="h-3 w-3" />
+                Clear
+              </button>
+            )}
+          </div>
+
+          {showSearch && (
+            <div className="border-b border-[#F3F4F6] px-2 py-1.5">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${label.toLowerCase()}…`}
+                className="w-full rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs text-[#111827] placeholder:text-[#9CA3AF] focus:border-[#1B3A5C] focus:outline-none"
+              />
+            </div>
+          )}
+
+          <div className="max-h-72 overflow-y-auto py-1">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-4 text-center text-xs text-[#9CA3AF]">
+                No matches
+              </div>
+            ) : (
+              filtered.map((opt) => {
+                const checked = selectedSet.has(opt.id)
+                return (
+                  <button
+                    type="button"
+                    key={opt.id}
+                    onClick={() => toggle(opt.id)}
+                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-[#F9FAFB]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      readOnly
+                      className="mt-1 h-3.5 w-3.5 shrink-0 accent-[#1B3A5C]"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[#111827]">{opt.label}</span>
+                      {opt.secondary && opt.secondary !== opt.label && (
+                        <span className="block truncate text-[10px] text-[#6B7280]">
+                          {opt.secondary}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

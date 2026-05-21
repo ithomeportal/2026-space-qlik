@@ -14,6 +14,14 @@ Division / Team filter (added 2026-04-17):
   excluded ONLY when a filter is active; without a filter the report keeps its full
   historical universe so unfiltered numbers match today's dashboard.
 
+Scope-filter round-2 (2026-05-21, Bruno PDF):
+  - `team_ids[]` / `exclude_team_ids[]` — multi-select team filters within the
+    division universe (the legacy single `team` param still works and is folded
+    into `team_ids` server-side).
+  - `customer_ids[]` / `exclude_customer_ids[]` — multi-select customer filters
+    applied directly on `report.customer_id` (no McLeod join required). Legacy
+    single `customer_id` still works and is folded into `customer_ids`.
+
 This router reads `base_lane` / `base_month` / `variance` as-is; no recomputation.
 """
 
@@ -67,28 +75,24 @@ customer_team AS (
 router = APIRouter(tags=["carriers-savings"], prefix="/custom/carriers-savings")
 
 
-def _resolve_team_filter(
-    division: Optional[str], team: Optional[str]
-) -> Optional[list[str]]:
-    """Translate (division, team) into the list of team_ids to restrict on.
+def _resolve_team_universe(division: Optional[str]) -> Optional[list[str]]:
+    """The full team set permitted by a `division` selector.
 
-    - `None`         → no restriction (join skipped, full historical universe).
-    - `[]`           → inputs were set but invalid/unknown → force zero rows.
-    - `[...]`        → explicit team list; strict inner join on McLeod.
-
-    When both are set, `team` wins (narrower).
+    - `None`  → no division restriction.
+    - `[]`    → division was set but unknown → caller should force zero rows.
+    - `[...]` → explicit team universe to constrain include-lists against.
     """
-    if team:
-        value = team.strip().upper()
-        if value in ALL_ALLOWED_TEAMS:
-            return [value]
-        return []
-    if division:
-        value = division.strip().upper()
-        if value in DIVISION_TEAMS:
-            return list(DIVISION_TEAMS[value])
-        return []
-    return None
+    if not division:
+        return None
+    value = division.strip().upper()
+    if value in DIVISION_TEAMS:
+        return list(DIVISION_TEAMS[value])
+    return []
+
+
+def _norm_teams(values: list[str]) -> list[str]:
+    """Drop unknown/blank team_ids; uppercase the rest."""
+    return [v.strip().upper() for v in values if v and v.strip().upper() in ALL_ALLOWED_TEAMS]
 
 
 def _collect_lane_filters(
@@ -110,25 +114,98 @@ def _collect_lane_filters(
     return parts
 
 
-def _build_team_clauses(
-    team_ids: Optional[list[str]], next_param_index: int
-) -> tuple[str, str, str, list]:
-    """Return (cte_prefix, join_sql, where_extra, extra_params).
+def _build_scope_clauses(
+    division: Optional[str],
+    legacy_team: Optional[str],
+    team_ids: list[str],
+    exclude_team_ids: list[str],
+    legacy_customer_id: Optional[str],
+    customer_ids: list[str],
+    exclude_customer_ids: list[str],
+    params: list,
+) -> tuple[str, str, str]:
+    """Resolve include/exclude scope filters into SQL fragments.
 
-    `cte_prefix` starts with `WITH ` so it can be prepended directly to a query.
-    `next_param_index` is the 1-based positional index of the next placeholder.
+    Returns (cte_prefix, join_sql, where_extra). `cte_prefix` starts with
+    `WITH `. `where_extra` is a string that begins with ` AND ...` (empty
+    when no filters apply). `params` is mutated in place: every new
+    placeholder appended is bound to the value just pushed.
+
+    Semantics (Bruno round-2):
+      - Customer include/exclude is applied directly on report.customer_id.
+        No McLeod join needed; multiple customers OR'd together.
+      - Team include/exclude is applied via the customer_team CTE (McLeod
+        dominant-team-per-customer). When a `division` is given OR any
+        team filter is set, the JOIN is added so customers not present in
+        McLeod are excluded — same behaviour as the original single filter.
+      - `include` shrinks the universe; `exclude` further removes. If both
+        are set, both apply (a customer in `customer_ids` but also in
+        `exclude_customer_ids` ends up excluded).
     """
-    if team_ids is None:
-        return "", "", "", []
-    if not team_ids:
-        # Filter was set but resolved to no valid teams — force empty result.
-        return "", "", " AND FALSE", []
-    return (
-        f"WITH {CUSTOMER_TEAM_CTE}",
-        "JOIN customer_team ct ON TRIM(report.customer_name) = ct.customer_name",
-        f" AND ct.team_id = ANY(${next_param_index})",
-        [team_ids],
-    )
+    parts: list[str] = []
+
+    # ---- Customer scope (no McLeod join needed) -----------------------------
+    includes: list[str] = []
+    if legacy_customer_id:
+        includes.append(legacy_customer_id)
+    for cid in customer_ids or []:
+        if cid and cid not in includes:
+            includes.append(cid)
+    if includes:
+        params.append(includes)
+        parts.append(f"report.customer_id = ANY(${len(params)})")
+
+    if exclude_customer_ids:
+        excludes = [c for c in exclude_customer_ids if c]
+        if excludes:
+            params.append(excludes)
+            parts.append(f"NOT (report.customer_id = ANY(${len(params)}))")
+
+    # ---- Team scope (requires McLeod customer_team JOIN) --------------------
+    allowed = _resolve_team_universe(division)
+    include_teams = _norm_teams(team_ids or [])
+    if legacy_team:
+        norm = legacy_team.strip().upper()
+        if norm in ALL_ALLOWED_TEAMS and norm not in include_teams:
+            include_teams.append(norm)
+    exclude_teams = _norm_teams(exclude_team_ids or [])
+
+    if allowed is not None and not allowed:
+        # division was set to an unknown value — force zero rows.
+        return "", "", " AND FALSE"
+
+    if allowed is not None and include_teams:
+        # User picked specific teams AND a division — intersect them.
+        include_teams = [t for t in include_teams if t in allowed]
+        if not include_teams:
+            return "", "", " AND FALSE"
+
+    need_team_join = bool(allowed is not None or include_teams or exclude_teams)
+
+    if need_team_join:
+        cte = f"WITH {CUSTOMER_TEAM_CTE}"
+        join_sql = (
+            "JOIN customer_team ct ON TRIM(report.customer_name) = ct.customer_name"
+        )
+
+        # If we have an explicit include list, use it; otherwise constrain to
+        # the division's universe when set.
+        if include_teams:
+            params.append(include_teams)
+            parts.append(f"ct.team_id = ANY(${len(params)})")
+        elif allowed is not None:
+            params.append(allowed)
+            parts.append(f"ct.team_id = ANY(${len(params)})")
+
+        if exclude_teams:
+            params.append(exclude_teams)
+            parts.append(f"NOT (ct.team_id = ANY(${len(params)}))")
+    else:
+        cte = ""
+        join_sql = ""
+
+    where_extra = "".join(f" AND {p}" for p in parts)
+    return cte, join_sql, where_extra
 
 
 @router.get("/months")
@@ -152,13 +229,63 @@ async def list_months(
     return {"success": True, "data": [dict(r) for r in rows]}
 
 
+@router.get("/customers")
+async def list_customers(
+    request: Request,
+    division: Optional[str] = Query(None, description="CORP | DFW — narrow via McLeod team mapping"),
+    _user: dict = Depends(require_report_access("esavings-carriers")),
+):
+    """Distinct customers (customer_id, customer_name) across the full report history.
+
+    Powers the Customer multi-select filter. Sorted by customer_name so the picker
+    is browsable; when `division` is set we restrict to customers whose dominant
+    McLeod team belongs to that division.
+    """
+    pool = get_savings_pool(request)
+    allowed = _resolve_team_universe(division)
+    if allowed is not None and not allowed:
+        return {"success": True, "data": []}
+
+    if allowed is None:
+        rows = await pool.fetch(
+            """
+            SELECT customer_id,
+                   MAX(customer_name) AS customer_name
+            FROM public.carriers_savings_results_report
+            WHERE customer_id IS NOT NULL AND customer_id <> ''
+            GROUP BY customer_id
+            ORDER BY MAX(customer_name) ASC
+            """
+        )
+    else:
+        rows = await pool.fetch(
+            f"""
+            WITH {CUSTOMER_TEAM_CTE}
+            SELECT report.customer_id,
+                   MAX(report.customer_name) AS customer_name
+            FROM public.carriers_savings_results_report report
+            JOIN customer_team ct ON TRIM(report.customer_name) = ct.customer_name
+            WHERE report.customer_id IS NOT NULL AND report.customer_id <> ''
+              AND ct.team_id = ANY($1)
+            GROUP BY report.customer_id
+            ORDER BY MAX(report.customer_name) ASC
+            """,
+            allowed,
+        )
+    return {"success": True, "data": [dict(r) for r in rows]}
+
+
 @router.get("/summary")
 async def summary(
     request: Request,
     month: Optional[date] = Query(None, description="YYYY-MM-01"),
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Legacy single-customer filter"),
     division: Optional[str] = Query(None, description="CORP | DFW"),
-    team: Optional[str] = Query(None, description="TEAM1..TEAM5 | TEAM-DFW"),
+    team: Optional[str] = Query(None, description="Legacy single team — TEAM1..TEAM5 | TEAM-DFW"),
+    team_ids: list[str] = Query(default_factory=list, description="Multi-select teams to include"),
+    exclude_team_ids: list[str] = Query(default_factory=list, description="Teams to exclude"),
+    customer_ids: list[str] = Query(default_factory=list, description="Multi-select customers to include"),
+    exclude_customer_ids: list[str] = Query(default_factory=list, description="Customers to exclude"),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
@@ -176,15 +303,15 @@ async def summary(
 
     target_month = await _resolve_month(pool, month)
 
-    params: list = [target_month, customer_id]
+    params: list = [target_month]
     lane_parts = _collect_lane_filters(params, origin, dest)
-    lane_extra = ("".join(f" AND {p}" for p in lane_parts))
+    lane_extra = "".join(f" AND {p}" for p in lane_parts)
 
-    team_ids = _resolve_team_filter(division, team)
-    cte, join_sql, where_extra, extra_params = _build_team_clauses(
-        team_ids, next_param_index=len(params) + 1
+    cte, join_sql, where_extra = _build_scope_clauses(
+        division, team, team_ids, exclude_team_ids,
+        customer_id, customer_ids, exclude_customer_ids,
+        params,
     )
-    params.extend(extra_params)
 
     row = await pool.fetchrow(
         f"""
@@ -206,7 +333,6 @@ async def summary(
         FROM public.carriers_savings_results_report report
         {join_sql}
         WHERE report.month_date = $1
-          AND ($2::text IS NULL OR report.customer_id = $2)
           {lane_extra}
           {where_extra}
         """,
@@ -223,7 +349,11 @@ async def by_customer(
     request: Request,
     month: Optional[date] = Query(None),
     division: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    team: Optional[str] = Query(None, description="Legacy single team"),
+    team_ids: list[str] = Query(default_factory=list),
+    exclude_team_ids: list[str] = Query(default_factory=list),
+    customer_ids: list[str] = Query(default_factory=list),
+    exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
@@ -237,11 +367,11 @@ async def by_customer(
     lane_parts = _collect_lane_filters(params, origin, dest)
     lane_extra = "".join(f" AND {p}" for p in lane_parts)
 
-    team_ids = _resolve_team_filter(division, team)
-    cte, join_sql, where_extra, extra_params = _build_team_clauses(
-        team_ids, next_param_index=len(params) + 1
+    cte, join_sql, where_extra = _build_scope_clauses(
+        division, team, team_ids, exclude_team_ids,
+        None, customer_ids, exclude_customer_ids,
+        params,
     )
-    params.extend(extra_params)
     params.append(limit)
     limit_placeholder = f"${len(params)}"
 
@@ -280,11 +410,15 @@ async def by_customer(
 async def lanes(
     request: Request,
     month: Optional[date] = Query(None),
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Legacy single-customer filter"),
     origin: Optional[str] = Query(None),
     dest: Optional[str] = Query(None),
     division: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    team: Optional[str] = Query(None, description="Legacy single team"),
+    team_ids: list[str] = Query(default_factory=list),
+    exclude_team_ids: list[str] = Query(default_factory=list),
+    customer_ids: list[str] = Query(default_factory=list),
+    exclude_customer_ids: list[str] = Query(default_factory=list),
     sort: str = Query("variance_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
@@ -306,9 +440,6 @@ async def lanes(
 
     where_parts = ["report.month_date = $1"]
     params: list = [target_month]
-    if customer_id:
-        params.append(customer_id)
-        where_parts.append(f"report.customer_id = ${len(params)}")
     if origin:
         params.append(f"%{origin}%")
         where_parts.append(f"report.origin_name ILIKE ${len(params)}")
@@ -316,11 +447,11 @@ async def lanes(
         params.append(f"%{dest}%")
         where_parts.append(f"report.dest_name ILIKE ${len(params)}")
 
-    team_ids = _resolve_team_filter(division, team)
-    cte, join_sql, where_extra, extra_params = _build_team_clauses(
-        team_ids, next_param_index=len(params) + 1
+    cte, join_sql, where_extra = _build_scope_clauses(
+        division, team, team_ids, exclude_team_ids,
+        customer_id, customer_ids, exclude_customer_ids,
+        params,
     )
-    params.extend(extra_params)
     if where_extra:
         # where_extra already starts with " AND "; strip that prefix when appending.
         where_parts.append(where_extra.lstrip().removeprefix("AND ").strip())
@@ -372,9 +503,13 @@ async def lanes(
 async def by_team(
     request: Request,
     month: Optional[date] = Query(None),
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Legacy single-customer filter"),
     division: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    team: Optional[str] = Query(None, description="Legacy single team"),
+    team_ids: list[str] = Query(default_factory=list),
+    exclude_team_ids: list[str] = Query(default_factory=list),
+    customer_ids: list[str] = Query(default_factory=list),
+    exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
@@ -394,19 +529,34 @@ async def by_team(
     where_parts = ["report.month_date = $1"]
     params: list = [target_month]
 
-    if customer_id:
-        params.append(customer_id)
-        where_parts.append(f"report.customer_id = ${len(params)}")
-
     where_parts.extend(_collect_lane_filters(params, origin, dest))
 
-    # Resolve which team_ids to include. When no filter is set, we still want
-    # the full breakdown — so default to every allowed team.
-    team_ids = _resolve_team_filter(division, team)
-    if team_ids is None:
-        scoped_teams = list(ALL_ALLOWED_TEAMS)
+    # Resolve which team_ids to include — division universe ∩ include list, then
+    # subtract exclude list. When nothing is set, default to every allowed team
+    # so the full breakdown still renders.
+    allowed = _resolve_team_universe(division)
+    if allowed is None:
+        allowed = list(ALL_ALLOWED_TEAMS)
+    elif not allowed:
+        return {
+            "success": True,
+            "data": [],
+            "meta": {"month_date": target_month.isoformat() if target_month else None},
+        }
+
+    include_teams = _norm_teams(team_ids)
+    if team:
+        norm = team.strip().upper()
+        if norm in ALL_ALLOWED_TEAMS and norm not in include_teams:
+            include_teams.append(norm)
+
+    if include_teams:
+        scoped_teams = [t for t in include_teams if t in allowed]
     else:
-        scoped_teams = team_ids
+        scoped_teams = list(allowed)
+
+    excludes = set(_norm_teams(exclude_team_ids))
+    scoped_teams = [t for t in scoped_teams if t not in excludes]
 
     if not scoped_teams:
         return {
@@ -417,6 +567,22 @@ async def by_team(
 
     params.append(scoped_teams)
     where_parts.append(f"ct.team_id = ANY(${len(params)})")
+
+    # Customer include/exclude apply directly on report.customer_id.
+    customer_includes: list[str] = []
+    if customer_id:
+        customer_includes.append(customer_id)
+    for cid in customer_ids:
+        if cid and cid not in customer_includes:
+            customer_includes.append(cid)
+    if customer_includes:
+        params.append(customer_includes)
+        where_parts.append(f"report.customer_id = ANY(${len(params)})")
+    if exclude_customer_ids:
+        excludes_c = [c for c in exclude_customer_ids if c]
+        if excludes_c:
+            params.append(excludes_c)
+            where_parts.append(f"NOT (report.customer_id = ANY(${len(params)}))")
 
     rows = await pool.fetch(
         f"""
@@ -458,9 +624,13 @@ async def by_team(
 @router.get("/monthly-totals")
 async def monthly_totals(
     request: Request,
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Legacy single-customer filter"),
     division: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    team: Optional[str] = Query(None, description="Legacy single team"),
+    team_ids: list[str] = Query(default_factory=list),
+    exclude_team_ids: list[str] = Query(default_factory=list),
+    customer_ids: list[str] = Query(default_factory=list),
+    exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
     months_window: int = Query(9, ge=1, le=36, alias="window"),
@@ -476,17 +646,13 @@ async def monthly_totals(
     where_parts = ["report.month_date IN (SELECT month_date FROM recent_months)"]
     params: list = []
 
-    if customer_id:
-        params.append(customer_id)
-        where_parts.append(f"report.customer_id = ${len(params)}")
-
     where_parts.extend(_collect_lane_filters(params, origin, dest))
 
-    team_ids = _resolve_team_filter(division, team)
-    team_cte, join_sql, where_extra, extra_params = _build_team_clauses(
-        team_ids, next_param_index=len(params) + 1
+    team_cte, join_sql, where_extra = _build_scope_clauses(
+        division, team, team_ids, exclude_team_ids,
+        customer_id, customer_ids, exclude_customer_ids,
+        params,
     )
-    params.extend(extra_params)
     if where_extra:
         where_parts.append(where_extra.lstrip().removeprefix("AND ").strip())
 
@@ -585,11 +751,15 @@ _RATE_FETCH_CONCURRENCY = 8
 async def lane_rates(
     request: Request,
     month: Optional[date] = Query(None, description="YYYY-MM-01"),
-    customer_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None, description="Legacy single-customer filter"),
     origin: Optional[str] = Query(None),
     dest: Optional[str] = Query(None),
     division: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    team: Optional[str] = Query(None, description="Legacy single team"),
+    team_ids: list[str] = Query(default_factory=list),
+    exclude_team_ids: list[str] = Query(default_factory=list),
+    customer_ids: list[str] = Query(default_factory=list),
+    exclude_customer_ids: list[str] = Query(default_factory=list),
     sort: str = Query("variance_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
@@ -620,9 +790,6 @@ async def lane_rates(
 
     where_parts = ["report.month_date = $1"]
     params: list = [target_month]
-    if customer_id:
-        params.append(customer_id)
-        where_parts.append(f"report.customer_id = ${len(params)}")
     if origin:
         params.append(f"%{origin}%")
         where_parts.append(f"report.origin_name ILIKE ${len(params)}")
@@ -630,11 +797,11 @@ async def lane_rates(
         params.append(f"%{dest}%")
         where_parts.append(f"report.dest_name ILIKE ${len(params)}")
 
-    team_ids = _resolve_team_filter(division, team)
-    cte, join_sql, where_extra, extra_params = _build_team_clauses(
-        team_ids, next_param_index=len(params) + 1
+    cte, join_sql, where_extra = _build_scope_clauses(
+        division, team, team_ids, exclude_team_ids,
+        customer_id, customer_ids, exclude_customer_ids,
+        params,
     )
-    params.extend(extra_params)
     if where_extra:
         where_parts.append(where_extra.lstrip().removeprefix("AND ").strip())
 
