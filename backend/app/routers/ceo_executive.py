@@ -36,16 +36,15 @@ Filter contract:
 - team     : one of CORP_TEAMS ∪ DFW_SUB_TEAMS | "" (all)
 - customer : single customer name | "" (all)
 
-Per PDF spec, panels fall into three groups:
-- SCOPED: respect range + team + customer (KPIs, Summary by Team, Profit by
-  Customer, Worst Profit by Customer, Worst Margins by Lanes, Negative Loads
-  by Order / Customer, Lane Production Analysis, All Orders).
-- GLOBAL: ignore ALL filters (All Teams Performance, Customer Count & Margin
-  last 15 months, Profit/Loads by Month last 15 months, Profit/Loads by Day
-  last 80 days, Customer Count & Margin by Day last 80 days, Loads vs
-  Revenue by Week last 10 weeks, Profit/%Margin by Week last 10 weeks,
-  Summary by Week, Top-5 Concentration by Revenue, Top-5 Concentration by
-  Profit).
+Per Bruno R5 (2026-05-21) panels fall into three groups:
+- FULLY SCOPED: respect range + division + team + customer (KPIs, Summary by
+  Team, Profit by Customer, Worst Profit by Customer, Worst Margins by
+  Lanes, Negative Loads by Order / Customer, Lane Production Analysis,
+  All Orders).
+- DATE-FIXED: respect division + team + customer, but date windows are
+  fixed (Yd/Wk/Mo for All Teams Performance; 15 months / 80 days for
+  Trends; 10 weeks / 12 weeks for Weekly; full year for Top-5
+  Concentration by Revenue / Profit).
 - SEMI-SCOPED: Profit-TM gauge respects team + customer but always uses the
   current calendar month.
 
@@ -510,16 +509,19 @@ async def overview(
         *tm_params,
     )
 
-    # ---- All Teams Performance (GLOBAL — Yd / Week / Month) -------------
-    # Ignores every filter. Always emits one row per ALL_DIVISION_TEAMS
-    # member via unnest LEFT JOIN agg so teams with no production still
-    # appear. $5 carries the full CORP+DFW team_id universe so the CTE can
-    # see rows from both divisions regardless of the currently-selected
-    # division filter.
+    # ---- All Teams Performance (Yd / Week / Month — fixed windows) ------
+    # Bruno R5 (2026-05-21): now honors Division + Team + Customer. Date
+    # windows (yesterday / week / month-to-date) stay fixed regardless of
+    # the Range pill, so the panel is still useful as a quick "are we
+    # tracking" snapshot. The unnest LEFT JOIN ensures empty teams in the
+    # current selection still render with zeros.
+    # Placeholders:
+    #   $1 yesterday, $2 week_start, $3 today, $4 m_start (production window),
+    #   $5 padded team_id universe for customer_team CTE (narrowed by division),
+    #   $6 unnest list of visible team labels,
+    #   $7 customer filter ("" = all customers — predicate is no-op).
     yesterday = today - timedelta(days=1)
     week_start = _week_start(today)
-    # production window spans m_start..today ($4..$3) so the FILTER (WHERE
-    # budget."Date" = $1) etc. all see rows from both CORP + DFW sources.
     atp_task = pool.fetch(
         f"""
         WITH {_production_cte(4, 3)},
@@ -571,6 +573,7 @@ async def overview(
           JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
           WHERE UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
             AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%UNILINK%'
+            AND ($7 = '' OR TRIM(budget."Customer Name") = $7)
           GROUP BY ct.division_team
         )
         SELECT
@@ -590,8 +593,9 @@ async def overview(
         ORDER BY mo_profit DESC NULLS LAST, team
         """,
         yesterday, week_start, today, m_start,
-        _pad_variants(ALLOWED_TEAMS, width=8),
-        list(ALL_DIVISION_TEAMS),
+        _pad_variants(_division_team_ids(division), width=8),
+        team_list_for_unnest,
+        customer or "",
     )
 
     kpi, sbt, profit_tm, atp = await asyncio.gather(
@@ -668,6 +672,7 @@ async def trends(
     request: Request,
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -675,11 +680,11 @@ async def trends(
     fifteen_months_start = _shift_months(_month_start(today), -14)
     eighty_days_start = today - timedelta(days=79)
 
-    # Bruno R4 (2026-05-12): Trends panels now honor the Team filter (date
-    # windows stay fixed at 15 months / 80 days). Separate param lists per
-    # task — different placeholder counts per asyncpg.gather call.
+    # Bruno R4 (2026-05-12): Trends panels honor Team. R5 (2026-05-21):
+    # Customer too. Date windows stay fixed at 15 months / 80 days. Separate
+    # param lists per task — different placeholder counts per gather call.
     monthly_params: list = []
-    monthly_scope = _scope_where("br4", team, None, monthly_params, division=division)
+    monthly_scope = _scope_where("br4", team, customer, monthly_params, division=division)
     monthly_params.extend([fifteen_months_start, today])
     m_s, m_e = len(monthly_params) - 1, len(monthly_params)
 
@@ -705,7 +710,7 @@ async def trends(
     )
 
     daily_params: list = []
-    daily_scope = _scope_where("br4", team, None, daily_params, division=division)
+    daily_scope = _scope_where("br4", team, customer, daily_params, division=division)
     daily_params.extend([eighty_days_start, today])
     d_s, d_e = len(daily_params) - 1, len(daily_params)
 
@@ -863,8 +868,10 @@ async def customers(
         *wp_params,
     )
 
-    # ---- Top-5 Concentration by Revenue (GLOBAL) ------------------------
-    # Use full year to be stable. "Others" is rank 6+.
+    # ---- Top-5 Concentration by Revenue ($-window = full year) ----------
+    # Bruno R5 (2026-05-21): when Customer is selected the chart collapses
+    # to a single 100% slice for that customer — same scope contract as
+    # every other panel in the Overview mega-tab.
     g_scope = _global_scope_where("br4")
     top5_rev_task = pool.fetch(
         f"""
@@ -878,6 +885,7 @@ async def customers(
             AND br4.origin_actual_departure >= $1
             AND br4.origin_actual_departure < ($2::date + 1)
             AND br4.customer_name IS NOT NULL
+            AND ($3 = '' OR TRIM(br4.customer_name) = $3)
           GROUP BY TRIM(br4.customer_name)
         ),
         ranked AS (
@@ -899,10 +907,10 @@ async def customers(
         GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
         ORDER BY rank_min
         """,
-        YEAR_START, YEAR_END,
+        YEAR_START, YEAR_END, customer or "",
     )
 
-    # ---- Top-5 Concentration by Profit (GLOBAL) -------------------------
+    # ---- Top-5 Concentration by Profit (same Customer-aware scope) ------
     top5_prof_task = pool.fetch(
         f"""
         WITH by_cust AS (
@@ -915,6 +923,7 @@ async def customers(
             AND br4.origin_actual_departure >= $1
             AND br4.origin_actual_departure < ($2::date + 1)
             AND br4.customer_name IS NOT NULL
+            AND ($3 = '' OR TRIM(br4.customer_name) = $3)
           GROUP BY TRIM(br4.customer_name)
         ),
         ranked AS (
@@ -936,7 +945,7 @@ async def customers(
         GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
         ORDER BY rank_min
         """,
-        YEAR_START, YEAR_END,
+        YEAR_START, YEAR_END, customer or "",
     )
 
     pc, wp, t5r, t5p = await asyncio.gather(
@@ -986,6 +995,7 @@ async def weekly(
     request: Request,
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -994,10 +1004,10 @@ async def weekly(
     ten_weeks_start = this_week_mon - timedelta(weeks=9)
     summary_start = today - timedelta(weeks=12)  # ~12 weeks for Summary by Week
 
-    # Bruno R4 (2026-05-12): Weekly tab now honors the Team filter (date
-    # windows stay fixed at 10 weeks / 12 weeks).
+    # Bruno R4 (2026-05-12): Weekly honors Team. R5 (2026-05-21): Customer
+    # too. Date windows stay fixed at 10 weeks / 12 weeks.
     weekly_params: list = []
-    weekly_scope = _scope_where("br4", team, None, weekly_params, division=division)
+    weekly_scope = _scope_where("br4", team, customer, weekly_params, division=division)
     weekly_params.extend([ten_weeks_start, today])
     w_s, w_e = len(weekly_params) - 1, len(weekly_params)
 
@@ -1024,7 +1034,7 @@ async def weekly(
     )
 
     summary_params: list = []
-    summary_scope = _scope_where("br4", team, None, summary_params, division=division)
+    summary_scope = _scope_where("br4", team, customer, summary_params, division=division)
     summary_params.extend([summary_start, today])
     s_s, s_e = len(summary_params) - 1, len(summary_params)
 
@@ -1166,6 +1176,7 @@ async def risk(
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
           TRIM(br4.origin_name)   AS origin,
           TRIM(br4.dest_name)     AS destination,
+          br4.origin_actual_departure AS departure,
           COALESCE(br4.total_charge, 0)::numeric AS revenue,
           COALESCE(br4.margin_amt, 0)::numeric AS profit,
           CASE WHEN br4.total_charge > 0
@@ -1251,6 +1262,7 @@ async def risk(
                     "carrier": r["carrier"],
                     "origin": r["origin"],
                     "destination": r["destination"],
+                    "departure": r["departure"].isoformat() if r["departure"] else None,
                     "revenue": float(r["revenue"] or 0),
                     "profit": float(r["profit"] or 0),
                     "margin_pct": float(r["margin_pct"] or 0) * 100.0,

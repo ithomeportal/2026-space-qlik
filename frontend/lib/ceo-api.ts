@@ -189,6 +189,7 @@ export interface CeoNegOrder {
   carrier: string
   origin: string
   destination: string
+  departure: string | null
   revenue: number
   profit: number
   margin_pct: number
@@ -268,22 +269,25 @@ export function useCeoOverview(f: CeoFilters, enabled = true) {
   })
 }
 
-// Bruno R4 (2026-05-12): Trends panels now honor Division + Team.
-// Range and Customer stay date-immutable / scope-immutable.
-function ceoTeamQs(f: Pick<CeoFilters, "division" | "team">) {
+// Bruno R4 (2026-05-12): Trends/Weekly honor Division + Team.
+// R5 (2026-05-21): Customer too. Date windows stay fixed.
+type CeoScopeFilters = Pick<CeoFilters, "division" | "team" | "customer">
+
+function ceoScopeQs(f: CeoScopeFilters) {
   const q = new URLSearchParams()
   if (f.division) q.set("division", f.division)
   if (f.team) q.set("team", f.team)
+  if (f.customer) q.set("customer", f.customer)
   const s = q.toString()
   return s ? `?${s}` : ""
 }
 
-export function useCeoTrends(f: Pick<CeoFilters, "division" | "team">, enabled = true) {
+export function useCeoTrends(f: CeoScopeFilters, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "trends", f.division ?? "", f.team ?? ""],
-    queryFn: () => apiFetch<CeoTrends>(`custom/ceo-executive/trends${ceoTeamQs(f)}`),
+    queryKey: ["ceo", "trends", f.division ?? "", f.team ?? "", f.customer ?? ""],
+    queryFn: () => apiFetch<CeoTrends>(`custom/ceo-executive/trends${ceoScopeQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
 }
@@ -297,12 +301,12 @@ export function useCeoCustomers(f: CeoFilters, enabled = true) {
   })
 }
 
-export function useCeoWeekly(f: Pick<CeoFilters, "division" | "team">, enabled = true) {
+export function useCeoWeekly(f: CeoScopeFilters, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "weekly", f.division ?? "", f.team ?? ""],
-    queryFn: () => apiFetch<CeoWeekly>(`custom/ceo-executive/weekly${ceoTeamQs(f)}`),
+    queryKey: ["ceo", "weekly", f.division ?? "", f.team ?? "", f.customer ?? ""],
+    queryFn: () => apiFetch<CeoWeekly>(`custom/ceo-executive/weekly${ceoScopeQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
 }

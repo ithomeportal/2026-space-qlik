@@ -138,6 +138,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
                 <SortableTh<CeoNegOrder> columnKey="carrier" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Carrier</SortableTh>
                 <SortableTh<CeoNegOrder> columnKey="origin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Origin</SortableTh>
                 <SortableTh<CeoNegOrder> columnKey="destination" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Destination</SortableTh>
+                <SortableTh<CeoNegOrder> columnKey="departure" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Departure</SortableTh>
                 <SortableTh<CeoNegOrder> columnKey="revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Revenue</SortableTh>
                 <SortableTh<CeoNegOrder> columnKey="profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>$ Profit</SortableTh>
                 <SortableTh<CeoNegOrder> columnKey="margin_pct" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin %</SortableTh>
@@ -146,7 +147,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
             </thead>
             <tbody>
               <tr className="sticky top-[26px] bg-[#FECACA] font-semibold">
-                <td className="px-2 py-1" colSpan={5}>Totals ({rows.length})</td>
+                <td className="px-2 py-1" colSpan={6}>Totals ({rows.length})</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
                 <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
                 <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
@@ -159,6 +160,7 @@ function NegOrdersTable({ rows, loading }: { rows: CeoNegOrder[]; loading?: bool
                   <td className="px-2 py-1 truncate max-w-[160px]">{r.carrier}</td>
                   <td className="px-2 py-1 truncate max-w-[130px]">{r.origin}</td>
                   <td className="px-2 py-1 truncate max-w-[130px]">{r.destination}</td>
+                  <td className="px-2 py-1 whitespace-nowrap">{r.departure ? r.departure.slice(0, 10) : "—"}</td>
                   <td className="px-1 py-1 text-right">{fmtUsd(r.revenue)}</td>
                   <td className="px-1 py-1 text-right text-[#991B1B] font-semibold">{fmtUsd(r.profit)}</td>
                   <td className="px-1 py-1 text-right text-[#991B1B] font-semibold">{fmtPct(r.margin_pct)}</td>

@@ -51,6 +51,7 @@ export function Weekly({ filters }: WeeklyProps) {
   const { data, isLoading, error } = useCeoWeekly({
     division: filters.division,
     team: filters.team,
+    customer: filters.customer,
   })
   const d = data?.data
 
@@ -65,7 +66,7 @@ export function Weekly({ filters }: WeeklyProps) {
 
       <div className="rounded-md border border-[#E5E7EB] bg-white p-3 text-xs text-[#6B7280]">
         Weekly panels are <strong>date-immutable</strong> — last 10 weeks / 12 weeks regardless
-        of Range. Division and Team filters are honored.
+        of Range. Division, Team and Customer filters are honored.
       </div>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">

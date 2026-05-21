@@ -137,6 +137,7 @@ export function Trends({ filters }: TrendsProps) {
   const { data, isLoading, error } = useCeoTrends({
     division: filters.division,
     team: filters.team,
+    customer: filters.customer,
   })
   const d = data?.data
 
@@ -154,8 +155,8 @@ export function Trends({ filters }: TrendsProps) {
       <CeoErrorBanner label="Trends" errors={[error]} />
 
       <div className="rounded-md border border-[#E5E7EB] bg-white p-3 text-xs text-[#6B7280]">
-        Trends panels are <strong>date-immutable</strong> — they ignore Range and Customer
-        and always show the fixed windows below. Division and Team filters are honored.
+        Trends panels are <strong>date-immutable</strong> — they ignore Range and always show
+        the fixed windows below. Division, Team and Customer filters are honored.
       </div>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">

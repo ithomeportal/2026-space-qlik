@@ -155,7 +155,7 @@ function AllTeamsPerformance({ rows, loading }: { rows: CeoAtpRow[]; loading?: b
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#DBEAFE] px-3 py-2 text-sm font-semibold text-[#1E3A8A]">
-        All Teams Performance <span className="text-xs font-normal text-[#6B7280]">· date-immutable</span>
+        All Teams Performance <span className="text-xs font-normal text-[#6B7280]">· Yd / Wk / Mo — fixed windows</span>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">
