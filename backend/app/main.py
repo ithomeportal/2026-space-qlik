@@ -17,6 +17,7 @@ from app.routers import (
     admin,
     admin_cashflow,
     attrition_wow,
+    bonus_calculator,
     budget_followup,
     carrier_risk,
     admin_access_doors,
@@ -298,6 +299,67 @@ async def lifespan(app: FastAPI):
                 """
             )
 
+            # Bonus Calculator (2026-05-24): HR-editable roster / afterhours /
+            # FX settings / month-lock. Team metrics come from the live datalake;
+            # these tables hold the HR data McLeod can't provide. Seeded once
+            # from the package template (see services/bonus_defaults.py).
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bonus_roster (
+                  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  team_id       TEXT NOT NULL,
+                  employee_name TEXT NOT NULL,
+                  role          TEXT NOT NULL,
+                  salary_mxn    NUMERIC NOT NULL DEFAULT 0,
+                  sort_order    INTEGER NOT NULL DEFAULT 0,
+                  created_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bonus_roster_team ON bonus_roster(team_id, sort_order)"
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bonus_afterhours (
+                  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  shift_group    TEXT NOT NULL,
+                  employee_name  TEXT NOT NULL,
+                  salary_mxn     NUMERIC NOT NULL DEFAULT 0,
+                  receives_bonus BOOLEAN NOT NULL DEFAULT TRUE,
+                  sort_order     INTEGER NOT NULL DEFAULT 0,
+                  created_at     TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bonus_settings (
+                  period_key TEXT PRIMARY KEY,
+                  team_fx    NUMERIC NOT NULL,
+                  night_fx   NUMERIC NOT NULL,
+                  updated_by TEXT,
+                  updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bonus_period_lock (
+                  period_key  TEXT PRIMARY KEY,
+                  status      TEXT NOT NULL DEFAULT 'open',
+                  approved_by TEXT,
+                  approved_at TIMESTAMPTZ
+                )
+                """
+            )
+            try:
+                from app.services.bonus_defaults import seed_bonus_data
+
+                await seed_bonus_data(app.state.pool)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Bonus Calculator seed skipped: {e}")
+
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
                 "SELECT COUNT(*) FROM role_report_access"
@@ -568,6 +630,26 @@ async def lifespan(app: FastAPI):
     else:
         app.state.freshservice_pool = None
 
+    # Optional read-only pool for UNLK-Financial's exchange_rates (Banxico FIX =
+    # DOF). Used only to PREFILL a suggested FX on Bonus Calculator; HR's pinned
+    # rate is authoritative, so the report works fine when this is unset.
+    if settings.FINANCIAL_DATABASE_URL:
+        try:
+            app.state.financial_pool = await asyncpg.create_pool(
+                settings.FINANCIAL_DATABASE_URL,
+                min_size=1,
+                max_size=2,
+                init=_set_cst_session,
+            )
+            logger.info("Financial pool connected — Bonus Calculator DOF FX suggestion")
+        except Exception as e:
+            logger.warning(
+                f"Financial DB connect failed: {e}. Bonus Calculator FX suggestion disabled."
+            )
+            app.state.financial_pool = None
+    else:
+        app.state.financial_pool = None
+
     # Schedule daily user sync at 2:00 AM CST (America/Chicago)
     if settings.TIMEOFF_DATABASE_URL:
         scheduler.add_job(
@@ -735,6 +817,7 @@ app.include_router(carrier_risk.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")
+app.include_router(bonus_calculator.router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -338,6 +338,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "DFW", "Operations", "Sales"],
     },
     {
+        "key": "bonus-calculator",  # -> /reports/bonus-calculator
+        "title": "Bonus Calculator",
+        "description": "Corporate operations bonus payouts by team & employee — KAM/Freight-Match/Tracking&Tracing brackets, wildcard, monthly profit add-ons, Team-1 KAM and Afterhours averaging",
+        "note": "CEO + HR only · 6th->6th period · live datalake (mcleod_gld_budget_report_v4 + scorecard, same as xray-corp-mng) · HR board-pinned FX (team + night) · HR-editable roster/afterhours · month-lock approval · scope TEAM1–TEAM4 · port of Bruno's HR-Headquarters bonus module (2026-05-24)",
+        "category": "Executive",
+        "tags": ["bonus", "hr", "payroll", "kam", "freight-match", "tracking-tracing", "wildcard", "corporate"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "HR"],
+    },
+    {
         "key": "admin-cashflow",  # -> /reports/admin-cashflow
         "title": "Admin Aging Cashflow",
         "description": "A/R cashflow discipline — delivery-vs-bill / BOL-vs-bill / carrier-invoice-vs-bill aging, delivered-not-billed and ready-not-billed inventory",

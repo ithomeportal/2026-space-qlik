@@ -8,6 +8,7 @@ import {
   BarChart3,
   Boxes,
   Building2,
+  Calculator,
   CalendarDays,
   ClipboardCheck,
   ClipboardList,
@@ -150,6 +151,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Ops Portal - Overview":          { icon: LayoutGrid,     family: "operations" },
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },
   "KAM Performance - DFW":          { icon: Stethoscope,    family: "dfw", tag: "KAM" },
+  "Bonus Calculator":               { icon: Calculator,     family: "hr" },
 
   // ---- Legacy Qlik (still in catalog) ----
   "Executive Report":               { icon: BarChart3,      family: "executive" },

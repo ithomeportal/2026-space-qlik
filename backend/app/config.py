@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # Aiven fresh_services_unlk — FreshService Tickets/Agents mirror
     # populated by an external Spark ETL. Powers the IT Tickets Mgmt report.
     FRESHSERVICE_DATABASE_URL: str = ""
+    # UNLK-Financial DB (read-only) — exchange_rates table (Banxico FIX = DOF).
+    # Optional: used only to PREFILL a suggested FX on Bonus Calculator; the
+    # HR board-pinned rate is authoritative. Percent-encode $ -> %24 in the URL.
+    FINANCIAL_DATABASE_URL: str = ""
     QLIK_TENANT_URL: str = "https://mb01txe2h9rovgh.us.qlikcloud.com"
     QLIK_PRIVATE_KEY: str = ""
     QLIK_ISSUER: str = ""

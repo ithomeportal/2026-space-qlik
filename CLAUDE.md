@@ -150,7 +150,7 @@
 12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
 13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
 14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
+15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
 ---
 
@@ -253,6 +253,7 @@ DATABASE_URL=<Aiven Postgres URL — analytics_hub>
 SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — most code-made reports>
 AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — Track Award Loads, Performance for RFPs>
 FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — IT Tickets Mgmt; percent-encode $ → %24>
+FINANCIAL_DATABASE_URL=<UNLK-Financial DB (read-only) — exchange_rates (Banxico FIX=DOF); OPTIONAL, only prefills Bonus Calculator FX suggestion; percent-encode $ → %24>
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
 QLIK_PRIVATE_KEY=<secret>
@@ -330,3 +331,4 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 | `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports — full per-report spec + checklist |
 | `docs/SPEC-CODE-RULES.md` | Cross-cutting code rules (sargability, CST clock, asyncpg, Render env, Outlook fonts, etc.) |
 | `docs/SPEC-RFP-DAILY-DIGEST.md` | RFP Performance daily email digest details |
+| `docs/SPEC-BONUS-CALCULATOR.md` | Bonus Calculator (CEO+HR) — engine port, live-datalake feed, 6th→6th period, HR-pinned FX, roster |
