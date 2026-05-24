@@ -60,77 +60,29 @@
 - Never name a custom prop `ref` (React reserves it; minified error #284). Use `refValue`/`baseline`/`avg`. See `docs/SPEC-CODE-RULES.md` §13
 - `next build` is stricter than `tsc` — always `npm run build` before pushing. See `docs/SPEC-CODE-RULES.md` §14
 
-### Code-Made Reports (cross-cutting)
-- Report-type column: `reports.report_type` (`'qlik'` | `'custom'`) + `reports.custom_path` (Next.js route); `/reports/[id]` redirects to `custom_path` when `report_type='custom'`
-- Pools: external sources get their own `asyncpg` pool + env var; reports hitting the same DB share a pool via `get_*_pool` helpers in `routers/deps.py`
-- Endpoints under `/api/custom/<feature>/...`, guarded by `Depends(require_report_access("<key>"))`
-- ReportGuard: every default export wraps in `<ReportGuard reportKey="<key>">` — `role_report_access` table is the single source of truth (admin UI at `/admin/reports`). See `docs/SPEC-CODE-RULES.md` §15
-- Tile icon: every new `CUSTOM_REPORTS` row also needs a `REPORT_MAP` entry in `frontend/components/ReportIcons.tsx` (icon + family + optional sibling tag). 10 family palettes, 3-band gradient per tile. See `docs/SPEC-UI.md` §9 + `docs/SPEC-CODE-RULES.md` §32
-- Sargability: never `TRIM()` McLeod text columns in WHERE/JOIN; use `_pad_variants(values, width=N)`. See `docs/SPEC-CODE-RULES.md` §1
-- v4 sparseness: executive roll-ups read `daily_production_budget_report` (CORP-only) `UNION ALL` v4-DFW. See `docs/SPEC-CODE-RULES.md` §3
-- CST clock pin: `from app.clock import cst_today` in Python; bare `CURRENT_DATE`/`now()` in SQL — pools `init=_set_cst_session`. See `docs/SPEC-CODE-RULES.md` §2
-- LATERAL > ROW_NUMBER: `LEFT JOIN LATERAL ... LIMIT 1` for first-match-per-key. See `docs/SPEC-CODE-RULES.md` §5
-- Date-decode clamp: every user-editable date col needs `CASE … to_char(…, 'YYYY-MM-DD') … ELSE NULL` + NaN/Inf guards on per-row numerics. See `docs/SPEC-CODE-RULES.md` §4
-- Ratio pivots: any endpoint emitting a ratio per cell (margin, win-rate, conversion) MUST also expose the raw numerator + denominator so totals rows / re-aggregates can compute the weighted avg correctly. See `docs/SPEC-CODE-RULES.md` §33
-- Renaming a wire field (e.g. `pct_del_bill_le10` → `pct_del_bill_le2` in admin-cashflow R4): bump backend emitter + TS interface + every reader + sparkline keys + URL params as one diff so in-flight clients never render `—`. See `docs/SPEC-CODE-RULES.md` §34
-- Per-user editable reports (KAM Performance - DFW is the first): every table needs `user_id TEXT NOT NULL`; every read AND every update/delete WHERE includes `user_id = $current_user`; `INSERT`s pull the id from the session, never the body. See `docs/SPEC-CODE-RULES.md` §35
-- Measure-pill charts (Vol/Rev/Prof/Marg.%): return per-tab variants of every overlay series (`losses_vol`/`losses_rev`/`losses_prof`/`losses_margin_pct`, same for BDGT + Projected) so the chart is single-axis. Ratio variant guards `denominator > 0`. See `docs/SPEC-CODE-RULES.md` §36
-- Day/Week/Month grain toggle: backend fetches MAX window per grain (D=120/W=50/M=26), Recharts `<Brush>` positions visible default (30/13/13), `useEffect([grain, data.length])` resets brush. ISO week labels via "+4 day UTC" trick client-side. See `docs/SPEC-CODE-RULES.md` §37
-- Full report catalog + per-report specifics: `docs/SPEC-CUSTOM-REPORTS.md`
+### Code-Made Reports (cross-cutting — full detail in `docs/SPEC-CODE-RULES.md` + `docs/SPEC-CUSTOM-REPORTS.md`)
+- `reports.report_type` (`'qlik'`|`'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path` when custom
+- **4-place mirror for every new report**: `CUSTOM_REPORTS` in `seed.py` · `REPORT_MAP` in `ReportIcons.tsx` · `<ReportGuard reportKey>` · backend `require_report_access("<key>")`. `role_report_access` is the single source of truth (admin UI `/admin/reports`)
+- Endpoints under `/api/custom/<feature>/...`; external DBs get their own `asyncpg` pool + env var via `get_*_pool` in `routers/deps.py`
+- Key SQL/code rules (SPEC-CODE-RULES §): no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37
 
-### Qlik Embedding (summary — see `docs/SPEC-QLIK.md`)
-- Use `@qlik/embed-web-components` with `auth-type="cookie"` — NOT `"jwt"` (invalid)
-- Universal Viewer: ALL portal users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
-- Session pre-exchange: `POST /login/jwt-session` BEFORE rendering; Promise singleton prevents races; 3 retries with backoff
-- JWT required claims: `sub`, `name`, `email`, `groups`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud` — `nbf` is MANDATORY
-- Web Integration ID: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
-- Tenant: `mb01txe2h9rovgh.us.qlikcloud.com`
-- Classic Embed Mode toggle for Dashboard Bundle objects (Date Picker, Variable Input, etc.)
-
-### TV Display (`/dfw-podium` — see `docs/SPEC-QLIK.md`)
-- Standalone route handler (not React page), serves raw HTML
-- JWT→cookie via `/api/qlik/tv-token` with `TV_SECRET` (must match on Vercel + Render)
-- Auto-refresh hourly; retry after 30s on error
-- RiseVision URL: `https://space.unilinkportal.com/dfw-podium`
+### Qlik Embedding (full detail — `docs/SPEC-QLIK.md`)
+- `@qlik/embed-web-components` with `auth-type="cookie"` (NOT `"jwt"`); ALL users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
+- Session pre-exchange `POST /login/jwt-session` before render; Promise singleton + 3 retries. JWT claims incl. mandatory `nbf`. Classic Embed toggle for Dashboard Bundle objects
+- **TV Display** `/dfw-podium`: standalone route (raw HTML), JWT→cookie via `/api/qlik/tv-token` + `TV_SECRET`, hourly refresh (RiseVision)
 
 ### Responsive Mobile
-- <1920px viewport = mobile mode → only `(Mob)` prefixed Qlik reports
-- Reports table has `is_mobile` column; `useIsMobile()` hook detects viewport
+- <1920px = mobile mode → only `(Mob)` Qlik reports; `is_mobile` column + `useIsMobile()` hook
 
-### User Sync & TagRoles (see `docs/SPEC-ADMIN.md`)
-- Daily sync at 2 AM CST from People Management app via APScheduler
-- TagRoles NOT auto-assigned — admins assign manually per user
-- Admin users (dfrodriguez, kmeneses, msalazarm, dcastrog) auto-get admin role
-- Use `emp["name"]` (bracket access) for asyncpg Records, NOT `.get("name")`
+### Data, Seeding & TagRoles (full detail — `docs/SPEC-DATA.md` + `docs/SPEC-ADMIN.md`)
+- Seed idempotent (`ON CONFLICT … DO UPDATE`); never `dict.pop()` module constants (use `.get()`); auto-seed when `role_report_access` empty; `seed_custom_reports(pool)` runs every startup so a new `CUSTOM_REPORTS` entry ships itself. Router order: search BEFORE reports
+- Use bracket access `emp["name"]` for asyncpg Records, NOT `.get()`
+- TagRoles **Title-Case** divisions; `admin`/`super_admin` lowercase; case-insensitive seed lookup; daily user sync 2 AM CST; NOT auto-assigned (manual per user). `POST /api/admin/dedupe-roles` merges case dupes
 
-### Database & Seeding (see `docs/SPEC-DATA.md`)
-- Seed uses `ON CONFLICT (qlik_app_id) DO UPDATE` — idempotent (partial index on `qlik_app_id IS NOT NULL`)
-- Never `dict.pop()` on module-level constants — use `.get()`
-- Auto-seed on startup if `role_report_access` is empty
-- Custom reports upsert runs on every startup — adding a new entry to `CUSTOM_REPORTS` in `seed.py` is enough; `seed_custom_reports(pool)` is called from the `main.py` lifespan
-- FastAPI router order matters: search router BEFORE reports router
-
-### TagRole Canonicalization (see `docs/SPEC-ADMIN.md`)
-- Canonical form: **Title-Case** for divisions (CEO, Executive, CORP, DFW, Finance, HR, IT, Operations, Procurement, Sales)
-- `admin` and `super_admin` stay lowercase (singletons)
-- Seed uses `role_ids_ci` (lowercased-key dict) for case-insensitive lookup
-- `POST /api/admin/dedupe-roles?secret=<SEED_SECRET>` merges case duplicates and migrates all refs
-
-### Scheduled Email Digests (see `docs/SPEC-RELIABILITY.md` §Scheduled Jobs)
-- `daily_losses_alert` — 07:00 CST daily, Resend → `noreply@unilinkportal.com`, Top Losses Lanes weekly-movers (`app/services/losses_alerts.py`)
-- `daily_rfp_digest` — 17:30 CST Mon-Fri, MS Graph → `ithome@unilinktransportation.com`, RFP Performance summary (`app/services/rfp_daily_digest.py`). Reuses `admin-ms-api` Entra app (Mail.Send Application perm, admin consent). See `docs/SPEC-RFP-DAILY-DIGEST.md`
-- Reuse `FONT_STACK` / `MONO_STACK` constants from `rfp_daily_digest.py` for any new HTML email — Outlook font reset rule. See `docs/SPEC-CODE-RULES.md` §21
-
-### Render Cold Starts (see `docs/SPEC-RELIABILITY.md`)
-- Free tier spins down after ~15 min inactivity — cold starts 30–60s
-- Vercel cron `/api/cron/keepalive` pings `/api/health` every 10 min
-- Proxy retries GET on 5xx 3× (5s, 10s); React Query 5× (2s→30s); skip 401/403
-- Favicon backfill MUST run as background `asyncio.create_task` — never block lifespan
-
-### App Favicons
-- Fetched from app URL: tries `/icon.svg`, `/favicon.svg`, `/favicon.ico`, then HTML `<link rel="icon">`
-- Google favicon API is last resort; default globe (726/362 bytes) is rejected
-- Stored as base64 data URIs in `icon_data` (no CSP needed)
+### Scheduled Jobs & Reliability (full detail — `docs/SPEC-RELIABILITY.md`)
+- `daily_losses_alert` 07:00 CST (Resend); `daily_rfp_digest` 17:30 CST Mon-Fri (MS Graph, `admin-ms-api` app). Reuse `FONT_STACK`/`MONO_STACK` for HTML email (Outlook reset)
+- Render free tier cold-starts 30–60s; Vercel cron pings `/api/health` every 10 min; proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
+- App favicons: tries `/icon.svg`→`/favicon.svg`→`/favicon.ico`→HTML `<link>`; stored as base64 data URIs in `icon_data`
 
 ---
 
