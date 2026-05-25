@@ -3,8 +3,10 @@
 import { Loader2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
+  useAttritionLaneSummary,
   useAttritionReactive,
   type AttritionFilters,
+  type LaneSummaryRow,
   type ReactiveRow,
 } from "@/lib/attrition-wow-api"
 import { SortableTh, useSortable } from "../../ceo-executive/sortable"
@@ -24,9 +26,21 @@ interface Props {
   // bar's Customer dropdown — props bubble up to page.tsx so the URL stays
   // the source of truth for filter state.
   onCustomerClick?: (customer: string) => void
+  // "Client" under the RUAN view (page 6), "Customer" otherwise.
+  entityLabel: string
 }
 
 type Bucket = ReactiveRow["bucket"]
+
+// Bruno (2026-05-25 pages 3-4): the Spot buckets render a lane-grained,
+// Spot-only table (Customer, Lane, Loads, Rev, Profit, Margin, Last Load,
+// Days Since) sourced from /lane-summary instead of the variance schema.
+const SPOT_BUCKETS: ReadonlySet<Bucket> = new Set<Bucket>([
+  "spot_recent",
+  "spot_stale",
+  "gt_1y",
+])
+const SPOT_CONTRACT = "SPOT"
 
 const BUCKET_LABELS: Record<Bucket, { title: string; subtitle: string; days: string }> = {
   lw: {
@@ -78,11 +92,23 @@ const BUCKET_ORDER: Bucket[] = [
   "gt_1y",
 ]
 
-export function ReactiveTab({ filters, onCustomerClick }: Props) {
+export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
   const { data: res, isLoading, error } = useAttritionReactive(filters)
   const rows = res?.data ?? []
 
-  // Counts per bucket so empty sections collapse cleanly.
+  // Spot buckets come from /lane-summary (lane-grained, Spot only).
+  const { data: laneRes, error: laneError } = useAttritionLaneSummary(filters)
+  const laneRows = useMemo(
+    () =>
+      (laneRes?.data ?? []).filter(
+        (r) => r.contract_type === SPOT_CONTRACT && SPOT_BUCKETS.has(r.bucket),
+      ),
+    [laneRes],
+  )
+
+  // Counts per bucket so empty sections collapse cleanly. Variance buckets
+  // count customers (from /reactive-summary); Spot buckets count customer×lane
+  // rows (from /lane-summary).
   const counts = useMemo(() => {
     const c: Record<Bucket, number> = {
       lw: 0,
@@ -93,9 +119,10 @@ export function ReactiveTab({ filters, onCustomerClick }: Props) {
       gt_1y: 0,
       no_load: 0,
     }
-    for (const r of rows) c[r.bucket] += 1
+    for (const r of rows) if (!SPOT_BUCKETS.has(r.bucket)) c[r.bucket] += 1
+    for (const r of laneRows) c[r.bucket] += 1
     return c
-  }, [rows])
+  }, [rows, laneRows])
 
   const [openBuckets, setOpenBuckets] = useState<Set<Bucket>>(
     () => new Set<Bucket>(["l2_4w", "lw"]),
@@ -117,13 +144,17 @@ export function ReactiveTab({ filters, onCustomerClick }: Props) {
 
   return (
     <div className="space-y-4">
-      <AttritionErrorBanner errors={[error]} label="Reactive Customers" />
+      <AttritionErrorBanner
+        errors={[error, laneError]}
+        label="Reactive Customers"
+      />
 
       {BUCKET_ORDER.map((b) => {
         const meta = BUCKET_LABELS[b]
-        const data = rows.filter((r) => r.bucket === b)
+        const isSpot = SPOT_BUCKETS.has(b)
         const total = counts[b]
         const open = openBuckets.has(b)
+        const countNoun = isSpot ? "Lanes" : `${entityLabel}s`
         return (
           <div
             key={b}
@@ -136,25 +167,39 @@ export function ReactiveTab({ filters, onCustomerClick }: Props) {
               <div>
                 <div className="text-sm font-semibold text-[#1B3A5C]">
                   {meta.title}
+                  {isSpot && (
+                    <span className="ml-2 rounded-full bg-[#EDE9FE] px-2 py-0.5 text-[10px] font-normal text-[#6D28D9]">
+                      contract = Spot
+                    </span>
+                  )}
                 </div>
                 <div className="mt-0.5 text-[11px] text-[#6B7280]">
-                  {meta.subtitle} · Customers: {total}
+                  {meta.subtitle} · {countNoun}: {total}
                 </div>
               </div>
               <div className="text-xs text-[#6B7280]">
                 {open ? "▾" : "▸"}
               </div>
             </button>
-            {open && total > 0 && (
+            {open && total > 0 && isSpot && (
+              <SpotTable
+                data={laneRows.filter((r) => r.bucket === b)}
+                entityLabel={entityLabel}
+                onCustomerClick={onCustomerClick}
+              />
+            )}
+            {open && total > 0 && !isSpot && (
               <ReactiveTable
                 bucket={b}
-                data={data}
+                data={rows.filter((r) => r.bucket === b)}
+                entityLabel={entityLabel}
                 onCustomerClick={onCustomerClick}
               />
             )}
             {open && total === 0 && (
               <div className="px-4 py-6 text-center text-xs text-[#9CA3AF]">
-                No customers in this bucket.
+                No {isSpot ? "lanes" : entityLabel.toLowerCase() + "s"} in this
+                bucket.
               </div>
             )}
           </div>
@@ -164,13 +209,90 @@ export function ReactiveTab({ filters, onCustomerClick }: Props) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// SpotTable — lane-grained Spot-only table for the Recent/Stale/>1yr buckets
+// (Bruno 2026-05-25 pages 3-4). Every column sortable.
+// ---------------------------------------------------------------------------
+
+function SpotTable({
+  data,
+  entityLabel,
+  onCustomerClick,
+}: {
+  data: LaneSummaryRow[]
+  entityLabel: string
+  onCustomerClick?: (customer: string) => void
+}) {
+  const { sorted, sortKey, sortDir, toggle } = useSortable<LaneSummaryRow>(
+    data,
+    "total_revenue",
+    "desc",
+  )
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[920px] text-[11px]">
+        <thead className="bg-[#F0FDFA] text-[10px] uppercase tracking-wider text-[#0F766E]">
+          <tr>
+            <SortableTh<LaneSummaryRow> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">{entityLabel}</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="lane" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Lane</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="total_loads" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Loads</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="total_revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Revenue</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="total_profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Profit</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="total_margin" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Margin</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="last_load_date" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Last Load Date</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="days_since_last_load" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Days Since</SortableTh>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#F3F4F6]">
+          {sorted.map((r, i) => (
+            <tr key={`${r.customer}-${r.lane}-${i}`} className="hover:bg-[#FAFAFA]">
+              <td className="px-3 py-1.5 max-w-[220px] truncate" title={r.customer ?? ""}>
+                {r.customer && onCustomerClick ? (
+                  <button
+                    type="button"
+                    onClick={() => onCustomerClick(r.customer!)}
+                    className="text-left text-[#1D4ED8] hover:underline"
+                  >
+                    {r.customer}
+                  </button>
+                ) : (
+                  <span className="text-[#111827]">{r.customer || "—"}</span>
+                )}
+              </td>
+              <td className="px-3 py-1.5 max-w-[260px] truncate font-mono text-[#374151]" title={r.lane ?? ""}>
+                {r.lane || "—"}
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono">{fmtCount(r.total_loads)}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{fmtUsd(r.total_revenue)}</td>
+              <td className={`px-3 py-1.5 text-right font-mono ${r.total_profit < 0 ? "text-[#DC2626]" : ""}`}>
+                {fmtUsd(r.total_profit)}
+              </td>
+              <td className={`px-3 py-1.5 text-right font-mono ${(r.total_margin ?? 0) < 0 ? "text-[#DC2626]" : ""}`}>
+                {fmtPct(r.total_margin)}
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono text-[#374151]">
+                {fmtTimestamp(r.last_load_date)}
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono text-[#374151]">
+                {r.days_since_last_load ?? "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function ReactiveTable({
   bucket,
   data,
+  entityLabel,
   onCustomerClick,
 }: {
   bucket: Bucket
   data: ReactiveRow[]
+  entityLabel: string
   onCustomerClick?: (customer: string) => void
 }) {
   // Pick the comparison window per bucket. Mirrors Bruno's PDF.
@@ -249,7 +371,7 @@ function ReactiveTable({
         <thead className="bg-[#F0FDFA] text-[10px] uppercase tracking-wider text-[#0F766E]">
           <tr>
             <SortableTh<ReactiveRow> columnKey="team" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left" className="sticky left-0 bg-[#F0FDFA]">Team</SortableTh>
-            <SortableTh<ReactiveRow> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left" className="sticky left-[80px] bg-[#F0FDFA]">Customer</SortableTh>
+            <SortableTh<ReactiveRow> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left" className="sticky left-[80px] bg-[#F0FDFA]">{entityLabel}</SortableTh>
             <SortableTh<ReactiveRow> columnKey="avg_loads_l8w" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Avg Loads (L8W)</SortableTh>
             <SortableTh<ReactiveRow> columnKey={variantKeys.load} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>{variantLabel.load}</SortableTh>
             <SortableTh<ReactiveRow> columnKey={variantKeys.pct_loads} sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>% Loads Var</SortableTh>

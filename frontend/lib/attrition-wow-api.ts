@@ -35,6 +35,10 @@ export interface AttritionFilters {
   customer?: string
   contract?: string
   lane?: string
+  // Bruno 2026-05-25 (page 6): the "RUAN" pseudo-team. When set to "ruan" the
+  // backend scopes to RUAN customers under TEAM-DFW and groups/labels by the
+  // `client` sub-shipper instead of customer_name.
+  view?: "ruan"
 }
 
 function buildQs(f: AttritionFilters, extra?: Record<string, string>) {
@@ -43,6 +47,7 @@ function buildQs(f: AttritionFilters, extra?: Record<string, string>) {
   if (f.customer) q.set("customer", f.customer)
   if (f.contract) q.set("contract", f.contract)
   if (f.lane) q.set("lane", f.lane)
+  if (f.view) q.set("view", f.view)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -54,6 +59,7 @@ function keyOf(f: AttritionFilters) {
     f.customer ?? "",
     f.contract ?? "",
     f.lane ?? "",
+    f.view ?? "",
   ]
 }
 
@@ -258,10 +264,13 @@ export interface WowVariation {
 // Hooks
 // ---------------------------------------------------------------------------
 
-export function useAttritionFilters() {
+export function useAttritionFilters(view?: "ruan") {
   return useQuery({
-    queryKey: ["attrition-wow", "filters"],
-    queryFn: () => apiFetch<AttritionFilterOptions>("custom/attrition-wow/filters"),
+    queryKey: ["attrition-wow", "filters", view ?? ""],
+    queryFn: () =>
+      apiFetch<AttritionFilterOptions>(
+        `custom/attrition-wow/filters${view ? `?view=${view}` : ""}`,
+      ),
     staleTime: 10 * 60_000,
     ...ATTRITION_RETRY,
   })
@@ -357,6 +366,59 @@ export function useAttritionWowVariation(f: AttritionFilters) {
     queryKey: ["attrition-wow", "wow-var", ...keyOf(f)],
     queryFn: () =>
       apiFetch<WowVariation>(`custom/attrition-wow/wow-variation${buildQs(f)}`),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Losses tab (Bruno 2026-05-25 pages 1-2) — negative-margin loads only.
+// ---------------------------------------------------------------------------
+
+export interface LossPoint {
+  bucket: string // ISO date (month-start or Monday week-start)
+  neg_profit: number // Σ margin_amt where margin_amt < 0 (negative number)
+  neg_loads: number // count of negative-margin loads
+}
+
+export interface WorstLaneRow {
+  customer: string | null
+  origin: string | null
+  dest: string | null
+  loads: number
+  revenue: number
+  profit: number
+  margin: number | null
+}
+
+export interface NegCustomerRow {
+  customer: string | null
+  loads: number
+  revenue: number
+  profit: number
+  margin: number | null
+}
+
+export interface LossTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin: number | null
+}
+
+export interface AttritionLosses {
+  by_month: LossPoint[]
+  by_week: LossPoint[]
+  worst_lanes: WorstLaneRow[]
+  by_customer: NegCustomerRow[]
+  totals: { lanes: LossTotals; customers: LossTotals }
+}
+
+export function useAttritionLosses(f: AttritionFilters) {
+  return useQuery({
+    queryKey: ["attrition-wow", "losses", ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<AttritionLosses>(`custom/attrition-wow/losses${buildQs(f)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })

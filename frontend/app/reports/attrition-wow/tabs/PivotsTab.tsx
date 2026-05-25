@@ -42,6 +42,8 @@ interface Props {
   // customer_lane view applies the customer (and optionally lane) filter.
   onCustomerClick?: (customer: string) => void
   onLaneClick?: (lane: string) => void
+  // "Client" under the RUAN view (page 6), "Customer" otherwise.
+  entityLabel: string
 }
 
 type Metric = "loads" | "revenue" | "profit" | "margin"
@@ -54,13 +56,20 @@ const METRICS: { key: Metric; label: string; fmt: (v: number | null | undefined)
   { key: "margin",  label: "% Margin",   fmt: fmtPct },
 ]
 
-const DIMS: { key: Dim; label: string }[] = [
-  { key: "team",          label: "by Team" },
-  { key: "customer",      label: "by Customer" },
-  { key: "customer_lane", label: "by Customer and Lane" },
-]
+function dimLabel(key: Dim, entityLabel: string): string {
+  if (key === "team") return "by Team"
+  if (key === "customer") return `by ${entityLabel}`
+  return `by ${entityLabel} and Lane`
+}
 
-export function PivotsTab({ filters, onCustomerClick, onLaneClick }: Props) {
+const DIM_KEYS: Dim[] = ["team", "customer", "customer_lane"]
+
+export function PivotsTab({
+  filters,
+  onCustomerClick,
+  onLaneClick,
+  entityLabel,
+}: Props) {
   const [metric, setMetric] = useState<Metric>("loads")
   const [dim, setDim] = useState<Dim>("team")
   const [weeks] = useState<number>(12)
@@ -93,17 +102,17 @@ export function PivotsTab({ filters, onCustomerClick, onLaneClick }: Props) {
             View
           </span>
           <div className="ml-1 flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB]">
-            {DIMS.map((d) => (
+            {DIM_KEYS.map((k) => (
               <button
-                key={d.key}
-                onClick={() => setDim(d.key)}
+                key={k}
+                onClick={() => setDim(k)}
                 className={`px-3 py-1.5 ${
-                  dim === d.key
+                  dim === k
                     ? "rounded-md bg-white font-semibold text-[#1B3A5C] shadow-sm"
                     : "text-[#6B7280] hover:text-[#111827]"
                 }`}
               >
-                {d.label}
+                {dimLabel(k, entityLabel)}
               </button>
             ))}
           </div>
@@ -129,9 +138,20 @@ export function PivotsTab({ filters, onCustomerClick, onLaneClick }: Props) {
         weeks={weeks}
         onCustomerClick={onCustomerClick}
         onLaneClick={onLaneClick}
+        entityLabel={entityLabel}
       />
     </div>
   )
+}
+
+// Separator the backend emits between customer/client and lane for the
+// customer_lane dim ("<entity> · <lane>").
+const DIM_SEP = " · "
+
+function splitDimKey(value: string): { cust: string; lane: string } {
+  const idx = value.indexOf(DIM_SEP)
+  if (idx < 0) return { cust: value, lane: "" }
+  return { cust: value.slice(0, idx), lane: value.slice(idx + DIM_SEP.length) }
 }
 
 function PivotPanel({
@@ -141,6 +161,7 @@ function PivotPanel({
   weeks,
   onCustomerClick,
   onLaneClick,
+  entityLabel,
 }: {
   filters: AttritionFilters
   dim: Dim
@@ -148,7 +169,9 @@ function PivotPanel({
   weeks: number
   onCustomerClick?: (customer: string) => void
   onLaneClick?: (lane: string) => void
+  entityLabel: string
 }) {
+  const isLane = dim === "customer_lane"
   const { data: res, isLoading, error } = useAttritionPivot(
     filters,
     dim,
@@ -212,21 +235,27 @@ function PivotPanel({
       })()
       const total = values.reduce<number>((a, b) => a + (b ?? 0), 0)
       const status = computeStatus(values[0] ?? null, values[1] ?? null, ref)
-      return { dim_key: k, values, revenue, profit, ref, total, status }
+      // Bruno (2026-05-25 page 5): expose customer/client + lane separately so
+      // the customer_lane view can render — and sort — two columns.
+      const { cust, lane } = splitDimKey(k)
+      return { dim_key: k, cust, lane, values, revenue, profit, ref, total, status }
     })
+    const strCompare = (av: string, bv: string) => {
+      const a = av.toLowerCase()
+      const b = bv.toLowerCase()
+      if (a < b) return sortDir === "asc" ? -1 : 1
+      if (a > b) return sortDir === "asc" ? 1 : -1
+      return 0
+    }
     pivotEntries.sort((a, b) => {
       if (sortKey === "status") {
         const av = STATUS_ORDER[a.status]
         const bv = STATUS_ORDER[b.status]
         return sortDir === "asc" ? av - bv : bv - av
       }
-      if (sortKey === "dim_key") {
-        const av = a.dim_key.toLowerCase()
-        const bv = b.dim_key.toLowerCase()
-        if (av < bv) return sortDir === "asc" ? -1 : 1
-        if (av > bv) return sortDir === "asc" ? 1 : -1
-        return 0
-      }
+      if (sortKey === "dim_key") return strCompare(a.dim_key, b.dim_key)
+      if (sortKey === "cust") return strCompare(a.cust, b.cust)
+      if (sortKey === "lane") return strCompare(a.lane, b.lane)
       if (sortKey === "ref") {
         const av = a.ref
         const bv = b.ref
@@ -314,12 +343,10 @@ function PivotPanel({
     )
   }
 
-  const headerLabel =
-    dim === "team"
-      ? "Team"
-      : dim === "customer"
-        ? "Customer"
-        : "Customer · Lane"
+  const headerLabel = dim === "team" ? "Team" : entityLabel
+  // Leading non-week columns: Status + (Lane adds an extra entity/lane split) +
+  // dim column(s) + 8-week avg. Used for the empty-state colSpan.
+  const leadingCols = isLane ? 4 : 3
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
@@ -338,16 +365,41 @@ function PivotPanel({
               >
                 Status
               </SortTh>
-              <SortTh
-                k="dim_key"
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onToggle={toggleSort}
-                align="left"
-                className="sticky left-[100px] z-10 bg-[#F9FAFB]"
-              >
-                {headerLabel}
-              </SortTh>
+              {isLane ? (
+                <>
+                  <SortTh
+                    k="cust"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onToggle={toggleSort}
+                    align="left"
+                    className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+                  >
+                    {entityLabel}
+                  </SortTh>
+                  <SortTh
+                    k="lane"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onToggle={toggleSort}
+                    align="left"
+                    className="bg-[#F9FAFB]"
+                  >
+                    Lane
+                  </SortTh>
+                </>
+              ) : (
+                <SortTh
+                  k="dim_key"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onToggle={toggleSort}
+                  align="left"
+                  className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+                >
+                  {headerLabel}
+                </SortTh>
+              )}
               <SortTh
                 k="ref"
                 sortKey={sortKey}
@@ -376,17 +428,54 @@ function PivotPanel({
                 <td className="sticky left-0 z-10 bg-white px-3 py-1.5">
                   <StatusBadge status={row.status} />
                 </td>
-                <td
-                  className="sticky left-[100px] z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]"
-                  title={row.dim_key}
-                >
-                  <DimKeyCell
-                    dim={dim}
-                    value={row.dim_key}
-                    onCustomerClick={onCustomerClick}
-                    onLaneClick={onLaneClick}
-                  />
-                </td>
+                {isLane ? (
+                  <>
+                    <td
+                      className="sticky left-[100px] z-10 max-w-[240px] truncate bg-white px-3 py-1.5 text-[#111827]"
+                      title={row.cust}
+                    >
+                      {onCustomerClick ? (
+                        <button
+                          type="button"
+                          onClick={() => onCustomerClick(row.cust)}
+                          className="text-left text-[#1D4ED8] hover:underline"
+                        >
+                          {row.cust}
+                        </button>
+                      ) : (
+                        <span>{row.cust}</span>
+                      )}
+                    </td>
+                    <td
+                      className="max-w-[240px] truncate bg-white px-3 py-1.5 font-mono text-[#374151]"
+                      title={row.lane}
+                    >
+                      {onLaneClick && row.lane ? (
+                        <button
+                          type="button"
+                          onClick={() => onLaneClick(row.lane)}
+                          className="text-left text-[#1D4ED8] hover:underline"
+                        >
+                          {row.lane}
+                        </button>
+                      ) : (
+                        <span>{row.lane || "—"}</span>
+                      )}
+                    </td>
+                  </>
+                ) : (
+                  <td
+                    className="sticky left-[100px] z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]"
+                    title={row.dim_key}
+                  >
+                    <DimKeyCell
+                      dim={dim}
+                      value={row.dim_key}
+                      onCustomerClick={onCustomerClick}
+                      onLaneClick={onLaneClick}
+                    />
+                  </td>
+                )}
                 <td className="bg-white px-3 py-1.5 text-right font-mono font-semibold text-[#1B3A5C]">
                   {row.ref === null ? "—" : fmt(row.ref)}
                 </td>
@@ -402,7 +491,7 @@ function PivotPanel({
             ))}
             {pivot.length === 0 && (
               <tr>
-                <td colSpan={weeksList.length + 3} className="py-8 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={weeksList.length + leadingCols} className="py-8 text-center text-xs text-[#9CA3AF]">
                   No data in scope.
                 </td>
               </tr>
@@ -419,6 +508,7 @@ function PivotPanel({
                 <td className="sticky left-[100px] z-10 bg-[#F9FAFB] px-3 py-2 text-[#1B3A5C]">
                   {metric === "margin" ? "Weighted avg" : "All rows"}
                 </td>
+                {isLane && <td className="bg-[#F9FAFB] px-3 py-2" />}
                 <td className="bg-[#F9FAFB] px-3 py-2 text-right font-mono text-[#1B3A5C]">
                   {totals.ref === null ? "—" : fmt(totals.ref)}
                 </td>

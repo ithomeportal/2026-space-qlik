@@ -14,19 +14,22 @@ import { OverviewTab } from "./tabs/OverviewTab"
 import { ReactiveTab } from "./tabs/ReactiveTab"
 import { PivotsTab } from "./tabs/PivotsTab"
 import { TrendsTab } from "./tabs/TrendsTab"
+import { LossesTab } from "./tabs/LossesTab"
 import { ReportGuard } from "@/components/ReportGuard"
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"]
 const DFW_TEAMS = ["TEAM-DFW"]
 
-type TabKey = "overview" | "reactive" | "pivots"
+type TabKey = "overview" | "reactive" | "pivots" | "losses"
 
 // Bruno (2026-04-27): merged "12-Week Pivots" + "Weekly Trends" into one tab.
 // Bruno round-5 (2026-05-19): renamed sibling tabs.
+// Bruno (2026-05-25): added "Losses" after Performance Trends.
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "reactive", label: "Customer Performance" },
   { key: "pivots", label: "Performance Trends" },
+  { key: "losses", label: "Losses" },
 ]
 
 function AttritionContent() {
@@ -37,11 +40,16 @@ function AttritionContent() {
   const rawTab = searchParams.get("tab")
   // Migration: legacy ?tab=trends links land on the merged Pivots tab.
   const activeTab: TabKey =
-    rawTab === "reactive" || rawTab === "pivots"
+    rawTab === "reactive" || rawTab === "pivots" || rawTab === "losses"
       ? rawTab
       : rawTab === "trends"
         ? "pivots"
         : "overview"
+  // Bruno (2026-05-25 page 6): the RUAN pseudo-team. ?view=ruan scopes to RUAN
+  // customers and swaps the entity from customer_name → client everywhere.
+  const view = searchParams.get("view") === "ruan" ? "ruan" : undefined
+  const isRuan = view === "ruan"
+  const entityLabel = isRuan ? "Client" : "Customer"
   const teamsParam = searchParams.get("teams")
   const teams = useMemo<string[]>(() => {
     if (teamsParam === null) return [...ALL_TEAMS]
@@ -72,34 +80,49 @@ function AttritionContent() {
   const setContract = (c: string) => updateUrl({ contract: c || null })
   const setLane = (l: string) => updateUrl({ lane: l || null })
   const setTeams = (next: string[]) => {
-    if (next.length === ALL_TEAMS.length) updateUrl({ teams: null })
-    else updateUrl({ teams: next.join(",") })
+    // Any normal team selection exits the RUAN view (and clears the entity
+    // filter, since a client value can't match a customer_name and vice-versa).
+    const patch: Record<string, string | null> = { view: null }
+    if (isRuan) patch.customer = null
+    patch.teams = next.length === ALL_TEAMS.length ? null : next.join(",")
+    updateUrl(patch)
   }
 
+  const setRuan = () =>
+    // RUAN forces TEAM-DFW scope server-side; drop teams/customer/lane so the
+    // URL is unambiguous and a stale customer_name doesn't leak into the view.
+    updateUrl({ view: "ruan", teams: null, customer: null, lane: null })
+
   const toggleTeam = (t: string) => {
-    setTeams(teams.includes(t) ? teams.filter((x) => x !== t) : [...teams, t])
+    const base = isRuan ? [...ALL_TEAMS] : teams
+    setTeams(base.includes(t) ? base.filter((x) => x !== t) : [...base, t])
   }
-  const allTeamsSelected = teams.length === ALL_TEAMS.length
+  const allTeamsSelected = !isRuan && teams.length === ALL_TEAMS.length
   const onlyCorp =
+    !isRuan &&
     teams.length === CORP_TEAMS.length &&
     teams.every((t) => CORP_TEAMS.includes(t))
   const onlyDfw =
+    !isRuan &&
     teams.length === DFW_TEAMS.length &&
     teams.every((t) => DFW_TEAMS.includes(t))
 
-  const { data: filterRes, isLoading: loadingFilters } = useAttritionFilters()
+  const { data: filterRes, isLoading: loadingFilters } = useAttritionFilters(view)
   const filterOptions = filterRes?.data
   const { data: freshnessRes } = useAttritionFreshness()
   const fr = freshnessRes?.data
 
   const filters: AttritionFilters = useMemo(
     () => ({
-      teams,
+      // RUAN forces TEAM-DFW server-side, so omit teams to keep the query key
+      // (and the request) unambiguous.
+      teams: isRuan ? undefined : teams,
       customer: customer || undefined,
       contract: contract || undefined,
       lane: lane || undefined,
+      view,
     }),
-    [teams, customer, contract, lane],
+    [teams, customer, contract, lane, view, isRuan],
   )
 
   const [customerInput, setCustomerInput] = useState<string>("")
@@ -146,8 +169,12 @@ function AttritionContent() {
               )}
               {" · "}
               Teams:{" "}
-              {allTeamsSelected ? "All" : teams.join(", ") || "None"}
-              {customer ? ` · Customer: ${customer}` : ""}
+              {isRuan
+                ? "RUAN (DFW)"
+                : allTeamsSelected
+                  ? "All"
+                  : teams.join(", ") || "None"}
+              {customer ? ` · ${entityLabel}: ${customer}` : ""}
               {contract ? ` · Contract: ${contract}` : ""}
               {lane ? ` · Lane: ${lane}` : ""}
             </span>
@@ -186,10 +213,15 @@ function AttritionContent() {
                 active={onlyDfw}
                 onClick={() => setTeams(DFW_TEAMS)}
               />
+              <TeamModeBtn
+                label="RUAN"
+                active={isRuan}
+                onClick={setRuan}
+              />
             </div>
             <div className="flex flex-wrap gap-1">
               {ALL_TEAMS.map((t) => {
-                const on = teams.includes(t)
+                const on = !isRuan && teams.includes(t)
                 return (
                   <button
                     key={t}
@@ -209,12 +241,14 @@ function AttritionContent() {
 
           <div className="relative flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-              Customer
+              {entityLabel}
             </label>
             <input
               type="text"
               placeholder={
-                loadingFilters ? "Loading…" : customer || "All customers"
+                loadingFilters
+                  ? "Loading…"
+                  : customer || `All ${entityLabel.toLowerCase()}s`
               }
               value={customerInput}
               onChange={(e) => setCustomerInput(e.target.value)}
@@ -304,9 +338,15 @@ function AttritionContent() {
 
       {/* Tab body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
-        {activeTab === "overview" && <OverviewTab filters={filters} />}
+        {activeTab === "overview" && (
+          <OverviewTab filters={filters} entityLabel={entityLabel} />
+        )}
         {activeTab === "reactive" && (
-          <ReactiveTab filters={filters} onCustomerClick={setCustomer} />
+          <ReactiveTab
+            filters={filters}
+            onCustomerClick={setCustomer}
+            entityLabel={entityLabel}
+          />
         )}
         {activeTab === "pivots" && (
           <div className="space-y-6">
@@ -314,9 +354,13 @@ function AttritionContent() {
               filters={filters}
               onCustomerClick={setCustomer}
               onLaneClick={setLane}
+              entityLabel={entityLabel}
             />
             <TrendsTab filters={filters} />
           </div>
+        )}
+        {activeTab === "losses" && (
+          <LossesTab filters={filters} entityLabel={entityLabel} />
         )}
       </div>
     </div>

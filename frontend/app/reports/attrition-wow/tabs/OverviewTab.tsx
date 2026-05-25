@@ -32,9 +32,10 @@ const LW_BG = "bg-[#ECFDF5]"
 
 interface Props {
   filters: AttritionFilters
+  entityLabel: string
 }
 
-export function OverviewTab({ filters }: Props) {
+export function OverviewTab({ filters, entityLabel }: Props) {
   const { data: summaryRes, isLoading: loadingSummary, error: summaryErr } =
     useAttritionSummary(filters)
   const { data: wowRes, isLoading: loadingWow, error: wowErr } =
@@ -70,7 +71,7 @@ export function OverviewTab({ filters }: Props) {
           block={s?.active_lanes}
         />
         <ActiveCard
-          title="Customer Attrition"
+          title={`${entityLabel} Attrition`}
           accent="text-[#1B3A5C]"
           loading={loadingSummary}
           block={s?.active_customers}

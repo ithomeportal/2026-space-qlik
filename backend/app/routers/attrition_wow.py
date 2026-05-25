@@ -44,6 +44,17 @@ ALL_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
 COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
+# Bruno (2026-05-25 feedback, page 6): the "RUAN" pseudo-team. RUAN
+# Transportation hauls freight for many underlying shippers; v4 records that
+# shipper in the ``client`` column (populated ONLY on RUAN rows). When the
+# RUAN view is active we (a) scope to RUAN's customer rows under TEAM-DFW and
+# (b) swap the grouping/label from customer_name → client so the breakdown is
+# by sub-shipper. We match ``customer_name ILIKE 'RUAN%'`` (the proven probe
+# the Quoting portal uses) rather than the two mistyped literals in the PDF,
+# so a spelling drift in McLeod doesn't silently empty the view.
+RUAN_TEAM = "TEAM-DFW"
+RUAN_VIEW = "ruan"
+
 # How many ISO weeks of history we keep in the weekly_facts CTE.
 # 15 weeks (trends) + 12 weeks (pivots) + 8 weeks (rolling avg) + slack.
 WEEKS_HISTORY = 60
@@ -110,9 +121,18 @@ def _scope_where(
     contract: Optional[str],
     lane: Optional[str],
     params: list,
+    view: Optional[str] = None,
 ) -> str:
-    """Common WHERE for v4. Appends positional params."""
-    params.append(_pad_variants(teams, width=8))
+    """Common WHERE for v4. Appends positional params.
+
+    When ``view == RUAN_VIEW`` the team scope is forced to TEAM-DFW, only
+    RUAN customer rows with a non-empty ``client`` are kept, and the
+    ``customer`` filter matches against ``client`` (the sub-shipper) instead
+    of ``customer_name``.
+    """
+    ruan = view == RUAN_VIEW
+    team_scope = [RUAN_TEAM] if ruan else teams
+    params.append(_pad_variants(team_scope, width=8))
     p_teams = len(params)
     params.append(_pad_variants(COMPANIES, width=4))
     p_companies = len(params)
@@ -126,9 +146,13 @@ def _scope_where(
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
+    if ruan:
+        parts.append(f"UPPER(COALESCE({alias}.customer_name,'')) LIKE 'RUAN%'")
+        parts.append(f"TRIM(COALESCE({alias}.client,'')) <> ''")
     if customer:
         params.append(customer)
-        parts.append(f"TRIM({alias}.customer_name) = TRIM(${len(params)})")
+        target = f"{alias}.client" if ruan else f"{alias}.customer_name"
+        parts.append(f"TRIM({target}) = TRIM(${len(params)})")
     if contract:
         params.append(contract)
         parts.append(
@@ -138,6 +162,14 @@ def _scope_where(
         params.append(lane)
         parts.append(f"({_lane_expr(alias)}) = ${len(params)}")
     return " AND ".join(parts)
+
+
+def _entity_expr(alias: str, view: Optional[str] = None) -> str:
+    """The grouping/label dimension: ``client`` under the RUAN view, else
+    ``customer_name``. Centralizes the page-6 "Customer → Client" swap so every
+    panel buckets by the same key."""
+    col = "client" if view == RUAN_VIEW else "customer_name"
+    return f"TRIM({alias}.{col})"
 
 
 def _lane_expr(alias: str) -> str:
@@ -192,16 +224,24 @@ def _weekly_cte(scope_where: str, weeks_back: int = WEEKS_HISTORY) -> str:
 async def filters(
     request: Request,
     response: Response,
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
 
-    # Customers + contract types + lanes from the last WEEKS_HISTORY weeks.
+    ruan = view == RUAN_VIEW
+    entity_col = "client" if ruan else "customer_name"
+    team_scope = (RUAN_TEAM,) if ruan else ALL_TEAMS
+    ruan_filter = (
+        " AND UPPER(COALESCE(customer_name,'')) LIKE 'RUAN%'" if ruan else ""
+    )
+
+    # Customers (or RUAN clients) + contract types from the catalog window.
     rows = await pool.fetch(
         f"""
         SELECT
-          DISTINCT TRIM(customer_name) AS customer_name,
+          DISTINCT TRIM({entity_col}) AS entity,
           UPPER(TRIM(COALESCE(contract_type_descr,''))) AS contract_type
         FROM public.mcleod_gld_budget_report_v4
         WHERE team_id    = ANY($1)
@@ -209,16 +249,16 @@ async def filters(
           AND status     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
-          AND customer_name IS NOT NULL
-          AND TRIM(customer_name) <> ''
-          AND origin_actual_departure >= $4
+          AND {entity_col} IS NOT NULL
+          AND TRIM({entity_col}) <> ''
+          AND origin_actual_departure >= $4{ruan_filter}
         """,
-        _pad_variants(ALL_TEAMS, width=8),
+        _pad_variants(team_scope, width=8),
         _pad_variants(COMPANIES, width=4),
         _pad_variants(OPEN_STATUSES, width=1),
         YEAR_START,
     )
-    customers = sorted({r["customer_name"] for r in rows if r["customer_name"]})
+    customers = sorted({r["entity"] for r in rows if r["entity"]})
     contracts = sorted({r["contract_type"] for r in rows if r["contract_type"]})
 
     return {
@@ -291,6 +331,7 @@ async def summary(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -302,7 +343,7 @@ async def summary(
     l2w_start, l2w_end = _l2w_window()
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params)
+    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
     # Date-window params (windows are inclusive-inclusive)
     params.extend([l8w_start, l8w_end])
     p_l8s, p_l8e = len(params) - 1, len(params)
@@ -320,7 +361,7 @@ async def summary(
             br4.total_charge,
             br4.margin_amt,
             {_lane_expr("br4")}                AS lane,
-            TRIM(br4.customer_name)            AS customer_name
+            {_entity_expr("br4", view)}        AS customer_name
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.origin_actual_departure::date BETWEEN ${p_l8s} AND ${p_lwe}
@@ -457,6 +498,7 @@ async def weekly_trends(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -465,7 +507,7 @@ async def weekly_trends(
     team_list = _parse_csv(teams, ALL_TEAMS)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params)
+    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
     params.append(weeks)
     p_weeks = len(params)
 
@@ -486,7 +528,7 @@ async def weekly_trends(
             br4.id                               AS load_id,
             br4.total_charge,
             br4.margin_amt,
-            TRIM(br4.customer_name)              AS customer_name
+            {_entity_expr("br4", view)}          AS customer_name
           FROM public.mcleod_gld_budget_report_v4 br4, bounds b
           WHERE {where}
             AND br4.origin_actual_departure >= b.first_monday
@@ -577,6 +619,7 @@ async def pivot(
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -584,20 +627,21 @@ async def pivot(
 
     team_list = _parse_csv(teams, ALL_TEAMS)
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params)
+    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
     params.append(weeks)
     p_weeks = len(params)
 
     # Bruno round-3 (2026-05-07): added "customer_lane" dim so users can drill
     # into per-(customer, lane) trend pivots. Concat with " · " so the wide
-    # cell stays readable in the sticky-left column.
+    # cell stays readable in the sticky-left column (the frontend splits on
+    # this separator into two sortable columns — Bruno 2026-05-25 page 5).
     if dim == "customer":
-        dim_sql = "TRIM(br4.customer_name)"
+        dim_sql = _entity_expr("br4", view)
     elif dim == "team":
         dim_sql = "TRIM(br4.team_id)"
     else:  # customer_lane
         dim_sql = (
-            "TRIM(br4.customer_name) || ' · ' || "
+            f"{_entity_expr('br4', view)} || ' · ' || "
             "(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || "
             " TRIM(COALESCE(br4.dest_name,'')))"
         )
@@ -696,6 +740,7 @@ async def reactive_summary(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Returns per (team, customer) row:
@@ -730,7 +775,7 @@ async def reactive_summary(
     earliest = today - timedelta(days=540)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, None, params)
+    where = _scope_where("br4", team_list, customer, contract, None, params, view)
     params.extend([
         earliest, l59_start, l59_end, l24_start, l24_end, l8w_start, l8w_end,
         lw_start, lw_end, today,
@@ -744,7 +789,7 @@ async def reactive_summary(
           SELECT
             br4.origin_actual_departure::date AS dep_date,
             TRIM(br4.team_id)                 AS team_id,
-            TRIM(br4.customer_name)           AS customer_name,
+            {_entity_expr("br4", view)}       AS customer_name,
             br4.id                            AS load_id,
             br4.total_charge,
             br4.margin_amt
@@ -923,13 +968,15 @@ async def lane_summary(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Per (team, customer, lane, contract_type) reactive aggregation.
 
-    Used by the Lane-level summary tables in the PDF (pages 13, 14, 15-17).
-    Slices into LW / L2-4W / L5-9W / >63d / SPOT-stale buckets just like
-    /reactive-summary but with lane resolution.
+    Powers the Customer-Performance Spot tables (Bruno 2026-05-25 pages 3-4):
+    Recent Spot (64-248d), Stale Spot (249-365d), >1 Year. Each row carries
+    total loads/revenue/profit/margin + last_load_date + days_since so the
+    frontend renders the lane-grained schema directly.
     """
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -942,11 +989,13 @@ async def lane_summary(
     l24_start = l24_end - timedelta(days=3 * 7 - 1)
     l59_end = l24_start - timedelta(days=1)
     l59_start = l59_end - timedelta(days=5 * 7 - 1)
-    # Spot tables go further back (1y).
-    earliest = today - timedelta(days=365)
+    # Bruno 2026-05-25: the ">1 Year" Spot table needs rows whose most recent
+    # load is 366+ days ago. Read 730d back so those lanes still surface (a
+    # 365d window left the >1y bucket permanently empty).
+    earliest = today - timedelta(days=730)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, None, params)
+    where = _scope_where("br4", team_list, customer, contract, None, params, view)
     params.extend([earliest, l8w_start, l8w_end, l24_start, l24_end, lw_start, lw_end, today])
     (p_earliest, p_l8s, p_l8e, p_l24s, p_l24e, p_lws, p_lwe, p_today) = range(
         len(params) - 7, len(params) + 1
@@ -958,7 +1007,7 @@ async def lane_summary(
           SELECT
             br4.origin_actual_departure::date AS dep_date,
             TRIM(br4.team_id)                  AS team_id,
-            TRIM(br4.customer_name)            AS customer_name,
+            {_entity_expr("br4", view)}        AS customer_name,
             {_lane_expr("br4")}                AS lane,
             UPPER(TRIM(COALESCE(br4.contract_type_descr,''))) AS contract_type,
             br4.id                             AS load_id,
@@ -1081,6 +1130,7 @@ async def wow_variation(
     teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     contract: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     """Profit variation: SUM(margin LW) − SUM(margin LW-1) per team + customer.
@@ -1099,19 +1149,23 @@ async def wow_variation(
     lw_prev_end = lw_start - timedelta(days=1)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, None, params)
+    where = _scope_where("br4", team_list, customer, contract, None, params, view)
     params.extend([lw_prev_start, lw_prev_end, lw_start, lw_end])
     p_lwps, p_lwpe, p_lws, p_lwe = (
         len(params) - 3, len(params) - 2, len(params) - 1, len(params),
     )
+
+    # Under the RUAN view there is no stable per-client id; group by the client
+    # name alone (customer_id collapses to NULL so it doesn't split a client).
+    customer_id_sql = "NULL::text" if view == RUAN_VIEW else "TRIM(br4.customer_id)"
 
     rows = await pool.fetch(
         f"""
         WITH base AS (
           SELECT
             TRIM(br4.team_id)        AS team_id,
-            TRIM(br4.customer_id)    AS customer_id,
-            TRIM(br4.customer_name)  AS customer_name,
+            {customer_id_sql}        AS customer_id,
+            {_entity_expr("br4", view)} AS customer_name,
             br4.origin_actual_departure::date AS dep_date,
             br4.margin_amt
           FROM public.mcleod_gld_budget_report_v4 br4
@@ -1159,6 +1213,241 @@ async def wow_variation(
             "windows": {
                 "lw":      {"start": lw_start.isoformat(),      "end": lw_end.isoformat()},
                 "lw_prev": {"start": lw_prev_start.isoformat(), "end": lw_prev_end.isoformat()},
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# /losses — the "Losses" tab (Bruno 2026-05-25 pages 1-2). Negative-margin
+# loads only (margin_amt < 0):
+#   - by_month / by_week combo-chart series (Σ negative profit + # neg loads)
+#   - worst_lanes table (per customer/client × origin × destination)
+#   - by_customer table (per customer/client)
+# Totals are computed over the full negative-margin set so the frontend's
+# "totals at the top" row is exact regardless of how rows are displayed.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/losses")
+async def losses(
+    request: Request,
+    response: Response,
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    contract: Optional[str] = Query(None),
+    lane: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("attrition-wow")),
+):
+    pool = get_datalake_gold_pool(request)
+    response.headers["Cache-Control"] = CACHE_HEADER
+
+    team_list = _parse_csv(teams, ALL_TEAMS)
+    entity = _entity_expr("br4", view)
+
+    # --- Monthly series: last 8 complete months (current month excluded) ----
+    params_m: list = []
+    where_m = _scope_where("br4", team_list, customer, contract, lane, params_m, view)
+    month_rows = await pool.fetch(
+        f"""
+        WITH bounds AS (
+          SELECT
+            date_trunc('month', CURRENT_DATE)::date AS this_month,
+            (date_trunc('month', CURRENT_DATE) - interval '8 months')::date AS first_month
+        ),
+        buckets AS (
+          SELECT generate_series(b.first_month, b.this_month - interval '1 month', interval '1 month')::date AS bucket
+          FROM bounds b
+        ),
+        base AS (
+          SELECT
+            date_trunc('month', br4.origin_actual_departure)::date AS bucket,
+            br4.margin_amt
+          FROM public.mcleod_gld_budget_report_v4 br4, bounds b
+          WHERE {where_m}
+            AND br4.origin_actual_departure >= b.first_month
+            AND br4.origin_actual_departure <  b.this_month
+            AND br4.margin_amt < 0
+        ),
+        agg AS (
+          SELECT bucket,
+                 COALESCE(SUM(margin_amt), 0)::numeric AS neg_profit,
+                 COUNT(*) AS neg_loads
+          FROM base GROUP BY bucket
+        )
+        SELECT bk.bucket,
+               COALESCE(a.neg_profit, 0) AS neg_profit,
+               COALESCE(a.neg_loads, 0)  AS neg_loads
+        FROM buckets bk LEFT JOIN agg a USING (bucket)
+        ORDER BY bk.bucket
+        """,
+        *params_m,
+    )
+
+    # --- Weekly series: last 8 complete Mon-Sun weeks (current week excluded) -
+    params_w: list = []
+    where_w = _scope_where("br4", team_list, customer, contract, lane, params_w, view)
+    week_rows = await pool.fetch(
+        f"""
+        WITH bounds AS (
+          SELECT
+            date_trunc('week', CURRENT_DATE)::date AS this_monday,
+            (date_trunc('week', CURRENT_DATE) - interval '8 weeks')::date AS first_monday
+        ),
+        buckets AS (
+          SELECT generate_series(b.first_monday, b.this_monday - interval '1 week', interval '1 week')::date AS bucket
+          FROM bounds b
+        ),
+        base AS (
+          SELECT
+            date_trunc('week', br4.origin_actual_departure)::date AS bucket,
+            br4.margin_amt
+          FROM public.mcleod_gld_budget_report_v4 br4, bounds b
+          WHERE {where_w}
+            AND br4.origin_actual_departure >= b.first_monday
+            AND br4.origin_actual_departure <  b.this_monday
+            AND br4.margin_amt < 0
+        ),
+        agg AS (
+          SELECT bucket,
+                 COALESCE(SUM(margin_amt), 0)::numeric AS neg_profit,
+                 COUNT(*) AS neg_loads
+          FROM base GROUP BY bucket
+        )
+        SELECT bk.bucket,
+               COALESCE(a.neg_profit, 0) AS neg_profit,
+               COALESCE(a.neg_loads, 0)  AS neg_loads
+        FROM buckets bk LEFT JOIN agg a USING (bucket)
+        ORDER BY bk.bucket
+        """,
+        *params_w,
+    )
+
+    # --- Worst Margins by Lane (per customer × origin × destination) --------
+    params_l: list = []
+    where_l = _scope_where("br4", team_list, customer, contract, lane, params_l, view)
+    params_l.append(YEAR_START)
+    p_year_l = len(params_l)
+    lane_rows = await pool.fetch(
+        f"""
+        SELECT
+          {entity}                                  AS customer,
+          TRIM(COALESCE(br4.origin_name,''))        AS origin,
+          TRIM(COALESCE(br4.dest_name,''))          AS dest,
+          COUNT(*)                                  AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt),   0)::numeric AS profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where_l}
+          AND br4.margin_amt < 0
+          AND br4.origin_actual_departure >= ${p_year_l}
+        GROUP BY 1, 2, 3
+        HAVING {entity} IS NOT NULL AND {entity} <> ''
+        ORDER BY profit ASC
+        """,
+        *params_l,
+    )
+
+    # --- Negative Loads by Customer (per customer/client) -------------------
+    params_c: list = []
+    where_c = _scope_where("br4", team_list, customer, contract, lane, params_c, view)
+    params_c.append(YEAR_START)
+    p_year_c = len(params_c)
+    cust_rows = await pool.fetch(
+        f"""
+        SELECT
+          {entity}                                  AS customer,
+          COUNT(*)                                  AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt),   0)::numeric AS profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where_c}
+          AND br4.margin_amt < 0
+          AND br4.origin_actual_departure >= ${p_year_c}
+        GROUP BY 1
+        HAVING {entity} IS NOT NULL AND {entity} <> ''
+        ORDER BY profit ASC
+        """,
+        *params_c,
+    )
+
+    def _margin(profit: float, revenue: float) -> Optional[float]:
+        return (profit / revenue) if revenue else None
+
+    by_month = [
+        {
+            "bucket": r["bucket"].isoformat(),
+            "neg_profit": float(r["neg_profit"] or 0),
+            "neg_loads": int(r["neg_loads"] or 0),
+        }
+        for r in month_rows
+    ]
+    by_week = [
+        {
+            "bucket": r["bucket"].isoformat(),
+            "neg_profit": float(r["neg_profit"] or 0),
+            "neg_loads": int(r["neg_loads"] or 0),
+        }
+        for r in week_rows
+    ]
+
+    worst_lanes = []
+    lane_tot_loads = lane_tot_rev = lane_tot_prof = 0.0
+    for r in lane_rows:
+        rev = float(r["revenue"] or 0)
+        prof = float(r["profit"] or 0)
+        loads = int(r["loads"] or 0)
+        lane_tot_loads += loads
+        lane_tot_rev += rev
+        lane_tot_prof += prof
+        worst_lanes.append({
+            "customer": r["customer"],
+            "origin": r["origin"],
+            "dest": r["dest"],
+            "loads": loads,
+            "revenue": rev,
+            "profit": prof,
+            "margin": _margin(prof, rev),
+        })
+
+    by_customer = []
+    cust_tot_loads = cust_tot_rev = cust_tot_prof = 0.0
+    for r in cust_rows:
+        rev = float(r["revenue"] or 0)
+        prof = float(r["profit"] or 0)
+        loads = int(r["loads"] or 0)
+        cust_tot_loads += loads
+        cust_tot_rev += rev
+        cust_tot_prof += prof
+        by_customer.append({
+            "customer": r["customer"],
+            "loads": loads,
+            "revenue": rev,
+            "profit": prof,
+            "margin": _margin(prof, rev),
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "by_month": by_month,
+            "by_week": by_week,
+            "worst_lanes": worst_lanes,
+            "by_customer": by_customer,
+            "totals": {
+                "lanes": {
+                    "loads": int(lane_tot_loads),
+                    "revenue": lane_tot_rev,
+                    "profit": lane_tot_prof,
+                    "margin": _margin(lane_tot_prof, lane_tot_rev),
+                },
+                "customers": {
+                    "loads": int(cust_tot_loads),
+                    "revenue": cust_tot_rev,
+                    "profit": cust_tot_prof,
+                    "margin": _margin(cust_tot_prof, cust_tot_rev),
+                },
             },
         },
     }
