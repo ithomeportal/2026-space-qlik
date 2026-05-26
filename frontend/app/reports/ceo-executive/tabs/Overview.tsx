@@ -20,19 +20,35 @@ interface Props {
 const PROFIT_GOAL_PER_TEAM = 55000
 
 export function Overview({ filters }: Props) {
-  const { data, isLoading, error } = useCeoOverview(filters)
+  const { data, isLoading, error, dataUpdatedAt } = useCeoOverview(filters)
   const d = data?.data
 
   const goalTeams = filters.team ? 1 : 6
   const goalTotal = PROFIT_GOAL_PER_TEAM * goalTeams
   const goalPct = d && goalTotal ? (d.profit_tm / goalTotal) * 100 : 0
 
+  // Bruno R7 (2026-05-26): surface when the report data last refreshed.
+  const refreshedLabel =
+    dataUpdatedAt > 0
+      ? new Date(dataUpdatedAt).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : "—"
+
   return (
     <div className="space-y-6">
       <CeoErrorBanner label="Overview" errors={[error]} />
 
-      {/* 6 compact KPIs — sized to leave room for a 7th element on the row */}
-      <section className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6 xl:grid-cols-7">
+      <div className="flex justify-end text-xs text-[#6B7280]">
+        Last auto-refreshed: <span className="ml-1 font-medium text-[#374151]">{refreshedLabel}</span>
+      </div>
+
+      {/* 6 KPIs — enlarged per Bruno R7. Sized to leave room for a 7th element. */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6 xl:grid-cols-7">
         <Kpi label="Revenue" value={fmtUsd(d?.kpis.revenue)} tone="blue" loading={isLoading} />
         <Kpi label="Profit" value={fmtUsd(d?.kpis.profit)} tone="yellow" loading={isLoading} />
         <Kpi label="Loads" value={fmtCount(d?.kpis.loads)} tone="red" loading={isLoading} />
@@ -236,10 +252,10 @@ function Kpi({
   loading?: boolean
 }) {
   return (
-    <div className={`rounded-md border ${KPI_TONES[tone]} bg-white px-2 py-2 text-center shadow-sm`}>
-      <div className="text-[10px] uppercase tracking-wider text-[#6B7280]">{label}</div>
-      <div className="mt-0.5 text-base font-bold tabular-nums leading-tight">
-        {loading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : value}
+    <div className={`rounded-md border ${KPI_TONES[tone]} bg-white px-3 py-3 text-center shadow-sm`}>
+      <div className="text-[11px] uppercase tracking-wider text-[#6B7280]">{label}</div>
+      <div className="mt-1 text-xl font-bold tabular-nums leading-tight">
+        {loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : value}
       </div>
     </div>
   )

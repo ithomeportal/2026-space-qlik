@@ -308,12 +308,12 @@ function CeoExecutiveContent() {
           <div className="space-y-10">
             <Overview filters={filters} />
             <Trends filters={filters} />
-            <Customers filters={filters} />
+            <Customers filters={filters} onCustomerSelect={setCustomer} />
           </div>
         )}
         {activeTab === "weekly" && <Weekly filters={filters} />}
-        {activeTab === "risk" && <Risk filters={filters} />}
-        {activeTab === "orders" && <Orders filters={filters} />}
+        {activeTab === "risk" && <Risk filters={filters} onCustomerSelect={setCustomer} />}
+        {activeTab === "orders" && <Orders filters={filters} onCustomerSelect={setCustomer} />}
       </div>
     </div>
   )

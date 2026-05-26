@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef } from "react"
 import { Loader2 } from "lucide-react"
 import {
   Bar,
@@ -15,6 +16,15 @@ import {
 } from "recharts"
 import { fmtDay, fmtMonth, fmtUsd, useCeoTrends, type CeoFilters } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
+
+// Bruno R7 (2026-05-26): per-day colors for the two "by Day" charts.
+const C_LOADS = "rgb(191, 0, 0)"
+const C_PROFIT = "rgb(235, 198, 0)"
+const C_CUSTOMER = "rgb(33, 191, 106)"
+const C_MARGIN = "rgb(0, 101, 128)"
+
+// ~30 days fit a typical panel width; 80 days overflow into horizontal scroll.
+const PX_PER_DAY = 44
 
 // Compact label formatters used by Recharts <LabelList />. Recharts v3 typed
 // the formatter signature loosely (string | number | undefined), so accept any.
@@ -36,97 +46,19 @@ const fmtInt = (v: unknown) => {
   return String(Math.round(n))
 }
 
-// Aggregate daily points into ISO weeks (Mon-Sun). Each bucket is plotted
-// at the week-ending Sunday on a continuous daily x-axis (all 80 days emitted),
-// so the weekly markers sit alongside their natural day position. Days that
-// don't fall on a Sunday have null values so the line only draws weekly points.
-function bucketDailyToWeekly(daily: { bucket: string; customers: number; margin_pct: number; profit: number; loads: number }[]) {
-  if (daily.length === 0) return [] as Array<{ label: string; bucket: string; customers: number | null; margin_pct: number | null; profit: number | null; loads: number | null; isSunday: boolean }>
-
-  // Group by ISO week ending Sunday (week's last day).
-  const weekMap = new Map<string, {
-    sundayIso: string
-    customersSum: number
-    daysWithCustomers: number
-    revenueWeighted: number
-    weightDenom: number
-    profit: number
-    loads: number
-  }>()
-
-  for (const d of daily) {
-    const dt = new Date(d.bucket + "T00:00:00")
-    const dow = dt.getDay() // 0=Sun, 1=Mon, ... 6=Sat
-    // Week-ending Sunday = next Sunday (or today if Sun).
-    const daysToSunday = dow === 0 ? 0 : 7 - dow
-    const sunday = new Date(dt)
-    sunday.setDate(sunday.getDate() + daysToSunday)
-    const sundayIso = sunday.toISOString().slice(0, 10)
-
-    const w = weekMap.get(sundayIso) ?? {
-      sundayIso,
-      customersSum: 0,
-      daysWithCustomers: 0,
-      revenueWeighted: 0,
-      weightDenom: 0,
-      profit: 0,
-      loads: 0,
-    }
-    if (d.customers > 0) {
-      w.customersSum += d.customers
-      w.daysWithCustomers += 1
-    }
-    // Approximate revenue from profit/margin so we can re-derive a weekly
-    // margin_pct as profit/revenue. If margin is 0, fall back to per-day avg.
-    if (d.margin_pct !== 0 && d.profit !== 0) {
-      const rev = d.profit / (d.margin_pct / 100)
-      w.revenueWeighted += d.profit
-      w.weightDenom += rev
-    }
-    w.profit += d.profit
-    w.loads += d.loads
-    weekMap.set(sundayIso, w)
-  }
-
-  // Daily x-axis: emit one row per day with values only on the week-ending Sunday.
-  return daily.map((d) => {
-    const dt = new Date(d.bucket + "T00:00:00")
-    const isSunday = dt.getDay() === 0
-    if (!isSunday) {
-      return {
-        label: fmtDay(d.bucket),
-        bucket: d.bucket,
-        customers: null,
-        margin_pct: null,
-        profit: null,
-        loads: null,
-        isSunday: false,
-      }
-    }
-    const w = weekMap.get(d.bucket)
-    if (!w) {
-      return {
-        label: fmtDay(d.bucket),
-        bucket: d.bucket,
-        customers: null,
-        margin_pct: null,
-        profit: null,
-        loads: null,
-        isSunday: true,
-      }
-    }
-    const avgCust = w.daysWithCustomers > 0 ? Math.round(w.customersSum / w.daysWithCustomers) : 0
-    const margin = w.weightDenom > 0 ? (w.revenueWeighted / w.weightDenom) * 100 : 0
-    return {
-      label: fmtDay(d.bucket),
-      bucket: d.bucket,
-      customers: avgCust,
-      margin_pct: margin,
-      profit: w.profit,
-      loads: w.loads,
-      isSunday: true,
-    }
-  })
+// Bruno R7 (2026-05-26): show genuine per-day points (no weekly aggregation),
+// default to the most-recent ~30 days, and scroll back through all 80.
+function toDailyPoints(
+  daily: { bucket: string; customers: number; margin_pct: number; profit: number; loads: number }[],
+) {
+  return daily.map((d) => ({
+    label: fmtDay(d.bucket),
+    bucket: d.bucket,
+    customers: d.customers,
+    margin_pct: d.margin_pct,
+    profit: d.profit,
+    loads: d.loads,
+  }))
 }
 
 interface TrendsProps {
@@ -145,10 +77,7 @@ export function Trends({ filters }: TrendsProps) {
     ...r,
     label: fmtMonth(r.bucket),
   }))
-  const dailyWeekly = bucketDailyToWeekly(d?.daily ?? [])
-
-  // Sparser x-axis tick stride for the 80-day chart so labels don't overlap.
-  const dailyTickStride = Math.max(0, Math.floor(dailyWeekly.length / 16))
+  const dailyPoints = toDailyPoints(d?.daily ?? [])
 
   return (
     <div className="space-y-6">
@@ -226,13 +155,13 @@ export function Trends({ filters }: TrendsProps) {
       <section className="grid grid-cols-1 gap-4">
         <Panel
           title="Profit / Loads by Day — Last 80 Days"
-          subtitle="Aggregated weekly · plotted on the day-axis at each week-ending Sunday"
+          subtitle="one point per day · showing recent days · scroll ← for up to 80 days"
           loading={isLoading}
         >
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={dailyWeekly} margin={{ top: 16, right: 12, left: 0, bottom: 4 }}>
+          <DailyScrollChart count={dailyPoints.length}>
+            <ComposedChart data={dailyPoints} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={dailyTickStride} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0} />
               <YAxis yAxisId="left" tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v, name) =>
@@ -243,33 +172,35 @@ export function Trends({ filters }: TrendsProps) {
                 yAxisId="left"
                 type="monotone"
                 dataKey="profit"
-                stroke="#D97706"
+                stroke={C_PROFIT}
                 name="Profit"
-                connectNulls
-                dot={{ r: 3, fill: "#D97706" }}
-              />
+                dot={{ r: 2, fill: C_PROFIT }}
+              >
+                <LabelList dataKey="profit" position="top" fontSize={8} fill="#92400E" formatter={fmtK} />
+              </Line>
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="loads"
-                stroke="#DC2626"
+                stroke={C_LOADS}
                 name="Loads"
-                connectNulls
-                dot={{ r: 3, fill: "#DC2626" }}
-              />
+                dot={{ r: 2, fill: C_LOADS }}
+              >
+                <LabelList dataKey="loads" position="bottom" fontSize={8} fill="#991B1B" formatter={fmtInt} />
+              </Line>
             </ComposedChart>
-          </ResponsiveContainer>
+          </DailyScrollChart>
         </Panel>
 
         <Panel
           title="Customer Count & Margin % by Day — Last 80 Days"
-          subtitle="Aggregated weekly · plotted on the day-axis at each week-ending Sunday"
+          subtitle="one point per day · showing recent days · scroll ← for up to 80 days"
           loading={isLoading}
         >
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={dailyWeekly} margin={{ top: 16, right: 12, left: 0, bottom: 4 }}>
+          <DailyScrollChart count={dailyPoints.length}>
+            <ComposedChart data={dailyPoints} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={dailyTickStride} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0} />
               <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
               <YAxis
                 yAxisId="right"
@@ -285,24 +216,46 @@ export function Trends({ filters }: TrendsProps) {
                 yAxisId="left"
                 type="monotone"
                 dataKey="customers"
-                stroke="#10B981"
+                stroke={C_CUSTOMER}
                 name="# Customer"
-                connectNulls
-                dot={{ r: 3, fill: "#10B981" }}
-              />
+                dot={{ r: 2, fill: C_CUSTOMER }}
+              >
+                <LabelList dataKey="customers" position="top" fontSize={8} fill="#065F46" formatter={fmtInt} />
+              </Line>
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="margin_pct"
-                stroke="#2563EB"
+                stroke={C_MARGIN}
                 name="% Margin"
-                connectNulls
-                dot={{ r: 3, fill: "#2563EB" }}
-              />
+                dot={{ r: 2, fill: C_MARGIN }}
+              >
+                <LabelList dataKey="margin_pct" position="bottom" fontSize={8} fill="#0E7490" formatter={fmtPct1} />
+              </Line>
             </ComposedChart>
-          </ResponsiveContainer>
+          </DailyScrollChart>
         </Panel>
       </section>
+    </div>
+  )
+}
+
+// Horizontally scrollable wrapper for the per-day charts. Sizes the inner
+// canvas to PX_PER_DAY × point-count so ~30 days fill a typical panel and the
+// rest scroll; auto-scrolls to the right (most recent) on mount / data change.
+function DailyScrollChart({ count, children }: { count: number; children: React.ReactElement }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.scrollLeft = ref.current.scrollWidth
+  }, [count])
+  const innerWidth = Math.max(count * PX_PER_DAY, 600)
+  return (
+    <div ref={ref} className="overflow-x-auto">
+      <div style={{ width: innerWidth, minWidth: "100%" }}>
+        <ResponsiveContainer width="100%" height={300}>
+          {children}
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }

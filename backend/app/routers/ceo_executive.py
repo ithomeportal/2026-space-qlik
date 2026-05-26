@@ -868,11 +868,19 @@ async def customers(
         *wp_params,
     )
 
-    # ---- Top-5 Concentration by Revenue ($-window = full year) ----------
-    # Bruno R5 (2026-05-21): when Customer is selected the chart collapses
-    # to a single 100% slice for that customer — same scope contract as
-    # every other panel in the Overview mega-tab.
-    g_scope = _global_scope_where("br4")
+    # ---- Top-5 Concentration ($-window = full year) ---------------------
+    # Bruno R5 (2026-05-21): Customer-aware (collapses to one slice when set).
+    # R7 (2026-05-26): now also honors Division + Team (previously global), and
+    # returns ALL ranked customers so the frontend can expand the "Others"
+    # slice into the full remaining-customer list. Date window stays full-year
+    # and date-immutable.
+    t5r_params: list = []
+    t5r_scope = _scope_where("br4", team, customer, t5r_params, division=division)
+    t5r_params.extend([YEAR_START, YEAR_END])
+    t5r_df = (
+        f"br4.origin_actual_departure >= ${len(t5r_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(t5r_params)}::date + 1)"
+    )
     top5_rev_task = pool.fetch(
         f"""
         WITH by_cust AS (
@@ -881,36 +889,27 @@ async def customers(
             COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
             COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
-          WHERE {g_scope}
-            AND br4.origin_actual_departure >= $1
-            AND br4.origin_actual_departure < ($2::date + 1)
+          WHERE {t5r_scope} AND {t5r_df}
             AND br4.customer_name IS NOT NULL
-            AND ($3 = '' OR TRIM(br4.customer_name) = $3)
           GROUP BY TRIM(br4.customer_name)
-        ),
-        ranked AS (
-          SELECT
-            customer, revenue, profit,
-            ROW_NUMBER() OVER (ORDER BY revenue DESC NULLS LAST) AS rn,
-            SUM(revenue) OVER () AS total_rev
-          FROM by_cust
         )
         SELECT
-          CASE WHEN rn <= 5 THEN customer ELSE 'Others' END AS customer,
-          SUM(revenue)::numeric AS revenue,
-          SUM(profit)::numeric  AS profit,
-          CASE WHEN MAX(total_rev) > 0
-               THEN SUM(revenue)::numeric / MAX(total_rev)
-               ELSE 0 END AS conc_pct,
-          MIN(rn) AS rank_min
-        FROM ranked
-        GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
-        ORDER BY rank_min
+          customer, revenue, profit,
+          ROW_NUMBER() OVER (ORDER BY revenue DESC NULLS LAST) AS rn,
+          SUM(revenue) OVER () AS total_metric
+        FROM by_cust
+        ORDER BY rn
         """,
-        YEAR_START, YEAR_END, customer or "",
+        *t5r_params,
     )
 
-    # ---- Top-5 Concentration by Profit (same Customer-aware scope) ------
+    t5p_params: list = []
+    t5p_scope = _scope_where("br4", team, customer, t5p_params, division=division)
+    t5p_params.extend([YEAR_START, YEAR_END])
+    t5p_df = (
+        f"br4.origin_actual_departure >= ${len(t5p_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(t5p_params)}::date + 1)"
+    )
     top5_prof_task = pool.fetch(
         f"""
         WITH by_cust AS (
@@ -919,33 +918,18 @@ async def customers(
             COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
             COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
-          WHERE {g_scope}
-            AND br4.origin_actual_departure >= $1
-            AND br4.origin_actual_departure < ($2::date + 1)
+          WHERE {t5p_scope} AND {t5p_df}
             AND br4.customer_name IS NOT NULL
-            AND ($3 = '' OR TRIM(br4.customer_name) = $3)
           GROUP BY TRIM(br4.customer_name)
-        ),
-        ranked AS (
-          SELECT
-            customer, revenue, profit,
-            ROW_NUMBER() OVER (ORDER BY profit DESC NULLS LAST) AS rn,
-            SUM(profit) OVER () AS total_prof
-          FROM by_cust
         )
         SELECT
-          CASE WHEN rn <= 5 THEN customer ELSE 'Others' END AS customer,
-          SUM(revenue)::numeric AS revenue,
-          SUM(profit)::numeric  AS profit,
-          CASE WHEN MAX(total_prof) > 0
-               THEN SUM(profit)::numeric / MAX(total_prof)
-               ELSE 0 END AS conc_pct,
-          MIN(rn) AS rank_min
-        FROM ranked
-        GROUP BY CASE WHEN rn <= 5 THEN customer ELSE 'Others' END
-        ORDER BY rank_min
+          customer, revenue, profit,
+          ROW_NUMBER() OVER (ORDER BY profit DESC NULLS LAST) AS rn,
+          SUM(profit) OVER () AS total_metric
+        FROM by_cust
+        ORDER BY rn
         """,
-        YEAR_START, YEAR_END, customer or "",
+        *t5p_params,
     )
 
     pc, wp, t5r, t5p = await asyncio.gather(
@@ -965,21 +949,54 @@ async def customers(
             ),
         }
 
-    def _map_top5(r):
-        return {
-            "customer": r["customer"],
-            "revenue": float(r["revenue"] or 0),
-            "profit": float(r["profit"] or 0),
-            "conc_pct": float(r["conc_pct"] or 0) * 100.0,
-        }
+    def _split_top5(rows, metric_key):
+        """Split ranked customers into the 5 named slices + an aggregated
+        'Others' slice, and return the full remaining-customer list so the UI
+        can expand 'Others'. conc_pct is each row's share of the metric total.
+        """
+        total = float(rows[0]["total_metric"] or 0) if rows else 0.0
+        top: list = []
+        others: list = []
+        o_rev = o_prof = 0.0
+        for r in rows:
+            metric_val = float(r[metric_key] or 0)
+            item = {
+                "customer": r["customer"],
+                "revenue": float(r["revenue"] or 0),
+                "profit": float(r["profit"] or 0),
+                "conc_pct": (metric_val / total * 100.0) if total else 0.0,
+            }
+            if r["rn"] <= 5:
+                top.append(item)
+            else:
+                others.append(item)
+                o_rev += item["revenue"]
+                o_prof += item["profit"]
+        slices = list(top)
+        if others:
+            o_metric = o_rev if metric_key == "revenue" else o_prof
+            slices.append(
+                {
+                    "customer": "Others",
+                    "revenue": o_rev,
+                    "profit": o_prof,
+                    "conc_pct": (o_metric / total * 100.0) if total else 0.0,
+                }
+            )
+        return slices, others[:500]
+
+    t5r_slices, t5r_others = _split_top5(t5r, "revenue")
+    t5p_slices, t5p_others = _split_top5(t5p, "profit")
 
     return {
         "success": True,
         "data": {
             "by_customer": [_map_cust(r) for r in pc],
             "worst_by_customer": [_map_cust(r) for r in wp],
-            "top5_revenue": [_map_top5(r) for r in t5r],
-            "top5_profit": [_map_top5(r) for r in t5p],
+            "top5_revenue": t5r_slices,
+            "top5_revenue_others": t5r_others,
+            "top5_profit": t5p_slices,
+            "top5_profit_others": t5p_others,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
@@ -1001,17 +1018,19 @@ async def weekly(
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     this_week_mon = _week_start(today)
-    ten_weeks_start = this_week_mon - timedelta(weeks=9)
-    summary_start = today - timedelta(weeks=12)  # ~12 weeks for Summary by Week
+    # Bruno R7 (2026-05-26): widened 10 → 20 weeks so the charts scroll back up
+    # to 20 weeks (frontend shows ~8 at a time, scrolled to most recent).
+    twenty_weeks_start = this_week_mon - timedelta(weeks=19)
+    summary_start = today - timedelta(weeks=20)  # ~20 weeks for Summary by Week
 
     # Bruno R4 (2026-05-12): Weekly honors Team. R5 (2026-05-21): Customer
-    # too. Date windows stay fixed at 10 weeks / 12 weeks.
+    # too. R7 (2026-05-26): windows widened to 20 weeks. Still date-immutable.
     weekly_params: list = []
     weekly_scope = _scope_where("br4", team, customer, weekly_params, division=division)
-    weekly_params.extend([ten_weeks_start, today])
+    weekly_params.extend([twenty_weeks_start, today])
     w_s, w_e = len(weekly_params) - 1, len(weekly_params)
 
-    # Last 10 weeks — loads + revenue + profit + margin
+    # Last 20 weeks — loads + revenue + profit + margin
     weekly_task = pool.fetch(
         f"""
         SELECT
@@ -1172,6 +1191,9 @@ async def risk(
         )
         SELECT
           TRIM(br4.id)            AS id,
+          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
+               ELSE TRIM(br4.team_id) END AS team,
+          COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
           TRIM(br4.customer_name) AS customer,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
           TRIM(br4.origin_name)   AS origin,
@@ -1258,6 +1280,8 @@ async def risk(
             "neg_orders": [
                 {
                     "id": r["id"],
+                    "team": r["team"],
+                    "contract_type": r["contract_type"],
                     "customer": r["customer"],
                     "carrier": r["carrier"],
                     "origin": r["origin"],
@@ -1301,6 +1325,8 @@ async def orders(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -1351,6 +1377,9 @@ async def orders(
     # using idx_movement_order_company_mv (1 index seek per matching v4 row),
     # vs the old CTE that pre-aggregated 400k+ movement rows with a window
     # function. Cuts the query from ~6s to ~150ms.
+    # Bruno R7 (2026-05-26): server-side pagination. The COUNT() reuses the
+    # same scope/date predicate so "Page X of Y" reflects the full result set,
+    # not just the fetched page. Departure-DESC keeps the stable page order.
     ao_params: list = []
     ao_where = _scope_where("br4", team, customer, ao_params, division=division)
     ao_params.extend([s, e])
@@ -1358,11 +1387,25 @@ async def orders(
         f"br4.origin_actual_departure >= ${len(ao_params)-1}"
         f" AND br4.origin_actual_departure < (${len(ao_params)}::date + 1)"
     )
+    ao_count_task = pool.fetchval(
+        f"""
+        SELECT COUNT(*)
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {ao_where} AND {ao_df}
+        """,
+        *ao_params,
+    )
+    # Page params follow the scope/date params positionally.
+    ao_params.append(page_size)
+    p_limit = len(ao_params)
+    ao_params.append((page - 1) * page_size)
+    p_offset = len(ao_params)
     ao_task = pool.fetch(
         f"""
         SELECT
           CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
                ELSE TRIM(br4.team_id) END AS team,
+          COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
           TRIM(br4.id)            AS id,
           TRIM(br4.customer_name) AS customer,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
@@ -1387,12 +1430,12 @@ async def orders(
         ) mov ON TRUE
         WHERE {ao_where} AND {ao_df}
         ORDER BY br4.origin_actual_departure DESC NULLS LAST
-        LIMIT 1000
+        LIMIT ${p_limit} OFFSET ${p_offset}
         """,
         *ao_params,
     )
 
-    lpa, ao = await asyncio.gather(lpa_task, ao_task)
+    lpa, ao, ao_total = await asyncio.gather(lpa_task, ao_task, ao_count_task)
 
     return {
         "success": True,
@@ -1416,6 +1459,7 @@ async def orders(
             "all_orders": [
                 {
                     "team": r["team"],
+                    "contract_type": r["contract_type"],
                     "id": r["id"],
                     "customer": r["customer"],
                     "carrier": r["carrier"],
@@ -1431,6 +1475,9 @@ async def orders(
                 }
                 for r in ao
             ],
+            "all_orders_total": int(ao_total or 0),
+            "page": page,
+            "page_size": page_size,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }

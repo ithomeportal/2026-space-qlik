@@ -145,6 +145,9 @@ export interface CeoCustomers {
   worst_by_customer: CeoCustomerRow[]
   top5_revenue: CeoTop5Row[]
   top5_profit: CeoTop5Row[]
+  // Bruno R7: full remaining-customer lists behind the "Others" slice.
+  top5_revenue_others: CeoTop5Row[]
+  top5_profit_others: CeoTop5Row[]
   window: { start: string; end: string }
 }
 
@@ -185,6 +188,8 @@ export interface CeoWorstLane {
 
 export interface CeoNegOrder {
   id: string
+  team: string
+  contract_type: string
   customer: string
   carrier: string
   origin: string
@@ -227,6 +232,7 @@ export interface CeoLaneAnalysis {
 
 export interface CeoAllOrder {
   team: string
+  contract_type: string
   id: string
   customer: string
   carrier: string
@@ -244,6 +250,9 @@ export interface CeoAllOrder {
 export interface CeoOrders {
   lane_analysis: CeoLaneAnalysis[]
   all_orders: CeoAllOrder[]
+  all_orders_total: number
+  page: number
+  page_size: number
   window: { start: string; end: string }
 }
 
@@ -320,12 +329,22 @@ export function useCeoRisk(f: CeoFilters, enabled = true) {
   })
 }
 
-export function useCeoOrders(f: CeoFilters, enabled = true) {
+// Bruno R7 (2026-05-26): All Orders is server-paginated. `page` is 1-based;
+// page_size fixed at 100. Lane analysis is returned on every page (cheap
+// aggregate) so the lane table stays populated while paging the order list.
+export function useCeoOrders(f: CeoFilters, page = 1, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "orders", f],
-    queryFn: () => apiFetch<CeoOrders>(`custom/ceo-executive/orders${ceoQs(f)}`),
+    placeholderData: (prev) => prev,
+    queryKey: ["ceo", "orders", f, page],
+    queryFn: () => {
+      const qs = ceoQs(f)
+      const sep = qs.includes("?") ? "&" : "?"
+      return apiFetch<CeoOrders>(
+        `custom/ceo-executive/orders${qs}${sep}page=${page}&page_size=100`,
+      )
+    },
   })
 }
 
