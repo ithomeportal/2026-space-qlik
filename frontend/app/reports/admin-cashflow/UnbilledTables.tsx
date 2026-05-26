@@ -69,7 +69,13 @@ function DeliveredNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
-              <th className="px-2 py-1.5">Customer</th>
+              <SortableTh
+                label="Customer"
+                col="customer_asc"
+                colDesc="customer_desc"
+                current={sort}
+                onChange={setSort}
+              />
               <SortableTh
                 label="Orig Sched Early"
                 col="ship_asc"
@@ -91,7 +97,14 @@ function DeliveredNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
-              <th className="px-2 py-1.5 text-right">Days</th>
+              <SortableTh
+                label="Days"
+                col="days_asc"
+                colDesc="days_desc"
+                current={sort}
+                onChange={setSort}
+                align="right"
+              />
               <SortableTh
                 label="$ Revenue"
                 col="revenue_asc"
@@ -197,7 +210,13 @@ function ReadyNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
-              <th className="px-2 py-1.5">Customer</th>
+              <SortableTh
+                label="Customer"
+                col="customer_asc"
+                colDesc="customer_desc"
+                current={sort}
+                onChange={setSort}
+              />
               <SortableTh
                 label="Ship Date"
                 col="ship_asc"
@@ -212,9 +231,28 @@ function ReadyNotBilledCard({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
-              <th className="px-2 py-1.5">BOL Recv</th>
-              <th className="px-2 py-1.5">Status</th>
-              <th className="px-2 py-1.5 text-right">Days</th>
+              <SortableTh
+                label="BOL Recv"
+                col="bol_asc"
+                colDesc="bol_desc"
+                current={sort}
+                onChange={setSort}
+              />
+              <SortableTh
+                label="Status"
+                col="status_asc"
+                colDesc="status_desc"
+                current={sort}
+                onChange={setSort}
+              />
+              <SortableTh
+                label="Days"
+                col="days_asc"
+                colDesc="days_desc"
+                current={sort}
+                onChange={setSort}
+                align="right"
+              />
               <SortableTh
                 label="$ Revenue"
                 col="revenue_asc"

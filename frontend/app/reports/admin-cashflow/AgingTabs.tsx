@@ -137,8 +137,20 @@ export function AgingTabs({ filters }: Props) {
         <table className="w-full text-xs">
           <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
             <tr className="border-b border-[#E5E7EB]">
-              <th className="px-2 py-1.5 text-left">Co.</th>
-              <th className="px-2 py-1.5 text-left">Team</th>
+              <SortableTh
+                label="Co."
+                col="company_asc"
+                colDesc="company_desc"
+                current={sort}
+                onChange={setSort}
+              />
+              <SortableTh
+                label="Team"
+                col="team_asc"
+                colDesc="team_desc"
+                current={sort}
+                onChange={setSort}
+              />
               <SortableTh
                 label="Order"
                 col="id_asc"
@@ -146,9 +158,27 @@ export function AgingTabs({ filters }: Props) {
                 current={sort}
                 onChange={setSort}
               />
-              <th className="px-2 py-1.5 text-left">Customer</th>
-              <th className="px-2 py-1.5 text-left">{tab.leftLabel}</th>
-              <th className="px-2 py-1.5 text-left">Bill Date</th>
+              <SortableTh
+                label="Customer"
+                col="customer_asc"
+                colDesc="customer_desc"
+                current={sort}
+                onChange={setSort}
+              />
+              <SortableTh
+                label={tab.leftLabel}
+                col="left_asc"
+                colDesc="left_desc"
+                current={sort}
+                onChange={setSort}
+              />
+              <SortableTh
+                label="Bill Date"
+                col="bill_asc"
+                colDesc="bill_desc"
+                current={sort}
+                onChange={setSort}
+              />
               <SortableTh
                 label="Days"
                 col="days_asc"

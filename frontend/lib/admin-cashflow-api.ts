@@ -125,6 +125,20 @@ export interface AdminCashflowKpis {
   alarm: boolean
   alarm_threshold_usd: number
   rows_in_scope: number
+  // Bruno R4 PDF 2026-05-26 — per-KPI supporting breakdown (count + revenue).
+  // le_*/total_* reconcile to the headline %; Avg-Days cards reuse the same scope.
+  del_le2_count: number
+  del_total_count: number
+  del_le2_rev: number
+  del_total_rev: number
+  bol_le1_count: number
+  bol_total_count: number
+  bol_le1_rev: number
+  bol_total_rev: number
+  carrinv_le1_count: number
+  carrinv_total_count: number
+  carrinv_le1_rev: number
+  carrinv_total_rev: number
   window: { start: string; end: string }
 }
 

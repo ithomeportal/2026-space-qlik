@@ -1,9 +1,11 @@
 "use client"
 
-import { Loader2, Users } from "lucide-react"
+import { useState } from "react"
+import { ChevronDown, ChevronUp, Loader2, Users } from "lucide-react"
 import {
   useTopDelayedCustomers,
   type AdminCashflowFilters,
+  type TopDelayedCustomerRow,
 } from "@/lib/admin-cashflow-api"
 import { fmtCount, fmtNum1, fmtUsd } from "./format"
 
@@ -11,9 +13,38 @@ interface Props {
   filters: AdminCashflowFilters
 }
 
+// Bruno R4 PDF 2026-05-26: sort every column. The list is ≤10 pre-fetched
+// rows (top-N by revenue), so re-ordering happens client-side.
+type SortKey = "customer_name" | "n_late" | "late_revenue" | "avg_days"
+type SortDir = "asc" | "desc"
+
 export function TopDelayedCustomers({ filters }: Props) {
   const { data, isLoading } = useTopDelayedCustomers(filters, 10)
-  const rows = data?.data ?? []
+  const [sortKey, setSortKey] = useState<SortKey>("late_revenue")
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
+
+  const onSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    } else {
+      setSortKey(key)
+      setSortDir(key === "customer_name" ? "asc" : "desc")
+    }
+  }
+
+  const rows = [...(data?.data ?? [])].sort(
+    (a: TopDelayedCustomerRow, b: TopDelayedCustomerRow) => {
+      const av = a[sortKey]
+      const bv = b[sortKey]
+      let cmp: number
+      if (typeof av === "string" || typeof bv === "string") {
+        cmp = String(av).localeCompare(String(bv))
+      } else {
+        cmp = (av as number) - (bv as number)
+      }
+      return sortDir === "asc" ? cmp : -cmp
+    },
+  )
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
@@ -40,10 +71,10 @@ export function TopDelayedCustomers({ filters }: Props) {
           <table className="w-full text-xs">
             <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
               <tr className="border-b border-[#E5E7EB]">
-                <th className="px-1.5 py-1.5 text-left">Customer</th>
-                <th className="px-1.5 py-1.5 text-right">Late</th>
-                <th className="px-1.5 py-1.5 text-right">Revenue</th>
-                <th className="px-1.5 py-1.5 text-right">Avg d</th>
+                <SortTh label="Customer" col="customer_name" current={sortKey} dir={sortDir} onSort={onSort} />
+                <SortTh label="Late" col="n_late" current={sortKey} dir={sortDir} onSort={onSort} align="right" />
+                <SortTh label="Revenue" col="late_revenue" current={sortKey} dir={sortDir} onSort={onSort} align="right" />
+                <SortTh label="Avg d" col="avg_days" current={sortKey} dir={sortDir} onSort={onSort} align="right" />
               </tr>
             </thead>
             <tbody>
@@ -71,5 +102,36 @@ export function TopDelayedCustomers({ filters }: Props) {
         )}
       </div>
     </div>
+  )
+}
+
+interface SortThProps {
+  label: string
+  col: SortKey
+  current: SortKey
+  dir: SortDir
+  onSort: (key: SortKey) => void
+  align?: "left" | "right"
+}
+
+function SortTh({ label, col, current, dir, onSort, align = "left" }: SortThProps) {
+  const active = current === col
+  return (
+    <th className={`px-1.5 py-1.5 ${align === "right" ? "text-right" : "text-left"}`}>
+      <button
+        onClick={() => onSort(col)}
+        className={`inline-flex items-center gap-1 ${
+          active ? "text-[#1B3A5C]" : "text-[#6B7280]"
+        }`}
+      >
+        {label}
+        {active &&
+          (dir === "desc" ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronUp className="h-3 w-3" />
+          ))}
+      </button>
+    </th>
   )
 }

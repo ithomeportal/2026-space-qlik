@@ -410,7 +410,45 @@ async def kpis(
       )::numeric AS ready_not_billed_usd,
 
       -- supporting counts — useful for tooltips / sanity
-      (SELECT COUNT(*) FROM base) AS rows_in_scope
+      (SELECT COUNT(*) FROM base) AS rows_in_scope,
+
+      -- Bruno R4 PDF 2026-05-26: per-KPI supporting breakdown (count + revenue,
+      -- ≤threshold vs total) shown under each card. Predicates intentionally
+      -- match the matching % subquery above, so le_cnt / tot_cnt == the shown
+      -- ratio (KPI detail must reconcile to the headline). The two Avg-Days
+      -- cards reuse the same scope as their % companions (delivery / bol).
+      d.le_cnt  AS del_le2_count,     d.tot_cnt AS del_total_count,
+      d.le_rev  AS del_le2_rev,       d.tot_rev AS del_total_rev,
+      b.le_cnt  AS bol_le1_count,     b.tot_cnt AS bol_total_count,
+      b.le_rev  AS bol_le1_rev,       b.tot_rev AS bol_total_rev,
+      v.le_cnt  AS carrinv_le1_count, v.tot_cnt AS carrinv_total_count,
+      v.le_rev  AS carrinv_le1_rev,   v.tot_rev AS carrinv_total_rev
+    FROM
+      (SELECT
+         COUNT(DISTINCT id) FILTER (WHERE (bill_date::date - dest_actual_departure::date) <= 2) AS le_cnt,
+         COUNT(DISTINCT id)                                                                      AS tot_cnt,
+         COALESCE(SUM(total_charge) FILTER (WHERE (bill_date::date - dest_actual_departure::date) <= 2), 0) AS le_rev,
+         COALESCE(SUM(total_charge), 0)                                                          AS tot_rev
+       FROM base
+       WHERE status = 'D'
+         AND bill_date             > '2000-01-01'::date
+         AND dest_actual_departure > '2000-01-01'::date) d,
+      (SELECT
+         COUNT(DISTINCT id) FILTER (WHERE (bill_date::date - bol_recv_date::date) <= 1) AS le_cnt,
+         COUNT(DISTINCT id)                                                             AS tot_cnt,
+         COALESCE(SUM(total_charge) FILTER (WHERE (bill_date::date - bol_recv_date::date) <= 1), 0) AS le_rev,
+         COALESCE(SUM(total_charge), 0)                                                 AS tot_rev
+       FROM base
+       WHERE bill_date     > '2000-01-01'::date
+         AND bol_recv_date > '2000-01-01'::date) b,
+      (SELECT
+         COUNT(DISTINCT id) FILTER (WHERE (bill_date::date - invoice_recv_date::date) <= 1) AS le_cnt,
+         COUNT(DISTINCT id)                                                                 AS tot_cnt,
+         COALESCE(SUM(total_charge) FILTER (WHERE (bill_date::date - invoice_recv_date::date) <= 1), 0) AS le_rev,
+         COALESCE(SUM(total_charge), 0)                                                     AS tot_rev
+       FROM base
+       WHERE bill_date         > '2000-01-01'::date
+         AND invoice_recv_date > '2000-01-01'::date) v
     """
 
     row = await pool.fetchrow(sql, *params)
@@ -433,6 +471,19 @@ async def kpis(
             "alarm": total_unbilled > UNBILLED_ALARM_USD,
             "alarm_threshold_usd": UNBILLED_ALARM_USD,
             "rows_in_scope": int(row["rows_in_scope"] or 0),
+            # Bruno R4 PDF 2026-05-26 — per-KPI supporting breakdown
+            "del_le2_count": int(row["del_le2_count"] or 0),
+            "del_total_count": int(row["del_total_count"] or 0),
+            "del_le2_rev": float(row["del_le2_rev"] or 0),
+            "del_total_rev": float(row["del_total_rev"] or 0),
+            "bol_le1_count": int(row["bol_le1_count"] or 0),
+            "bol_total_count": int(row["bol_total_count"] or 0),
+            "bol_le1_rev": float(row["bol_le1_rev"] or 0),
+            "bol_total_rev": float(row["bol_total_rev"] or 0),
+            "carrinv_le1_count": int(row["carrinv_le1_count"] or 0),
+            "carrinv_total_count": int(row["carrinv_total_count"] or 0),
+            "carrinv_le1_rev": float(row["carrinv_le1_rev"] or 0),
+            "carrinv_total_rev": float(row["carrinv_total_rev"] or 0),
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
@@ -554,6 +605,11 @@ _DELIVERED_NOT_BILLED_SORTS = {
     "delivered_asc": "dest_actual_arrival ASC NULLS LAST",
     "revenue_desc": "total_charge DESC NULLS LAST",
     "revenue_asc": "total_charge ASC NULLS LAST",
+    # Bruno R4 PDF 2026-05-26: sort Customer + Days
+    "customer_asc": "customer_name ASC NULLS LAST",
+    "customer_desc": "customer_name DESC NULLS LAST",
+    "days_asc": "days_since_delivery ASC NULLS LAST",
+    "days_desc": "days_since_delivery DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -678,6 +734,14 @@ _READY_NOT_BILLED_SORTS = {
     "revenue_desc": "total_charge DESC NULLS LAST",
     "revenue_asc": "total_charge ASC NULLS LAST",
     "status_asc": "status ASC, ship_date ASC NULLS LAST",
+    # Bruno R4 PDF 2026-05-26: sort Customer + BOL Recv + Status + Days
+    "status_desc": "status DESC, ship_date ASC NULLS LAST",
+    "customer_asc": "customer_name ASC NULLS LAST",
+    "customer_desc": "customer_name DESC NULLS LAST",
+    "bol_asc": "bol_recv_date ASC NULLS LAST",
+    "bol_desc": "bol_recv_date DESC NULLS LAST",
+    "days_asc": "days_since_bol_recv ASC NULLS LAST",
+    "days_desc": "days_since_bol_recv DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -793,6 +857,17 @@ _AGING_SORTS = {
     "revenue_asc": "total_charge ASC NULLS LAST",
     "ship_desc": "origin_actual_arrival DESC NULLS LAST",
     "ship_asc": "origin_actual_arrival ASC NULLS LAST",
+    # Bruno R4 PDF 2026-05-26: sort every column
+    "company_asc": "company_id ASC NULLS LAST",
+    "company_desc": "company_id DESC NULLS LAST",
+    "team_asc": "team_id ASC NULLS LAST",
+    "team_desc": "team_id DESC NULLS LAST",
+    "customer_asc": "customer_name ASC NULLS LAST",
+    "customer_desc": "customer_name DESC NULLS LAST",
+    "left_asc": "left_date ASC NULLS LAST",
+    "left_desc": "left_date DESC NULLS LAST",
+    "bill_asc": "bill_date ASC NULLS LAST",
+    "bill_desc": "bill_date DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }

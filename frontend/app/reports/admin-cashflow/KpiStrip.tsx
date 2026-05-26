@@ -6,7 +6,7 @@ import type {
   AdminCashflowKpis,
   AdminCashflowSparklines,
 } from "@/lib/admin-cashflow-api"
-import { fmtPct, fmtUsd } from "./format"
+import { fmtCount, fmtPct, fmtUsd, fmtUsdCompact } from "./format"
 
 interface Props {
   kpis: AdminCashflowKpis | undefined
@@ -17,6 +17,67 @@ interface Props {
 function fmtDays(v: number | undefined) {
   if (v === undefined || v === null || Number.isNaN(v)) return "—"
   return `${v.toFixed(1)}d`
+}
+
+// Bruno R4 PDF 2026-05-26 — supporting breakdown shown under each timing KPI.
+interface DetailRow {
+  label: string
+  count: number
+  rev: number
+}
+
+// % cards: [≤Nd, Total] — le/total reconciles to the headline %.
+function detailLeTotal(
+  kpis: AdminCashflowKpis | undefined,
+  leLabel: string,
+  lePrefix: string,
+  totPrefix: string,
+): DetailRow[] | undefined {
+  if (!kpis) return undefined
+  const k = kpis as unknown as Record<string, number>
+  return [
+    { label: leLabel, count: k[`${lePrefix}_count`], rev: k[`${lePrefix}_rev`] },
+    { label: "Total", count: k[`${totPrefix}_count`], rev: k[`${totPrefix}_rev`] },
+  ]
+}
+
+// Avg-Days cards: [≤Nd, >Nd] — >N is derived as total − ≤N (same scope).
+function detailLeGt(
+  kpis: AdminCashflowKpis | undefined,
+  leLabel: string,
+  gtLabel: string,
+  lePrefix: string,
+  totPrefix: string,
+): DetailRow[] | undefined {
+  if (!kpis) return undefined
+  const k = kpis as unknown as Record<string, number>
+  const leC = k[`${lePrefix}_count`]
+  const leR = k[`${lePrefix}_rev`]
+  const totC = k[`${totPrefix}_count`]
+  const totR = k[`${totPrefix}_rev`]
+  return [
+    { label: leLabel, count: leC, rev: leR },
+    { label: gtLabel, count: Math.max(0, totC - leC), rev: Math.max(0, totR - leR) },
+  ]
+}
+
+function KpiDetail({ rows }: { rows?: DetailRow[] }) {
+  if (!rows) return null
+  return (
+    <div className="mt-2 space-y-0.5 border-t border-[#F3F4F6] pt-1.5 text-[10px] text-[#6B7280]">
+      {rows.map((r) => (
+        <div
+          key={r.label}
+          className="flex items-center justify-between gap-1 tabular-nums"
+        >
+          <span className="text-[#9CA3AF]">{r.label}</span>
+          <span>
+            {fmtCount(r.count)} · {fmtUsdCompact(r.rev)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export function KpiStrip({ kpis, loading, sparklines }: Props) {
@@ -30,6 +91,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         actual={kpis?.pct_del_bill_le2}
         spark={sparklines?.del_bill_le2 ?? []}
         weeks={sparklines?.weeks ?? []}
+        detail={detailLeTotal(kpis, "≤2d", "del_le2", "del_total")}
       />
       <AvgDaysKpiCard
         icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
@@ -37,6 +99,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         value={loading ? "…" : fmtDays(kpis?.avg_days_del_bill)}
         actual={kpis?.avg_days_del_bill}
         warnAbove={2}
+        detail={detailLeGt(kpis, "≤2d", ">2d", "del_le2", "del_total")}
       />
       <PctKpiCard
         icon={<FileText className="h-4 w-4 text-[#1B3A5C]" />}
@@ -46,6 +109,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         actual={kpis?.pct_bol_bill_le1}
         spark={sparklines?.bol_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
+        detail={detailLeTotal(kpis, "≤1d", "bol_le1", "bol_total")}
       />
       <AvgDaysKpiCard
         icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
@@ -53,6 +117,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         value={loading ? "…" : fmtDays(kpis?.avg_days_bol_bill)}
         actual={kpis?.avg_days_bol_bill}
         warnAbove={1}
+        detail={detailLeGt(kpis, "≤1d", ">1d", "bol_le1", "bol_total")}
       />
       <PctKpiCard
         icon={<Receipt className="h-4 w-4 text-[#1B3A5C]" />}
@@ -62,6 +127,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         actual={kpis?.pct_carrinv_bill_le1}
         spark={sparklines?.carrinv_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
+        detail={detailLeTotal(kpis, "≤1d", "carrinv_le1", "carrinv_total")}
       />
       <UsdKpiCard
         icon={<PackageCheck className="h-4 w-4 text-[#B45309]" />}
@@ -91,9 +157,10 @@ interface AvgDaysKpiProps {
   value: string
   actual: number | undefined
   warnAbove: number
+  detail?: DetailRow[]
 }
 
-function AvgDaysKpiCard({ icon, label, value, actual, warnAbove }: AvgDaysKpiProps) {
+function AvgDaysKpiCard({ icon, label, value, actual, warnAbove, detail }: AvgDaysKpiProps) {
   // green if at/below target days; amber within 50% over; red beyond.
   let tone = "border-[#E5E7EB] bg-white"
   let valueColor = "text-[#1B3A5C]"
@@ -119,6 +186,7 @@ function AvgDaysKpiCard({ icon, label, value, actual, warnAbove }: AvgDaysKpiPro
         {value}
       </div>
       <div className="mt-1 text-[10px] text-[#6B7280]">target ≤{warnAbove}d</div>
+      <KpiDetail rows={detail} />
     </div>
   )
 }
@@ -131,9 +199,10 @@ interface PctKpiProps {
   actual: number | undefined
   spark: (number | null)[]
   weeks: string[]
+  detail?: DetailRow[]
 }
 
-function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks }: PctKpiProps) {
+function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detail }: PctKpiProps) {
   // Card highlight: green if at/above threshold, amber if within 5pts, red below.
   let tone = "border-[#E5E7EB] bg-white"
   let valueColor = "text-[#1B3A5C]"
@@ -166,6 +235,7 @@ function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks }: Pct
       <div className="mt-1 text-[10px] text-[#6B7280]">
         target ≥{threshold}%
       </div>
+      <KpiDetail rows={detail} />
       <div className="mt-1 h-10">
         {hasData ? (
           <ResponsiveContainer width="100%" height="100%">
