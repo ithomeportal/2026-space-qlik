@@ -183,16 +183,21 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
             if week.get("marginPct") is not None
             else (0 if revenue == 0 else gross_profit / revenue)
         )
+        loads = float(week["loads"])
+        # The weekly minimum of 100 loads is the gate for EVERY role (Bruno, 2026-05-26):
+        # below it no bonus applies that week, even if margin/service clear their bracket.
+        meets_load_minimum = loads >= 100
         weekly_rules.append(
             {
                 "label": week["label"],
-                "loads": float(week["loads"]),
+                "loads": loads,
                 "revenue": revenue,
                 "grossProfit": gross_profit,
                 "marginPct": margin_pct,
-                "loadBonusPct": get_bracket_bonus(float(week["loads"]), LOAD_COUNT_BRACKETS),
-                "marginBonusPct": get_bracket_bonus(margin_pct, MARGIN_BRACKETS),
-                "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS),
+                "meetsLoadMinimum": meets_load_minimum,
+                "loadBonusPct": get_bracket_bonus(loads, LOAD_COUNT_BRACKETS),
+                "marginBonusPct": get_bracket_bonus(margin_pct, MARGIN_BRACKETS) if meets_load_minimum else 0.0,
+                "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS) if meets_load_minimum else 0.0,
             }
         )
 
@@ -207,11 +212,12 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         role = employee["role"]
         regular_weekly_usd = []
         for rule in weekly_rules:
-            freight_match_meets_load_requirement = rule["loads"] > 100
+            # marginBonusPct / serviceBonusPct are already 0 in weeks under the
+            # 100-load minimum, so each role just reads its own bracket %.
             if role == "kam":
                 multiplier = rule["loadBonusPct"]
             elif role == "freight_match":
-                multiplier = rule["marginBonusPct"] if freight_match_meets_load_requirement else 0
+                multiplier = rule["marginBonusPct"]
             else:
                 multiplier = rule["serviceBonusPct"]
             regular_weekly_usd.append(multiplier * rule["loads"] * PAY_PER_LOAD[role])

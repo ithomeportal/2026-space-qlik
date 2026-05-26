@@ -63,6 +63,7 @@ export interface WeeklyRule {
   revenue: number
   grossProfit: number
   marginPct: number // decimal
+  meetsLoadMinimum: boolean // weekly loads >= 100 — gates every role's bonus
   loadBonusPct: number
   marginBonusPct: number
   serviceBonusPct: number

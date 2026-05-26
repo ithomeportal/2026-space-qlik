@@ -66,8 +66,9 @@ export function CriteriaGuide({ report }: { report: BonusReport }) {
         <h2 className="text-lg font-bold text-[#1F2937]">Bonus Criteria Guide</h2>
       </div>
       <p className="mt-1 text-xs text-[#6B7280]">
-        Use this table first. KAMs qualify by load count, Freight Match qualifies by margin percentage, and Tracking &amp;
-        Tracing qualifies by the current-month average of pickup and delivery service.
+        Use this table first. Every role must first reach a minimum of 100 loads in the week — below that no bonus
+        applies, even if margin or service clear their bracket. KAMs then qualify by load count, Freight Match by
+        margin percentage, and Tracking &amp; Tracing by the current-month average of pickup and delivery service.
       </p>
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -95,16 +96,16 @@ export function CriteriaGuide({ report }: { report: BonusReport }) {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <InfoCard title="KAM Load Count" body="KAM bonus is measured by load count." bg={COLORS.cardBg} titleColor={COLORS.cardTitle} />
+        <InfoCard title="KAM Load Count" body="KAM has one requirement: reach a minimum of 100 loads in the week, then the load-count bracket sets the bonus." bg={COLORS.cardBg} titleColor={COLORS.cardTitle} />
         <InfoCard
           title="Freight Match Margin"
-          body="Freight Match bonus is measured by margin percentage only after the load-count row is above 100; wildcard is the only alternate payout path."
+          body="Freight Match needs a minimum of 100 loads in the week and an 18.5% margin; the margin bracket pays only once the 100-load minimum is met. Wildcard is the only alternate payout path."
           bg={COLORS.cardBg}
           titleColor={COLORS.cardTitle}
         />
         <InfoCard
           title="Tracking & Tracing Service"
-          body="Tracking & Tracing bonus is measured by current-month pickup and delivery service average."
+          body="Tracking & Tracing needs a minimum of 100 loads in the week plus the current-month pickup and delivery service average; below 100 loads no service bonus applies that week."
           bg={COLORS.cardBg}
           titleColor={COLORS.cardTitle}
         />

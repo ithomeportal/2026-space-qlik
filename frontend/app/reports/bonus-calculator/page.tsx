@@ -8,7 +8,6 @@ import { useBonusFilters, useBonusReport } from "@/lib/bonus-api"
 import { BRAND, BRAND_DARK } from "./format"
 import { KpiStrip } from "./components/KpiStrip"
 import { CriteriaGuide } from "./components/CriteriaGuide"
-import { DataSourceCard } from "./components/DataSourceCard"
 import { TeamBlock } from "./components/TeamBlock"
 import { AfterhoursCard } from "./components/AfterhoursCard"
 import { BestPractice } from "./components/BestPractice"
@@ -122,7 +121,6 @@ function BonusCalculatorContent() {
           <>
             <KpiStrip report={report} />
             <CriteriaGuide report={report} />
-            <DataSourceCard report={report} />
             {visibleTeams.map((team) => (
               <TeamBlock key={team.id} team={team} report={report} />
             ))}

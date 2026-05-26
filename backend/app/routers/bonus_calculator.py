@@ -61,12 +61,13 @@ router = APIRouter(tags=["bonus-calculator"], prefix="/custom/bonus-calculator")
 # ---------------------------------------------------------------------------
 
 
-def _add_month(y: int, m: int) -> tuple[int, int]:
-    return (y + 1, 1) if m == 12 else (y, m + 1)
-
-
 def _current_period_key() -> str:
-    """The 'YYYY-MM' whose 6th opens the period containing today (CST)."""
+    """The 'YYYY-MM' calendar month we default to today (CST).
+
+    A month's data keeps updating until the cutoff on the 5th of the following
+    month (Bruno, 2026-05-26), so before the 6th we still default to the prior
+    month that is being finalized.
+    """
     today = cst_today()
     if today.day >= 6:
         return f"{today.year:04d}-{today.month:02d}"
@@ -83,23 +84,39 @@ def _parse_period(period: Optional[str]) -> tuple[int, int]:
         raise HTTPException(status_code=422, detail="period must be 'YYYY-MM'")
 
 
+def _month_weeks(y: int, m: int) -> list[tuple[str, date, date]]:
+    """Monday→Sunday weeks belonging to calendar month (y, m).
+
+    A week belongs to the month that contains its Monday, so the final week can
+    spill into the next month (e.g. June Week 5 = 29 Jun-05 Jul) and the days
+    before the month's first Monday belong to the prior month. This yields 4 or
+    5 weeks per month (Bruno, 2026-05-26).
+    """
+    first = date(y, m, 1)
+    offset = (7 - first.weekday()) % 7  # days to the first Monday on/after the 1st
+    monday = date.fromordinal(first.toordinal() + offset)
+    weeks: list[tuple[str, date, date]] = []
+    while monday.month == m:
+        sunday = date.fromordinal(monday.toordinal() + 6)
+        label = (
+            f"{monday.day:02d} {month_name[monday.month][:3]}-"
+            f"{sunday.day:02d} {month_name[sunday.month][:3]}"
+        )
+        weeks.append((label, monday, sunday))
+        monday = date.fromordinal(monday.toordinal() + 7)
+    return weeks
+
+
 def _period_bounds(period: Optional[str]):
-    """Return (period_key, label, start, end_exclusive, buckets)."""
+    """Return (period_key, label, start, end_exclusive, buckets).
+
+    ``start``/``end`` span the union of the month's Monday→Sunday weeks, so the
+    datalake read window matches exactly what the weekly buckets cover.
+    """
     y, m = _parse_period(period)
-    start = date(y, m, 6)
-    ny, nm = _add_month(y, m)
-    end = date(ny, nm, 6)  # exclusive
-
-    buckets = []  # (label, bucket_start, bucket_end_inclusive)
-    for i in range(4):
-        bstart = date.fromordinal(start.toordinal() + 7 * i)
-        if i < 3:
-            bend = date.fromordinal(bstart.toordinal() + 6)
-        else:
-            bend = date.fromordinal(end.toordinal() - 1)  # fold remainder into week 4
-        label = f"{bstart.day:02d} {month_name[bstart.month][:3]}-{bend.day:02d} {month_name[bend.month][:3]}"
-        buckets.append((label, bstart, bend))
-
+    buckets = _month_weeks(y, m)
+    start = buckets[0][1]  # first Monday
+    end = date.fromordinal(buckets[-1][2].toordinal() + 1)  # day after last Sunday (exclusive)
     label = f"{month_name[m]} {y}"
     return f"{y:04d}-{m:02d}", label, start, end, buckets
 
