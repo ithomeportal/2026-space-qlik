@@ -333,7 +333,11 @@ async def kpis(
       WHERE {where_open} AND {date_frag}
     )
     SELECT
-      -- discipline KPI #1: Delivery vs Bill, ≤2 days (Bruno R3 PDF 2026-05-19)
+      -- discipline KPI #1: Delivery vs Bill, ≤2 days
+      -- Bruno R4 PDF 2026-05-26: predicate widened to status IN ('D','P') and
+      -- guarded on dest_actual_arrival>2000 (was status='D', no arrival guard).
+      -- dest_actual_departure>2000 kept — required so the calendar-day diff
+      -- doesn't explode on sentinel '1900' dates (Qlik's day() masked this).
       (
         SELECT
           COALESCE(
@@ -343,8 +347,9 @@ async def kpis(
             / NULLIF(COUNT(DISTINCT id), 0),
           0)
         FROM base
-        WHERE status = 'D'
+        WHERE status IN ('D','P')
           AND bill_date              > '2000-01-01'::date
+          AND dest_actual_arrival    > '2000-01-01'::date
           AND dest_actual_departure  > '2000-01-01'::date
       ) AS pct_del_bill_le2,
 
@@ -378,10 +383,13 @@ async def kpis(
       ) AS pct_carrinv_bill_le1,
 
       -- Avg KPI #A: Avg Days Delivery → Bill (bill_date - dest_actual_departure)
+      -- Bruno R4 PDF 2026-05-26: same scope as the % above (D,P + arrival guard).
       (
         SELECT COALESCE(AVG(bill_date::date - dest_actual_departure::date)::numeric, 0)
         FROM base
-        WHERE bill_date              > '2000-01-01'::date
+        WHERE status IN ('D','P')
+          AND bill_date              > '2000-01-01'::date
+          AND dest_actual_arrival    > '2000-01-01'::date
           AND dest_actual_departure  > '2000-01-01'::date
       )::numeric AS avg_days_del_bill,
 
@@ -430,8 +438,9 @@ async def kpis(
          COALESCE(SUM(total_charge) FILTER (WHERE (bill_date::date - dest_actual_departure::date) <= 2), 0) AS le_rev,
          COALESCE(SUM(total_charge), 0)                                                          AS tot_rev
        FROM base
-       WHERE status = 'D'
+       WHERE status IN ('D','P')
          AND bill_date             > '2000-01-01'::date
+         AND dest_actual_arrival   > '2000-01-01'::date
          AND dest_actual_departure > '2000-01-01'::date) d,
       (SELECT
          COUNT(DISTINCT id) FILTER (WHERE (bill_date::date - bol_recv_date::date) <= 1) AS le_cnt,
@@ -536,19 +545,24 @@ async def sparklines(
         c.bill_date,
         c.bol_recv_date,
         c.invoice_recv_date,
+        c.dest_actual_arrival,
         c.dest_actual_departure
       FROM public.mcleod_gld_cashflow c
       WHERE {where_open} AND {date_frag}
     )
     SELECT
       wk,
-      -- denominators kept separate per KPI (different status/sentinel filters)
+      -- denominators kept separate per KPI (different status/sentinel filters).
+      -- Bruno R4 PDF 2026-05-26: delivery now D,P + arrival guard (base is
+      -- already status IN ('D','P') via OPEN_STATUSES) to match the headline %.
       COUNT(DISTINCT id) FILTER (
-        WHERE status='D' AND bill_date>'2000-01-01'::date
+        WHERE bill_date>'2000-01-01'::date
+          AND dest_actual_arrival>'2000-01-01'::date
           AND dest_actual_departure>'2000-01-01'::date
       ) AS d_n_del,
       COUNT(DISTINCT id) FILTER (
-        WHERE status='D' AND bill_date>'2000-01-01'::date
+        WHERE bill_date>'2000-01-01'::date
+          AND dest_actual_arrival>'2000-01-01'::date
           AND dest_actual_departure>'2000-01-01'::date
           AND (bill_date::date - dest_actual_departure::date) <= 2
       ) AS d_le_del,
