@@ -39,25 +39,53 @@ const RETRY = {
 }
 
 // ---------------------------------------------------------------------------
-// This-week (Mon..today, CST) bounds used for service KPIs and Top-10 KPIs.
-// Computed in JS so callers can pass `range=custom&start_date=…&end_date=…`
-// to the existing ops-customer-score / xray-dfw endpoints.
+// Date filter — YTD / MTD / WTD (Mon-anchored) / Custom (Bruno R2).
+// Bounds are computed in JS so every tab passes the same
+// `range=custom&start_date=…&end_date=…` shape to the backend (the parent
+// ops-customer-score / xray-dfw endpoints don't know a `wtd` keyword, so we
+// resolve it client-side and send an explicit window).
 // ---------------------------------------------------------------------------
 
-function currentWeekBoundsIso(): { start: string; end: string } {
-  const now = new Date()
-  // Use the browser's local clock; backend pins CST so any tz < 6h off is fine.
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const dow = today.getDay() // Sun=0, Mon=1, ...
-  const daysFromMon = (dow + 6) % 7 // Mon-anchored
-  const monday = new Date(today)
-  monday.setDate(today.getDate() - daysFromMon)
-  const iso = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-  return { start: iso(monday), end: iso(today) }
+export type KamRange = "ytd" | "mtd" | "wtd" | "custom"
+export interface KamBounds {
+  start: string
+  end: string
 }
 
-export const KAM_CURRENT_WEEK = currentWeekBoundsIso
+const KAM_YEAR_START = "2026-01-01"
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
+export function kamBounds(
+  range: KamRange,
+  customStart?: string,
+  customEnd?: string,
+): KamBounds {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayIso = isoDay(today)
+  if (range === "ytd") return { start: KAM_YEAR_START, end: todayIso }
+  if (range === "mtd")
+    return { start: isoDay(new Date(today.getFullYear(), today.getMonth(), 1)), end: todayIso }
+  if (range === "wtd") {
+    const daysFromMon = (today.getDay() + 6) % 7 // Mon-anchored
+    const monday = new Date(today)
+    monday.setDate(today.getDate() - daysFromMon)
+    return { start: isoDay(monday), end: todayIso }
+  }
+  return { start: customStart || KAM_YEAR_START, end: customEnd || todayIso }
+}
+
+// Mon..today, kept for the legacy "this week" caption.
+export function KAM_CURRENT_WEEK(): KamBounds {
+  return kamBounds("wtd")
+}
+
+function rangeQuery(b: KamBounds): string {
+  return `range=custom&start_date=${encodeURIComponent(b.start)}&end_date=${encodeURIComponent(b.end)}`
+}
 
 // ---------------------------------------------------------------------------
 // Tab 1 — SCORECARDS
@@ -328,13 +356,12 @@ interface ServiceOverviewResponse {
   kpi: ServiceOverviewKpi
 }
 
-export function useDfwServiceKpi(side: "pu" | "del") {
-  const { start, end } = KAM_CURRENT_WEEK()
+export function useDfwServiceKpi(side: "pu" | "del", bounds: KamBounds) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "service-kpi", side, start, end],
+    queryKey: ["kam-performance-dfw", "service-kpi", side, bounds.start, bounds.end],
     queryFn: () =>
       apiFetch<ServiceOverviewResponse>(
-        `custom/ops-customer-score/${side}/overview?range=custom&start_date=${start}&end_date=${end}&division=DFW`,
+        `custom/ops-customer-score/${side}/overview?${rangeQuery(bounds)}&division=DFW`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -344,6 +371,7 @@ export function useDfwServiceKpi(side: "pu" | "del") {
 export interface ServiceFailureRow {
   id: string
   team_id: string | null
+  team_dfw: string | null
   customer_name: string | null
   actual_arrival: string | null
   sched_late: string | null
@@ -357,31 +385,58 @@ export interface ServiceFailureRow {
 export function useDfwServiceFailures(
   side: "pu" | "del",
   fault: "our" | "not",
+  bounds: KamBounds,
   page: number,
   limit = 200,
 ) {
-  const { start, end } = KAM_CURRENT_WEEK()
   return useQuery({
     queryKey: [
       "kam-performance-dfw",
       "service-failures",
       side,
       fault,
-      start,
-      end,
+      bounds.start,
+      bounds.end,
       page,
       limit,
     ],
     queryFn: () =>
       apiFetch<ServiceFailureRow[]>(
-        `custom/ops-customer-score/${side}/${fault === "our" ? "our-fault" : "not-our-fault"}?range=custom&start_date=${start}&end_date=${end}&division=DFW&page=${page}&limit=${limit}`,
+        `custom/ops-customer-score/${side}/${fault === "our" ? "our-fault" : "not-our-fault"}?${rangeQuery(bounds)}&division=DFW&page=${page}&limit=${limit}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
   })
 }
 
-// xray-dfw KPIs accept range=custom for an arbitrary window
+// ---------------------------------------------------------------------------
+// Tab 3 — Top 10 lanes filters (customer + sub-team), rides on xray-dfw.
+// GENERAL MOTORS + HOMEDEPOT are always dropped (Bruno R2).
+// ---------------------------------------------------------------------------
+
+const KAM_LANE_EXCLUDE = "GENERAL MOTORS,HOMEDEPOT"
+
+interface XrayDfwFilters {
+  sub_teams: string[]
+  customers: string[]
+}
+
+export function useXrayDfwFilters() {
+  return useQuery({
+    queryKey: ["kam-performance-dfw", "xray-filters"],
+    queryFn: () => apiFetch<XrayDfwFilters>("custom/xray-dfw/filters"),
+    staleTime: 5 * 60 * 1000,
+    ...RETRY,
+  })
+}
+
+function laneFilterQuery(customer: string, subTeams: string[]): string {
+  let q = `&exclude_customers=${encodeURIComponent(KAM_LANE_EXCLUDE)}`
+  if (customer) q += `&customer=${encodeURIComponent(customer)}`
+  if (subTeams.length) q += `&sub_teams=${encodeURIComponent(subTeams.join(","))}`
+  return q
+}
+
 interface XrayDfwKpis {
   loads: number
   revenue: number
@@ -392,13 +447,12 @@ interface XrayDfwKpis {
   loss_loads: number
 }
 
-export function useDfwLaneKpi() {
-  const { start, end } = KAM_CURRENT_WEEK()
+export function useDfwLaneKpi(bounds: KamBounds, customer: string, subTeams: string[]) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "dfw-kpi", start, end],
+    queryKey: ["kam-performance-dfw", "dfw-kpi", bounds.start, bounds.end, customer, subTeams.join(",")],
     queryFn: () =>
       apiFetch<XrayDfwKpis>(
-        `custom/xray-dfw/kpis?range=custom&start_date=${start}&end_date=${end}`,
+        `custom/xray-dfw/kpis?${rangeQuery(bounds)}${laneFilterQuery(customer, subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -415,15 +469,99 @@ export interface DfwLaneRow {
   otd_pct: number
 }
 
-export function useDfwTop10Lanes() {
-  const { start, end } = KAM_CURRENT_WEEK()
+export function useDfwTop10Lanes(bounds: KamBounds, customer: string, subTeams: string[]) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "top10-lanes", start, end],
+    queryKey: ["kam-performance-dfw", "top10-lanes", bounds.start, bounds.end, customer, subTeams.join(",")],
     queryFn: () =>
       apiFetch<DfwLaneRow[]>(
-        `custom/xray-dfw/by-lane?range=custom&start_date=${start}&end_date=${end}&limit=10`,
+        `custom/xray-dfw/by-lane?${rangeQuery(bounds)}&limit=10${laneFilterQuery(customer, subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Tab 6 — WORST 10 LANES (Bruno R2). Worst losing (customer, lane) pairs for
+// DFW + per-lane editable Expiration Date / Action Plan.
+// ---------------------------------------------------------------------------
+
+export interface KamWorstLaneRow {
+  lane_key: string
+  customer: string
+  lane: string
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number | null
+  expiration_date: string | null
+  action_plan: string
+}
+
+export function useWorstLanes(bounds: KamBounds) {
+  return useQuery({
+    queryKey: ["kam-performance-dfw", "worst-lanes", bounds.start, bounds.end],
+    queryFn: () =>
+      apiFetch<KamWorstLaneRow[]>(
+        `custom/kam-performance-dfw/worst-lanes?${rangeQuery(bounds)}&limit=10`,
+      ),
+    staleTime: 60 * 1000,
+    ...RETRY,
+  })
+}
+
+export function useUpsertWorstLaneNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      lane_key: string
+      expiration_date?: string | null
+      action_plan?: string
+    }) =>
+      apiFetch<{ lane_key: string; expiration_date: string | null; action_plan: string }>(
+        "custom/kam-performance-dfw/worst-lane-notes",
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "worst-lanes"] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Tab 7 — CARRIER SALES (Bruno R2). Per-lane latest carriers + avg cost +
+// per-lane editable Comments.
+// ---------------------------------------------------------------------------
+
+export interface KamCarrierSalesRow {
+  lane_key: string
+  lane: string
+  carriers: string
+  avg_cost: number | null
+  movements: number
+  comments: string
+}
+
+export function useCarrierSales(bounds: KamBounds) {
+  return useQuery({
+    queryKey: ["kam-performance-dfw", "carrier-sales", bounds.start, bounds.end],
+    queryFn: () =>
+      apiFetch<KamCarrierSalesRow[]>(
+        `custom/kam-performance-dfw/carrier-sales?${rangeQuery(bounds)}`,
+      ),
+    staleTime: 60 * 1000,
+    ...RETRY,
+  })
+}
+
+export function useUpsertCarrierComment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { lane_key: string; comments: string }) =>
+      apiFetch<{ lane_key: string; comments: string }>(
+        "custom/kam-performance-dfw/carrier-comments",
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "carrier-sales"] }),
   })
 }

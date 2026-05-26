@@ -3,44 +3,84 @@
 import { useEffect, useState } from "react"
 import { Loader2, Save, TrendingUp } from "lucide-react"
 import {
-  KAM_CURRENT_WEEK,
   useDfwLaneKpi,
   useDfwTop10Lanes,
   useTopLanesNote,
   useUpsertTopLanesNote,
+  useXrayDfwFilters,
 } from "@/lib/kam-performance-dfw-api"
+import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
 
+const SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"]
+
 export function Tab3TopLanes() {
-  const { start, end } = KAM_CURRENT_WEEK()
-  const { data: kpiRes, isLoading: loadingKpi } = useDfwLaneKpi()
-  const { data: lanesRes, isLoading: loadingLanes } = useDfwTop10Lanes()
+  const { value, setValue, bounds } = useKamDateRange("wtd")
+  const [customer, setCustomer] = useState("")
+  const [subTeams, setSubTeams] = useState<string[]>([])
+
+  const { data: filters } = useXrayDfwFilters()
+  const { data: kpiRes, isLoading: loadingKpi } = useDfwLaneKpi(bounds, customer, subTeams)
+  const { data: lanesRes, isLoading: loadingLanes } = useDfwTop10Lanes(bounds, customer, subTeams)
   const k = kpiRes?.data
   const lanes = lanesRes?.data ?? []
+  const customers = filters?.data?.customers ?? []
+
+  const toggleTeam = (t: string) =>
+    setSubTeams((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    )
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangeControl value={value} onChange={setValue} />
+        <select
+          value={customer}
+          onChange={(e) => setCustomer(e.target.value)}
+          className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1.5 text-xs"
+        >
+          <option value="">All customers</option>
+          {customers.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <div className="inline-flex overflow-hidden rounded-md border border-[#E5E7EB]">
+          {SUB_TEAMS.map((t) => (
+            <button
+              key={t}
+              onClick={() => toggleTeam(t)}
+              className={`px-3 py-1.5 text-xs ${
+                subTeams.includes(t)
+                  ? "bg-[#1B3A5C] text-white"
+                  : "bg-white text-[#374151] hover:bg-[#F9FAFB]"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        {subTeams.length > 0 && (
+          <button
+            onClick={() => setSubTeams([])}
+            className="text-[10px] text-[#6B7280] underline hover:text-[#111827]"
+          >
+            Clear teams
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiBox
-          label="Loads"
-          value={loadingKpi ? "…" : fmtCount(k?.loads)}
-        />
-        <KpiBox
-          label="Revenue"
-          value={loadingKpi ? "…" : fmtUsd(k?.revenue)}
-        />
-        <KpiBox
-          label="Profit"
-          value={loadingKpi ? "…" : fmtUsd(k?.profit)}
-        />
-        <KpiBox
-          label="Margin %"
-          value={loadingKpi ? "…" : fmtPct(k?.margin_pct)}
-        />
+        <KpiBox label="Loads" value={loadingKpi ? "…" : fmtCount(k?.loads)} />
+        <KpiBox label="Revenue" value={loadingKpi ? "…" : fmtUsd(k?.revenue)} />
+        <KpiBox label="Profit" value={loadingKpi ? "…" : fmtUsd(k?.profit)} />
+        <KpiBox label="Margin %" value={loadingKpi ? "…" : fmtPct(k?.margin_pct)} />
       </div>
       <div className="text-[10px] text-[#6B7280]">
-        Current week ({start} → {end}, Mon-anchored) · scope: TEAM-DFW · source:
-        xray-dfw-mng
+        {bounds.start} → {bounds.end} · scope: TEAM-DFW · GENERAL MOTORS +
+        HOMEDEPOT excluded · source: xray-dfw-mng
       </div>
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
@@ -71,7 +111,7 @@ export function Tab3TopLanes() {
               ) : lanes.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
-                    No lanes this week
+                    No lanes in this window
                   </td>
                 </tr>
               ) : (

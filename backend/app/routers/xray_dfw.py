@@ -106,6 +106,7 @@ def _scope_where(
     sub_teams: list[str],
     customer: Optional[str],
     params: list,
+    exclude_customers: Optional[list[str]] = None,
 ) -> str:
     """Common DFW-scope WHERE clauses for the budget_report_v4 load-level table.
 
@@ -114,6 +115,11 @@ def _scope_where(
     TRIM equality there since values like 'TM1' are short and storage may
     or may not pad. v4.team_id, company_id, status follow the sargable
     padded-variants pattern.
+
+    ``exclude_customers`` drops the named customers (case-insensitive
+    substring, like the OILTEX/UNILINK guards). Default ``None`` = no extra
+    exclusion, so the xray-dfw report itself is unchanged; the KAM
+    Performance Lanes tab passes ``GENERAL MOTORS,HOMEDEPOT`` per Bruno R2.
     """
     teams_param = _pad_variants(list(DFW_TEAMS), width=8)
     companies_param = _pad_variants(list(DFW_COMPANIES), width=4)
@@ -139,7 +145,19 @@ def _scope_where(
     if customer:
         params.append(customer)
         parts.append(f"{alias}.customer_name = ${len(params)}")
+    for name in exclude_customers or []:
+        params.append(f"%{name.upper()}%")
+        parts.append(
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE ${len(params)}"
+        )
     return " AND ".join(parts)
+
+
+def _parse_exclude(raw: Optional[str]) -> list[str]:
+    """Split the CSV ``exclude_customers`` query param into trimmed names."""
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
 
 
 def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
@@ -277,6 +295,7 @@ async def kpis(
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    exclude_customers: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -284,10 +303,11 @@ async def kpis(
     today = cst_today()
     m_start, m_end, _, _, _, _ = _month_bounds(today)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    exclude_list = _parse_exclude(exclude_customers)
 
     # ---- KPIs + Loss Loads ----------------------------------------------
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where("br4", sub_team_list, customer, params, exclude_list)
     params.extend([s, e])
     date_fragment = (
         f"br4.origin_actual_departure::date BETWEEN ${len(params) - 1} AND ${len(params)}"
@@ -694,14 +714,16 @@ async def by_lane(
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    exclude_customers: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    exclude_list = _parse_exclude(exclude_customers)
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where("br4", sub_team_list, customer, params, exclude_list)
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
 

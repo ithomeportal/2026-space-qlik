@@ -298,6 +298,33 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            # KAM round 2 (2026-05-26): per-lane editable annotations for the
+            # new Worst-10-Lanes and Carrier-Sales tabs. Keyed by (user_id,
+            # lane_key) so a KAM's expiration dates / action plans / comments
+            # stick to the lane even as the worst-lane list reshuffles.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_worst_lane_notes (
+                  user_id         TEXT NOT NULL,
+                  lane_key        TEXT NOT NULL,
+                  expiration_date DATE,
+                  action_plan     TEXT NOT NULL DEFAULT '',
+                  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                  PRIMARY KEY (user_id, lane_key)
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_carrier_comments (
+                  user_id    TEXT NOT NULL,
+                  lane_key   TEXT NOT NULL,
+                  comments   TEXT NOT NULL DEFAULT '',
+                  updated_at TIMESTAMPTZ DEFAULT NOW(),
+                  PRIMARY KEY (user_id, lane_key)
+                )
+                """
+            )
 
             # Bonus Calculator (2026-05-24): HR-editable roster / afterhours /
             # FX settings / month-lock. Team metrics come from the live datalake;

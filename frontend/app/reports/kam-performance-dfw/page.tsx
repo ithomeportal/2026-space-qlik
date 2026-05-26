@@ -4,12 +4,14 @@ import { Suspense, useCallback, useMemo } from "react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
+  AlertTriangle,
   ArrowLeft,
   ClipboardList,
   Loader2,
   ScrollText,
   Stethoscope,
   TrendingUp,
+  Truck,
   Users,
 } from "lucide-react"
 import { ReportGuard } from "@/components/ReportGuard"
@@ -18,13 +20,24 @@ import { Tab2Service } from "./Tab2Service"
 import { Tab3TopLanes } from "./Tab3TopLanes"
 import { Tab4CustomerDev } from "./Tab4CustomerDev"
 import { Tab5TeamDev } from "./Tab5TeamDev"
+import { Tab6WorstLanes } from "./Tab6WorstLanes"
+import { Tab7CarrierSales } from "./Tab7CarrierSales"
 
-type TabKey = "scorecards" | "service" | "lanes" | "customer-dev" | "team-dev"
+type TabKey =
+  | "scorecards"
+  | "service"
+  | "lanes"
+  | "worst-lanes"
+  | "carrier-sales"
+  | "customer-dev"
+  | "team-dev"
 
 const TABS: { k: TabKey; label: string; icon: React.ReactNode }[] = [
   { k: "scorecards", label: "Scorecards", icon: <ScrollText className="h-3.5 w-3.5" /> },
   { k: "service", label: "Service", icon: <Stethoscope className="h-3.5 w-3.5" /> },
   { k: "lanes", label: "Top 10 lanes", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+  { k: "worst-lanes", label: "Worst 10 Lanes", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+  { k: "carrier-sales", label: "Carrier Sales", icon: <Truck className="h-3.5 w-3.5" /> },
   { k: "customer-dev", label: "Customer Dev", icon: <ClipboardList className="h-3.5 w-3.5" /> },
   { k: "team-dev", label: "Team Dev", icon: <Users className="h-3.5 w-3.5" /> },
 ]
@@ -97,6 +110,8 @@ function KamPerformanceContent() {
         {tab === "scorecards" && <Tab1Scorecards />}
         {tab === "service" && <Tab2Service />}
         {tab === "lanes" && <Tab3TopLanes />}
+        {tab === "worst-lanes" && <Tab6WorstLanes />}
+        {tab === "carrier-sales" && <Tab7CarrierSales />}
         {tab === "customer-dev" && <Tab4CustomerDev />}
         {tab === "team-dev" && <Tab5TeamDev />}
       </div>

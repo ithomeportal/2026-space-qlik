@@ -1133,6 +1133,7 @@ async def _fault_rows(
     SELECT
       sc.id,
       TRIM(sc.team_id) AS team_id,
+      TRIM(sc.team_dfw) AS team_dfw,
       TRIM(sc.customer_name) AS customer_name,
       sc.{arrival_col} AS actual_arrival,
       sc.{sched_late_col} AS sched_late,
@@ -1164,6 +1165,7 @@ async def _fault_rows(
             {
                 "id": r["id"],
                 "team_id": r["team_id"],
+                "team_dfw": r["team_dfw"],
                 "customer_name": r["customer_name"],
                 "actual_arrival": iso(r["actual_arrival"]),
                 "sched_late": iso(r["sched_late"]),

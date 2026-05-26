@@ -29,20 +29,34 @@ if a row id leaks, another user can't read or mutate it.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.routers.deps import get_pool, require_report_access
+from app.clock import cst_today
+from app.datalake import pad_variants as _pad_variants
+from app.routers.deps import (
+    get_datalake_gold_pool,
+    get_pool,
+    require_report_access,
+)
 
 
 router = APIRouter(
     tags=["kam-performance-dfw"],
     prefix="/custom/kam-performance-dfw",
 )
+
+# DFW scope for the read-only datalake tabs (Worst 10 Lanes, Carrier Sales).
+# Same sargable padded-variant pattern as losses-lanes / xray-dfw.
+YEAR_START = date(2026, 1, 1)
+YEAR_END = date(2026, 12, 31)
+DFW_TEAMS = ("TEAM-DFW",)
+COMPANIES = ("TMS", "TMS3")
+OPEN_STATUSES = ("D", "P")
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +70,60 @@ def _iso(d) -> Optional[str]:
     if isinstance(d, (datetime, date)):
         return d.isoformat()
     return str(d)
+
+
+def _clamp(d: Optional[date], default: date) -> date:
+    if d is None:
+        return default
+    if d < YEAR_START:
+        return YEAR_START
+    if d > YEAR_END:
+        return YEAR_END
+    return d
+
+
+def _resolve_range(
+    rng: Optional[str],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> tuple[date, date]:
+    """YTD / MTD / WTD (Mon-anchored) / Custom — the date filter Bruno R2
+    added to the Service, Lanes and Carrier-Sales tabs. Default = MTD."""
+    today = cst_today()
+    today_clamped = max(YEAR_START, min(YEAR_END, today))
+    if rng == "ytd":
+        return YEAR_START, today_clamped
+    if rng == "wtd":
+        monday = today_clamped - timedelta(days=today_clamped.weekday())
+        return max(YEAR_START, monday), today_clamped
+    if rng == "custom":
+        s = _clamp(start_date, YEAR_START)
+        e = _clamp(end_date, YEAR_END)
+        if e < s:
+            s, e = e, s
+        return s, e
+    # default: month-to-date
+    return today_clamped.replace(day=1), today_clamped
+
+
+def _dfw_scope_where(alias: str, params: list) -> str:
+    """DFW-only v4 scope (team_id='TEAM-DFW'), mirroring losses-lanes minus the
+    multi-team selector. Excludes UNILINK + OILTEX like every other v4 report."""
+    params.append(_pad_variants(list(DFW_TEAMS), width=8))
+    p_teams = len(params)
+    params.append(_pad_variants(list(COMPANIES), width=4))
+    p_companies = len(params)
+    params.append(_pad_variants(list(OPEN_STATUSES), width=1))
+    p_status = len(params)
+    return " AND ".join(
+        [
+            f"{alias}.team_id    = ANY(${p_teams})",
+            f"{alias}.company_id = ANY(${p_companies})",
+            f"{alias}.status     = ANY(${p_status})",
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
+            f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +617,289 @@ async def delete_team_dev(
     if res.endswith(" 0"):
         raise HTTPException(status_code=404, detail="Row not found")
     return {"success": True, "data": {"deleted": True}}
+
+
+# ---------------------------------------------------------------------------
+# Tab 6 — WORST 10 LANES (Bruno R2)
+#
+# "Based on the Losses email" — the worst losing (customer, lane) pairs for
+# DFW: neg-margin loads only (margin_amt < 0), same source/ranking as the
+# daily Losses Lanes email. Metrics are computed over the neg-margin slice so
+# the numbers tie out to the email. Expiration Date + Action Plan are
+# per-user editable, keyed by (user_id, lane_key) so a KAM's notes persist
+# even as the top-10 reshuffles week to week.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/worst-lanes")
+async def worst_lanes(
+    request: Request,
+    range: Optional[str] = Query("ytd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    gold = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    params: list = []
+    where = _dfw_scope_where("b", params)
+    params.extend([s, e, limit])
+    p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
+
+    lane_sql = (
+        "NULLIF(TRIM(b.origin_city_name),'') || ', ' || "
+        "NULLIF(TRIM(b.origin_state_id),'')  || ' - ' || "
+        "NULLIF(TRIM(b.dest_city_name),'')   || ', ' || "
+        "NULLIF(TRIM(b.dest_state_id),'')"
+    )
+
+    rows = await gold.fetch(
+        f"""
+        WITH base AS (
+          SELECT
+            TRIM(b.customer_name) AS customer,
+            {lane_sql}            AS lane,
+            b.total_charge,
+            b.margin_amt
+          FROM public.mcleod_gld_budget_report_v4 b
+          WHERE {where}
+            AND b.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+            AND b.margin_amt < 0 AND b.total_charge <> 0
+        )
+        SELECT
+          customer,
+          lane,
+          COUNT(*)                   AS loads,
+          SUM(total_charge)::numeric AS revenue,
+          SUM(margin_amt)::numeric   AS profit,
+          CASE WHEN SUM(total_charge) <> 0
+               THEN SUM(margin_amt)::numeric / SUM(total_charge)::numeric * 100
+               ELSE NULL END         AS margin_pct
+        FROM base
+        WHERE customer IS NOT NULL AND lane IS NOT NULL
+        GROUP BY customer, lane
+        ORDER BY profit ASC
+        LIMIT ${p_lim}
+        """,
+        *params,
+    )
+
+    # Pull this user's saved notes once and stitch them in by lane_key.
+    notes = await get_pool(request).fetch(
+        "SELECT lane_key, expiration_date, action_plan FROM kam_worst_lane_notes WHERE user_id = $1",
+        user["sub"],
+    )
+    note_map = {
+        n["lane_key"]: {
+            "expiration_date": _iso(n["expiration_date"]),
+            "action_plan": n["action_plan"] or "",
+        }
+        for n in notes
+    }
+
+    data = []
+    for r in rows:
+        lane_key = f"{r['customer']}::{r['lane']}"
+        note = note_map.get(lane_key, {"expiration_date": None, "action_plan": ""})
+        data.append(
+            {
+                "lane_key": lane_key,
+                "customer": r["customer"],
+                "lane": r["lane"],
+                "loads": int(r["loads"] or 0),
+                "revenue": float(r["revenue"] or 0),
+                "profit": float(r["profit"] or 0),
+                "margin_pct": float(r["margin_pct"]) if r["margin_pct"] is not None else None,
+                "expiration_date": note["expiration_date"],
+                "action_plan": note["action_plan"],
+            }
+        )
+    return {
+        "success": True,
+        "data": data,
+        "meta": {"window": {"start": s.isoformat(), "end": e.isoformat()}},
+    }
+
+
+class WorstLaneNoteUpsert(BaseModel):
+    lane_key: str = Field(..., min_length=1, max_length=400)
+    expiration_date: Optional[date] = None
+    action_plan: str = Field(default="", max_length=5000)
+
+
+@router.put("/worst-lane-notes")
+async def upsert_worst_lane_note(
+    body: WorstLaneNoteUpsert,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    row = await pool.fetchrow(
+        """
+        INSERT INTO kam_worst_lane_notes (user_id, lane_key, expiration_date, action_plan, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (user_id, lane_key) DO UPDATE
+          SET expiration_date = EXCLUDED.expiration_date,
+              action_plan     = EXCLUDED.action_plan,
+              updated_at      = NOW()
+        RETURNING lane_key, expiration_date, action_plan, updated_at
+        """,
+        user["sub"],
+        body.lane_key,
+        body.expiration_date,
+        body.action_plan,
+    )
+    return {
+        "success": True,
+        "data": {
+            "lane_key": row["lane_key"],
+            "expiration_date": _iso(row["expiration_date"]),
+            "action_plan": row["action_plan"] or "",
+            "updated_at": _iso(row["updated_at"]),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 7 — CARRIER SALES (Bruno R2)
+#
+# Per-lane carrier intel for DFW: lane = origin_name - dest_name (from v4),
+# the 3 most-recently-used distinct carriers, and avg(override_pay_amt) from
+# the dispatchers table. dispatchers ⨝ v4 on (id, company_id) — the same join
+# the carrier-risk report uses. Comments are per-user editable, keyed by
+# (user_id, lane_key).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/carrier-sales")
+async def carrier_sales(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    limit: int = Query(100, ge=1, le=300),
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    gold = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    params: list = []
+    # Scope predicates live on the dispatchers alias ``d``.
+    params.append(_pad_variants(list(DFW_TEAMS), width=8))
+    p_teams = len(params)
+    params.extend([s, e, limit])
+    p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
+
+    rows = await gold.fetch(
+        f"""
+        WITH base AS (
+          SELECT
+            (TRIM(b.origin_name) || ' - ' || TRIM(b.dest_name)) AS lane,
+            d.carrier_name,
+            d.override_pay_amt,
+            d.origin_actual_departure AS dep
+          FROM public.mcleod_gld_dispatchers d
+          JOIN public.mcleod_gld_budget_report_v4 b
+            ON d.id = b.id AND d.company_id = b.company_id
+          WHERE d.team_id = ANY(${p_teams})
+            AND d.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+            AND d.carrier_name <> 'DUMMY TRANSPORTATION'
+            AND UPPER(COALESCE(d.customer_name,'')) NOT LIKE '%UNILINK%'
+            AND UPPER(COALESCE(d.customer_name,'')) NOT LIKE '%OILTEX%'
+            AND TRIM(COALESCE(b.origin_name,'')) <> ''
+            AND TRIM(COALESCE(b.dest_name,'')) <> ''
+        ),
+        carrier_latest AS (
+          SELECT lane, carrier_name, MAX(dep) AS last_dep
+          FROM base
+          WHERE carrier_name IS NOT NULL AND TRIM(carrier_name) <> ''
+          GROUP BY lane, carrier_name
+        ),
+        carrier_ranked AS (
+          SELECT lane, carrier_name,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY lane ORDER BY last_dep DESC NULLS LAST, carrier_name
+                 ) AS rn
+          FROM carrier_latest
+        ),
+        carriers_top3 AS (
+          SELECT lane, string_agg(carrier_name, ', ' ORDER BY rn) AS carriers
+          FROM carrier_ranked
+          WHERE rn <= 3
+          GROUP BY lane
+        ),
+        lane_agg AS (
+          SELECT lane,
+                 COUNT(*)                    AS movements,
+                 AVG(override_pay_amt)::numeric AS avg_cost
+          FROM base
+          GROUP BY lane
+        )
+        SELECT la.lane, c.carriers, la.avg_cost, la.movements
+        FROM lane_agg la
+        LEFT JOIN carriers_top3 c USING (lane)
+        ORDER BY la.movements DESC, la.lane
+        LIMIT ${p_lim}
+        """,
+        *params,
+    )
+
+    comments = await get_pool(request).fetch(
+        "SELECT lane_key, comments FROM kam_carrier_comments WHERE user_id = $1",
+        user["sub"],
+    )
+    comment_map = {c["lane_key"]: (c["comments"] or "") for c in comments}
+
+    data = [
+        {
+            "lane_key": r["lane"],
+            "lane": r["lane"],
+            "carriers": r["carriers"] or "—",
+            "avg_cost": float(r["avg_cost"]) if r["avg_cost"] is not None else None,
+            "movements": int(r["movements"] or 0),
+            "comments": comment_map.get(r["lane"], ""),
+        }
+        for r in rows
+    ]
+    return {
+        "success": True,
+        "data": data,
+        "meta": {"window": {"start": s.isoformat(), "end": e.isoformat()}},
+    }
+
+
+class CarrierCommentUpsert(BaseModel):
+    lane_key: str = Field(..., min_length=1, max_length=400)
+    comments: str = Field(default="", max_length=5000)
+
+
+@router.put("/carrier-comments")
+async def upsert_carrier_comment(
+    body: CarrierCommentUpsert,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    row = await pool.fetchrow(
+        """
+        INSERT INTO kam_carrier_comments (user_id, lane_key, comments, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (user_id, lane_key) DO UPDATE
+          SET comments   = EXCLUDED.comments,
+              updated_at = NOW()
+        RETURNING lane_key, comments, updated_at
+        """,
+        user["sub"],
+        body.lane_key,
+        body.comments,
+    )
+    return {
+        "success": True,
+        "data": {
+            "lane_key": row["lane_key"],
+            "comments": row["comments"] or "",
+            "updated_at": _iso(row["updated_at"]),
+        },
+    }
