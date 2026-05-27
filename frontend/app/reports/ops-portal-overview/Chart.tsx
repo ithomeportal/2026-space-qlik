@@ -7,6 +7,7 @@ import {
   Brush,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Line,
   ReferenceLine,
   ResponsiveContainer,
@@ -50,6 +51,21 @@ const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
 
 // Series legend keys — toggled on/off by clicking the legend pills.
 type SeriesKey = "bars" | "budget" | "avgLq" | "projected" | "losses"
+
+// Compact data-point labels on the bars (Bruno R4 "show the data points").
+// Full USD on every bar overlaps; compact ($210K) keeps the chart readable.
+const usdCompact = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
+function labelFmt(measure: Measure, v: number): string {
+  if (!Number.isFinite(v) || v === 0) return ""
+  if (measure === "margin_pct") return `${v.toFixed(1)}%`
+  if (measure === "volume") return fmtCount(v)
+  return usdCompact.format(v)
+}
 
 export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const cf = { team: filters.team, customer: filters.customer, loadType }
@@ -216,20 +232,47 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmt(Number(v))} />
               <Tooltip
-                formatter={(v, name) => {
-                  const num = Number(v)
-                  if (measure === "margin_pct") return fmtPct(num)
-                  if (measure === "volume" && (name === "Budget" || name === "Losses x M" || name === measureMeta.label))
-                    return fmtCount(num)
-                  return fmtUsd(num)
+                content={({ active, payload }) => {
+                  if (!active || !payload || !payload.length) return null
+                  const row = payload[0].payload as Record<string, number> & { label?: string }
+                  // Bruno R4: fixed legend order — Actual · Budget · Losses · Avg · Projected.
+                  const items = [
+                    { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: Number(row[measure] ?? 0) },
+                    { key: "budget" as SeriesKey,    label: "Budget",    color: "#16A34A", value: Number(row[budgetKey] ?? 0) },
+                    { key: "losses" as SeriesKey,    label: "Losses",    color: "#DC2626", value: Number(row[lossesKey] ?? 0) },
+                    { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
+                    { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
+                  ].filter((i) => !isHidden(i.key))
+                  return (
+                    <div className="rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-md">
+                      <div className="mb-1 font-semibold text-[#111827]">{row.label}</div>
+                      {items.map((i) => (
+                        <div key={i.key} className="flex items-center justify-between gap-4">
+                          <span className="flex items-center gap-1.5">
+                            <span className="inline-block h-2 w-2 rounded-full" style={{ background: i.color }} />
+                            {i.label}
+                          </span>
+                          <span className="font-medium tabular-nums text-[#111827]">{fmt(i.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 }}
               />
               {!isHidden("bars") && (
                 <Bar
                   dataKey={measure}
-                  name={measureMeta.label}
+                  name="Actual"
                   fill="#7DD3FC"
-                />
+                >
+                  <LabelList
+                    dataKey={measure}
+                    position="top"
+                    fontSize={9}
+                    fill="#475569"
+                    formatter={(v) => labelFmt(measure, Number(v))}
+                  />
+                </Bar>
               )}
               {!isHidden("budget") && (
                 <Line

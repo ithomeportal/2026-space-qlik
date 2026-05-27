@@ -1,6 +1,7 @@
 "use client"
 
-import { Loader2 } from "lucide-react"
+import { useState } from "react"
+import { Loader2, Plus } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -13,6 +14,7 @@ import {
   useOppTeamVariance,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
+import { TeamWeeklyModal } from "./TeamWeeklyModal"
 
 interface Props {
   filters: OppFilters
@@ -155,9 +157,27 @@ function CustomerLosses({ filters }: { filters: OppFilters }) {
 function TeamPerformance({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppTeamPerformance(filters)
   const v = data?.data
+  const [weeklyOpen, setWeeklyOpen] = useState(false)
   // Bruno round-2 (2026-05-13): OTP/OTD coloured bands + highlight Volume/Profit/Margin.
+  // Bruno R4 (2026-05-27): "+" opens the Team Weekly Performance modal.
   return (
-    <PanelCard title="Team Monthly Performance" icon="📈" loading={isLoading} error={error}>
+    <PanelCard
+      title="Team Monthly Performance"
+      icon="📈"
+      loading={isLoading}
+      error={error}
+      action={
+        <button
+          type="button"
+          onClick={() => setWeeklyOpen(true)}
+          title="Team Weekly Performance — last 5 weeks"
+          className="flex h-5 w-5 items-center justify-center rounded border border-[#BFDBFE] bg-white text-[#2563EB] hover:bg-[#EFF6FF]"
+          aria-label="Open Team Weekly Performance"
+        >
+          <Plus className="h-3 w-3" />
+        </button>
+      }
+    >
       <table className="w-full text-xs">
         <tbody>
           <Row label="Customers"   value={v ? fmtCount(v.customers)   : "—"} />
@@ -182,6 +202,7 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
           <Row label="Lane Attrition %" value={v ? fmtPct(v.lane_attr_pct) : "—"} />
         </tbody>
       </table>
+      {weeklyOpen && <TeamWeeklyModal filters={filters} onClose={() => setWeeklyOpen(false)} />}
     </PanelCard>
   )
 }
@@ -226,12 +247,14 @@ function PanelCard({
   icon,
   loading,
   error,
+  action,
   children,
 }: {
   title: string
   icon?: string
   loading?: boolean
   error?: unknown
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -239,6 +262,7 @@ function PanelCard({
       <div className="flex items-center gap-2 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-sm font-semibold text-[#3B82F6]">
         {icon && <span aria-hidden>{icon}</span>}
         <span>{title}</span>
+        {action && <span className="ml-1">{action}</span>}
         {loading && <Loader2 className="ml-auto h-3 w-3 animate-spin text-[#6B7280]" />}
       </div>
       {error ? (

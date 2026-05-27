@@ -9,6 +9,7 @@ import {
   fmtUsdSigned,
   useOppActuals,
   type OppActualsRow,
+  type OppActualsTotals,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
 
@@ -18,7 +19,8 @@ interface Props {
 
 // Bruno round 3 (2026-05-19): per-cell display mode toggle —
 // only the chosen sub-row renders inside each Volume/Revenue/Profit/Margin cell.
-type Mode = "production" | "budget" | "variance"
+// Bruno R4 (2026-05-27): added "all" — Production / Budget / Variance stacked.
+type Mode = "production" | "budget" | "variance" | "all"
 
 // Single source of truth for sortable column metadata.
 // `accessor` returns the numeric value used for sort comparison.
@@ -39,13 +41,13 @@ const COLUMNS: {
   { k: "customer_name", label: "Customer Name", align: "left",   numeric: false,
     accessor: (r) => (r.customer_name || "").toUpperCase() },
   { k: "vol", label: "Volume", align: "center", numeric: true,
-    accessor: (r, m) => m === "production" ? r.vol : m === "budget" ? r.vol_budget : r.vol_var },
+    accessor: (r, m) => m === "budget" ? r.vol_budget : m === "variance" ? r.vol_var : r.vol },
   { k: "rev", label: "Revenue", align: "center", numeric: true,
-    accessor: (r, m) => m === "production" ? r.rev : m === "budget" ? r.rev_budget : r.rev_var },
+    accessor: (r, m) => m === "budget" ? r.rev_budget : m === "variance" ? r.rev_var : r.rev },
   { k: "prof", label: "Profit", align: "center", numeric: true,
-    accessor: (r, m) => m === "production" ? r.prof : m === "budget" ? r.prof_budget : r.prof_var },
+    accessor: (r, m) => m === "budget" ? r.prof_budget : m === "variance" ? r.prof_var : r.prof },
   { k: "margin", label: "Margin", align: "center", numeric: true,
-    accessor: (r, m) => m === "production" ? r.margin_pct : m === "budget" ? r.margin_budget_pct : r.margin_var_pct },
+    accessor: (r, m) => m === "budget" ? r.margin_budget_pct : m === "variance" ? r.margin_var_pct : r.margin_pct },
   { k: "otp",  label: "OTP %",   align: "right", numeric: true, accessor: (r) => r.otp_pct },
   { k: "otd",  label: "OTD %",   align: "right", numeric: true, accessor: (r) => r.otd_pct },
   { k: "rev_x_l",  label: "Rev. x L",  align: "right", numeric: true, accessor: (r) => r.rev_x_l },
@@ -64,6 +66,7 @@ export function Actuals({ filters }: Props) {
   // Fetch with a stable backend sort; we re-sort client-side for column clicks.
   const { data, isLoading, error } = useOppActuals(filters, { sort: "revenue_desc", limit: 200 })
   const rawRows: OppActualsRow[] = useMemo(() => data?.data ?? [], [data])
+  const totals = data?.meta?.totals as OppActualsTotals | undefined
 
   const rows = useMemo(() => {
     const col = COLUMNS.find((c) => c.k === sortKey)
@@ -122,6 +125,24 @@ export function Actuals({ filters }: Props) {
                   </SortableTh>
                 ))}
               </tr>
+              {totals && (
+                <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
+                  <td className="px-2 py-1.5">TOTAL</td>
+                  <ModeCell mode={mode} kind="count"
+                    production={totals.vol} budget={totals.vol_budget} variance={totals.vol_var} />
+                  <ModeCell mode={mode} kind="usd"
+                    production={totals.rev} budget={totals.rev_budget} variance={totals.rev_var} />
+                  <ModeCell mode={mode} kind="usd"
+                    production={totals.prof} budget={totals.prof_budget} variance={totals.prof_var} />
+                  <ModeCell mode={mode} kind="pct"
+                    production={totals.margin_pct} budget={totals.margin_budget_pct} variance={totals.margin_var_pct} />
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otp_pct)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otd_pct)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev_x_l)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof_x_l)}</td>
+                  <td className="px-2 py-1.5" colSpan={4} />
+                </tr>
+              )}
             </thead>
             <tbody>
               {rows.length === 0 ? (
@@ -167,6 +188,7 @@ export function Actuals({ filters }: Props) {
 
 function ModePills({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const opts: { k: Mode; label: string }[] = [
+    { k: "all",        label: "All" },
     { k: "production", label: "Production" },
     { k: "budget",     label: "Budget" },
     { k: "variance",   label: "Variance per Cell" },
@@ -249,6 +271,20 @@ function ModeCell({
     : kind === "pct" ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`
     : fmtUsdSigned(v)
 
+  if (mode === "all") {
+    // Bruno R4: stacked Production / Budget / Variance in one cell.
+    return (
+      <td className="px-2 py-1.5 text-center tabular-nums">
+        <div className={`font-semibold text-[#1B3A5C] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
+          {fmt(production)}
+        </div>
+        <div className="text-[10px] text-[#6B7280]">{fmt(budget)}</div>
+        <div className={`text-[10px] font-medium ${variance < 0 ? "text-[#DC2626]" : "text-[#16A34A]"}`}>
+          {fmtSigned(variance)}
+        </div>
+      </td>
+    )
+  }
   if (mode === "production") {
     return (
       <td className="px-2 py-1.5 text-center tabular-nums">

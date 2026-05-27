@@ -5,15 +5,19 @@ import Link from "next/link"
 import { ArrowLeft, LayoutGrid, Loader2 } from "lucide-react"
 import { ReportGuard } from "@/components/ReportGuard"
 import {
+  useOppActuals,
   useOppFilters,
   type LoadType,
   type OppFilters,
   type OppRange,
 } from "@/lib/ops-portal-overview-api"
 import { ComboChart } from "./Chart"
+import { ServiceChart } from "./ServiceChart"
 import { SidePanels } from "./SidePanels"
+import { ProductionByCustomer } from "./ProductionByCustomer"
 import { Actuals } from "./Actuals"
 import { ActualsByLane } from "./ActualsByLane"
+import { ByOrder } from "./ByOrder"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -78,6 +82,16 @@ function OpsPortalOverviewContent() {
     return filterOptions.customers.filter((c) => c.toLowerCase().includes(q)).slice(0, 8)
   }, [customerInput, filterOptions])
 
+  // Bruno R4 (2026-05-27): "last auto-refresh" stamp. Shares the /actuals cache
+  // key with the Actuals table, so this adds no extra fetch.
+  const { dataUpdatedAt } = useOppActuals(filters, { sort: "revenue_desc", limit: 200 })
+  const refreshedLabel =
+    dataUpdatedAt > 0
+      ? new Date(dataUpdatedAt).toLocaleString("en-US", {
+          month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+        })
+      : "—"
+
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
       {/* Top bar */}
@@ -92,13 +106,18 @@ function OpsPortalOverviewContent() {
           <h1 className="text-sm font-semibold text-[#1B3A5C]">Ops Portal - Overview</h1>
           <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">CORP</span>
         </div>
-        <div className="ml-auto text-xs text-[#6B7280]">
-          {appliedDates.startDate} → {appliedDates.endDate}
-          {" · "}
-          Team: {team || "All"}
-          {" · "}
-          Customer: {customer || "All"}
-          {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
+        <div className="ml-auto flex flex-col items-end text-xs text-[#6B7280]">
+          <div>
+            {appliedDates.startDate} → {appliedDates.endDate}
+            {" · "}
+            Team: {team || "All"}
+            {" · "}
+            Customer: {customer || "All"}
+            {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
+          </div>
+          <div className="text-[11px] text-[#9CA3AF]">
+            Last auto-refreshed: <span className="font-medium text-[#6B7280]">{refreshedLabel}</span>
+          </div>
         </div>
       </div>
 
@@ -226,8 +245,11 @@ function OpsPortalOverviewContent() {
           <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
           <SidePanels filters={filters} />
         </div>
+        <ServiceChart filters={filters} loadType={loadType} />
+        <ProductionByCustomer filters={filters} />
         <Actuals filters={filters} />
         <ActualsByLane filters={filters} />
+        <ByOrder filters={filters} />
       </div>
     </div>
   )

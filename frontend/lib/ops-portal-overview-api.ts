@@ -221,6 +221,79 @@ export interface OppLaneRow {
   prof_x_l: number
 }
 
+// Bruno R4 (2026-05-27): totals rows surfaced in meta for the bottom tables.
+export interface OppActualsTotals {
+  vol: number; vol_budget: number; vol_var: number
+  rev: number; rev_budget: number; rev_var: number
+  prof: number; prof_budget: number; prof_var: number
+  margin_pct: number; margin_budget_pct: number; margin_var_pct: number
+  otp_pct: number; otd_pct: number; rev_x_l: number; prof_x_l: number
+}
+
+export interface OppLaneTotals {
+  vol: number; rev: number; prof: number; margin_pct: number
+  loss_loads: number; loss_profit: number
+  otp_pct: number; otd_pct: number; rev_x_l: number; prof_x_l: number
+}
+
+export interface OppOrderTotals {
+  n_orders: number; revenue: number; profit: number; margin_pct: number
+}
+
+// Bruno R4: per-bucket OTP/OTD time series ("Service" KPI MANAGEMENT chart).
+export interface OppServiceBucket {
+  bucket_start: string
+  volume: number
+  otp_pct: number
+  otd_pct: number
+  lates_pu: number
+  lates_del: number
+}
+export interface OppService {
+  grain: OppGrain
+  buckets: OppServiceBucket[]
+  today: string
+}
+
+// Bruno R4: load-level Production rows ("By Order" table).
+export interface OppOrderRow {
+  order_id: string
+  team_id: string
+  departure: string
+  customer_name: string
+  lane: string
+  revenue: number
+  profit: number
+  margin_pct: number
+}
+
+// Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
+export interface OppWeekPerf {
+  start: string
+  end: string
+  label: string
+  customers: number
+  lanes: number
+  volume: number
+  revenue: number
+  profit: number
+  margin_pct: number
+  rev_x_l: number
+  prof_x_l: number
+  team_ut: number
+  otp_pct: number
+  lates_pu: number
+  otd_pct: number
+  lates_del: number
+  savings: number
+  over_pay: number
+  net_savings: number
+  loss_loads: number
+  profit_loss: number
+  cust_attr_pct: number
+  lane_attr_pct: number
+}
+
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
@@ -342,6 +415,55 @@ export function useOppActualsByLane(
       apiFetch<OppLaneRow[]>(
         `${BASE}/actuals-by-lane${qs(f, { sort, limit: String(limit) })}`,
       ),
+    ...RETRY,
+  })
+}
+
+// Bruno R4: "Service" KPI MANAGEMENT chart — OTP/OTD over the grain.
+export function useOppService(
+  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  grain: OppGrain = "month",
+) {
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    queryKey: ["opp-service", grain, f.team || "", f.customer || "", f.loadType || ""],
+    queryFn: () => apiFetch<OppService>(`${BASE}/service${qs(filters, { grain })}`),
+    ...RETRY,
+  })
+}
+
+// Bruno R4: "By Order" load-level table — server-side sort on every column.
+export function useOppByOrder(
+  f: OppFilters,
+  opts?: { sort?: string; limit?: number },
+) {
+  const sort = opts?.sort ?? "revenue_desc"
+  const limit = opts?.limit ?? 500
+  return useQuery({
+    queryKey: [
+      "opp-by-order",
+      f.range, f.startDate, f.endDate,
+      f.team, f.customer, f.loadType,
+      sort, limit,
+    ],
+    queryFn: () =>
+      apiFetch<OppOrderRow[]>(
+        `${BASE}/by-order${qs(f, { sort, limit: String(limit) })}`,
+      ),
+    ...RETRY,
+  })
+}
+
+// Bruno R4: "Team Weekly Performance" modal data.
+export function useOppTeamWeekly(
+  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  enabled: boolean,
+) {
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    queryKey: ["opp-team-weekly", f.team || "", f.customer || "", f.loadType || ""],
+    queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${BASE}/team-weekly-performance${qs(filters)}`),
+    enabled,
     ...RETRY,
   })
 }
