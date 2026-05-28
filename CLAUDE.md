@@ -1,7 +1,12 @@
-# UNILINK Space (Analytics Hub) — Role-Based Qlik Dashboard Portal
+# UNILINK Space (Analytics Hub) — Role-Based Analytics Portal
 
 > Detailed specs live in `docs/SPEC-*.md` (local only — fully gitignored).
 > See [Spec Files](#spec-files) at the bottom for the index.
+>
+> **Qlik fully decommissioned 2026-05-28** — the portal now serves only
+> code-made (custom) reports. Qlik embedding, the TV display, and all 36
+> Qlik catalog rows were removed. (See `docs/SPEC-QLIK.md` for the archived
+> integration notes.)
 
 ---
 
@@ -26,9 +31,8 @@
 
 ### Security (Non-Negotiable)
 - NO hardcoded secrets — all via environment variables
-- Qlik JWTs: 60-min expiry, silent refresh before expiry
 - Rate limiting: 300 req/min standard, 10 req/min for token generation
-- CSP allows: `*.qlikcloud.com`, `cdn.qlikcloud.com`, `cdn.jsdelivr.net`, `login.qlik.com`, `*.launchdarkly.com`, `events.launchdarkly.com`, `api.qlikdataengineering.com`, `sqs.us-east-1.amazonaws.com`, `two026-space-qlik-back.onrender.com`
+- CSP allows: `cdn.jsdelivr.net`, `two026-space-qlik-back.onrender.com`, fonts.googleapis/gstatic (Qlik origins removed 2026-05-28)
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: `"resend"`, NOT `"email"`)
 - Domain: use `.com` subdomains (not `.space` TLDs — Google Safe Browsing flags them)
@@ -61,18 +65,14 @@
 - `next build` is stricter than `tsc` — always `npm run build` before pushing. See `docs/SPEC-CODE-RULES.md` §14
 
 ### Code-Made Reports (cross-cutting — full detail in `docs/SPEC-CODE-RULES.md` + `docs/SPEC-CUSTOM-REPORTS.md`)
-- `reports.report_type` (`'qlik'`|`'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path` when custom
+- ALL reports are now code-made. `reports.report_type` (always `'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path`
 - **4-place mirror for every new report**: `CUSTOM_REPORTS` in `seed.py` · `REPORT_MAP` in `ReportIcons.tsx` · `<ReportGuard reportKey>` · backend `require_report_access("<key>")`. `role_report_access` is the single source of truth (admin UI `/admin/reports`)
 - Endpoints under `/api/custom/<feature>/...`; external DBs get their own `asyncpg` pool + env var via `get_*_pool` in `routers/deps.py`
 - Key SQL/code rules (SPEC-CODE-RULES §): no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37
+- Vestigial `qlik_app_id`/`qlik_sheet_id`/`use_classic` columns remain on `reports` (always NULL) — harmless; dropping them is tangled with boot-time DDL
 
-### Qlik Embedding (full detail — `docs/SPEC-QLIK.md`)
-- `@qlik/embed-web-components` with `auth-type="cookie"` (NOT `"jwt"`); ALL users share ONE Qlik identity (`portal-viewer@unilinktransportation.com`)
-- Session pre-exchange `POST /login/jwt-session` before render; Promise singleton + 3 retries. JWT claims incl. mandatory `nbf`. Classic Embed toggle for Dashboard Bundle objects
-- **TV Display** `/dfw-podium`: standalone route (raw HTML), JWT→cookie via `/api/qlik/tv-token` + `TV_SECRET`, hourly refresh (RiseVision)
-
-### Responsive Mobile
-- <1920px = mobile mode → only `(Mob)` Qlik reports; `is_mobile` column + `useIsMobile()` hook
+### Backend keep-warm (Render free tier)
+- Render spins the backend down after ~15 min idle (30-60s cold start → first page load shows empty reports). Keep it warm with `.github/workflows/keepalive.yml` (pings `/api/health` every 5 min). The Vercel cron in `vercel.json` is a daily-only backstop (Hobby plan caps crons at once/day). See `docs/SPEC-RELIABILITY.md`
 
 ### Data, Seeding & TagRoles (full detail — `docs/SPEC-DATA.md` + `docs/SPEC-ADMIN.md`)
 - Seed idempotent (`ON CONFLICT … DO UPDATE`); never `dict.pop()` module constants (use `.get()`); auto-seed when `role_report_access` empty; `seed_custom_reports(pool)` runs every startup so a new `CUSTOM_REPORTS` entry ships itself. Router order: search BEFORE reports
@@ -81,7 +81,7 @@
 
 ### Scheduled Jobs & Reliability (full detail — `docs/SPEC-RELIABILITY.md`)
 - `daily_losses_alert` 07:00 CST (Resend); `daily_rfp_digest` 17:30 CST Mon-Fri (MS Graph, `admin-ms-api` app). Reuse `FONT_STACK`/`MONO_STACK` for HTML email (Outlook reset)
-- Render free tier cold-starts 30–60s; Vercel cron pings `/api/health` every 10 min; proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
+- Render free tier cold-starts 30–60s; **GitHub Actions `keepalive.yml` pings `/api/health` every 5 min** (primary keep-warm — the Vercel `*/10` cron is a daily-only backstop since Hobby caps crons at once/day); proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
 - App favicons: tries `/icon.svg`→`/favicon.svg`→`/favicon.ico`→HTML `<link>`; stored as base64 data URIs in `icon_data`
 
 ---
@@ -91,18 +91,15 @@
 1. **Email Code Auth** — 8-digit code via Resend, NextAuth session
 2. **3-Column Home** — TagRole filters | Reports | Apps, sorted by usage
 3. **TagRole-Based Access** — Reports filtered by TagRole; Apps visible to all
-4. **Responsive Mobile** — <1920px forces list view + `(Mob)` reports
-5. **Viewer-Only Embed** — `analytics/sheet` with toolbar off, Viewers group JWT
-6. **Full-Page Embed** — `/reports/[id]` 100vh, auto-picks classic vs analytics
-7. **Inline Search** — DB-backed, title/description/note/tags, 300ms debounce
-8. **Admin Console** — Reports/Apps/TagRoles/Users CRUD + matrix view
-9. **Apps (External Links)** — Favicon-iconed links, visible to all users
-10. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
-11. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
-12. **Classic Embed Mode** — Per-report toggle for Dashboard Bundle reports
-13. **TV Display** — `/dfw-podium` standalone Qlik fullscreen for RiseVision
-14. **Keep-Alive Cron** — 10-min backend ping to prevent Render cold starts
-15. **Code-Made Reports** — Non-Qlik reports via `report_type='custom'`. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
+4. **Inline Search** — DB-backed, title/description/note/tags, 300ms debounce
+5. **Admin Console** — Reports/Apps/TagRoles/Users CRUD + matrix view (report rows are code-seeded; admin manages access/metadata, not creation)
+6. **Apps (External Links)** — Favicon-iconed links, visible to all users
+7. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
+8. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
+9. **Keep-Alive** — GitHub Actions pings `/api/health` every 5 min to prevent Render cold starts
+10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
+
+> _Removed 2026-05-28 (Qlik decommission): Viewer-Only Embed, Full-Page Qlik Embed, Classic Embed Mode, TV Display (`/dfw-podium`), Responsive `(Mob)` Qlik reports._
 
 ---
 
@@ -115,8 +112,7 @@
 | State | React Query (TanStack) |
 | Backend | FastAPI (Python) on Render |
 | Auth | NextAuth.js v5 beta-30 (Resend, JWT strategy) |
-| Scheduler | APScheduler (daily user sync + email digests) + Vercel Cron (keep-alive) |
-| Qlik Embed | `@qlik/embed-web-components` with cookie auth |
+| Scheduler | APScheduler (daily user sync + email digests) + GitHub Actions (keep-alive, every 5 min) |
 | Database | PostgreSQL (Aiven) |
 | Search | PostgreSQL ILIKE |
 | Email | Resend + MS Graph (admin-ms-api app) |
@@ -130,27 +126,25 @@ frontend/
   app/
     layout.tsx
     page.tsx                     # Home: search + 3-column grid
-    reports/[id]/page.tsx        # Full-screen Qlik embed
+    reports/[id]/page.tsx        # Redirects to the report's custom_path
     reports/<custom>/page.tsx    # Code-made report (one folder per report)
     admin/
       layout.tsx                 # Admin sidebar
       page.tsx                   # Usage analytics
-      reports/page.tsx           # Report CRUD + TagRole assignment
+      reports/page.tsx           # Report metadata + TagRole assignment (no creation)
       apps/page.tsx              # App CRUD
       roles/page.tsx             # TagRole CRUD
       users/page.tsx             # User list
       users/[id]/page.tsx        # User detail + access matrix
-    dfw-podium/route.ts          # TV display (JWT→cookie)
     api/auth/[...nextauth]/      # NextAuth handlers
     api/proxy/[...path]/route.ts # Backend proxy w/ retry logic
-    api/cron/keepalive/route.ts  # Vercel cron → backend /api/health
+    api/cron/keepalive/route.ts  # Vercel cron → backend /api/health (daily backstop)
     (auth)/login/page.tsx
   components/
     SearchBar.tsx
     ReportGrid.tsx
     ReportCard.tsx
     ReportGuard.tsx              # role_report_access gate
-    QlikEmbed.tsx                # Session exchange + retry + singleton
     Providers.tsx                # React Query w/ 5× retry, skip 401/403
   lib/
     auth.ts
@@ -158,7 +152,8 @@ frontend/
     use-is-mobile.ts
     use-debounce.ts
   next.config.mjs                # CSP headers
-  vercel.json                    # Cron schedule
+  vercel.json                    # Cron schedule (daily backstop keep-alive)
+.github/workflows/keepalive.yml  # Primary keep-warm: pings /api/health every 5 min
 
 backend/
   app/
@@ -168,7 +163,6 @@ backend/
     routers/
       deps.py                    # require_user / require_admin / require_report_access / pool factories
       reports.py                 # /api/reports, /api/apps
-      qlik.py                    # Viewer + TV token endpoints
       search.py                  # /api/reports/search
       preferences.py             # /api/user/preferences
       admin.py                   # Admin CRUD + seed + sync
@@ -195,9 +189,8 @@ NEXTAUTH_SECRET=<secret>
 DATABASE_URL=postgresql://...
 RESEND_API_KEY=<secret>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
-NEXT_PUBLIC_QLIK_TENANT=mb01txe2h9rovgh.us.qlikcloud.com
-TV_SECRET=<shared with backend>
 ```
+> Removed 2026-05-28: `NEXT_PUBLIC_QLIK_TENANT`, `TV_SECRET` (Qlik decommission).
 
 ### Backend (Render)
 ```
@@ -207,13 +200,8 @@ AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — Track Award Loads, Perfor
 FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — IT Tickets Mgmt; percent-encode $ → %24>
 FINANCIAL_DATABASE_URL=<UNLK-Financial DB (read-only) — exchange_rates (Banxico FIX=DOF); OPTIONAL, only prefills Bonus Calculator FX suggestion; percent-encode $ → %24>
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
-QLIK_TENANT_URL=https://mb01txe2h9rovgh.us.qlikcloud.com
-QLIK_PRIVATE_KEY=<secret>
-QLIK_ISSUER=https://analytics-hub.unilinkportal.com
-QLIK_KEY_ID=analytics-hub-key-1
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app
 SEED_SECRET=<secret>
-TV_SECRET=<shared with frontend>
 RESEND_API_KEY=<shared with frontend — daily Losses Lanes email>
 SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>
 LB123_CLIENT_ID=<123LoadBoard OAuth client id>
@@ -224,6 +212,7 @@ MS_CLIENT_ID=<admin-ms-api client id>
 MS_CLIENT_SECRET=<admin-ms-api secret — expires 2027-12-30>
 MS_SEND_FROM=ithome@unilinktransportation.com
 ```
+> Removed 2026-05-28: `QLIK_TENANT_URL`, `QLIK_PRIVATE_KEY`, `QLIK_ISSUER`, `QLIK_KEY_ID`, `TV_SECRET` (Qlik decommission). These can be deleted from the Render dashboard — the code no longer reads them (leaving them is harmless).
 
 > **Note**: Use the same read-only role (`sa_dfrodriguez`) for
 > `SAVINGS_DATABASE_URL`, `AUTOMATIONS_DATABASE_URL`, and
@@ -240,19 +229,17 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 - **Users** — TagRoles assigned at `/admin/users/[id]` matrix
 - **Home filters** — TagRoles act as filter buttons (not access control)
 - **No auto-assign** — TagRoles are 100% manual
-- **Admins** — dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned); can edit Qlik App/Sheet IDs
+- **Admins** — dfrodriguez, kmeneses, msalazarm, dcastrog (admin role auto-assigned)
 - **Single source of truth** — `role_report_access` table (admin UI at `/admin/reports`); both `<ReportGuard>` and backend `require_report_access(...)` read it. See `docs/SPEC-CODE-RULES.md` §15
 
 ---
 
-## Qlik Tenant
+## Qlik Tenant — DECOMMISSIONED 2026-05-28
 
-- **Tenant**: `mb01txe2h9rovgh.us.qlikcloud.com`
-- **Tenant ID**: `ZC6dict00GLAZhISVRVWKm4d-l105j0n`
-- **JWT IdP ID**: `69b30b03dbb54989a11adb6b`
-- **Viewers Group ID**: `69b4c6eec98c45424617135b` (consumer on all shared spaces)
-- **Web Integration ID**: `UcOYHRHZf7W4ydusUB3cJPin3HHOPnit`
-- 19 desktop + 12 mobile apps across 7 spaces (see `docs/SPEC-QLIK-INVENTORY.md`)
+Qlik is no longer connected to this app. The tenant
+(`mb01txe2h9rovgh.us.qlikcloud.com`) and its apps still exist in Qlik Cloud
+but the portal no longer embeds, authenticates to, or references them. Archived
+tenant/IdP/app details are in `docs/SPEC-QLIK.md` + `docs/SPEC-QLIK-INVENTORY.md`.
 
 ---
 
@@ -273,8 +260,8 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 |------|----------|
 | `docs/SPEC-AUTH.md` | Auth flow, email code, NextAuth, roles, user seeding |
 | `docs/SPEC-UI.md` | Design system, colors, typography, 3-column layout |
-| `docs/SPEC-QLIK.md` | Qlik embed, JWT, IdP setup, TV display, lessons learned |
-| `docs/SPEC-QLIK-INVENTORY.md` | Full app inventory with IDs, sheets, categories |
+| `docs/SPEC-QLIK.md` | **ARCHIVED (Qlik decommissioned 2026-05-28)** — embed, JWT, IdP, TV display, lessons learned |
+| `docs/SPEC-QLIK-INVENTORY.md` | **ARCHIVED** — historical Qlik app inventory with IDs, sheets, categories |
 | `docs/SPEC-DATA.md` | PostgreSQL schema, API endpoints |
 | `docs/SPEC-SEARCH.md` | Search engine, PostgreSQL ILIKE |
 | `docs/SPEC-ADMIN.md` | Admin console, TagRoles, user sync, apps |
