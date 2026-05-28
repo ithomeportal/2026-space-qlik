@@ -184,6 +184,7 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
             else (0 if revenue == 0 else gross_profit / revenue)
         )
         loads = float(week["loads"])
+        week_service_average = float(week.get("serviceAveragePct", 0.0) or 0.0)
         # The weekly minimum of 100 loads is the gate for EVERY role (Bruno, 2026-05-26):
         # below it no bonus applies that week, even if margin/service clear their bracket.
         meets_load_minimum = loads >= 100
@@ -200,7 +201,16 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS) if meets_load_minimum else 0.0,
                 # Display-only per-week On time P&D (Bruno 2026-05-28). The payout
                 # above intentionally uses the period/monthly service average.
-                "serviceAveragePct": float(week.get("serviceAveragePct", 0.0) or 0.0),
+                "serviceAveragePct": week_service_average,
+                # Display-only per-week On time P&D "Actual Bonus %" — mirrors the
+                # Load/Margin rows so each week reads its OWN service against the
+                # bracket, gated by that week's 100-load minimum (Bruno 2026-05-28
+                # round 2). serviceBonusPct above (period avg) still drives payout.
+                "serviceBonusPctWeekly": (
+                    get_bracket_bonus(normalize_percent(week_service_average), SERVICE_BRACKETS)
+                    if meets_load_minimum
+                    else 0.0
+                ),
             }
         )
 

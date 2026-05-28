@@ -66,8 +66,9 @@ export interface WeeklyRule {
   meetsLoadMinimum: boolean // weekly loads >= 100 — gates every role's bonus
   loadBonusPct: number
   marginBonusPct: number
-  serviceBonusPct: number
+  serviceBonusPct: number // period/monthly service bracket — drives payout
   serviceAveragePct: number // percentage — per-week (OTP+OTD)/2, display only
+  serviceBonusPctWeekly: number // per-week service bracket, load-gated — display only
 }
 
 export interface ProfitBracketBonus {

@@ -116,7 +116,7 @@ function ActualDataTable({ team }: { team: BonusTeam }) {
           <tr className="border-t border-[#BEF264]">
             <td className="px-3 py-1.5 font-medium text-[#1F2937]">On time P&amp;D</td>
             {weeks.map((w, i) => (
-              <td key={i} className="px-3 py-1.5 text-center font-semibold text-[#1F2937]">{pct(w.serviceBonusPct * 100)}</td>
+              <td key={i} className="px-3 py-1.5 text-center font-semibold text-[#1F2937]">{pct(w.serviceBonusPctWeekly * 100)}</td>
             ))}
           </tr>
         </tbody>
