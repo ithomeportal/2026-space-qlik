@@ -198,6 +198,9 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 "loadBonusPct": get_bracket_bonus(loads, LOAD_COUNT_BRACKETS),
                 "marginBonusPct": get_bracket_bonus(margin_pct, MARGIN_BRACKETS) if meets_load_minimum else 0.0,
                 "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS) if meets_load_minimum else 0.0,
+                # Display-only per-week On time P&D (Bruno 2026-05-28). The payout
+                # above intentionally uses the period/monthly service average.
+                "serviceAveragePct": float(week.get("serviceAveragePct", 0.0) or 0.0),
             }
         )
 

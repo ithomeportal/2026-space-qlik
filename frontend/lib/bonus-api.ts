@@ -67,6 +67,7 @@ export interface WeeklyRule {
   loadBonusPct: number
   marginBonusPct: number
   serviceBonusPct: number
+  serviceAveragePct: number // percentage — per-week (OTP+OTD)/2, display only
 }
 
 export interface ProfitBracketBonus {

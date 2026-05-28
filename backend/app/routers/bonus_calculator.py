@@ -185,6 +185,15 @@ async def _team_metrics(
         select_parts.append(
             f"COALESCE(SUM(margin_amt) FILTER (WHERE dep_date BETWEEN ${ps} AND ${pe}), 0)::numeric AS w{i}_prof"
         )
+        # Per-week OTP/OTD exception counts so the Actual Data table can show a
+        # distinct (pickup+delivery)/2 per week (Bruno 2026-05-28). Display only —
+        # the payout still rides on the period/monthly service average below.
+        select_parts.append(
+            f"COALESCE(SUM(otp_cnt) FILTER (WHERE dep_date BETWEEN ${ps} AND ${pe}), 0) AS w{i}_otp"
+        )
+        select_parts.append(
+            f"COALESCE(SUM(otd_cnt) FILTER (WHERE dep_date BETWEEN ${ps} AND ${pe}), 0) AS w{i}_otd"
+        )
 
     # Period (weekly-union) totals — service that feeds the bonus math.
     period_filter = f"WHERE dep_date >= ${p_start} AND dep_date < ${p_end}"
@@ -244,6 +253,12 @@ async def _team_metrics(
         rev = float(row[f"w{i}_rev"] or 0)
         prof = float(row[f"w{i}_prof"] or 0)
         wl = int(row[f"w{i}_loads"] or 0)
+        # Per-week service %, same load-weighted basis as the period figure
+        # (1 - exceptions/loads). Display only — payout uses the period average.
+        w_otp = int(row[f"w{i}_otp"] or 0)
+        w_otd = int(row[f"w{i}_otd"] or 0)
+        w_pickup = (1 - w_otp / wl) * 100 if wl else 0.0
+        w_delivery = (1 - w_otd / wl) * 100 if wl else 0.0
         weeks.append(
             {
                 "label": label,
@@ -251,6 +266,7 @@ async def _team_metrics(
                 "revenue": rev,
                 "grossProfit": prof,
                 "marginPct": (prof / rev) if rev else 0.0,  # decimal; engine normalizes
+                "serviceAveragePct": (w_pickup + w_delivery) / 2,  # percentage, display only
             }
         )
 
