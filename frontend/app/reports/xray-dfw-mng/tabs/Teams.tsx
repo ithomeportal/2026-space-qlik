@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
 import {
   fmtCount,
@@ -10,6 +11,7 @@ import {
   type XrayDfwTeamBucket,
   type XrayDfwTeamBreakdownRow,
 } from "@/lib/xray-dfw-api"
+import { SortableTh, type SortDir, type SortState } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
@@ -31,7 +33,11 @@ const COLS: { key: keyof Omit<XrayDfwTeamBreakdownRow, "team">; label: string }[
 ]
 
 export function Teams({ filters }: Props) {
-  const { data, isLoading, error } = useXrayDfwTeamsBreakdown({ customer: filters.customer })
+  const { data, isLoading, error } = useXrayDfwTeamsBreakdown({
+    customers: filters.customers,
+    lanes: filters.lanes,
+    view: filters.view,
+  })
   const breakdown = data?.data
 
   return (
@@ -61,11 +67,48 @@ function TeamTable({
 }) {
   const headerBg =
     tone === "red" ? "bg-[#FEE2E2]" : tone === "yellow" ? "bg-[#FEF3C7]" : "bg-[#EDE9FE]"
+
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const toggleSort = (key: string) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    else {
+      setSortKey(key)
+      setSortDir("desc")
+    }
+  }
+  const sortState: SortState = { sortKey, sortDir, toggleSort }
+
+  const metricVal = (b: XrayDfwTeamBucket | undefined) => {
+    if (!b) return 0
+    if (metric === "loads") return b.loads
+    if (metric === "profit") return b.profit
+    return b.margin_pct
+  }
+
   const render = (b: XrayDfwTeamBucket) => {
     if (metric === "loads") return fmtCount(b.loads)
     if (metric === "profit") return fmtUsd(b.profit)
     return fmtPct(b.margin_pct)
   }
+
+  const sortedTeams = useMemo(() => {
+    if (!data) return []
+    if (!sortKey) return data.teams
+    const copy = [...data.teams]
+    copy.sort((a, b) => {
+      let c: number
+      if (sortKey === "team") {
+        c = String(a.team ?? "").localeCompare(String(b.team ?? ""), undefined, { numeric: true })
+      } else {
+        const av = metricVal(a[sortKey as keyof Omit<XrayDfwTeamBreakdownRow, "team">] as XrayDfwTeamBucket)
+        const bv = metricVal(b[sortKey as keyof Omit<XrayDfwTeamBreakdownRow, "team">] as XrayDfwTeamBucket)
+        c = av - bv
+      }
+      return sortDir === "asc" ? c : -c
+    })
+    return copy
+  }, [data, sortKey, sortDir, metric])
 
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -79,11 +122,15 @@ function TeamTable({
           <table className="w-full text-xs tabular-nums">
             <thead className={`${headerBg} text-[#6B7280]`}>
               <tr>
-                <th className="px-3 py-1.5 text-left font-semibold">Team</th>
+                <SortableTh label="Team" columnKey="team" state={sortState} />
                 {COLS.map((c) => (
-                  <th key={c.key} className="px-2 py-1.5 text-right font-semibold">
-                    {c.label}
-                  </th>
+                  <SortableTh
+                    key={c.key}
+                    label={c.label}
+                    columnKey={c.key}
+                    state={sortState}
+                    align="right"
+                  />
                 ))}
               </tr>
             </thead>
@@ -96,7 +143,7 @@ function TeamTable({
                   </td>
                 ))}
               </tr>
-              {data.teams.map((r) => (
+              {sortedTeams.map((r) => (
                 <tr key={r.team} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
                   <td className="px-3 py-1.5">{r.team}</td>
                   {COLS.map((c) => {

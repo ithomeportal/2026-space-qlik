@@ -25,6 +25,7 @@ import {
   type XrayDfwFilters,
   type XrayDfwTrendPoint,
 } from "@/lib/xray-dfw-api"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
@@ -34,7 +35,12 @@ interface Props {
 type Grain = "day" | "week" | "month"
 
 export function Trends({ filters }: Props) {
-  const trioFilter = { subTeams: filters.subTeams, customer: filters.customer }
+  const trioFilter = {
+    subTeams: filters.subTeams,
+    customers: filters.customers,
+    lanes: filters.lanes,
+    view: filters.view,
+  }
   const { data: trendsRes, isLoading: loadingTrends, error: trendsErr } = useXrayDfwTrends(trioFilter)
   const { data: summRes, isLoading: loadingSumm, error: summErr } = useXrayDfwSummaryTable(trioFilter)
   const t = trendsRes?.data
@@ -47,6 +53,7 @@ export function Trends({ filters }: Props) {
   const barData = t?.[barGrain] ?? []
   const comboData = t?.[comboGrain] ?? []
   const summaryRows = summaryGrain === "month" ? summ?.months ?? [] : summ?.weeks ?? []
+  const summarySort = useSortable(summaryRows)
 
   const avgLoadsLM = avgFromBucket(barData, "loads", "prev")
   const avgLoadsTM = avgFromBucket(barData, "loads", "current")
@@ -160,20 +167,22 @@ export function Trends({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#F9FAFB] text-[#6B7280]">
                 <tr>
-                  <th className="px-3 py-1.5 text-left font-semibold">
-                    {summaryGrain === "month" ? "Month" : "Week"}
-                  </th>
-                  <th className="px-3 py-1.5 text-right font-semibold"># Lanes</th>
-                  <th className="px-3 py-1.5 text-right font-semibold"># Loads</th>
-                  <th className="px-3 py-1.5 text-right font-semibold">$ Revenue</th>
-                  <th className="px-3 py-1.5 text-right font-semibold">$ Profit</th>
-                  <th className="px-3 py-1.5 text-right font-semibold">% Margin</th>
-                  <th className="px-3 py-1.5 text-right font-semibold">OTP %</th>
-                  <th className="px-3 py-1.5 text-right font-semibold">OTD %</th>
+                  <SortableTh
+                    label={summaryGrain === "month" ? "Month" : "Week"}
+                    columnKey="bucket"
+                    state={summarySort}
+                  />
+                  <SortableTh label="# Lanes" columnKey="lanes" state={summarySort} align="right" />
+                  <SortableTh label="# Loads" columnKey="loads" state={summarySort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={summarySort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={summarySort} align="right" />
+                  <SortableTh label="% Margin" columnKey="margin_pct" state={summarySort} align="right" />
+                  <SortableTh label="OTP %" columnKey="otp_pct" state={summarySort} align="right" />
+                  <SortableTh label="OTD %" columnKey="otd_pct" state={summarySort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {summaryRows.map((r) => (
+                {summarySort.sorted.map((r) => (
                   <tr key={r.bucket} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
                     <td className="px-3 py-1.5">{fmtBucket(r.bucket)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(r.lanes)}</td>

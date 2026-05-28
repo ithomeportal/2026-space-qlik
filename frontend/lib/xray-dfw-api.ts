@@ -56,13 +56,16 @@ function useApiPrefix() {
 // ---------------------------------------------------------------------------
 
 export type XrayDfwRange = "mtd" | "ytd" | "full" | "custom"
+export type XrayDfwView = "ruan"
 
 export interface XrayDfwFilters {
   range: XrayDfwRange
   startDate?: string
   endDate?: string
   subTeams?: string[] // empty / undefined = all 4
-  customer?: string
+  customers?: string[] // multi-select customer (or RUAN client) filter
+  lanes?: string[] // multi-select lane filter
+  view?: XrayDfwView // "ruan" swaps customer_name → client
 }
 
 function dfwQs(f: XrayDfwFilters) {
@@ -71,7 +74,9 @@ function dfwQs(f: XrayDfwFilters) {
   if (f.range === "custom" && f.startDate) q.set("start_date", f.startDate)
   if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
   if (f.subTeams && f.subTeams.length) q.set("sub_teams", f.subTeams.join(","))
-  if (f.customer) q.set("customer", f.customer)
+  if (f.customers && f.customers.length) q.set("customers", f.customers.join(","))
+  if (f.lanes && f.lanes.length) q.set("lanes", f.lanes.join(","))
+  if (f.view) q.set("view", f.view)
   const s = q.toString()
   return s ? `?${s}` : ""
 }
@@ -83,8 +88,10 @@ function dfwQs(f: XrayDfwFilters) {
 export interface XrayDfwFilterOptions {
   sub_teams: string[]
   customers: string[]
+  lanes: string[]
   year_start: string
   year_end: string
+  locked_team?: string
 }
 
 export interface XrayDfwKpis {
@@ -324,12 +331,13 @@ export interface XrayDfwLaneAnalysisRow {
 // reports (`/reports/xray-dfw-tm{1..4}`).
 // ---------------------------------------------------------------------------
 
-export function useXrayDfwFilters() {
+export function useXrayDfwFilters(view?: XrayDfwView) {
   const prefix = useApiPrefix()
+  const qs = view ? `?view=${view}` : ""
   return useQuery({
     ...XRAY_DFW_RETRY,
-    queryKey: [prefix, "filters"],
-    queryFn: () => apiFetch<XrayDfwFilterOptions>(`${prefix}/filters`),
+    queryKey: [prefix, "filters", view ?? "default"],
+    queryFn: () => apiFetch<XrayDfwFilterOptions>(`${prefix}/filters${qs}`),
     staleTime: 30 * 60 * 1000,
   })
 }
@@ -345,7 +353,7 @@ export function useXrayDfwKpis(f: XrayDfwFilters, enabled = true) {
 }
 
 export function useXrayDfwTrio(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -360,7 +368,7 @@ export function useXrayDfwTrio(
 }
 
 export function useXrayDfwProjection(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -395,7 +403,7 @@ export function useXrayDfwByLane(f: XrayDfwFilters, enabled = true) {
 }
 
 export function useXrayDfwAttrition(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -409,7 +417,7 @@ export function useXrayDfwAttrition(
 }
 
 export function useXrayDfwTeamsBreakdown(
-  f: Pick<XrayDfwFilters, "customer">,
+  f: Pick<XrayDfwFilters, "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -425,7 +433,7 @@ export function useXrayDfwTeamsBreakdown(
 }
 
 export function useXrayDfwTrends(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -440,7 +448,7 @@ export function useXrayDfwTrends(
 }
 
 export function useXrayDfwSummaryTable(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()
@@ -467,7 +475,7 @@ export function useXrayDfwRisk(f: XrayDfwFilters, enabled = true) {
 }
 
 export function useXrayDfwContractSpot(
-  f: Pick<XrayDfwFilters, "subTeams" | "customer">,
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
   enabled = true,
 ) {
   const prefix = useApiPrefix()

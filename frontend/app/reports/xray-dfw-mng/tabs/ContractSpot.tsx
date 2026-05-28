@@ -21,10 +21,14 @@ import {
   useXrayDfwLaneAnalysis,
   type XrayDfwFilters,
 } from "@/lib/xray-dfw-api"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayDfwFilters
+  entityLabel?: string
+  onCustomerClick?: (name: string) => void
+  onLaneClick?: (lane: string) => void
 }
 
 const fmtBucket = (s: string) => {
@@ -33,14 +37,27 @@ const fmtBucket = (s: string) => {
   return `${d.toLocaleString("en-US", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`
 }
 
-export function ContractSpot({ filters }: Props) {
-  const trioFilter = { subTeams: filters.subTeams, customer: filters.customer }
+export function ContractSpot({
+  filters,
+  entityLabel = "Customer",
+  onCustomerClick,
+  onLaneClick,
+}: Props) {
+  const trioFilter = {
+    subTeams: filters.subTeams,
+    customers: filters.customers,
+    lanes: filters.lanes,
+    view: filters.view,
+  }
   const { data: csRes, isLoading: loadingCs, error: csErr } = useXrayDfwContractSpot(trioFilter)
   const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayDfwAllOrders(filters)
   const { data: laRes, isLoading: loadingLa, error: laErr } = useXrayDfwLaneAnalysis(filters)
   const cs = csRes?.data
   const orders = ordersRes?.data ?? []
   const lanes = laRes?.data ?? []
+
+  const orderSort = useSortable(orders)
+  const laneSort = useSortable(lanes)
 
   return (
     <div className="space-y-6">
@@ -119,30 +136,38 @@ export function ContractSpot({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#FEF3C7] text-[#6B7280]">
                 <tr>
-                  <Th>Team</Th>
-                  <Th>Order</Th>
-                  <Th>Customer</Th>
-                  <Th>Carrier</Th>
-                  <Th>Origin</Th>
-                  <Th>Destination</Th>
-                  <Th>Departure</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">Diff 15%</Th>
-                  <Th className="text-right">Diff 18%</Th>
-                  <Th className="text-right">Diff 20%</Th>
+                  <SortableTh label="Team" columnKey="team" state={orderSort} />
+                  <SortableTh label="Order" columnKey="id" state={orderSort} />
+                  <SortableTh label={entityLabel} columnKey="customer" state={orderSort} />
+                  <SortableTh label="Carrier" columnKey="carrier" state={orderSort} />
+                  <SortableTh label="Origin" columnKey="origin" state={orderSort} />
+                  <SortableTh label="Destination" columnKey="destination" state={orderSort} />
+                  <SortableTh label="Departure" columnKey="departure" state={orderSort} />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={orderSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={orderSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={orderSort} align="right" />
+                  <SortableTh label="Diff 15%" columnKey="diff_15" state={orderSort} align="right" />
+                  <SortableTh label="Diff 18%" columnKey="diff_18" state={orderSort} align="right" />
+                  <SortableTh label="Diff 20%" columnKey="diff_20" state={orderSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {orders.map((r) => (
+                {orderSort.sorted.map((r) => (
                   <tr key={r.id} className="border-t border-[#F3F4F6] hover:bg-[#FEFCE8]">
                     <td className="px-3 py-1.5">{r.team}</td>
                     <td className="px-3 py-1.5">{r.id}</td>
-                    <td className="px-3 py-1.5">{r.customer}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.customer} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5">{r.carrier}</td>
                     <td className="px-3 py-1.5">{r.origin}</td>
-                    <td className="px-3 py-1.5">{r.destination}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName
+                        value={`${r.origin} - ${r.destination}`}
+                        display={r.destination}
+                        onClick={onLaneClick}
+                      />
+                    </td>
                     <td className="px-3 py-1.5">{r.departure ? r.departure.substring(0, 16).replace("T", " ") : "—"}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                     <td className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}>
@@ -174,27 +199,35 @@ export function ContractSpot({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#EDE9FE] text-[#6B7280]">
                 <tr>
-                  <Th>Customer</Th>
-                  <Th>Origin</Th>
-                  <Th>Destination</Th>
-                  <Th className="text-right">Conc %</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">AVG R/L</Th>
-                  <Th className="text-right">AVG P/L</Th>
-                  <Th className="text-right">Diff 15%</Th>
-                  <Th className="text-right">Diff 18%</Th>
-                  <Th className="text-right">Diff 20%</Th>
+                  <SortableTh label={entityLabel} columnKey="customer" state={laneSort} />
+                  <SortableTh label="Origin" columnKey="origin" state={laneSort} />
+                  <SortableTh label="Destination" columnKey="destination" state={laneSort} />
+                  <SortableTh label="Conc %" columnKey="conc_pct" state={laneSort} align="right" />
+                  <SortableTh label="# Loads" columnKey="loads" state={laneSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={laneSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={laneSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={laneSort} align="right" />
+                  <SortableTh label="AVG R/L" columnKey="avg_r_per_l" state={laneSort} align="right" />
+                  <SortableTh label="AVG P/L" columnKey="avg_p_per_l" state={laneSort} align="right" />
+                  <SortableTh label="Diff 15%" columnKey="diff_15" state={laneSort} align="right" />
+                  <SortableTh label="Diff 18%" columnKey="diff_18" state={laneSort} align="right" />
+                  <SortableTh label="Diff 20%" columnKey="diff_20" state={laneSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {lanes.map((r, i) => (
+                {laneSort.sorted.map((r, i) => (
                   <tr key={i} className="border-t border-[#F3F4F6] hover:bg-[#FAF5FF]">
-                    <td className="px-3 py-1.5">{r.customer}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.customer} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5">{r.origin}</td>
-                    <td className="px-3 py-1.5">{r.destination}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName
+                        value={`${r.origin} - ${r.destination}`}
+                        display={r.destination}
+                        onClick={onLaneClick}
+                      />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtPct(r.conc_pct)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(r.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
@@ -220,8 +253,27 @@ export function ContractSpot({ filters }: Props) {
   )
 }
 
-function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-1.5 text-left font-semibold ${className}`}>{children}</th>
+function ClickName({
+  value,
+  display,
+  onClick,
+}: {
+  value: string
+  display?: string
+  onClick?: (v: string) => void
+}) {
+  const text = display ?? value
+  if (!onClick) return <>{text}</>
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(value)}
+      className="text-left hover:text-[#1B3A5C] hover:underline"
+      title="Filter by this value"
+    >
+      {text}
+    </button>
+  )
 }
 
 function Spin() {

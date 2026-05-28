@@ -19,15 +19,28 @@ import {
   useXrayDfwRisk,
   type XrayDfwFilters,
 } from "@/lib/xray-dfw-api"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayDfwFilters
+  entityLabel?: string
+  onCustomerClick?: (name: string) => void
+  onLaneClick?: (lane: string) => void
 }
 
-export function Risk({ filters }: Props) {
+export function Risk({
+  filters,
+  entityLabel = "Customer",
+  onCustomerClick,
+  onLaneClick,
+}: Props) {
   const { data, isLoading, error } = useXrayDfwRisk(filters)
   const r = data?.data
+
+  const worstSort = useSortable(r?.worst_lanes ?? [])
+  const negOrderSort = useSortable(r?.neg_orders ?? [])
+  const negCustSort = useSortable(r?.neg_customers ?? [])
 
   const fmtBucket = (s: string) => {
     const d = new Date(s)
@@ -49,24 +62,32 @@ export function Risk({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#FEE2E2] text-[#6B7280]">
                 <tr>
-                  <Th>Customer</Th>
-                  <Th>Origin</Th>
-                  <Th>Destination</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">Diff to 15%</Th>
-                  <Th className="text-right">Diff to 18%</Th>
-                  <Th className="text-right">Diff to 20%</Th>
+                  <SortableTh label={entityLabel} columnKey="customer" state={worstSort} />
+                  <SortableTh label="Origin" columnKey="origin" state={worstSort} />
+                  <SortableTh label="Destination" columnKey="destination" state={worstSort} />
+                  <SortableTh label="# Loads" columnKey="loads" state={worstSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={worstSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={worstSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={worstSort} align="right" />
+                  <SortableTh label="Diff to 15%" columnKey="diff_15" state={worstSort} align="right" />
+                  <SortableTh label="Diff to 18%" columnKey="diff_18" state={worstSort} align="right" />
+                  <SortableTh label="Diff to 20%" columnKey="diff_20" state={worstSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {(r?.worst_lanes ?? []).map((row, i) => (
+                {worstSort.sorted.map((row, i) => (
                   <tr key={i} className="border-t border-[#FECACA] hover:bg-[#FEF2F2]">
-                    <td className="px-3 py-1.5">{row.customer}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={row.customer} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5">{row.origin}</td>
-                    <td className="px-3 py-1.5">{row.destination}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName
+                        value={`${row.origin} - ${row.destination}`}
+                        display={row.destination}
+                        onClick={onLaneClick}
+                      />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(row.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(row.revenue)}</td>
                     <td className="px-3 py-1.5 text-right text-[#DC2626]">{fmtUsd(row.profit)}</td>
@@ -93,25 +114,33 @@ export function Risk({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#FEE2E2] text-[#6B7280]">
                 <tr>
-                  <Th>Order</Th>
-                  <Th>Customer</Th>
-                  <Th>Carrier</Th>
-                  <Th>Origin</Th>
-                  <Th>Destination</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">Conc %</Th>
+                  <SortableTh label="Order" columnKey="id" state={negOrderSort} />
+                  <SortableTh label={entityLabel} columnKey="customer" state={negOrderSort} />
+                  <SortableTh label="Carrier" columnKey="carrier" state={negOrderSort} />
+                  <SortableTh label="Origin" columnKey="origin" state={negOrderSort} />
+                  <SortableTh label="Destination" columnKey="destination" state={negOrderSort} />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={negOrderSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={negOrderSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={negOrderSort} align="right" />
+                  <SortableTh label="Conc %" columnKey="conc_pct" state={negOrderSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {(r?.neg_orders ?? []).map((row) => (
+                {negOrderSort.sorted.map((row) => (
                   <tr key={row.id} className="border-t border-[#FECACA] hover:bg-[#FEF2F2]">
                     <td className="px-3 py-1.5">{row.id}</td>
-                    <td className="px-3 py-1.5">{row.customer}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={row.customer} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5">{row.carrier}</td>
                     <td className="px-3 py-1.5">{row.origin}</td>
-                    <td className="px-3 py-1.5">{row.destination}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName
+                        value={`${row.origin} - ${row.destination}`}
+                        display={row.destination}
+                        onClick={onLaneClick}
+                      />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(row.revenue)}</td>
                     <td className="px-3 py-1.5 text-right text-[#DC2626]">{fmtUsd(row.profit)}</td>
                     <td className="px-3 py-1.5 text-right text-[#DC2626]">{fmtPct(row.margin_pct)}</td>
@@ -126,7 +155,7 @@ export function Risk({ filters }: Props) {
 
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <div className="border-b border-[#FCA5A5] bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">
-          Negative Loads — by Customer
+          Negative Loads — by {entityLabel}
         </div>
         {isLoading ? (
           <Spin />
@@ -135,17 +164,19 @@ export function Risk({ filters }: Props) {
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#FEE2E2] text-[#6B7280]">
                 <tr>
-                  <Th>Customer</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Conc %</Th>
+                  <SortableTh label={entityLabel} columnKey="customer" state={negCustSort} />
+                  <SortableTh label="# Loads" columnKey="loads" state={negCustSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={negCustSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={negCustSort} align="right" />
+                  <SortableTh label="Conc %" columnKey="conc_pct" state={negCustSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {(r?.neg_customers ?? []).map((row, i) => (
+                {negCustSort.sorted.map((row, i) => (
                   <tr key={i} className="border-t border-[#FECACA] hover:bg-[#FEF2F2]">
-                    <td className="px-3 py-1.5">{row.customer}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={row.customer} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(row.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(row.revenue)}</td>
                     <td className="px-3 py-1.5 text-right text-[#DC2626]">{fmtUsd(row.profit)}</td>
@@ -192,8 +223,27 @@ export function Risk({ filters }: Props) {
   )
 }
 
-function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-1.5 text-left font-semibold ${className}`}>{children}</th>
+function ClickName({
+  value,
+  display,
+  onClick,
+}: {
+  value: string
+  display?: string
+  onClick?: (v: string) => void
+}) {
+  const text = display ?? value
+  if (!onClick) return <>{text}</>
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(value)}
+      className="text-left hover:text-[#1B3A5C] hover:underline"
+      title="Filter by this value"
+    >
+      {text}
+    </button>
+  )
 }
 
 function Spin() {

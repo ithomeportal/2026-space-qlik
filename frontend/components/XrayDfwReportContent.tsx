@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Activity, Loader2 } from "lucide-react"
 import {
@@ -8,7 +8,9 @@ import {
   useXrayDfwFilters,
   type XrayDfwFilters,
   type XrayDfwRange,
+  type XrayDfwView,
 } from "@/lib/xray-dfw-api"
+import { MultiSelectChips } from "@/components/MultiSelectChips"
 import { Overview } from "@/app/reports/xray-dfw-mng/tabs/Overview"
 import { CustomersLanes } from "@/app/reports/xray-dfw-mng/tabs/CustomersLanes"
 import { Teams } from "@/app/reports/xray-dfw-mng/tabs/Teams"
@@ -75,10 +77,16 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(clampToYear(todayIso()))
   const [subTeams, setSubTeams] = useState<string[]>([])
-  const [customerInput, setCustomerInput] = useState<string>("")
-  const [customer, setCustomer] = useState<string>("")
+  const [customers, setCustomers] = useState<string[]>([])
+  const [lanes, setLanes] = useState<string[]>([])
+  // Bruno (2026-05-28): the RUAN pseudo-team. view="ruan" scopes to RUAN
+  // customers under TEAM-DFW and swaps the entity from customer_name → client.
+  const [view, setView] = useState<XrayDfwView | undefined>(undefined)
 
-  const { data: filterRes, isLoading: loadingFilters } = useXrayDfwFilters()
+  const isRuan = view === "ruan"
+  const entityLabel = isRuan ? "Client" : "Customer"
+
+  const { data: filterRes, isLoading: loadingFilters } = useXrayDfwFilters(view)
   const filterOptions = filterRes?.data
 
   const appliedDates = useMemo(() => {
@@ -99,26 +107,64 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
       startDate: appliedDates.startDate,
       endDate: appliedDates.endDate,
       subTeams: effectiveSubTeams,
-      customer: customer || undefined,
+      customers: customers.length ? customers : undefined,
+      lanes: lanes.length ? lanes : undefined,
+      view,
     }),
-    [range, appliedDates, effectiveSubTeams, customer],
+    [range, appliedDates, effectiveSubTeams, customers, lanes, view],
   )
 
-  const customerSuggestions = useMemo(() => {
-    const q = customerInput.trim().toLowerCase()
-    if (!q || !filterOptions?.customers) return []
-    return filterOptions.customers.filter((c) => c.toLowerCase().includes(q)).slice(0, 8)
-  }, [customerInput, filterOptions])
+  // Toggling any normal team selection exits the RUAN view and clears the
+  // customer filter (a client value can't match a customer_name).
+  const exitRuanIfNeeded = useCallback(() => {
+    if (isRuan) {
+      setView(undefined)
+      setCustomers([])
+    }
+  }, [isRuan])
+
+  const selectAllTeams = () => {
+    exitRuanIfNeeded()
+    setSubTeams([])
+  }
 
   const toggleSubTeam = (t: string) => {
+    exitRuanIfNeeded()
     setSubTeams((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
   }
 
+  const selectRuan = () => {
+    // RUAN forces TEAM-DFW scope server-side; clear teams/customers/lanes so the
+    // view is unambiguous and a stale customer_name doesn't leak in.
+    setView("ruan")
+    setSubTeams([])
+    setCustomers([])
+    setLanes([])
+  }
+
+  const onCustomerClick = useCallback((name: string) => {
+    if (!name) return
+    setCustomers((prev) => (prev.includes(name) ? prev : [...prev, name]))
+  }, [])
+
+  const onLaneClick = useCallback((lane: string) => {
+    if (!lane) return
+    setLanes((prev) => (prev.includes(lane) ? prev : [...prev, lane]))
+  }, [])
+
   const teamSummary = lockedTeam
     ? lockedTeam
-    : subTeams.length
-      ? subTeams.join(", ")
-      : "All"
+    : isRuan
+      ? "RUAN (DFW)"
+      : subTeams.length
+        ? subTeams.join(", ")
+        : "All"
+
+  const entitySummary = customers.length
+    ? customers.length === 1
+      ? customers[0]
+      : `${customers.length} ${entityLabel.toLowerCase()}s`
+    : "All"
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
@@ -138,7 +184,8 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
           {" · "}
           Team: {teamSummary}
           {" · "}
-          Customer: {customer || "All"}
+          {entityLabel}: {entitySummary}
+          {lanes.length > 0 && ` · Lanes: ${lanes.length}`}
         </div>
       </div>
 
@@ -202,9 +249,9 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
               <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Team</label>
               <div className="flex flex-wrap gap-1">
                 <button
-                  onClick={() => setSubTeams([])}
+                  onClick={selectAllTeams}
                   className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                    subTeams.length === 0
+                    !isRuan && subTeams.length === 0
                       ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
                       : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
                   }`}
@@ -216,7 +263,7 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
                     key={t}
                     onClick={() => toggleSubTeam(t)}
                     className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                      subTeams.includes(t)
+                      !isRuan && subTeams.includes(t)
                         ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
                         : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
                     }`}
@@ -224,46 +271,38 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
                     {t}
                   </button>
                 ))}
+                <button
+                  onClick={selectRuan}
+                  title="RUAN — TEAM-DFW RUAN customers, broken down by client"
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                    isRuan
+                      ? "border-[#7C3AED] bg-[#7C3AED] text-white"
+                      : "border-[#DDD6FE] bg-[#F5F3FF] text-[#6D28D9] hover:bg-[#EDE9FE]"
+                  }`}
+                >
+                  RUAN
+                </button>
               </div>
             </div>
           )}
 
-          <div className="relative flex items-center gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Customer</label>
-            <input
-              type="text"
-              placeholder={loadingFilters ? "Loading…" : customer || "All customers"}
-              value={customerInput}
-              onChange={(e) => setCustomerInput(e.target.value)}
-              onBlur={() => setTimeout(() => setCustomerInput(""), 150)}
-              className="w-64 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
-            />
-            {customerInput && customerSuggestions.length > 0 && (
-              <ul className="absolute left-[calc(theme(spacing.2)+4.5rem)] top-full z-30 mt-1 max-h-64 w-64 overflow-auto rounded-md border border-[#E5E7EB] bg-white text-xs shadow-md">
-                {customerSuggestions.map((c) => (
-                  <li key={c}>
-                    <button
-                      onMouseDown={() => {
-                        setCustomer(c)
-                        setCustomerInput("")
-                      }}
-                      className="block w-full truncate px-3 py-1.5 text-left hover:bg-[#F3F4F6]"
-                    >
-                      {c}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {customer && (
-              <button
-                onClick={() => setCustomer("")}
-                className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs text-[#6B7280] hover:bg-[#F3F4F6]"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          <MultiSelectChips
+            label={entityLabel}
+            options={filterOptions?.customers ?? []}
+            selected={customers}
+            onChange={setCustomers}
+            placeholder={loadingFilters ? "Loading…" : `All ${entityLabel.toLowerCase()}s`}
+            width={240}
+          />
+
+          <MultiSelectChips
+            label="Lane"
+            options={filterOptions?.lanes ?? []}
+            selected={lanes}
+            onChange={setLanes}
+            placeholder={loadingFilters ? "Loading…" : "All lanes"}
+            width={260}
+          />
 
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
         </div>
@@ -286,12 +325,33 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
       </div>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
-        {activeTab === "overview" && <Overview filters={filters} />}
-        {activeTab === "customers" && <CustomersLanes filters={filters} />}
+        {activeTab === "overview" && <Overview filters={filters} entityLabel={entityLabel} />}
+        {activeTab === "customers" && (
+          <CustomersLanes
+            filters={filters}
+            entityLabel={entityLabel}
+            onCustomerClick={onCustomerClick}
+            onLaneClick={onLaneClick}
+          />
+        )}
         {activeTab === "teams" && <Teams filters={filters} />}
         {activeTab === "trends" && <Trends filters={filters} />}
-        {activeTab === "risk" && <Risk filters={filters} />}
-        {activeTab === "contract-spot" && <ContractSpot filters={filters} />}
+        {activeTab === "risk" && (
+          <Risk
+            filters={filters}
+            entityLabel={entityLabel}
+            onCustomerClick={onCustomerClick}
+            onLaneClick={onLaneClick}
+          />
+        )}
+        {activeTab === "contract-spot" && (
+          <ContractSpot
+            filters={filters}
+            entityLabel={entityLabel}
+            onCustomerClick={onCustomerClick}
+            onLaneClick={onLaneClick}
+          />
+        )}
       </div>
     </div>
   )

@@ -42,6 +42,15 @@ DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
 DFW_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
+# Bruno (2026-05-28): the "RUAN" pseudo-team. RUAN Transportation hauls for many
+# underlying shippers; v4 records that shipper in the ``client`` column (populated
+# ONLY on RUAN rows). When the RUAN view is active we (a) scope to RUAN's customer
+# rows under TEAM-DFW and (b) swap the grouping/label from customer_name → client.
+# We match ``customer_name ILIKE 'RUAN%'`` (the proven probe) rather than the two
+# mistyped literals in the PDF, so a spelling drift in McLeod doesn't empty the
+# view. Mirrors the Attrition WoW RUAN view.
+RUAN_VIEW = "ruan"
+
 # OTP / OTD edi codes — same as CORP (Bruno's Qlik load script is shared).
 OTP_CODES = ("T4", "T3", "D1", "D2", "BO", "BE", "AL", "AI", "AH", "AF", "A5", "A2")
 OTD_CODES = ("AL", "D2", "AZ", "AH", "BE", "D1", "A5", "AI", "AF", "A2", "A1", "AU", "U3")
@@ -68,6 +77,30 @@ def _parse_csv(raw: Optional[str], allowed: tuple[str, ...]) -> list[str]:
     wanted = [t.strip().upper() for t in raw.split(",") if t.strip()]
     allowed_set = {t for t in allowed}
     return [t for t in wanted if t in allowed_set]
+
+
+def _parse_list(raw: Optional[str]) -> list[str]:
+    """Parse a CSV of free-text values (customers / lanes) into trimmed strings."""
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def _lane_expr(alias: str) -> str:
+    """Bruno's lane = concat(trim(origin_name), ' - ', trim(dest_name))."""
+    return (
+        f"TRIM(COALESCE({alias}.origin_name,'')) "
+        f"|| ' - ' || "
+        f"TRIM(COALESCE({alias}.dest_name,''))"
+    )
+
+
+def _entity_expr(alias: str, view: Optional[str] = None) -> str:
+    """The grouping/label dimension: ``client`` under the RUAN view, else
+    ``customer_name``. Centralizes the "Customer → Client" swap so every panel
+    buckets by the same key (Bruno 2026-05-28)."""
+    col = "client" if view == RUAN_VIEW else "customer_name"
+    return f"TRIM({alias}.{col})"
 
 
 def _clamp(d: Optional[date], default: date) -> date:
@@ -104,9 +137,11 @@ def _resolve_range(
 def _scope_where(
     alias: str,
     sub_teams: list[str],
-    customer: Optional[str],
+    customers: list[str],
     params: list,
     exclude_customers: Optional[list[str]] = None,
+    view: Optional[str] = None,
+    lanes: Optional[list[str]] = None,
 ) -> str:
     """Common DFW-scope WHERE clauses for the budget_report_v4 load-level table.
 
@@ -116,11 +151,16 @@ def _scope_where(
     or may not pad. v4.team_id, company_id, status follow the sargable
     padded-variants pattern.
 
+    ``customers`` is the multi-select filter; matches ``client`` under the RUAN
+    view, else ``customer_name`` (Bruno 2026-05-28). ``lanes`` filters on the
+    ``origin - dest`` concat. ``view == RUAN_VIEW`` additionally forces RUAN
+    customer rows with a non-empty ``client``.
+
     ``exclude_customers`` drops the named customers (case-insensitive
     substring, like the OILTEX/UNILINK guards). Default ``None`` = no extra
-    exclusion, so the xray-dfw report itself is unchanged; the KAM
-    Performance Lanes tab passes ``GENERAL MOTORS,HOMEDEPOT`` per Bruno R2.
+    exclusion; the KAM Performance Lanes tab passes ``GENERAL MOTORS,HOMEDEPOT``.
     """
+    ruan = view == RUAN_VIEW
     teams_param = _pad_variants(list(DFW_TEAMS), width=8)
     companies_param = _pad_variants(list(DFW_COMPANIES), width=4)
     statuses_param = _pad_variants(list(OPEN_STATUSES), width=1)
@@ -139,12 +179,18 @@ def _scope_where(
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
     ]
+    if ruan:
+        parts.append(f"UPPER(COALESCE({alias}.customer_name,'')) LIKE 'RUAN%'")
+        parts.append(f"TRIM(COALESCE({alias}.client,'')) <> ''")
     if sub_teams:
         params.append(sub_teams)
         parts.append(f"TRIM({alias}.team) = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"{alias}.customer_name = ${len(params)}")
+    if customers:
+        params.append(customers)
+        parts.append(f"{_entity_expr(alias, view)} = ANY(${len(params)})")
+    if lanes:
+        params.append(lanes)
+        parts.append(f"({_lane_expr(alias)}) = ANY(${len(params)})")
     for name in exclude_customers or []:
         params.append(f"%{name.upper()}%")
         parts.append(
@@ -248,34 +294,65 @@ def _week_bounds(today: date) -> tuple[date, date, date, date]:
 @router.get("/filters")
 async def filters(
     request: Request,
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
-    """Sub-teams + distinct customer list in scope."""
+    """Sub-teams + distinct customer (or RUAN client) list + lanes in scope."""
     pool = get_datalake_gold_pool(request)
-    rows = await pool.fetch(
-        """
-        SELECT DISTINCT TRIM(customer_name) AS customer_name
+    ruan = view == RUAN_VIEW
+    entity_col = "client" if ruan else "customer_name"
+    ruan_filter = (
+        " AND UPPER(COALESCE(customer_name,'')) LIKE 'RUAN%'" if ruan else ""
+    )
+
+    customers_task = pool.fetch(
+        f"""
+        SELECT DISTINCT TRIM({entity_col}) AS entity
         FROM public.mcleod_gld_budget_report_v4
         WHERE TRIM(team_id)    = ANY($1)
           AND TRIM(company_id) = ANY($2)
           AND TRIM(status)     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
-          AND customer_name IS NOT NULL
-          AND TRIM(customer_name) <> ''
-          AND origin_actual_departure >= $4
-        ORDER BY customer_name
+          AND {entity_col} IS NOT NULL
+          AND TRIM({entity_col}) <> ''
+          AND origin_actual_departure >= $4{ruan_filter}
+        ORDER BY entity
         """,
         list(DFW_TEAMS),
         list(DFW_COMPANIES),
         list(OPEN_STATUSES),
         YEAR_START,
     )
+
+    lanes_task = pool.fetch(
+        f"""
+        SELECT DISTINCT ({_lane_expr("br4")}) AS lane
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE TRIM(br4.team_id)    = ANY($1)
+          AND TRIM(br4.company_id) = ANY($2)
+          AND TRIM(br4.status)     = ANY($3)
+          AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
+          AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%UNILINK%'
+          AND br4.origin_actual_departure >= $4{ruan_filter}
+          AND TRIM(COALESCE(br4.origin_name,'')) <> ''
+          AND TRIM(COALESCE(br4.dest_name,'')) <> ''
+        ORDER BY lane
+        LIMIT 3000
+        """,
+        list(DFW_TEAMS),
+        list(DFW_COMPANIES),
+        list(OPEN_STATUSES),
+        YEAR_START,
+    )
+
+    cust_rows, lane_rows = await asyncio.gather(customers_task, lanes_task)
     return {
         "success": True,
         "data": {
             "sub_teams": list(DFW_SUB_TEAMS),
-            "customers": [r["customer_name"] for r in rows],
+            "customers": [r["entity"] for r in cust_rows],
+            "lanes": [r["lane"] for r in lane_rows],
             "year_start": YEAR_START.isoformat(),
             "year_end": YEAR_END.isoformat(),
         },
@@ -294,7 +371,9 @@ async def kpis(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -303,11 +382,17 @@ async def kpis(
     today = cst_today()
     m_start, m_end, _, _, _, _ = _month_bounds(today)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
     exclude_list = _parse_exclude(exclude_customers)
+    ruan = view == RUAN_VIEW
 
     # ---- KPIs + Loss Loads ----------------------------------------------
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params, exclude_list)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, exclude_list,
+        view=view, lanes=lanes_list,
+    )
     params.extend([s, e])
     date_fragment = (
         f"br4.origin_actual_departure::date BETWEEN ${len(params) - 1} AND ${len(params)}"
@@ -356,7 +441,9 @@ async def kpis(
     # only DFW-side production source (matches CEO Executive's _production_cte
     # for DFW UNION branch).
     tm_params: list = []
-    tm_where = _scope_where("br4", sub_team_list, customer, tm_params)
+    tm_where = _scope_where(
+        "br4", sub_team_list, customers_list, tm_params, view=view, lanes=lanes_list,
+    )
     tm_params.extend([m_start, m_end])
     tm_date = (
         f"br4.origin_actual_departure >= ${len(tm_params) - 1} "
@@ -379,9 +466,14 @@ async def kpis(
         " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
         " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%UNILINK%'"
     )
-    if customer:
-        sav_params.append(customer)
-        sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
+    # Savings results carry only customer_name (no client breakdown), so under
+    # the RUAN view we scope the trio to RUAN customers and ignore the
+    # client-level multi-select; otherwise apply the customer multi-select.
+    if ruan:
+        sav_extra += " AND UPPER(COALESCE(cs.customer_name,'')) LIKE 'RUAN%'"
+    elif customers_list:
+        sav_params.append(customers_list)
+        sav_extra += f" AND cs.customer_name = ANY(${len(sav_params)})"
 
     # Build the customer→team mapping using DFW only. Optional sub-team
     # filter narrows which v4.team rows feed the most-frequent calculation.
@@ -444,7 +536,9 @@ async def kpis(
 async def trio_tables(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     """Yesterday / This Week / This Month sub-team summary triplet."""
@@ -454,13 +548,17 @@ async def trio_tables(
     m_start, _, _, _, _, _ = _month_bounds(today)
     w_start, _, _, _ = _week_bounds(today)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     # Capacity uses the count of sub-teams in scope (default 4 for DFW).
     total_team_count = len(sub_team_list) if sub_team_list else len(DFW_SUB_TEAMS)
 
     async def _window(d_from: date, d_to: date, capacity: int) -> dict:
         params: list = []
-        where = _scope_where("br4", sub_team_list, customer, params)
+        where = _scope_where(
+            "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        )
         params.extend([d_from, d_to])
         date_frag = (
             f"br4.origin_actual_departure::date BETWEEN ${len(params)-1} AND ${len(params)}"
@@ -545,13 +643,17 @@ async def trio_tables(
 async def projection(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     m_start, m_end, _, _, past, pending = _month_bounds(today)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     bdays, d = [], today - timedelta(days=1)
     while len(bdays) < 14:
@@ -566,7 +668,9 @@ async def projection(
     three_weeks_end = monday - timedelta(days=1)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     p14s = len(params) + 1; params.append(prev_14_start)
     p14e = len(params) + 1; params.append(prev_14_end)
     p3ws = len(params) + 1; params.append(three_weeks_start)
@@ -578,7 +682,7 @@ async def projection(
         f"""
         WITH prod AS (
             SELECT TRIM(br4.origin_name) AS origin, TRIM(br4.dest_name) AS dest,
-                   br4.customer_name,
+                   {_entity_expr("br4", view)} AS customer_name,
                    br4.total_charge, br4.margin_amt,
                    br4.origin_actual_departure::date AS dep_date
             FROM public.mcleod_gld_budget_report_v4 br4
@@ -657,15 +761,21 @@ async def by_customer(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
 
@@ -674,7 +784,7 @@ async def by_customer(
         WITH otp AS ({_scorecard_cte("otp", sub_team_list)}),
              otd AS ({_scorecard_cte("otd", sub_team_list)}),
              prod AS (
-                SELECT br4.customer_name, br4.id, br4.company_id,
+                SELECT {_entity_expr("br4", view)} AS customer_name, br4.id, br4.company_id,
                        br4.total_charge, br4.margin_amt,
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
@@ -713,7 +823,9 @@ async def by_lane(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -721,9 +833,14 @@ async def by_lane(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
     exclude_list = _parse_exclude(exclude_customers)
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params, exclude_list)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, exclude_list,
+        view=view, lanes=lanes_list,
+    )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
 
@@ -769,14 +886,20 @@ async def by_lane(
 async def attrition(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.append(limit)
 
     rows = await pool.fetch(
@@ -784,7 +907,7 @@ async def attrition(
         WITH otp AS ({_scorecard_cte("otp", sub_team_list)}),
              otd AS ({_scorecard_cte("otd", sub_team_list)}),
              prod AS (
-                SELECT br4.customer_name,
+                SELECT {_entity_expr("br4", view)} AS customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
                        br4.id, br4.company_id, br4.total_charge, br4.margin_amt,
@@ -840,7 +963,9 @@ async def attrition(
 @router.get("/teams-breakdown")
 async def teams_breakdown(
     request: Request,
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     """Per-sub-team Loads / Profit / Margin across TM, TW, LW, L2W..L5W."""
@@ -848,6 +973,8 @@ async def teams_breakdown(
     today = cst_today()
     m_start, _, _, _, _, _ = _month_bounds(today)
     w_mon, _, _, _ = _week_bounds(today)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     weeks = []
     for i in range(5):
@@ -861,7 +988,9 @@ async def teams_breakdown(
 
     params: list = []
     # No sub-team filter on this endpoint — Bruno's Teams tab always shows all 4.
-    where = _scope_where("br4", [], customer, params)
+    where = _scope_where(
+        "br4", [], customers_list, params, view=view, lanes=lanes_list,
+    )
     min_start = min(r[1] for r in ranges)
     max_end = max(r[2] for r in ranges)
     params.extend([min_start, max_end])
@@ -946,12 +1075,16 @@ async def teams_breakdown(
 async def trends(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
     day_start = today - timedelta(days=14)
     week_start = (today - timedelta(days=today.weekday())) - timedelta(days=7 * 11)
     month_start = date(today.year, today.month, 1)
@@ -964,7 +1097,9 @@ async def trends(
     month_start = date(y, m, 1)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.append(min(day_start, week_start, month_start))
 
     rows = await pool.fetch(
@@ -1059,16 +1194,22 @@ async def trends(
 async def summary_table(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     start = today - timedelta(days=500)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.append(start)
 
     rows = await pool.fetch(
@@ -1140,16 +1281,23 @@ async def risk(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
+    ent = _entity_expr("br4", view)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
     lim_idx = len(params)
@@ -1157,7 +1305,7 @@ async def risk(
     worst_lanes_task = pool.fetch(
         f"""
         SELECT
-          br4.customer_name AS customer,
+          {ent} AS customer,
           TRIM(br4.origin_name) AS origin,
           TRIM(br4.dest_name)   AS destination,
           COUNT(*) FILTER (WHERE br4.total_charge <> 0) AS loads,
@@ -1171,7 +1319,7 @@ async def risk(
           GREATEST(0, SUM(br4.total_charge) * 0.20 - SUM(br4.margin_amt))::numeric AS diff_20
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where} AND {date_frag}
-        GROUP BY br4.customer_name, TRIM(br4.origin_name), TRIM(br4.dest_name)
+        GROUP BY {ent}, TRIM(br4.origin_name), TRIM(br4.dest_name)
         HAVING SUM(br4.margin_amt) < 0
         ORDER BY profit ASC
         LIMIT ${lim_idx}
@@ -1182,7 +1330,7 @@ async def risk(
     neg_orders_task = pool.fetch(
         f"""
         WITH neg AS (
-            SELECT br4.id, br4.customer_name, br4.company_id,
+            SELECT br4.id, {ent} AS customer_name, br4.company_id,
                    TRIM(br4.origin_name) AS origin,
                    TRIM(br4.dest_name)   AS destination,
                    br4.total_charge, br4.margin_amt
@@ -1225,7 +1373,7 @@ async def risk(
     neg_customer_task = pool.fetch(
         f"""
         WITH neg AS (
-            SELECT br4.customer_name,
+            SELECT {ent} AS customer_name,
                    br4.total_charge, br4.margin_amt
             FROM public.mcleod_gld_budget_report_v4 br4
             WHERE {where} AND {date_frag}
@@ -1254,7 +1402,9 @@ async def risk(
     today = cst_today()
     losses_start = today - timedelta(days=280)
     loss_params: list = []
-    loss_where = _scope_where("br4", sub_team_list, customer, loss_params)
+    loss_where = _scope_where(
+        "br4", sub_team_list, customers_list, loss_params, view=view, lanes=lanes_list,
+    )
     loss_params.append(losses_start)
     losses_task = pool.fetch(
         f"""
@@ -1306,16 +1456,22 @@ async def risk(
 async def contract_spot(
     request: Request,
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     start = (today - timedelta(days=today.weekday())) - timedelta(days=7 * 8)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.append(start)
 
     rows = await pool.fetch(
@@ -1362,16 +1518,22 @@ async def all_orders(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
 
@@ -1386,7 +1548,7 @@ async def all_orders(
         SELECT
           TRIM(br4.team) AS team,
           br4.id,
-          br4.customer_name AS customer,
+          {_entity_expr("br4", view)} AS customer,
           COALESCE(mov1.payee_name, '—') AS carrier,
           TRIM(br4.origin_name) AS origin,
           TRIM(br4.dest_name)   AS destination,
@@ -1424,23 +1586,29 @@ async def lane_analysis(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
     limit: int = Query(300, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
 
     params: list = []
-    where = _scope_where("br4", sub_team_list, customer, params)
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
 
     rows = await pool.fetch(
         f"""
         WITH base AS (
-            SELECT br4.customer_name,
+            SELECT {_entity_expr("br4", view)} AS customer_name,
                    TRIM(br4.origin_name) AS origin,
                    TRIM(br4.dest_name) AS destination,
                    br4.total_charge, br4.margin_amt

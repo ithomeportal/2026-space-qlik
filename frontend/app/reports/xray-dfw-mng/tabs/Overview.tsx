@@ -11,19 +11,26 @@ import {
   type XrayDfwFilters,
   type XrayDfwTrioRow,
 } from "@/lib/xray-dfw-api"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayDfwFilters
+  entityLabel?: string
 }
 
 const PROFIT_GOAL_PER_TEAM = 55000
 const ALL_SUB_TEAMS_COUNT = 4
 
-export function Overview({ filters }: Props) {
+export function Overview({ filters, entityLabel = "Customer" }: Props) {
   const { data: kpiRes, isLoading: loadingKpis, error: kpiErr } = useXrayDfwKpis(filters)
   const k = kpiRes?.data
-  const trioFilter = { subTeams: filters.subTeams, customer: filters.customer }
+  const trioFilter = {
+    subTeams: filters.subTeams,
+    customers: filters.customers,
+    lanes: filters.lanes,
+    view: filters.view,
+  }
   const { data: trioRes, isLoading: loadingTrio, error: trioErr } = useXrayDfwTrio(trioFilter)
   const { data: projRes, isLoading: loadingProj, error: projErr } = useXrayDfwProjection(trioFilter)
   const p = projRes?.data
@@ -114,7 +121,7 @@ export function Overview({ filters }: Props) {
           Projection (current month, rolling)
         </h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <MiniKpi label="Total Customers" value={fmtCount(p?.total_customers)} loading={loadingProj} />
+          <MiniKpi label={`Total ${entityLabel}s`} value={fmtCount(p?.total_customers)} loading={loadingProj} />
           <MiniKpi label="Total Lanes" value={fmtCount(p?.total_lanes)} loading={loadingProj} />
           <MiniKpi label="AVG Vol × Day" value={fmtCount(p?.avg_vol_day)} loading={loadingProj} />
           <MiniKpi label="AVG Vol × Week" value={fmtCount(p?.avg_vol_week)} loading={loadingProj} />
@@ -198,6 +205,7 @@ function TrioTable({
 }) {
   const headerBg = tone === "red" ? "bg-[#FEE2E2]" : tone === "green" ? "bg-[#D1FAE5]" : "bg-[#FEF3C7]"
   const totalsBg = tone === "red" ? "bg-[#FECACA]" : tone === "green" ? "bg-[#A7F3D0]" : "bg-[#FDE68A]"
+  const sort = useSortable(rows)
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -213,16 +221,16 @@ function TrioTable({
         <table className="w-full text-[11px] tabular-nums">
           <thead className={`${headerBg} text-[#6B7280]`}>
             <tr>
-              <th className="px-2 py-1 text-left">Team</th>
-              <th className="px-1 py-1 text-right">Vol</th>
-              <th className="px-1 py-1 text-right">Rev</th>
-              <th className="px-1 py-1 text-right">Prof</th>
-              <th className="px-1 py-1 text-right">M%</th>
-              <th className="px-1 py-1 text-right">OTP%</th>
-              <th className="px-1 py-1 text-right">OTD%</th>
-              <th className="px-1 py-1 text-right">TU</th>
-              <th className="px-1 py-1 text-right">R/L</th>
-              <th className="px-1 py-1 text-right">P/L</th>
+              <SortableTh label="Team" columnKey="team" state={sort} className="px-2 py-1" />
+              <SortableTh label="Vol" columnKey="vol" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="Rev" columnKey="rev" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="Prof" columnKey="prof" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="M%" columnKey="m_pct" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="OTP%" columnKey="otp_pct" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="OTD%" columnKey="otd_pct" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="TU" columnKey="tu" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="R/L" columnKey="r_per_l" state={sort} align="right" className="px-1 py-1" />
+              <SortableTh label="P/L" columnKey="p_per_l" state={sort} align="right" className="px-1 py-1" />
             </tr>
           </thead>
           <tbody>
@@ -240,7 +248,7 @@ function TrioTable({
                 <td className="px-1 py-1 text-right">{fmtUsd(totals.p_per_l)}</td>
               </tr>
             )}
-            {rows.map((r) => (
+            {sort.sorted.map((r) => (
               <tr key={r.team} className="border-t border-[#F3F4F6]">
                 <td className="px-2 py-1">{r.team}</td>
                 <td className="px-1 py-1 text-right">{fmtCount(r.vol)}</td>

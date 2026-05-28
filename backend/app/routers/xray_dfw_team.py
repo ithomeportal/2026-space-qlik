@@ -22,6 +22,7 @@ only (vs the CORP/DFW filters which return all DFW customers across TMs).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Optional
 
@@ -59,9 +60,9 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         _user: dict = Depends(gate),
     ):
-        """Return customers scoped to *this* TM only (server-locked)."""
+        """Return customers + lanes scoped to *this* TM only (server-locked)."""
         pool = get_datalake_gold_pool(request)
-        rows = await pool.fetch(
+        cust_task = pool.fetch(
             """
             SELECT DISTINCT TRIM(customer_name) AS customer_name
             FROM public.mcleod_gld_budget_report_v4
@@ -81,11 +82,34 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
             list(xray_dfw.OPEN_STATUSES),
             xray_dfw.YEAR_START,
         )
+        lane_task = pool.fetch(
+            f"""
+            SELECT DISTINCT ({xray_dfw._lane_expr("br4")}) AS lane
+            FROM public.mcleod_gld_budget_report_v4 br4
+            WHERE TRIM(br4.team_id)    = 'TEAM-DFW'
+              AND TRIM(br4.team)       = $1
+              AND TRIM(br4.company_id) = ANY($2)
+              AND TRIM(br4.status)     = ANY($3)
+              AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
+              AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%UNILINK%'
+              AND br4.origin_actual_departure >= $4
+              AND TRIM(COALESCE(br4.origin_name,'')) <> ''
+              AND TRIM(COALESCE(br4.dest_name,'')) <> ''
+            ORDER BY lane
+            LIMIT 3000
+            """,
+            tm,
+            list(xray_dfw.DFW_COMPANIES),
+            list(xray_dfw.OPEN_STATUSES),
+            xray_dfw.YEAR_START,
+        )
+        cust_rows, lane_rows = await asyncio.gather(cust_task, lane_task)
         return {
             "success": True,
             "data": {
                 "sub_teams": [tm],
-                "customers": [row["customer_name"] for row in rows],
+                "customers": [row["customer_name"] for row in cust_rows],
+                "lanes": [row["lane"] for row in lane_rows],
                 "year_start": xray_dfw.YEAR_START.isoformat(),
                 "year_end": xray_dfw.YEAR_END.isoformat(),
                 "locked_team": tm,
@@ -98,32 +122,35 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.kpis(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/trio-tables")
     async def trio_tables(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.trio_tables(
-            request=request, sub_teams=tm, customer=customer, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/projection")
     async def projection(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.projection(
-            request=request, sub_teams=tm, customer=customer, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/by-customer")
@@ -132,13 +159,14 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.by_customer(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     @r.get("/by-lane")
@@ -147,57 +175,62 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.by_lane(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     @r.get("/attrition")
     async def attrition(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.attrition(
-            request=request, sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     @r.get("/teams-breakdown")
     async def teams_breakdown(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         # The Teams tab table on the locked report still shows the same per-TM
         # rows; backend doesn't take sub_teams here -- it always returns all 4.
         # We let it through and the frontend will hide / dim non-locked rows.
         return await xray_dfw.teams_breakdown(
-            request=request, customer=customer, _user=_user,
+            request=request, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/trends")
     async def trends(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.trends(
-            request=request, sub_teams=tm, customer=customer, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/summary-table")
     async def summary_table(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.summary_table(
-            request=request, sub_teams=tm, customer=customer, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/risk")
@@ -206,23 +239,25 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.risk(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     @r.get("/contract-spot")
     async def contract_spot(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.contract_spot(
-            request=request, sub_teams=tm, customer=customer, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
         )
 
     @r.get("/all-orders")
@@ -231,13 +266,14 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(500, ge=1, le=2000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.all_orders(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     @r.get("/lane-analysis")
@@ -246,13 +282,14 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         range: Optional[str] = Query("ytd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
         limit: int = Query(300, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.lane_analysis(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customer=customer, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
         )
 
     return r

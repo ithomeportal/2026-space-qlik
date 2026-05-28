@@ -10,20 +10,38 @@ import {
   useXrayDfwByLane,
   type XrayDfwFilters,
 } from "@/lib/xray-dfw-api"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
   filters: XrayDfwFilters
+  entityLabel?: string
+  onCustomerClick?: (name: string) => void
+  onLaneClick?: (lane: string) => void
 }
 
-export function CustomersLanes({ filters }: Props) {
+export function CustomersLanes({
+  filters,
+  entityLabel = "Customer",
+  onCustomerClick,
+  onLaneClick,
+}: Props) {
   const { data: custRes, isLoading: loadingCust, error: custErr } = useXrayDfwByCustomer(filters)
   const { data: laneRes, isLoading: loadingLane, error: laneErr } = useXrayDfwByLane(filters)
-  const trioFilter = { subTeams: filters.subTeams, customer: filters.customer }
+  const trioFilter = {
+    subTeams: filters.subTeams,
+    customers: filters.customers,
+    lanes: filters.lanes,
+    view: filters.view,
+  }
   const { data: attrRes, isLoading: loadingAttr, error: attrErr } = useXrayDfwAttrition(trioFilter)
   const customers = custRes?.data ?? []
   const lanes = laneRes?.data ?? []
   const attrition = attrRes?.data ?? []
+
+  const custSort = useSortable(customers)
+  const laneSort = useSortable(lanes)
+  const attrSort = useSortable(attrition)
 
   const custTotal = customers.reduce(
     (acc, r) => ({
@@ -50,25 +68,23 @@ export function CustomersLanes({ filters }: Props) {
       <XrayDfwErrorBanner label="Customers & Lanes" errors={[custErr, laneErr, attrErr]} />
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <div className="border-b border-[#E5E7EB] bg-[#F3F4F6] px-3 py-2 text-sm font-semibold text-[#111827]">
-          Profit by Customer
-          <span className="ml-2 text-xs text-[#6B7280]">({customers.length} customers)</span>
+          Profit by {entityLabel}
+          <span className="ml-2 text-xs text-[#6B7280]">({customers.length} {entityLabel.toLowerCase()}s)</span>
         </div>
         {loadingCust ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
-          </div>
+          <Spin />
         ) : (
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#F9FAFB] text-[#6B7280]">
                 <tr>
-                  <Th className="text-left">Customer</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">OTP %</Th>
-                  <Th className="text-right">OTD %</Th>
+                  <SortableTh label={entityLabel} columnKey="customer_name" state={custSort} />
+                  <SortableTh label="# Loads" columnKey="loads" state={custSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={custSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={custSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={custSort} align="right" />
+                  <SortableTh label="OTP %" columnKey="otp_pct" state={custSort} align="right" />
+                  <SortableTh label="OTD %" columnKey="otd_pct" state={custSort} align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -81,9 +97,11 @@ export function CustomersLanes({ filters }: Props) {
                   <td className="px-3 py-1.5 text-right">—</td>
                   <td className="px-3 py-1.5 text-right">—</td>
                 </tr>
-                {customers.map((r) => (
+                {custSort.sorted.map((r) => (
                   <tr key={r.customer_name} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
-                    <td className="px-3 py-1.5">{r.customer_name}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.customer_name} onClick={onCustomerClick} />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(r.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                     <td className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}>
@@ -108,21 +126,19 @@ export function CustomersLanes({ filters }: Props) {
           <span className="ml-2 text-xs text-[#6B7280]">({lanes.length} lanes)</span>
         </div>
         {loadingLane ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
-          </div>
+          <Spin />
         ) : (
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#F9FAFB] text-[#6B7280]">
                 <tr>
-                  <Th className="text-left">Lane</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">Margin %</Th>
-                  <Th className="text-right">OTP %</Th>
-                  <Th className="text-right">OTD %</Th>
+                  <SortableTh label="Lane" columnKey="lane" state={laneSort} />
+                  <SortableTh label="# Loads" columnKey="loads" state={laneSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={laneSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={laneSort} align="right" />
+                  <SortableTh label="Margin %" columnKey="margin_pct" state={laneSort} align="right" />
+                  <SortableTh label="OTP %" columnKey="otp_pct" state={laneSort} align="right" />
+                  <SortableTh label="OTD %" columnKey="otd_pct" state={laneSort} align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -135,9 +151,11 @@ export function CustomersLanes({ filters }: Props) {
                   <td className="px-3 py-1.5 text-right">—</td>
                   <td className="px-3 py-1.5 text-right">—</td>
                 </tr>
-                {lanes.map((r) => (
+                {laneSort.sorted.map((r) => (
                   <tr key={r.lane} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
-                    <td className="px-3 py-1.5">{r.lane}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.lane} onClick={onLaneClick} />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(r.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                     <td className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}>
@@ -162,31 +180,33 @@ export function CustomersLanes({ filters }: Props) {
           <span className="ml-2 text-xs text-[#6B7280]">sorted by days since last load</span>
         </div>
         {loadingAttr ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
-          </div>
+          <Spin />
         ) : (
           <div className="max-h-[500px] overflow-auto">
             <table className="w-full text-xs tabular-nums">
               <thead className="sticky top-0 bg-[#F9FAFB] text-[#6B7280]">
                 <tr>
-                  <Th className="text-left">Customer</Th>
-                  <Th className="text-left">Lane</Th>
-                  <Th className="text-right"># Loads</Th>
-                  <Th className="text-right">$ Revenue</Th>
-                  <Th className="text-right">$ Profit</Th>
-                  <Th className="text-right">% Margin</Th>
-                  <Th className="text-right">OTP %</Th>
-                  <Th className="text-right">OTD %</Th>
-                  <Th className="text-right">Last Load</Th>
-                  <Th className="text-right">Days</Th>
+                  <SortableTh label={entityLabel} columnKey="customer_name" state={attrSort} />
+                  <SortableTh label="Lane" columnKey="lane" state={attrSort} />
+                  <SortableTh label="# Loads" columnKey="loads" state={attrSort} align="right" />
+                  <SortableTh label="$ Revenue" columnKey="revenue" state={attrSort} align="right" />
+                  <SortableTh label="$ Profit" columnKey="profit" state={attrSort} align="right" />
+                  <SortableTh label="% Margin" columnKey="margin_pct" state={attrSort} align="right" />
+                  <SortableTh label="OTP %" columnKey="otp_pct" state={attrSort} align="right" />
+                  <SortableTh label="OTD %" columnKey="otd_pct" state={attrSort} align="right" />
+                  <SortableTh label="Last Load" columnKey="last_load_date" state={attrSort} align="right" />
+                  <SortableTh label="Days" columnKey="days_since" state={attrSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {attrition.map((r, i) => (
+                {attrSort.sorted.map((r, i) => (
                   <tr key={i} className="border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
-                    <td className="px-3 py-1.5">{r.customer_name}</td>
-                    <td className="px-3 py-1.5">{r.lane}</td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.customer_name} onClick={onCustomerClick} />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <ClickName value={r.lane} onClick={onLaneClick} />
+                    </td>
                     <td className="px-3 py-1.5 text-right">{fmtCount(r.loads)}</td>
                     <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                     <td className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}>
@@ -212,8 +232,32 @@ export function CustomersLanes({ filters }: Props) {
   )
 }
 
-function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-1.5 font-semibold ${className}`}>{children}</th>
+function ClickName({
+  value,
+  onClick,
+}: {
+  value: string
+  onClick?: (v: string) => void
+}) {
+  if (!onClick) return <>{value}</>
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(value)}
+      className="text-left hover:text-[#1B3A5C] hover:underline"
+      title="Filter by this value"
+    >
+      {value}
+    </button>
+  )
+}
+
+function Spin() {
+  return (
+    <div className="flex h-40 items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
+    </div>
+  )
 }
 
 function marginClass(pct: number) {
