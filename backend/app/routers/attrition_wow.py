@@ -172,6 +172,52 @@ def _entity_expr(alias: str, view: Optional[str] = None) -> str:
     return f"TRIM({alias}.{col})"
 
 
+def _team_dim(alias: str) -> str:
+    """The Team label/grain. For the DFW division (``team_id = 'TEAM-DFW'``) we
+    break out by the sub-team ``team`` (TM1..TM4) so the DFW filter shows each
+    team individually (Bruno 2026-05-28); CORP rows keep their ``team_id``. A
+    DFW row with no sub-team falls back to ``TEAM-DFW``. Handles mixed pill
+    selections per-row with no mode flag."""
+    return (
+        f"CASE WHEN TRIM({alias}.team_id) = 'TEAM-DFW' "
+        f"THEN COALESCE(NULLIF(TRIM({alias}.team), ''), 'TEAM-DFW') "
+        f"ELSE TRIM({alias}.team_id) END"
+    )
+
+
+def _losses_table_window(
+    rng: Optional[str], frm: Optional[str], to: Optional[str]
+) -> tuple[date, date]:
+    """Resolve the Losses-tab table date window (start inclusive, end exclusive).
+
+    Bruno 2026-05-28: the Losses tab gains YTD/MTD/WTD/Last Month/Custom date
+    buttons that affect ONLY the two tables (the month/week charts keep their
+    fixed last-8 windows). CST-based via ``cst_today()``. Default = YTD.
+    """
+    today = cst_today()
+    tomorrow = today + timedelta(days=1)
+    if rng == "mtd":
+        return date(today.year, today.month, 1), tomorrow
+    if rng == "wtd":
+        return today - timedelta(days=today.weekday()), tomorrow  # Monday → today
+    if rng == "last_month":
+        first_this = date(today.year, today.month, 1)
+        py, pm = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+        return date(py, pm, 1), first_this
+    if rng == "custom":
+        try:
+            start = date.fromisoformat(frm) if frm else date(today.year, 1, 1)
+        except ValueError:
+            start = date(today.year, 1, 1)
+        try:
+            end = date.fromisoformat(to) + timedelta(days=1) if to else tomorrow
+        except ValueError:
+            end = tomorrow
+        return start, end
+    # default: YTD (Jan 1 of the current year → today, inclusive)
+    return date(today.year, 1, 1), tomorrow
+
+
 def _lane_expr(alias: str) -> str:
     """Bruno's lane = concat(trim(origin_name), ' - ', trim(dest_name))."""
     return (
@@ -198,7 +244,7 @@ def _weekly_cte(scope_where: str, weeks_back: int = WEEKS_HISTORY) -> str:
     base AS (
       SELECT
         date_trunc('week', br4.origin_actual_departure)::date AS week_start,
-        TRIM(br4.team_id)        AS team_id,
+        {_team_dim("br4")}       AS team_id,
         TRIM(br4.customer_id)    AS customer_id,
         TRIM(br4.customer_name)  AS customer_name,
         {_lane_expr("br4")}      AS lane,
@@ -638,7 +684,7 @@ async def pivot(
     if dim == "customer":
         dim_sql = _entity_expr("br4", view)
     elif dim == "team":
-        dim_sql = "TRIM(br4.team_id)"
+        dim_sql = _team_dim("br4")
     else:  # customer_lane
         dim_sql = (
             f"{_entity_expr('br4', view)} || ' · ' || "
@@ -788,7 +834,7 @@ async def reactive_summary(
         WITH base AS (
           SELECT
             br4.origin_actual_departure::date AS dep_date,
-            TRIM(br4.team_id)                 AS team_id,
+            {_team_dim("br4")}                AS team_id,
             {_entity_expr("br4", view)}       AS customer_name,
             br4.id                            AS load_id,
             br4.total_charge,
@@ -1006,7 +1052,7 @@ async def lane_summary(
         WITH base AS (
           SELECT
             br4.origin_actual_departure::date AS dep_date,
-            TRIM(br4.team_id)                  AS team_id,
+            {_team_dim("br4")}                 AS team_id,
             {_entity_expr("br4", view)}        AS customer_name,
             {_lane_expr("br4")}                AS lane,
             UPPER(TRIM(COALESCE(br4.contract_type_descr,''))) AS contract_type,
@@ -1163,7 +1209,7 @@ async def wow_variation(
         f"""
         WITH base AS (
           SELECT
-            TRIM(br4.team_id)        AS team_id,
+            {_team_dim("br4")}       AS team_id,
             {customer_id_sql}        AS customer_id,
             {_entity_expr("br4", view)} AS customer_name,
             br4.origin_actual_departure::date AS dep_date,
@@ -1238,6 +1284,9 @@ async def losses(
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
+    range: Optional[str] = Query("ytd", description="ytd|mtd|wtd|last_month|custom — tables only"),
+    date_from: Optional[str] = Query(None, alias="from", description="ISO start (custom range)"),
+    date_to: Optional[str] = Query(None, alias="to", description="ISO end (custom range)"),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -1245,6 +1294,8 @@ async def losses(
 
     team_list = _parse_csv(teams, ALL_TEAMS)
     entity = _entity_expr("br4", view)
+    # Date window applies to the two tables only; charts keep last-8 windows.
+    tbl_start, tbl_end = _losses_table_window(range, date_from, date_to)
 
     # --- Monthly series: last 8 complete months (current month excluded) ----
     params_m: list = []
@@ -1327,8 +1378,10 @@ async def losses(
     # --- Worst Margins by Lane (per customer × origin × destination) --------
     params_l: list = []
     where_l = _scope_where("br4", team_list, customer, contract, lane, params_l, view)
-    params_l.append(YEAR_START)
-    p_year_l = len(params_l)
+    params_l.append(tbl_start)
+    p_start_l = len(params_l)
+    params_l.append(tbl_end)
+    p_end_l = len(params_l)
     lane_rows = await pool.fetch(
         f"""
         SELECT
@@ -1341,7 +1394,8 @@ async def losses(
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where_l}
           AND br4.margin_amt < 0
-          AND br4.origin_actual_departure >= ${p_year_l}
+          AND br4.origin_actual_departure >= ${p_start_l}
+          AND br4.origin_actual_departure <  ${p_end_l}
         GROUP BY 1, 2, 3
         HAVING {entity} IS NOT NULL AND {entity} <> ''
         ORDER BY profit ASC
@@ -1352,8 +1406,10 @@ async def losses(
     # --- Negative Loads by Customer (per customer/client) -------------------
     params_c: list = []
     where_c = _scope_where("br4", team_list, customer, contract, lane, params_c, view)
-    params_c.append(YEAR_START)
-    p_year_c = len(params_c)
+    params_c.append(tbl_start)
+    p_start_c = len(params_c)
+    params_c.append(tbl_end)
+    p_end_c = len(params_c)
     cust_rows = await pool.fetch(
         f"""
         SELECT
@@ -1364,7 +1420,8 @@ async def losses(
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where_c}
           AND br4.margin_amt < 0
-          AND br4.origin_actual_departure >= ${p_year_c}
+          AND br4.origin_actual_departure >= ${p_start_c}
+          AND br4.origin_actual_departure <  ${p_end_c}
         GROUP BY 1
         HAVING {entity} IS NOT NULL AND {entity} <> ''
         ORDER BY profit ASC
@@ -1435,6 +1492,11 @@ async def losses(
             "by_week": by_week,
             "worst_lanes": worst_lanes,
             "by_customer": by_customer,
+            "range": {
+                "key": range,
+                "from": tbl_start.isoformat(),
+                "to": (tbl_end - timedelta(days=1)).isoformat(),
+            },
             "totals": {
                 "lanes": {
                     "loads": int(lane_tot_loads),

@@ -12,7 +12,17 @@ import { TeamBlock } from "./components/TeamBlock"
 import { AfterhoursCard } from "./components/AfterhoursCard"
 import { BestPractice } from "./components/BestPractice"
 import { RosterEditor } from "./components/RosterEditor"
+import { HistoryTab } from "./components/HistoryTab"
+import { RulesTab } from "./components/RulesTab"
 import { ErrorBanner } from "./ErrorBanner"
+
+type TabKey = "calculator" | "history" | "rules"
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "calculator", label: "Calculator" },
+  { key: "history", label: "History" },
+  { key: "rules", label: "Rules" },
+]
 
 export default function BonusCalculatorPage() {
   return (
@@ -26,6 +36,7 @@ function BonusCalculatorContent() {
   const [period, setPeriod] = useState<string | undefined>(undefined)
   const [teamFilter, setTeamFilter] = useState<string>("")
   const [editorOpen, setEditorOpen] = useState(false)
+  const [tab, setTab] = useState<TabKey>("calculator")
 
   const { data: filtersRes } = useBonusFilters()
   const filters = filtersRes?.data
@@ -70,6 +81,36 @@ function BonusCalculatorContent() {
       </div>
 
       <div className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-5">
+        {/* Tab switcher (Bruno 2026-05-28: + History + Rules). */}
+        <div className="flex gap-1 border-b border-[#EDE9FE]">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+                tab === t.key
+                  ? "border-[#561195] text-[#561195]"
+                  : "border-transparent text-[#6B7280] hover:text-[#111827]"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "history" && <HistoryTab />}
+
+        {tab === "rules" &&
+          (report ? (
+            <RulesTab report={report} />
+          ) : (
+            <div className="flex items-center justify-center py-24 text-[#6B7280]">
+              <Loader2 className="mr-2 h-6 w-6 animate-spin" /> Loading rules…
+            </div>
+          ))}
+
+        {tab === "calculator" && (
+          <>
         {/* Report period + filters */}
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#EDE9FE] bg-white px-5 py-4 shadow-sm">
           <div>
@@ -126,6 +167,8 @@ function BonusCalculatorContent() {
             ))}
             <AfterhoursCard report={report} />
             <BestPractice />
+          </>
+        )}
           </>
         )}
       </div>

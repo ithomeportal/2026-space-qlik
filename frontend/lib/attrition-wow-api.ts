@@ -406,19 +406,38 @@ export interface LossTotals {
   margin: number | null
 }
 
+// Bruno 2026-05-28: the Losses tab date range applies to the two tables only.
+export type LossRange = "ytd" | "mtd" | "wtd" | "last_month" | "custom"
+
+export interface LossDateRange {
+  key: LossRange
+  from: string // ISO (inclusive)
+  to: string // ISO (inclusive)
+}
+
 export interface AttritionLosses {
   by_month: LossPoint[]
   by_week: LossPoint[]
   worst_lanes: WorstLaneRow[]
   by_customer: NegCustomerRow[]
+  range: LossDateRange
   totals: { lanes: LossTotals; customers: LossTotals }
 }
 
-export function useAttritionLosses(f: AttritionFilters) {
+// `range`/`from`/`to` scope the tables only; the charts ignore them server-side.
+export function useAttritionLosses(
+  f: AttritionFilters,
+  range: LossRange = "ytd",
+  from?: string,
+  to?: string,
+) {
+  const extra: Record<string, string> = { range }
+  if (range === "custom" && from) extra.from = from
+  if (range === "custom" && to) extra.to = to
   return useQuery({
-    queryKey: ["attrition-wow", "losses", ...keyOf(f)],
+    queryKey: ["attrition-wow", "losses", ...keyOf(f), range, from ?? "", to ?? ""],
     queryFn: () =>
-      apiFetch<AttritionLosses>(`custom/attrition-wow/losses${buildQs(f)}`),
+      apiFetch<AttritionLosses>(`custom/attrition-wow/losses${buildQs(f, extra)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })

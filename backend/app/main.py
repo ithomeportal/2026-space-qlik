@@ -72,6 +72,21 @@ async def _scheduled_losses_alert():
         logger.error(f"Scheduled losses alert failed: {e}")
 
 
+async def _scheduled_bonus_history_finalize():
+    """Background job: freeze closed Bonus-Calculator months into bonus_history.
+
+    Idempotent + self-backfilling — only writes a period once its cutoff (6th of
+    the next month 23:59 CST) has passed and it isn't already stored.
+    """
+    try:
+        from app.services.bonus_history import finalize_due_periods
+
+        result = await finalize_due_periods(app)
+        logger.info(f"Scheduled bonus history finalize complete: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled bonus history finalize failed: {e}")
+
+
 async def _scheduled_rfp_digest():
     """Background job: send daily 5:30 PM CST RFP Performance email digest.
 
@@ -379,6 +394,22 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            # Immutable monthly snapshot (Bruno 2026-05-28). Finalized at the
+            # cutoff (6th of the next month 23:59 CST) by daily_bonus_history_finalize.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bonus_history (
+                  period_key      TEXT NOT NULL,
+                  team_id         TEXT NOT NULL,
+                  team_name       TEXT NOT NULL,
+                  profit_usd      NUMERIC NOT NULL,
+                  total_bonus_usd NUMERIC NOT NULL,
+                  pct_bonus       NUMERIC,
+                  finalized_at    TIMESTAMPTZ DEFAULT NOW(),
+                  PRIMARY KEY (period_key, team_id)
+                )
+                """
+            )
             try:
                 from app.services.bonus_defaults import seed_bonus_data
 
@@ -532,6 +563,19 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Losses alert NOT scheduled — missing env vars: %s", ", ".join(missing)
         )
+
+    # Schedule daily Bonus Calculator history finalize at 1:00 AM CST. Needs the
+    # primary pool (bonus_history) + the gold pool (savings_pool) to recompute a
+    # closed month; runs daily so it self-backfills past months on first deploy.
+    if settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_bonus_history_finalize,
+            CronTrigger(hour=1, minute=0, timezone="America/Chicago"),
+            id="daily_bonus_history_finalize",
+            name="Finalize Bonus Calculator monthly history snapshots",
+            replace_existing=True,
+        )
+        logger.info("Scheduled Bonus Calculator history finalize at 1:00 AM CST")
 
     # Schedule nightly lane_market_rates pre-warm at 5:00 AM CST. Skips when
     # neither SONAR nor 123LB credentials are present (the prewarm just no-ops).

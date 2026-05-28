@@ -1,10 +1,12 @@
 "use client"
 
+import { useState } from "react"
 import { Loader2 } from "lucide-react"
 import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   ResponsiveContainer,
@@ -16,6 +18,7 @@ import {
   useAttritionLosses,
   type AttritionFilters,
   type LossPoint,
+  type LossRange,
   type LossTotals,
   type NegCustomerRow,
   type WorstLaneRow,
@@ -39,7 +42,17 @@ const fmtKAxis = (v: number) => {
 }
 
 export function LossesTab({ filters, entityLabel }: Props) {
-  const { data: res, isLoading, error } = useAttritionLosses(filters)
+  // Bruno 2026-05-28: tab-local date range — affects the two tables only, never
+  // the charts. Local state (not the URL) so it doesn't leak to other tabs.
+  const [range, setRange] = useState<LossRange>("ytd")
+  const [customFrom, setCustomFrom] = useState<string>("")
+  const [customTo, setCustomTo] = useState<string>("")
+  const { data: res, isLoading, error } = useAttritionLosses(
+    filters,
+    range,
+    customFrom || undefined,
+    customTo || undefined,
+  )
   const d = res?.data
 
   const months = (d?.by_month ?? []).map((p) => ({ ...p, label: fmtMonth(p.bucket) }))
@@ -62,17 +75,107 @@ export function LossesTab({ filters, entityLabel }: Props) {
         <LossChart title="Losses by Week" subtitle="Last 8 weeks" data={weeks} />
       </section>
 
-      <WorstLanesTable
-        rows={d?.worst_lanes ?? []}
-        totals={d?.totals.lanes}
-        entityLabel={entityLabel}
+      <LossDateRangeBar
+        range={range}
+        onRange={setRange}
+        from={customFrom}
+        to={customTo}
+        onFrom={setCustomFrom}
+        onTo={setCustomTo}
+        active={d?.range}
       />
 
+      {/* Bruno 2026-05-28: Negative Loads by Customer first, then Worst Lanes. */}
       <NegCustomersTable
         rows={d?.by_customer ?? []}
         totals={d?.totals.customers}
         entityLabel={entityLabel}
       />
+
+      <WorstLanesTable
+        rows={d?.worst_lanes ?? []}
+        totals={d?.totals.lanes}
+        entityLabel={entityLabel}
+      />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Date-range bar — presets + custom; scopes the tables only (Bruno 2026-05-28).
+// ---------------------------------------------------------------------------
+
+const RANGE_PRESETS: { key: LossRange; label: string }[] = [
+  { key: "ytd", label: "YTD" },
+  { key: "mtd", label: "MTD" },
+  { key: "wtd", label: "WTD" },
+  { key: "last_month", label: "Last Month" },
+  { key: "custom", label: "Custom" },
+]
+
+function LossDateRangeBar({
+  range,
+  onRange,
+  from,
+  to,
+  onFrom,
+  onTo,
+  active,
+}: {
+  range: LossRange
+  onRange: (r: LossRange) => void
+  from: string
+  to: string
+  onFrom: (v: string) => void
+  onTo: (v: string) => void
+  active?: { from: string; to: string }
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E5E7EB] bg-white px-4 py-3 shadow-sm">
+      <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+        Date range
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {RANGE_PRESETS.map((p) => {
+          const on = range === p.key
+          return (
+            <button
+              key={p.key}
+              onClick={() => onRange(p.key)}
+              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                on
+                  ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
+                  : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+              }`}
+            >
+              {p.label}
+            </button>
+          )
+        })}
+      </div>
+      {range === "custom" && (
+        <div className="flex items-center gap-2 text-xs text-[#374151]">
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => onFrom(e.target.value)}
+            className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+          />
+          <span className="text-[#9CA3AF]">→</span>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => onTo(e.target.value)}
+            className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+          />
+        </div>
+      )}
+      {active && (
+        <span className="ml-auto text-[11px] text-[#6B7280]">
+          Tables: {active.from} → {active.to}
+          <span className="ml-1 text-[#9CA3AF]">· charts show last 8 periods</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -121,7 +224,16 @@ function LossChart({
               fill="#DC2626"
               name="$ Profit (negative)"
               barSize={28}
-            />
+            >
+              {/* Bruno 2026-05-28: value labels on the points. */}
+              <LabelList
+                dataKey="neg_profit"
+                position="bottom"
+                fill="#991B1B"
+                fontSize={9}
+                formatter={(v) => fmtKAxis(Number(v))}
+              />
+            </Bar>
             <Line
               yAxisId="right"
               type="monotone"
@@ -129,7 +241,14 @@ function LossChart({
               stroke="#1D4ED8"
               name="# Loads"
               dot={{ r: 3 }}
-            />
+            >
+              <LabelList
+                dataKey="neg_loads"
+                position="top"
+                fill="#1D4ED8"
+                fontSize={9}
+              />
+            </Line>
           </ComposedChart>
         </ResponsiveContainer>
       </div>

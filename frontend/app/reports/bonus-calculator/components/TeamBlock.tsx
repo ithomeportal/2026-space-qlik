@@ -213,11 +213,13 @@ export function TeamBlock({ team, report }: { team: BonusTeam; report: BonusRepo
             employee including achieved monthly profit brackets.
           </p>
         </div>
+        {/* Bruno 2026-05-28: KPIs are the calendar-month cumulative (1st→last
+            day), not the sum of the weekly buckets below. */}
         <div className="flex flex-wrap gap-5">
-          <MiniKpi label="Loads" value={num(team.totalLoads)} />
-          <MiniKpi label="Profit" value={usd0(team.totalProfit)} />
-          <MiniKpi label="Margin" value={pct(team.marginPct * 100, 1)} />
-          <MiniKpi label="Service" value={pct(team.serviceAveragePct, 2)} />
+          <MiniKpi label="Loads" value={num(team.monthlyLoads)} />
+          <MiniKpi label="Profit" value={usd0(team.monthlyProfit)} />
+          <MiniKpi label="Margin" value={pct(team.monthlyMarginPct * 100, 1)} />
+          <MiniKpi label="Service" value={pct(team.monthlyServicePct, 2)} />
           <MiniKpi
             label="Wildcard"
             value={team.wildcardEligible ? "Eligible" : "—"}

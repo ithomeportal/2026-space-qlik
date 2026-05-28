@@ -135,17 +135,39 @@ def _recent_period_keys(count: int = 12) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-async def _team_metrics(pool, team_no: int, start: date, end: date, buckets) -> dict:
-    """One row of weekly loads/rev/profit (×4 buckets) + period OTP/OTD for one team.
+async def _team_metrics(
+    pool, team_no: int, start: date, end: date, buckets, month_start: date, month_end: date
+) -> dict:
+    """Per-team weekly loads/rev/profit (×N buckets) + period OTP/OTD AND the
+    calendar-month cumulative loads/rev/profit/service for one team.
 
     Reuses xray-corp's scope + scorecard CTEs so service % matches that report.
+
+    Two windows on the same scan (Bruno 2026-05-28):
+      - period [start, end): the Mon→Sun weekly union — drives the bonus payout
+        math (weekly buckets) and the weekly-period service %.
+      - month [month_start, month_end): the calendar 1st→last day — drives the
+        display KPIs (Loads/Profit/Margin/Service) which must be the month
+        cumulative, NOT the sum of the weekly buckets.
+    The read window is the union of both so month-edge days are fetched.
     """
+    read_lo = min(start, month_start)
+    read_hi = max(end, month_end)
+
     params: list = []
     where = xray_corp._scope_where("br4", f"TEAM{team_no}", None, params)
+    params.append(read_lo)
+    p_lo = len(params)
+    params.append(read_hi)
+    p_hi = len(params)
     params.append(start)
     p_start = len(params)
     params.append(end)
     p_end = len(params)
+    params.append(month_start)
+    p_ms = len(params)
+    params.append(month_end)
+    p_me = len(params)
 
     select_parts: list[str] = []
     for i, (_label, bstart, bend) in enumerate(buckets, start=1):
@@ -164,11 +186,23 @@ async def _team_metrics(pool, team_no: int, start: date, end: date, buckets) -> 
             f"COALESCE(SUM(margin_amt) FILTER (WHERE dep_date BETWEEN ${ps} AND ${pe}), 0)::numeric AS w{i}_prof"
         )
 
+    # Period (weekly-union) totals — service that feeds the bonus math.
+    period_filter = f"WHERE dep_date >= ${p_start} AND dep_date < ${p_end}"
     select_parts.append(
-        "COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS loads"
+        f"COUNT(*) FILTER ({period_filter} AND total_charge IS NOT NULL AND total_charge <> 0) AS loads"
     )
-    select_parts.append("COALESCE(SUM(otp_cnt), 0) AS otp_sum")
-    select_parts.append("COALESCE(SUM(otd_cnt), 0) AS otd_sum")
+    select_parts.append(f"COALESCE(SUM(otp_cnt) FILTER ({period_filter}), 0) AS otp_sum")
+    select_parts.append(f"COALESCE(SUM(otd_cnt) FILTER ({period_filter}), 0) AS otd_sum")
+
+    # Calendar-month cumulative — the display KPIs.
+    month_filter = f"WHERE dep_date >= ${p_ms} AND dep_date < ${p_me}"
+    select_parts.append(
+        f"COUNT(*) FILTER ({month_filter} AND total_charge IS NOT NULL AND total_charge <> 0) AS m_loads"
+    )
+    select_parts.append(f"COALESCE(SUM(total_charge) FILTER ({month_filter}), 0)::numeric AS m_rev")
+    select_parts.append(f"COALESCE(SUM(margin_amt) FILTER ({month_filter}), 0)::numeric AS m_prof")
+    select_parts.append(f"COALESCE(SUM(otp_cnt) FILTER ({month_filter}), 0) AS m_otp")
+    select_parts.append(f"COALESCE(SUM(otd_cnt) FILTER ({month_filter}), 0) AS m_otd")
 
     sql = f"""
         WITH otp AS ({xray_corp._scorecard_cte("otp")}),
@@ -182,8 +216,8 @@ async def _team_metrics(pool, team_no: int, start: date, end: date, buckets) -> 
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date >= ${p_start}
-                  AND br4.origin_actual_departure::date <  ${p_end}
+                  AND br4.origin_actual_departure::date >= ${p_lo}
+                  AND br4.origin_actual_departure::date <  ${p_hi}
              )
         SELECT {", ".join(select_parts)}
         FROM prod
@@ -195,6 +229,15 @@ async def _team_metrics(pool, team_no: int, start: date, end: date, buckets) -> 
     otd_sum = int(row["otd_sum"] or 0)
     pickup_pct = (1 - otp_sum / loads) * 100 if loads else 0.0
     delivery_pct = (1 - otd_sum / loads) * 100 if loads else 0.0
+
+    # Calendar-month cumulative KPI figures.
+    m_loads = int(row["m_loads"] or 0)
+    m_rev = float(row["m_rev"] or 0)
+    m_prof = float(row["m_prof"] or 0)
+    m_otp = int(row["m_otp"] or 0)
+    m_otd = int(row["m_otd"] or 0)
+    m_pickup_pct = (1 - m_otp / m_loads) * 100 if m_loads else 0.0
+    m_delivery_pct = (1 - m_otd / m_loads) * 100 if m_loads else 0.0
 
     weeks = []
     for i, (label, _bs, _be) in enumerate(buckets, start=1):
@@ -211,20 +254,30 @@ async def _team_metrics(pool, team_no: int, start: date, end: date, buckets) -> 
             }
         )
 
-    return {"pickupServicePct": pickup_pct, "deliveryServicePct": delivery_pct, "weeks": weeks}
+    return {
+        "pickupServicePct": pickup_pct,
+        "deliveryServicePct": delivery_pct,
+        "weeks": weeks,
+        # Calendar-month cumulative (display KPIs only — not the payout math).
+        "monthlyLoads": m_loads,
+        "monthlyRevenue": m_rev,
+        "monthlyProfit": m_prof,
+        "monthlyMarginPct": (m_prof / m_rev) if m_rev else 0.0,  # decimal
+        "monthlyServicePct": (m_pickup_pct + m_delivery_pct) / 2,  # percentage
+    }
 
 
-async def _suggested_dof_fx(request: Request, on_or_before: date) -> Optional[float]:
+async def _suggested_dof_fx(financial_pool, on_or_before: date) -> Optional[float]:
     """Best-effort DOF/Banxico-FIX USD->MXN rate from the optional financial pool.
 
     HR-pinned FX is authoritative (Q3); this only prefills the suggestion. Any
     schema/connection issue silently yields None so the report still renders.
+    Takes the pool directly so it works outside a request (history finalize job).
     """
-    pool = getattr(request.app.state, "financial_pool", None)
-    if pool is None:
+    if financial_pool is None:
         return None
     try:
-        val = await pool.fetchval(
+        val = await financial_pool.fetchval(
             """
             SELECT COALESCE(inverse_rate, 1.0 / NULLIF(rate, 0))
             FROM exchange_rates
@@ -347,43 +400,45 @@ async def filters(
     }
 
 
-@router.get("/report")
-async def report(
-    request: Request,
-    period: Optional[str] = Query(None, description="YYYY-MM (the month the 6th-period opens in)"),
-    _user: dict = Depends(require_report_access(REPORT_KEY)),
-):
-    """Full calculated bonus report for one 6th->6th period, fed from live datalake."""
-    gold = get_datalake_gold_pool(request)
-    primary = get_pool(request)
+async def build_bonus_report_data(gold, primary, financial, period: Optional[str]) -> dict:
+    """Assemble the full calculated bonus report for one period from live datalake.
 
+    Request-free (takes pools directly) so it is reused by both the ``/report``
+    endpoint and the History finalize job (services/bonus_history.py).
+    """
     period_key, label, start, end, buckets = _period_bounds(period)
+    y, m = _parse_period(period)
+    month_start = date(y, m, 1)
+    month_end = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
 
     roster, afterhours, settings, lock, suggested_fx = await asyncio.gather(
         _load_roster(primary),
         _load_afterhours(primary),
         _load_settings(primary, period_key),
         _load_lock(primary, period_key),
-        _suggested_dof_fx(request, start),
+        _suggested_dof_fx(financial, start),
     )
 
     team_fx = settings["teamFx"]
     night_fx = settings["nightFx"]
 
     metrics = await asyncio.gather(
-        *[_team_metrics(gold, int(t.split("-")[1]), start, end, buckets) for t in BONUS_TEAMS]
+        *[
+            _team_metrics(gold, int(t.split("-")[1]), start, end, buckets, month_start, month_end)
+            for t in BONUS_TEAMS
+        ]
     )
 
     teams_payload = []
-    for team_id, m in zip(BONUS_TEAMS, metrics):
+    for team_id, mtr in zip(BONUS_TEAMS, metrics):
         teams_payload.append(
             {
                 "id": team_id,
                 "name": DEFAULT_TEAM_NAMES[team_id],
-                "pickupServicePct": m["pickupServicePct"],
-                "deliveryServicePct": m["deliveryServicePct"],
+                "pickupServicePct": mtr["pickupServicePct"],
+                "deliveryServicePct": mtr["deliveryServicePct"],
                 "fxRate": team_fx,
-                "weeks": m["weeks"],
+                "weeks": mtr["weeks"],
                 "employees": roster.get(team_id, []),
             }
         )
@@ -404,6 +459,18 @@ async def report(
         status_label="Connected",
     )
 
+    # Attach calendar-month cumulative KPIs (display only — payout math stays
+    # weekly-bucket based). Bruno 2026-05-28: KPIs = 1st→last day, not Σ weeks.
+    monthly_total_profit = 0.0
+    for team_out, mtr in zip(report_data["teams"], metrics):
+        team_out["monthlyLoads"] = mtr["monthlyLoads"]
+        team_out["monthlyRevenue"] = mtr["monthlyRevenue"]
+        team_out["monthlyProfit"] = mtr["monthlyProfit"]
+        team_out["monthlyMarginPct"] = mtr["monthlyMarginPct"]
+        team_out["monthlyServicePct"] = mtr["monthlyServicePct"]
+        monthly_total_profit += mtr["monthlyProfit"]
+    report_data["monthlyTotalProfit"] = monthly_total_profit
+
     report_data["period"] = {
         "key": period_key,
         "label": label,
@@ -419,7 +486,73 @@ async def report(
         "updatedBy": settings.get("updatedBy"),
     }
     report_data["lock"] = lock
+    return report_data
+
+
+@router.get("/report")
+async def report(
+    request: Request,
+    period: Optional[str] = Query(None, description="YYYY-MM (the month the 6th-period opens in)"),
+    _user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """Full calculated bonus report for one period, fed from live datalake."""
+    report_data = await build_bonus_report_data(
+        get_datalake_gold_pool(request),
+        get_pool(request),
+        getattr(request.app.state, "financial_pool", None),
+        period,
+    )
     return {"success": True, "data": report_data}
+
+
+@router.get("/history")
+async def history(
+    request: Request,
+    _user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """Monthly History (Bruno 2026-05-28): immutable snapshots + the still-open
+    current month computed live (flagged ``open``)."""
+    # Lazy import — bonus_history imports this module (avoids a circular import).
+    from app.services.bonus_history import get_history
+
+    primary = get_pool(request)
+    snapshots = await get_history(primary)
+    for s in snapshots:
+        y, m = (int(x) for x in s["periodKey"].split("-"))
+        s["label"] = f"{month_name[m]} {y}"
+
+    current = None
+    current_key = _current_period_key()
+    try:
+        rep = await build_bonus_report_data(
+            get_datalake_gold_pool(request),
+            primary,
+            getattr(request.app.state, "financial_pool", None),
+            current_key,
+        )
+        rows = []
+        for t in rep["teams"]:
+            profit = float(t.get("monthlyProfit", 0) or 0)
+            bonus = float(t.get("teamBonusUsd", 0) or 0)
+            rows.append(
+                {
+                    "teamId": t["id"],
+                    "teamName": t["name"],
+                    "profitUsd": profit,
+                    "totalBonusUsd": bonus,
+                    "pctBonus": (bonus / profit * 100) if profit else None,
+                }
+            )
+        current = {
+            "periodKey": current_key,
+            "label": rep["period"]["label"],
+            "open": True,
+            "rows": rows,
+        }
+    except Exception as exc:  # noqa: BLE001 — open-month preview is best-effort
+        logger.warning("History current-period compute failed: %s", exc)
+
+    return {"success": True, "data": {"snapshots": snapshots, "current": current}}
 
 
 @router.get("/roster")
@@ -436,7 +569,7 @@ async def get_roster(
         _load_afterhours(primary),
         _load_settings(primary, period_key),
         _load_lock(primary, period_key),
-        _suggested_dof_fx(request, start),
+        _suggested_dof_fx(getattr(request.app.state, "financial_pool", None), start),
     )
     return {
         "success": True,

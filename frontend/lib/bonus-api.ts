@@ -114,6 +114,13 @@ export interface BonusTeam {
   totalRevenue: number
   totalProfit: number
   marginPct: number // decimal
+  // Calendar-month cumulative KPIs (Bruno 2026-05-28) — 1st→last day, NOT the
+  // sum of the Mon→Sun weekly buckets. Display only; payout math stays weekly.
+  monthlyLoads: number
+  monthlyRevenue: number
+  monthlyProfit: number
+  monthlyMarginPct: number // decimal
+  monthlyServicePct: number // percentage (e.g. 94.44)
   teamBonusUsd: number
   profitBracketBonuses: ProfitBracketBonus[]
   weeklyRules: WeeklyRule[]
@@ -137,6 +144,8 @@ export interface BonusReport {
     payPerLoad: Record<string, number>
   }
   teams: BonusTeam[]
+  // Σ of per-team calendar-month profit (Bruno 2026-05-28 KPI basis).
+  monthlyTotalProfit: number
   nightShift: {
     fxRate: number
     trackingTracingAverageBonusUsd: number
@@ -197,6 +206,36 @@ export function useBonusReport(period: string | undefined) {
   return useQuery({
     queryKey: ["bonus", "report", period ?? "current"],
     queryFn: () => apiGet<BonusReport>(`/report${period ? `?period=${period}` : ""}`),
+    ...BONUS_RETRY,
+  })
+}
+
+// History tab (Bruno 2026-05-28) — immutable monthly snapshots + open month.
+export interface BonusHistoryRow {
+  periodKey: string
+  label?: string
+  teamId: string
+  teamName: string
+  profitUsd: number
+  totalBonusUsd: number
+  pctBonus: number | null
+  finalizedAt?: string | null
+}
+
+export interface BonusHistory {
+  snapshots: BonusHistoryRow[]
+  current: {
+    periodKey: string
+    label: string
+    open: boolean
+    rows: Omit<BonusHistoryRow, "periodKey" | "finalizedAt" | "label">[]
+  } | null
+}
+
+export function useBonusHistory() {
+  return useQuery({
+    queryKey: ["bonus", "history"],
+    queryFn: () => apiGet<BonusHistory>("/history"),
     ...BONUS_RETRY,
   })
 }

@@ -35,6 +35,9 @@ function Kpi({
 
 export function KpiStrip({ report }: { report: BonusReport }) {
   const connected = report.dataSource.status.toLowerCase() === "connected"
+  // Bruno 2026-05-28: profit KPIs are the calendar-month cumulative.
+  const monthlyProfit = report.monthlyTotalProfit
+  const bonusPctOfProfit = monthlyProfit ? (report.totals.grandBonusUsd / monthlyProfit) * 100 : 0
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Kpi
@@ -45,13 +48,13 @@ export function KpiStrip({ report }: { report: BonusReport }) {
       />
       <Kpi
         label="Total Profit"
-        value={usd0(report.totals.totalProfit)}
+        value={usd0(monthlyProfit)}
         sub="Operations teams from report"
         Icon={TrendingUp}
       />
       <Kpi
         label="Bonus / Profit"
-        value={pct(report.totals.bonusAsPctOfProfit)}
+        value={pct(bonusPctOfProfit)}
         sub="Control metric for HR review"
         Icon={Calculator}
       />
