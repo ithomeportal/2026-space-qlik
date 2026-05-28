@@ -20,10 +20,6 @@ VIEWER_SUB = "portal-viewer@unilinktransportation.com"
 VIEWER_NAME = "Analytics Portal Viewer"
 VIEWER_EMAIL = "portal-viewer@unilinktransportation.com"
 
-# In-memory token cache: single viewer token
-_viewer_token: str | None = None
-_viewer_token_expires: float = 0
-
 
 def _generate_viewer_jwt() -> str:
     """Generate a JWT for the universal portal viewer identity."""
@@ -58,18 +54,13 @@ async def get_viewer_token(
 
     All portal users share the same Qlik identity (portal-viewer).
     Access control is handled by the portal (NextAuth roles), not Qlik.
+
+    Never cache the token: Qlik's ``/login/jwt-session`` enforces one-time use
+    per JWT (rejects a reused ``jti`` with "jwt token has already been used").
+    A fresh, uniquely-jti'd token is minted on every call — RS256 signing is
+    cheap and the frontend already calls this once per session exchange.
     """
-    global _viewer_token, _viewer_token_expires
-
-    now = time.time()
-    # Return cached token if still valid (more than 10 min left)
-    if _viewer_token and _viewer_token_expires - now > 600:
-        return {"success": True, "data": {"token": _viewer_token}}
-
-    _viewer_token = _generate_viewer_jwt()
-    _viewer_token_expires = now + 3600
-
-    return {"success": True, "data": {"token": _viewer_token}}
+    return {"success": True, "data": {"token": _generate_viewer_jwt()}}
 
 
 @router.post("/qlik/tv-token")
@@ -87,16 +78,9 @@ async def get_tv_token(
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Invalid TV secret")
 
-    global _viewer_token, _viewer_token_expires
-
-    now = time.time()
-    if _viewer_token and _viewer_token_expires - now > 600:
-        return {"success": True, "data": {"token": _viewer_token}}
-
-    _viewer_token = _generate_viewer_jwt()
-    _viewer_token_expires = now + 3600
-
-    return {"success": True, "data": {"token": _viewer_token}}
+    # Fresh, single-use token per call (see get_viewer_token — Qlik rejects a
+    # reused jti at /login/jwt-session).
+    return {"success": True, "data": {"token": _generate_viewer_jwt()}}
 
 
 # Keep legacy endpoint for backward compatibility
