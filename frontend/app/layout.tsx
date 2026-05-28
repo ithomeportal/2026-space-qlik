@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
 
 export const metadata: Metadata = {
   title: "UNILINK Space (Analytics Hub)",
-  description: "Role-based Qlik dashboard portal for Unilink Transportation",
+  description: "Role-based analytics portal for Unilink Transportation",
 }
 
 export default function RootLayout({

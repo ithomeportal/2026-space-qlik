@@ -15,10 +15,6 @@ class Settings(BaseSettings):
     # Optional: used only to PREFILL a suggested FX on Bonus Calculator; the
     # HR board-pinned rate is authoritative. Percent-encode $ -> %24 in the URL.
     FINANCIAL_DATABASE_URL: str = ""
-    QLIK_TENANT_URL: str = "https://mb01txe2h9rovgh.us.qlikcloud.com"
-    QLIK_PRIVATE_KEY: str = ""
-    QLIK_ISSUER: str = ""
-    QLIK_KEY_ID: str = ""
     RESEND_API_KEY: str = ""
     TYPESENSE_API_KEY: str = ""
     TYPESENSE_HOST: str = "localhost"
@@ -27,7 +23,6 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "http://localhost:3000"
     TIMEOFF_DATABASE_URL: str = ""
     SEED_SECRET: str = "change-me-in-production"
-    TV_SECRET: str = "change-me-in-production"
 
     # Microsoft Graph (admin-ms-api app) — used to send the RFP Performance
     # daily digest from ithome@unilinktransportation.com via /sendMail.

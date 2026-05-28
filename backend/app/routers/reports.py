@@ -23,11 +23,11 @@ async def list_reports(
 
     rows = await pool.fetch(
         """
-        SELECT DISTINCT r.id, r.qlik_app_id, r.qlik_sheet_id, r.title,
+        SELECT DISTINCT r.id, r.title,
                r.description, r.note, r.category, r.tags, r.owner_name,
                r.data_sources, r.last_reload, r.is_active, r.created_at,
+               r.report_type, r.custom_path,
                COALESCE(r.is_mobile, FALSE) AS is_mobile,
-               COALESCE(r.use_classic, FALSE) AS use_classic,
                EXISTS(
                  SELECT 1 FROM user_preferences up
                  WHERE up.user_id = $1 AND r.id = ANY(up.pinned_reports)

@@ -29,9 +29,6 @@ async def require_admin(user: dict = Depends(require_user)) -> dict:
 
 
 class ReportCreate(BaseModel):
-    qlik_app_id: str
-    qlik_sheet_id: str | None = None
-    qlik_space_id: str | None = None
     title: str
     description: str | None = None
     note: str | None = None
@@ -39,6 +36,7 @@ class ReportCreate(BaseModel):
     tags: list[str] | None = None
     owner_name: str | None = None
     data_sources: list[str] | None = None
+    custom_path: str | None = None
     role_names: list[str] | None = None
 
 
@@ -54,10 +52,7 @@ class ReportUpdate(BaseModel):
     tags: list[str] | None = None
     owner_name: str | None = None
     data_sources: list[str] | None = None
-    qlik_app_id: str | None = None
-    qlik_sheet_id: str | None = None
     is_active: bool | None = None
-    use_classic: bool | None = None
 
 
 @router.get("/reports")
@@ -72,7 +67,7 @@ async def admin_list_reports(
 
     rows = await pool.fetch(
         """
-        SELECT r.*, COALESCE(r.use_classic, FALSE) AS use_classic,
+        SELECT r.*,
                COALESCE(
                  (SELECT COUNT(*) FROM access_log al WHERE al.report_id = r.id
                   AND al.accessed_at > NOW() - INTERVAL '30 days'), 0
@@ -110,14 +105,12 @@ async def admin_create_report(
 
     row = await pool.fetchrow(
         """
-        INSERT INTO reports (qlik_app_id, qlik_sheet_id, qlik_space_id, title,
-                             description, note, category, tags, owner_name, data_sources)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO reports (title, description, note, category, tags,
+                             owner_name, data_sources, custom_path, report_type)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                CASE WHEN $8 IS NULL THEN 'qlik' ELSE 'custom' END)
         RETURNING *
         """,
-        body.qlik_app_id,
-        body.qlik_sheet_id,
-        body.qlik_space_id,
         body.title,
         body.description,
         body.note,
@@ -125,6 +118,7 @@ async def admin_create_report(
         body.tags or [],
         body.owner_name,
         body.data_sources or [],
+        body.custom_path,
     )
 
     # Assign tag roles if provided

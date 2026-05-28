@@ -35,7 +35,6 @@ from app.routers import (
     podium_dfw,
     podium_top,
     preferences,
-    qlik,
     reports,
     rfp_performance,
     sales_attrition_to_ops,
@@ -397,184 +396,6 @@ async def lifespan(app: FastAPI):
 
                 await seed_all()
 
-            # One-time migration (idempotent): flip the legacy "HR - Access Log
-            # Doors" Qlik row (app 4573ff42-…, sheet ZYDdxs on unilink.us) to a
-            # code-made row pointing at /reports/hr-access-doors. Runs on every
-            # boot but no-ops once the row has been converted. Also removes the
-            # obsolete "(Mob) HR - Access Log Doors" mobile duplicate.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/hr-access-doors',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '4573ff42-c0b5-48ef-9945-20861b7a6f63'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/hr-access-doors')
-                    """
-                )
-                await app.state.pool.execute(
-                    """
-                    DELETE FROM reports
-                     WHERE title = '(Mob) HR - Access Log Doors'
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"HR Access Log migration skipped: {e}")
-
-            # 2026-04-25 — flip legacy Qlik "Attrition Week-Over-Week"
-            # (app 4e326aa5-…) to a code-made row pointing at
-            # /reports/attrition-wow. seed_custom_reports() then sets the
-            # title/desc/roles to the new spec. Removes the (Mob) duplicate.
-            # Idempotent: no-ops once flipped.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/attrition-wow',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '4e326aa5-3d7a-4802-a792-56e28a35fdd6'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/attrition-wow')
-                    """
-                )
-                await app.state.pool.execute(
-                    """
-                    DELETE FROM reports
-                     WHERE title = '(Mob) Attrition Week-Over-Week'
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"Attrition WoW migration skipped: {e}")
-
-            # 2026-04-26 — flip legacy Qlik "Customer Scorecard"
-            # (app de4c1a28-…) to the code-made "OPs Customer Score" pointing
-            # at /reports/ops-customer-score. seed_custom_reports() then sets
-            # the title/desc/roles. Idempotent: no-ops once flipped.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/ops-customer-score',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = 'de4c1a28-5e6a-465d-a351-59f99950a5d4'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/ops-customer-score')
-                    """
-                )
-                await app.state.pool.execute(
-                    """
-                    DELETE FROM reports
-                     WHERE title = '(Mob) Customer Scorecard'
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"Customer Score migration skipped: {e}")
-
-            # 2026-04-26 — flip legacy Qlik "Vonage VoIP Calls"
-            # (app 3e30136b-…) to the code-made "VoIP Calls Logs" pointing
-            # at /reports/voip-calls-logs. seed_custom_reports() then sets
-            # the title/desc/roles (everyone). Removes the (Mob) duplicate
-            # (app 9e477387-…). Idempotent: no-ops once flipped.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/voip-calls-logs',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '3e30136b-050a-4f19-83ab-17a7d55a2fc3'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/voip-calls-logs')
-                    """
-                )
-                await app.state.pool.execute(
-                    """
-                    DELETE FROM reports
-                     WHERE qlik_app_id = '9e477387-e2ce-46bc-a27f-ec85b06c0f7e'
-                        OR title = '(Mob) Vonage VoIP Calls'
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"VoIP Calls Logs migration skipped: {e}")
-
-            # 2026-04-28 — flip legacy Qlik "IT Managed Services"
-            # (app 86da731f-…, sheet RqXzx) to the code-made "IT Tickets Mgmt"
-            # pointing at /reports/it-tickets-mgmt. seed_custom_reports() then
-            # sets the title/desc/roles (everyone). Idempotent: no-ops once flipped.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/it-tickets-mgmt',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '86da731f-577f-45d3-9d40-c416649a4937'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/it-tickets-mgmt')
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"IT Tickets Mgmt migration skipped: {e}")
-
-            # 2026-04-28 — flip legacy Qlik "RFP Performance Tracker"
-            # (app 6df25048-…) to the code-made "Performance for RFPs"
-            # pointing at /reports/rfp-performance. seed_custom_reports()
-            # then sets the title/desc/roles to the new spec. Idempotent:
-            # no-ops once flipped.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/rfp-performance',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '6df25048-2917-43e9-a944-a48cc355fdb4'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/rfp-performance')
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"RFP Performance migration skipped: {e}")
-
-            # 2026-04-27 — flip legacy Qlik "Awards Tracker"
-            # (app 949cafc8-…, legacy unilink.us tenant — not embeddable from
-            # the portal tenant) to the code-made "Track Award Loads" pointing
-            # at /reports/track-award-loads. seed_custom_reports() then sets
-            # the title/desc/roles. Removes the (Mob) Awards Tracker duplicate
-            # (app 651f789a-…) since the new page is responsive. Idempotent.
-            try:
-                await app.state.pool.execute(
-                    """
-                    UPDATE reports
-                       SET qlik_app_id   = NULL,
-                           qlik_sheet_id = NULL,
-                           report_type   = 'custom',
-                           custom_path   = '/reports/track-award-loads',
-                           is_active     = TRUE
-                     WHERE qlik_app_id = '949cafc8-cd79-4058-a528-cd4b330d9298'
-                       AND (custom_path IS NULL OR custom_path <> '/reports/track-award-loads')
-                    """
-                )
-                await app.state.pool.execute(
-                    """
-                    DELETE FROM reports
-                     WHERE qlik_app_id = '651f789a-f9a4-44ad-9ce3-301a1a3dc2ef'
-                        OR title = '(Mob) Awards Tracker'
-                    """
-                )
-            except Exception as e:
-                logger.warning(f"Awards Tracker migration skipped: {e}")
-
             # Always idempotently upsert code-made (custom) reports so new
             # entries added to CUSTOM_REPORTS ship on the next deploy — the
             # full seed_all only runs once (when role_report_access is empty).
@@ -815,7 +636,6 @@ async def _timing_log(request: Request, call_next):
 
 app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
-app.include_router(qlik.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")

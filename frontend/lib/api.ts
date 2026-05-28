@@ -26,8 +26,6 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<ApiResp
 
 export interface Report {
   id: string
-  qlik_app_id: string | null
-  qlik_sheet_id: string | null
   title: string
   description: string | null
   note: string | null
@@ -40,8 +38,7 @@ export interface Report {
   is_active: boolean
   is_favorited?: boolean
   view_count?: number
-  use_classic?: boolean
-  report_type?: "qlik" | "custom"
+  report_type?: "custom"
   custom_path?: string | null
 }
 
@@ -118,15 +115,6 @@ export function useUserTagRoles() {
   return useQuery({
     queryKey: ["user-tag-roles"],
     queryFn: () => apiFetch<TagRole[]>("user/tag-roles"),
-  })
-}
-
-export function useQlikToken() {
-  return useQuery({
-    queryKey: ["qlik-token"],
-    queryFn: () => apiFetch<{ token: string }>("qlik/token"),
-    staleTime: 50 * 60 * 1000, // 50 minutes
-    refetchInterval: 50 * 60 * 1000,
   })
 }
 

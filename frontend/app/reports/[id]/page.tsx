@@ -3,9 +3,7 @@
 import { useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useReport } from "@/lib/api"
-import { QlikEmbed } from "@/components/QlikEmbed"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 
 export default function ReportViewerPage() {
@@ -13,10 +11,11 @@ export default function ReportViewerPage() {
   const router = useRouter()
   const { data: reportRes, isLoading } = useReport(id)
 
-  // Code-made reports bypass the Qlik embed and redirect to their custom Next.js route.
+  // Every report is now a code-made (custom) report rendered at its own
+  // Next.js route — redirect there. (Qlik embedding was removed 2026-05-28.)
   const report = reportRes?.data
   useEffect(() => {
-    if (report?.report_type === "custom" && report.custom_path) {
+    if (report?.custom_path) {
       router.replace(report.custom_path)
     }
   }, [report, router])
@@ -49,8 +48,9 @@ export default function ReportViewerPage() {
     )
   }
 
-  // Custom reports — show a lightweight placeholder while the useEffect redirect kicks in.
-  if (report.report_type === "custom") {
+  // Custom report with a path — show a lightweight placeholder while the
+  // useEffect redirect kicks in.
+  if (report.custom_path) {
     return (
       <div className="flex h-[calc(100vh-64px)] items-center justify-center">
         <Skeleton className="h-8 w-64" />
@@ -58,43 +58,14 @@ export default function ReportViewerPage() {
     )
   }
 
-  if (!report.qlik_app_id) {
-    return (
-      <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center">
-        <h2 className="text-xl font-semibold text-[#1B3A5C]">Report misconfigured</h2>
-        <p className="mt-2 text-[#6B7280]">This report has no embed target.</p>
-      </div>
-    )
-  }
-
+  // No embed target (legacy/misconfigured row).
   return (
-    <div className="flex h-[calc(100vh-64px)] flex-col">
-      {/* Report header bar */}
-      <div className="flex items-center gap-3 border-b border-[#E5E7EB] bg-white px-4 py-2">
-        <Link
-          href="/"
-          className="flex items-center gap-1 text-sm text-[#6B7280] hover:text-[#111827]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
-        <div className="h-4 w-px bg-[#E5E7EB]" />
-        <h1 className="text-sm font-semibold text-[#1B3A5C]">{report.title}</h1>
-        {report.category && (
-          <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">
-            {report.category}
-          </span>
-        )}
-      </div>
-
-      {/* Qlik embed - full remaining height */}
-      <div className="flex-1">
-        <QlikEmbed
-          appId={report.qlik_app_id}
-          sheetId={report.qlik_sheet_id}
-          useClassic={report.use_classic}
-        />
-      </div>
+    <div className="flex h-[calc(100vh-64px)] flex-col items-center justify-center">
+      <h2 className="text-xl font-semibold text-[#1B3A5C]">Report unavailable</h2>
+      <p className="mt-2 text-[#6B7280]">This report is no longer available.</p>
+      <Link href="/" className="mt-4 text-sm text-[#2563EB] hover:underline">
+        Back to home
+      </Link>
     </div>
   )
 }

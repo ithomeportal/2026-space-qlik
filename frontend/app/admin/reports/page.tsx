@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -10,19 +9,16 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
-import { Plus, Trash2, Pencil, FileEdit } from "lucide-react"
+import { Trash2, Pencil, FileEdit } from "lucide-react"
 
 interface Report {
   id: string
   title: string
   description: string | null
   note: string | null
-  qlik_app_id: string | null
-  qlik_sheet_id: string | null
+  custom_path: string | null
   is_active: boolean
-  use_classic: boolean
   views_30d: number
   tag_roles: string[]
 }
@@ -33,25 +29,12 @@ interface Role {
 }
 
 export default function AdminReportsPage() {
-  const { data: session } = useSession()
-  const canEditQlikIds = (session?.user?.roles ?? []).includes("admin")
   const [reports, setReports] = useState<Report[]>([])
   const [roles, setRoles] = useState<Role[]>([])
-  const [showCreate, setShowCreate] = useState(false)
   const [editingReport, setEditingReport] = useState<Report | null>(null)
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
   const [editReport, setEditReport] = useState<Report | null>(null)
-  const [editForm, setEditForm] = useState({ title: "", description: "", note: "", qlik_app_id: "", qlik_sheet_id: "", use_classic: false })
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    note: "",
-    qlik_app_id: "",
-    qlik_sheet_id: "",
-    owner_name: "",
-    tags: "",
-  })
-  const [createRoles, setCreateRoles] = useState<string[]>([])
+  const [editForm, setEditForm] = useState({ title: "", description: "", note: "" })
 
   useEffect(() => {
     loadReports()
@@ -70,34 +53,6 @@ export default function AdminReportsPage() {
     if (json.success) setRoles(json.data)
   }
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    await fetch("/api/proxy/admin/reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        tags: form.tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
-        role_names: createRoles,
-      }),
-    })
-    setShowCreate(false)
-    setForm({
-      title: "",
-      description: "",
-      note: "",
-      qlik_app_id: "",
-      qlik_sheet_id: "",
-      owner_name: "",
-      tags: "",
-    })
-    setCreateRoles([])
-    loadReports()
-  }
-
   async function handleDelete(id: string) {
     await fetch(`/api/proxy/admin/reports/${id}`, { method: "DELETE" })
     loadReports()
@@ -109,23 +64,15 @@ export default function AdminReportsPage() {
       title: report.title,
       description: report.description ?? "",
       note: report.note ?? "",
-      qlik_app_id: report.qlik_app_id ?? "",
-      qlik_sheet_id: report.qlik_sheet_id ?? "",
-      use_classic: report.use_classic ?? false,
     })
   }
 
   async function handleSaveEdit() {
     if (!editReport) return
-    const payload: Record<string, string | boolean | undefined> = {
+    const payload: Record<string, string | undefined> = {
       title: editForm.title || undefined,
       description: editForm.description || undefined,
       note: editForm.note || undefined,
-      use_classic: editForm.use_classic,
-    }
-    if (canEditQlikIds) {
-      payload.qlik_app_id = editForm.qlik_app_id || undefined
-      payload.qlik_sheet_id = editForm.qlik_sheet_id || undefined
     }
     await fetch(`/api/proxy/admin/reports/${editReport.id}`, {
       method: "PATCH",
@@ -195,83 +142,9 @@ export default function AdminReportsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[#1B3A5C]">Report Catalog</h1>
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger>
-            <Button className="bg-[#2563EB]">
-              <Plus className="mr-2 h-4 w-4" /> Add Report
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Report</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-3">
-              <Input
-                placeholder="Title"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                required
-              />
-              <Input
-                placeholder="Description"
-                value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
-              />
-              <textarea
-                placeholder="Note — additional details about what this report contains"
-                value={form.note}
-                onChange={(e) =>
-                  setForm({ ...form, note: e.target.value })
-                }
-                rows={3}
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <Input
-                placeholder="Qlik App ID"
-                value={form.qlik_app_id}
-                onChange={(e) =>
-                  setForm({ ...form, qlik_app_id: e.target.value })
-                }
-                required
-              />
-              <Input
-                placeholder="Qlik Sheet ID"
-                value={form.qlik_sheet_id}
-                onChange={(e) =>
-                  setForm({ ...form, qlik_sheet_id: e.target.value })
-                }
-              />
-              <Input
-                placeholder="Owner Name"
-                value={form.owner_name}
-                onChange={(e) =>
-                  setForm({ ...form, owner_name: e.target.value })
-                }
-              />
-              <Input
-                placeholder="Tags (comma-separated)"
-                value={form.tags}
-                onChange={(e) => setForm({ ...form, tags: e.target.value })}
-              />
-              <div>
-                <p className="mb-2 text-sm font-medium text-[#374151]">
-                  Tag Roles (who can access)
-                </p>
-                <RoleCheckboxes
-                  selected={createRoles}
-                  onChange={(name) =>
-                    toggleRole(name, createRoles, setCreateRoles)
-                  }
-                />
-              </div>
-              <Button type="submit" className="w-full bg-[#2563EB]">
-                Create Report
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <p className="text-sm text-[#6B7280]">
+          Reports are code-made — manage access &amp; metadata here.
+        </p>
       </div>
 
       {/* Edit Tag Roles Dialog */}
@@ -345,53 +218,6 @@ export default function AdminReportsPage() {
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
-            {canEditQlikIds && (
-              <>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#374151]">
-                    Qlik App ID
-                  </label>
-                  <Input
-                    placeholder="Qlik App ID"
-                    value={editForm.qlik_app_id}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, qlik_app_id: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#374151]">
-                    Qlik Sheet ID
-                  </label>
-                  <Input
-                    placeholder="Qlik Sheet ID"
-                    value={editForm.qlik_sheet_id}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, qlik_sheet_id: e.target.value })
-                    }
-                  />
-                </div>
-              </>
-            )}
-            <div className="flex items-center gap-3">
-              <label className="relative inline-flex cursor-pointer items-center">
-                <input
-                  type="checkbox"
-                  className="peer sr-only"
-                  checked={editForm.use_classic}
-                  onChange={(e) =>
-                    setEditForm({ ...editForm, use_classic: e.target.checked })
-                  }
-                />
-                <div className="h-5 w-9 rounded-full bg-[#D1D5DB] after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-[#2563EB] peer-checked:after:translate-x-full" />
-              </label>
-              <div>
-                <p className="text-sm font-medium text-[#374151]">Classic Embed Mode</p>
-                <p className="text-xs text-[#6B7280]">
-                  Enable for reports with Date Picker or other Dashboard Bundle objects
-                </p>
-              </div>
-            </div>
             <Button
               onClick={handleSaveEdit}
               className="w-full bg-[#2563EB]"
@@ -408,7 +234,7 @@ export default function AdminReportsPage() {
             <tr className="border-b bg-[#F9FAFB] text-left text-[#6B7280]">
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Tag Roles</th>
-              <th className="px-4 py-3">App ID</th>
+              <th className="px-4 py-3">Path</th>
               <th className="px-4 py-3 text-right">Views (30d)</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3 text-right">Actions</th>
@@ -435,24 +261,15 @@ export default function AdminReportsPage() {
                   </div>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-[#6B7280]">
-                  {report.qlik_app_id
-                    ? `${report.qlik_app_id.slice(0, 8)}...`
-                    : <span className="text-[#9CA3AF] italic">custom</span>}
+                  {report.custom_path ?? (
+                    <span className="text-[#9CA3AF] italic">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right">{report.views_30d}</td>
                 <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    <Badge
-                      variant={report.is_active ? "default" : "secondary"}
-                    >
-                      {report.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                    {report.use_classic && (
-                      <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">
-                        Classic
-                      </Badge>
-                    )}
-                  </div>
+                  <Badge variant={report.is_active ? "default" : "secondary"}>
+                    {report.is_active ? "Active" : "Inactive"}
+                  </Badge>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-1">
@@ -476,7 +293,7 @@ export default function AdminReportsPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(report.id)}
-                      title="Delete Report"
+                      title="Deactivate Report"
                     >
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
