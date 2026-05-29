@@ -395,10 +395,11 @@ CUSTOM_REPORTS = [
             "out-of-service", "mcp", "risk", "compliance", "procurement",
         ],
         "owner_name": "admin",
-        "roles": [
-            "CEO", "Executive", "Procurement",
-            "Operations", "CORP", "DFW",
-        ],
+        # Managers only — CEO + Executive (admins always bypass). Set per Diego
+        # 2026-05-29. NOTE: seed only ADDS roles (ON CONFLICT DO NOTHING); the
+        # first deploy seeded a wider set, so the live narrowing was done in the
+        # admin UI (/admin/reports) — the single source of truth.
+        "roles": ["CEO", "Executive"],
     },
 ]
 
