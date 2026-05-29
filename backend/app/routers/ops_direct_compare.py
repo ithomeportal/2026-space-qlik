@@ -160,9 +160,11 @@ async def panel_summary(
           COALESCE(SUM(br4.total_charge) FILTER (
             WHERE br4.total_charge <> 0
           ), 0)::numeric                                            AS revenue,
-          COALESCE(SUM(br4.margin_amt) FILTER (
-            WHERE br4.total_charge <> 0
-          ), 0)::numeric                                            AS profit
+          -- Profit = SUM(margin_amt) over ALL in-scope rows. We intentionally
+          -- do NOT filter total_charge <> 0 here: zero-charge rows carry
+          -- accessorial margin that is real profit and must be added (matches
+          -- CEO Executive's canonical sum(margin_amt); Bruno 2026-05-29).
+          COALESCE(SUM(br4.margin_amt), 0)::numeric                 AS profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
         """,
@@ -226,9 +228,7 @@ async def concentration(
             COALESCE(SUM(br4.total_charge) FILTER (
               WHERE br4.total_charge <> 0
             ), 0)::numeric AS revenue,
-            COALESCE(SUM(br4.margin_amt) FILTER (
-              WHERE br4.total_charge <> 0
-            ), 0)::numeric AS profit
+            COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.customer_name IS NOT NULL
@@ -294,9 +294,7 @@ def _customer_select(where: str) -> str:
           COALESCE(SUM(br4.total_charge) FILTER (
             WHERE br4.total_charge <> 0
           ), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt) FILTER (
-            WHERE br4.total_charge <> 0
-          ), 0)::numeric AS profit
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
           AND br4.customer_name IS NOT NULL
@@ -506,9 +504,7 @@ def _lane_select(where: str) -> str:
           COALESCE(SUM(br4.total_charge) FILTER (
             WHERE br4.total_charge <> 0
           ), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt) FILTER (
-            WHERE br4.total_charge <> 0
-          ), 0)::numeric AS profit
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
           AND br4.origin_city_name IS NOT NULL
@@ -759,9 +755,7 @@ async def trend_12m(
               COALESCE(SUM(br4.total_charge) FILTER (
                 WHERE br4.total_charge <> 0
               ), 0)::numeric AS revenue,
-              COALESCE(SUM(br4.margin_amt) FILTER (
-                WHERE br4.total_charge <> 0
-              ), 0)::numeric AS profit
+              COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
             FROM public.mcleod_gld_budget_report_v4 br4
             WHERE {where}
               AND br4.origin_actual_departure::date
@@ -824,9 +818,7 @@ async def customer_revenue_margin(
             COALESCE(SUM(br4.total_charge) FILTER (
               WHERE br4.total_charge <> 0
             ), 0)::numeric AS revenue,
-            COALESCE(SUM(br4.margin_amt) FILTER (
-              WHERE br4.total_charge <> 0
-            ), 0)::numeric AS profit
+            COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.customer_name IS NOT NULL
