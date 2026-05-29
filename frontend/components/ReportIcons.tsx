@@ -16,6 +16,7 @@ import {
   Crown,
   DoorOpen,
   FileSpreadsheet,
+  Gauge,
   GitCompare,
   Headphones,
   LayoutDashboard,
@@ -114,6 +115,7 @@ interface ReportIconAssignment {
 
 const REPORT_MAP: Record<string, ReportIconAssignment> = {
   // ---- Code-made (active) ----
+  "CEO Cockpit":                    { icon: Gauge,          family: "executive" },
   "eSavings from Carriers":         { icon: PiggyBank,      family: "operations" },
   "2026 Official Budget Follow Up": { icon: Target,         family: "finance" },
   "XRay CORP Mng":                  { icon: Activity,       family: "corp" },

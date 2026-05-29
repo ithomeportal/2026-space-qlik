@@ -122,6 +122,16 @@ CUSTOM_REPORTS = [
         "roles": ["CEO"],
     },
     {
+        "key": "ceo-cockpit",  # -> /reports/ceo-cockpit
+        "title": "CEO Cockpit",
+        "description": "Executive cockpit: one hero KPI per report, colour-coded, click a card to open the full report",
+        "note": "Aggregates every report's headline KPI in-process · personalized by role · first-draft thresholds (tune in code)",
+        "category": "Executive",
+        "tags": ["ceo", "cockpit", "dashboard", "kpi", "executive", "overview", "summary"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Finance", "Operations", "Sales"],
+    },
+    {
         "key": "hr-access-doors",  # -> /reports/hr-access-doors
         "title": "HR - Access Log Doors",
         "description": "Fingerprint check-in log with on-time vs late analysis per employee, team and day",

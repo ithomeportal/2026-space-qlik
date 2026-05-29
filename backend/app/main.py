@@ -22,6 +22,7 @@ from app.routers import (
     carrier_risk,
     admin_access_doors,
     carriers_savings,
+    ceo_cockpit,
     ceo_executive,
     dfw_access_doors,
     hr_access_doors,
@@ -691,6 +692,7 @@ app.include_router(xray_dfw.router, prefix="/api")
 for _team_router in xray_dfw_team.team_routers:
     app.include_router(_team_router, prefix="/api")
 app.include_router(ceo_executive.router, prefix="/api")
+app.include_router(ceo_cockpit.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")
 app.include_router(admin_access_doors.router, prefix="/api")
