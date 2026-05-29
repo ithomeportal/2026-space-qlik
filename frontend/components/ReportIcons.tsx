@@ -47,15 +47,15 @@ import type React from "react"
 
 // ---------------------------------------------------------------------------
 // Family palettes — each family gets a 3-stop gradient (light → mid → dark)
-// rendered as 3 horizontal bands. Color = division/audience at a glance.
+// rendered as one smooth diagonal sweep. Color = division/audience at a glance.
 // ---------------------------------------------------------------------------
 
 interface FamilyPalette {
-  /** Top band (light) */
+  /** Lightest stop (top-left of the sweep) */
   light: string
-  /** Middle band (mid) — also the color of the corner sibling tag */
+  /** Middle stop — also the color of the corner sibling tag */
   mid: string
-  /** Bottom band (dark) — also the icon shadow base */
+  /** Darkest stop (bottom-right of the sweep) — also the icon shadow base */
   dark: string
   /** Tailwind label color for screen-reader text + family hover hint */
   label: string
@@ -88,21 +88,11 @@ const FAMILY_PALETTES: Record<Family, FamilyPalette> = {
   neutral:     { light: "#F3F4F6", mid: "#9CA3AF", dark: "#4B5563", label: "Other" },
 }
 
-/** 3 hard-stopped bands at 33% / 66% so they read as distinct stripes,
- * not a smooth gradient. Used as inline `style.background`. */
+/** One smooth diagonal sweep light → mid → dark (no hard bands), so the tile
+ * reads as a single polished gradient. Used as inline `style.background`. */
 export function familyGradient(family: Family): string {
   const p = FAMILY_PALETTES[family]
-  return [
-    `linear-gradient(`,
-    `to bottom,`,
-    `${p.light} 0%,`,
-    `${p.light} 33%,`,
-    `${p.mid} 33%,`,
-    `${p.mid} 66%,`,
-    `${p.dark} 66%,`,
-    `${p.dark} 100%`,
-    `)`,
-  ].join(" ")
+  return `linear-gradient(145deg, ${p.light} 0%, ${p.mid} 52%, ${p.dark} 100%)`
 }
 
 export function familyTagBg(family: Family): string {
@@ -276,7 +266,7 @@ export interface ResolvedIcon {
   icon: ComponentType<{ className?: string; style?: React.CSSProperties }>
   family: Family
   tag?: string
-  /** Inline-style 3-band gradient (assign to `style.background`) */
+  /** Inline-style smooth diagonal gradient (assign to `style.background`) */
   gradient: string
   /** Tag pill background (= family.dark) */
   tagBg: string

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { LayoutGrid, List, ExternalLink, Tag } from "lucide-react"
-import { useReports, useApps, useUserTagRoles } from "@/lib/api"
+import { useReports, useApps } from "@/lib/api"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { ReportCard, AppCard } from "./ReportCard"
 import { ReportGridSkeleton } from "./skeletons/ReportGridSkeleton"
@@ -44,16 +44,37 @@ function ViewToggle({
   )
 }
 
+interface RoleFilter {
+  name: string
+  count: number
+}
+
+/** Build the Filters list from the roles actually attached to the visible
+ *  reports. This guarantees every button maps to ≥1 report and surfaces every
+ *  role present on a report the user can see (e.g. Human Resources) — rather
+ *  than only the roles assigned to the logged-in user. */
+function deriveRoleFilters(reports: { tag_roles?: string[] }[]): RoleFilter[] {
+  const counts = new Map<string, number>()
+  for (const report of reports) {
+    for (const role of report.tag_roles ?? []) {
+      if (role === "admin") continue
+      counts.set(role, (counts.get(role) ?? 0) + 1)
+    }
+  }
+  return Array.from(counts, ([name, count]) => ({ name, count })).sort(
+    (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+  )
+}
+
 function TagRoleSidebar({
+  roles,
   activeRole,
   onSelect,
 }: {
+  roles: RoleFilter[]
   activeRole: string | null
   onSelect: (role: string | null) => void
 }) {
-  const { data: rolesRes } = useUserTagRoles()
-  const roles = rolesRes?.data ?? []
-
   if (roles.length === 0) return null
 
   return (
@@ -76,7 +97,7 @@ function TagRoleSidebar({
       </button>
       {roles.map((role) => (
         <button
-          key={role.id}
+          key={role.name}
           onClick={() => onSelect(activeRole === role.name ? null : role.name)}
           className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
             activeRole === role.name
@@ -90,7 +111,7 @@ function TagRoleSidebar({
               activeRole === role.name ? "text-white/70" : "text-[#9CA3AF]"
             }`}
           >
-            ({role.report_count})
+            ({role.count})
           </span>
         </button>
       ))}
@@ -134,6 +155,10 @@ export function ReportGrid() {
   const allReports = reportsRes?.data ?? []
   const apps = appsRes?.data ?? []
 
+  // Filters derived from roles present on the visible reports (not the user's
+  // assigned roles) — surfaces every role attached to a report the user can see.
+  const roleFilters = deriveRoleFilters(allReports)
+
   // Filter reports by selected TagRole
   const reports = activeRole
     ? allReports.filter((r) => (r.tag_roles ?? []).includes(activeRole))
@@ -151,7 +176,7 @@ export function ReportGrid() {
         </div>
 
         {/* TagRole filter pills for list view */}
-        <TagRoleFilterPills activeRole={activeRole} onSelect={setActiveRole} />
+        <TagRoleFilterPills roles={roleFilters} activeRole={activeRole} onSelect={setActiveRole} />
 
         {/* Apps section */}
         {apps.length > 0 && (
@@ -225,7 +250,7 @@ export function ReportGrid() {
       <div className="flex gap-6">
         {/* Left column — TagRole filters */}
         <div className="w-[10%] shrink-0">
-          <TagRoleSidebar activeRole={activeRole} onSelect={setActiveRole} />
+          <TagRoleSidebar roles={roleFilters} activeRole={activeRole} onSelect={setActiveRole} />
         </div>
 
         {/* Center column — Reports matrix */}
@@ -288,15 +313,14 @@ export function ReportGrid() {
 
 /** Horizontal filter pills for list view */
 function TagRoleFilterPills({
+  roles,
   activeRole,
   onSelect,
 }: {
+  roles: RoleFilter[]
   activeRole: string | null
   onSelect: (role: string | null) => void
 }) {
-  const { data: rolesRes } = useUserTagRoles()
-  const roles = rolesRes?.data ?? []
-
   if (roles.length === 0) return null
 
   return (
@@ -313,7 +337,7 @@ function TagRoleFilterPills({
       </button>
       {roles.map((role) => (
         <button
-          key={role.id}
+          key={role.name}
           onClick={() => onSelect(activeRole === role.name ? null : role.name)}
           className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
             activeRole === role.name
@@ -322,7 +346,7 @@ function TagRoleFilterPills({
           }`}
         >
           {role.name}
-          <span className="ml-1 opacity-60">{role.report_count}</span>
+          <span className="ml-1 opacity-60">{role.count}</span>
         </button>
       ))}
     </div>
