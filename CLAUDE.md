@@ -97,7 +97,7 @@
 7. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
 8. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
 9. **Keep-Alive** — GitHub Actions pings `/api/health` every 5 min to prevent Render cold starts
-10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
+10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator, Reports Index. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
 > _Removed 2026-05-28 (Qlik decommission): Viewer-Only Embed, Full-Page Qlik Embed, Classic Embed Mode, TV Display (`/dfw-podium`), Responsive `(Mob)` Qlik reports._
 
