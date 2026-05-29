@@ -29,7 +29,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.clock import cst_now
+from app.clock import cst_now, cst_today
 from app.routers.deps import require_report_access
 
 router = APIRouter(tags=["ceo-cockpit"], prefix="/custom/ceo-cockpit")
@@ -58,32 +58,38 @@ TILES: list[dict[str, Any]] = [
         "key": "ceo-executive",
         "title": "CEO Executive",
         "category": "Executive",
-        "label": "MTD Profit vs Month Quota",
+        "label": "MTD Profit",
         "endpoint": "/custom/ceo-executive/overview",
         "params": {"range": "mtd"},
         "value_path": "data.kpis.profit",
         "unit": "usd",
-        "compare": {"type": "achievement", "baseline_path": "data.profit_tm"},
+        # NOTE: `profit_tm` is MTD *actual* profit from the budget-report source
+        # (a 2nd reading of the same number), NOT a target — so it's not a valid
+        # baseline. No real quota is exposed here; show plain MTD profit.
+        "compare": {"type": "sign"},
     },
     {
         "key": "xray-corp-mng",
         "title": "XRay CORP Mng",
         "category": "Executive",
-        "label": "MTD Profit vs TM Quota",
+        "label": "MTD Profit",
         "endpoint": "/custom/xray-corp/kpis",
         "params": {"range": "mtd"},
         "value_path": "data.profit",
         "unit": "usd",
-        "compare": {"type": "achievement", "baseline_path": "data.profit_tm"},
+        "compare": {"type": "sign"},  # profit_tm is not a target — see CEO Executive note
     },
     # ---- Operations -------------------------------------------------------
     {
         "key": "budget-followup-2026",
         "title": "2026 Budget Follow Up",
         "category": "Operations",
-        "label": "Revenue vs Budget (YTD)",
+        "label": "Revenue vs Budget (MTD pace)",
         "endpoint": "/custom/budget-followup/summary",
-        "params": {},
+        # Window = month-start..today so it's MTD actual vs MTD budget (a fair
+        # "on pace?" %). The default (full-year) makes YTD/full-year-budget,
+        # which always reads ~40% mid-year — a false alarm.
+        "params": {"start_date": "@month_start", "end_date": "@today"},
         "value_path": "data.revenue_achievement_pct",
         "unit": "pct",
         "compare": {"type": "high", "green": 100, "warn": 90},
@@ -172,12 +178,12 @@ TILES: list[dict[str, Any]] = [
         "key": "xray-dfw-mng",
         "title": "XRay DFW Mng",
         "category": "DFW",
-        "label": "MTD Profit vs TM Quota",
+        "label": "MTD Profit",
         "endpoint": "/custom/xray-dfw/kpis",
         "params": {"range": "mtd"},
         "value_path": "data.profit",
         "unit": "usd",
-        "compare": {"type": "achievement", "baseline_path": "data.profit_tm"},
+        "compare": {"type": "sign"},  # profit_tm is not a target — see CEO Executive note
     },
     {
         "key": "podium-dfw",
@@ -305,6 +311,33 @@ _CACHE: dict[frozenset, tuple[float, dict]] = {}
 _CACHE_TTL = 90.0  # seconds
 
 
+def _resolve_params(params: Optional[dict]) -> Optional[dict]:
+    """Replace date sentinels with live CST values at request time.
+
+    `@month_start` → first day of the current CST month, `@today` → today (CST).
+    Lets a tile request a month-to-date window without hard-coding dates.
+    """
+    if not params:
+        return None
+    today = cst_today()
+    subs = {
+        "@month_start": today.replace(day=1).isoformat(),
+        "@today": today.isoformat(),
+    }
+    return {k: (subs.get(v, v) if isinstance(v, str) else v) for k, v in params.items()}
+
+
+# Beyond this, an achievement/delta % is noise (e.g. projected ≈ 0): keep the
+# colour, drop the meaningless number.
+_DELTA_PCT_CAP = 999.0
+
+
+def _clamp_delta(delta_pct: Optional[float]) -> Optional[float]:
+    if delta_pct is None or abs(delta_pct) > _DELTA_PCT_CAP:
+        return None
+    return delta_pct
+
+
 def _dig(obj: Any, path: str) -> Any:
     """Walk a dotted path into nested dicts; return None on any miss."""
     cur = obj
@@ -343,7 +376,7 @@ def _evaluate(
         ach = value / baseline
         delta_pct = (ach - 1.0) * 100.0
         status = "good" if ach >= 1.0 else "warn" if ach >= 0.9 else "bad"
-        return status, baseline, delta_abs, delta_pct
+        return status, baseline, delta_abs, _clamp_delta(delta_pct)
 
     if rtype == "delta_high":
         baseline = _dig(body, rule["baseline_path"])
@@ -354,7 +387,7 @@ def _evaluate(
         delta_pct = (value / baseline - 1.0) * 100.0
         warn_pct = rule.get("warn_pct", -10)
         status = "good" if delta_pct >= 0 else "warn" if delta_pct >= warn_pct else "bad"
-        return status, baseline, delta_abs, delta_pct
+        return status, baseline, delta_abs, _clamp_delta(delta_pct)
 
     if rtype == "high":
         status = ("good" if value >= rule["green"]
@@ -404,7 +437,7 @@ async def _fetch_tile(client: httpx.AsyncClient, auth: str, spec: dict) -> dict:
     try:
         resp = await client.get(
             f"/api{spec['endpoint']}",
-            params=spec.get("params") or None,
+            params=_resolve_params(spec.get("params")),
             headers={"authorization": auth, "content-type": "application/json"},
         )
     except Exception:
