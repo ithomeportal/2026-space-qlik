@@ -82,6 +82,10 @@ function KpiTile({ tile }: { tile: CockpitTile }) {
           )}
         </div>
 
+        {tile.desc && (
+          <p className="mt-2 text-[10px] leading-snug text-[#9CA3AF]">{tile.desc}</p>
+        )}
+
         <div className="mt-auto flex items-center justify-between pt-3 text-[10px] text-[#9CA3AF]">
           <span>{asOf ? `as of ${asOf}` : " "}</span>
           <span className="flex items-center gap-0.5 text-[#6B7280] opacity-0 transition group-hover:opacity-100">

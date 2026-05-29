@@ -25,6 +25,7 @@ export interface CockpitTile {
   category: string
   label: string
   unit: TileUnit
+  desc: string | null
   deeplink: string
   value: number | null
   baseline: number | null
@@ -39,6 +40,7 @@ export interface CockpitLinkTile {
   title: string
   category: string
   note: string | null
+  desc: string | null
   deeplink: string
   status: "link"
 }

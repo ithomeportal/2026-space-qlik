@@ -67,6 +67,8 @@ TILES: list[dict[str, Any]] = [
         # (a 2nd reading of the same number), NOT a target — so it's not a valid
         # baseline. No real quota is exposed here; show plain MTD profit.
         "compare": {"type": "sign"},
+        "desc": "Sum of margin_amt for all CORP + DFW loads departing this "
+                "month (month-to-date). Includes accessorial profit.",
     },
     {
         "key": "xray-corp-mng",
@@ -78,6 +80,43 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.profit",
         "unit": "usd",
         "compare": {"type": "sign"},  # profit_tm is not a target — see CEO Executive note
+        "desc": "Sum of margin_amt for CORP loads (teams 1–5) departing this "
+                "month (month-to-date).",
+    },
+    {
+        "key": "xray-dfw-mng",
+        "title": "XRay DFW Mng",
+        "category": "Executive",
+        "label": "MTD Profit",
+        "endpoint": "/custom/xray-dfw/kpis",
+        "params": {"range": "mtd"},
+        "value_path": "data.profit",
+        "unit": "usd",
+        "compare": {"type": "sign"},  # profit_tm is not a target — see CEO Executive note
+        "desc": "Sum of margin_amt for DFW loads (team TEAM-DFW) departing "
+                "this month (month-to-date).",
+    },
+    {
+        # "Better or Worse Profit" (Bruno 2026-05-29): the MoM swing in profit.
+        # value shown = Σ margin_amt this month − Σ margin_amt last month
+        # (same all-division scope), green when up, red when down. Reuses
+        # ops-direct-compare/panel-summary (mtd vs last_month) — no new SQL.
+        "key": "profit-mom",
+        "title": "Profit — Better or Worse",
+        "category": "Executive",
+        "label": "MTD profit Δ vs last month",
+        "endpoint": "/custom/ops-direct-compare/panel-summary",
+        "params": {"range": "mtd"},
+        "value_path": "data.profit",
+        "baseline_endpoint": "/custom/ops-direct-compare/panel-summary",
+        "baseline_params": {"range": "last_month"},
+        "baseline_value_path": "data.profit",
+        "unit": "usd",
+        "compare": {"type": "mom_delta"},
+        "deeplink": "/reports/ops-direct-compare",
+        "desc": "This month's profit (Σ margin_amt) minus last month's, same "
+                "company-wide scope. Positive (green) = doing better than "
+                "last month.",
     },
     # ---- Operations -------------------------------------------------------
     {
@@ -93,6 +132,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.revenue_achievement_pct",
         "unit": "pct",
         "compare": {"type": "high", "green": 100, "warn": 90},
+        "desc": "MTD actual revenue ÷ MTD budgeted revenue × 100 "
+                "(100% = on pace with budget).",
     },
     {
         "key": "attrition-wow",
@@ -105,6 +146,8 @@ TILES: list[dict[str, Any]] = [
         "unit": "usd",
         "compare": {"type": "delta_high", "baseline_path": "data.profit.l8w_avg",
                     "warn_pct": -10},
+        "desc": "Last completed week's profit; the Δ compares it to the "
+                "trailing 8-week average.",
     },
     {
         "key": "ops-direct-compare",
@@ -116,6 +159,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.profit",
         "unit": "usd",
         "compare": {"type": "sign"},
+        "desc": "Sum of margin_amt for all CORP + DFW loads departing this "
+                "month (month-to-date).",
     },
     {
         "key": "ops-customer-score",
@@ -127,6 +172,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.kpi.pct_on_time",
         "unit": "pct",
         "compare": {"type": "high", "green": 95, "warn": 90},
+        "desc": "Loads picked up on/before scheduled pickup ÷ total pickups "
+                "this month × 100.",
     },
     {
         "key": "losses-lanes",
@@ -138,6 +185,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.profit",
         "unit": "usd",
         "compare": {"type": "loss"},
+        "desc": "Sum of margin_amt across loads with negative margin this "
+                "month (the MTD loss).",
     },
     {
         "key": "esavings-carriers",
@@ -149,6 +198,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.net_variance",
         "unit": "usd",
         "compare": {"type": "sign"},
+        "desc": "Carrier savings minus overpay, measured against each lane's "
+                "quarterly base rate.",
     },
     {
         "key": "carrier-risk",
@@ -160,6 +211,8 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.single_carrier_volume_pct",
         "unit": "pct",
         "compare": {"type": "low", "green": 30, "warn": 50},
+        "desc": "Share of this month's load volume handled by the single "
+                "largest carrier (lower = less concentration risk).",
     },
     {
         "key": "track-award-loads",
@@ -172,19 +225,10 @@ TILES: list[dict[str, Any]] = [
         "unit": "usd",
         "compare": {"type": "achievement",
                     "baseline_path": "data.profit.projected_profit"},
+        "desc": "Actual profit on awarded loads; the Δ compares it to "
+                "projected awarded profit.",
     },
     # ---- DFW --------------------------------------------------------------
-    {
-        "key": "xray-dfw-mng",
-        "title": "XRay DFW Mng",
-        "category": "DFW",
-        "label": "MTD Profit",
-        "endpoint": "/custom/xray-dfw/kpis",
-        "params": {"range": "mtd"},
-        "value_path": "data.profit",
-        "unit": "usd",
-        "compare": {"type": "sign"},  # profit_tm is not a target — see CEO Executive note
-    },
     {
         "key": "podium-dfw",
         "title": "Podium Set DFW",
@@ -195,6 +239,7 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.kpis.loads",
         "unit": "count",
         "compare": {"type": "neutral"},
+        "desc": "Count of rate confirmations (loads booked) this month.",
     },
     {
         "key": "dfw-access-doors",
@@ -207,6 +252,8 @@ TILES: list[dict[str, Any]] = [
         "unit": "pct",
         "scale": 100,
         "compare": {"type": "high", "green": 90, "warn": 75},
+        "desc": "On-time first punch-ins ÷ scored punch-ins today, DFW badge "
+                "readers (× 100).",
     },
     # ---- Finance ----------------------------------------------------------
     {
@@ -220,6 +267,8 @@ TILES: list[dict[str, Any]] = [
         "unit": "usd",
         "compare": {"type": "low_dynamic", "threshold_path": "data.alarm_threshold_usd",
                     "green_frac": 0.6},
+        "desc": "Total unbilled dollars aging in accounts receivable "
+                "(lower is better).",
     },
     # ---- Sales ------------------------------------------------------------
     {
@@ -233,19 +282,39 @@ TILES: list[dict[str, Any]] = [
         "unit": "pct",
         "scale": 100,
         "compare": {"type": "high", "green": 20, "warn": 10},  # DRAFT threshold
+        "desc": "Awarded RFP lanes ÷ total bid lanes, year-to-date (× 100).",
     },
     # ---- HR ---------------------------------------------------------------
     {
         "key": "hr-access-doors",
         "title": "HR Access Doors",
         "category": "HR",
-        "label": "On-Time Punch % (today)",
+        "label": "Arrived On-Time % (today)",
         "endpoint": "/custom/hr-access-doors/kpis",
         "params": {},
         "value_path": "data.pct_on_time",
         "unit": "pct",
         "scale": 100,
         "compare": {"type": "high", "green": 90, "warn": 75},
+        "desc": "People who arrived on time ÷ scored first punch-ins today "
+                "(× 100).",
+    },
+    {
+        # Bruno 2026-05-29: the complement of on-time. Same endpoint, the
+        # pct_out_of_time field — late arrivals ÷ scored punch-ins today.
+        "key": "hr-access-doors-late",
+        "title": "HR Access Doors",
+        "category": "HR",
+        "label": "Arrived Late % (today)",
+        "endpoint": "/custom/hr-access-doors/kpis",
+        "params": {},
+        "value_path": "data.pct_out_of_time",
+        "unit": "pct",
+        "scale": 100,
+        "compare": {"type": "low", "green": 10, "warn": 25},
+        "deeplink": "/reports/hr-access-doors",
+        "desc": "People who did NOT arrive on time ÷ scored first punch-ins "
+                "today (× 100; the complement of arrived-on-time).",
     },
     # ---- IT ---------------------------------------------------------------
     {
@@ -258,6 +327,7 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.kpis.pct_closed",
         "unit": "pct",
         "compare": {"type": "high", "green": 80, "warn": 60},
+        "desc": "Closed tickets ÷ total tickets in scope × 100.",
     },
     {
         "key": "voip-calls-logs",
@@ -269,6 +339,7 @@ TILES: list[dict[str, Any]] = [
         "value_path": "data.total_calls",
         "unit": "count",
         "compare": {"type": "neutral"},
+        "desc": "Total call legs logged so far this week.",
     },
     # ---- Admin ------------------------------------------------------------
     {
@@ -282,6 +353,8 @@ TILES: list[dict[str, Any]] = [
         "unit": "pct",
         "scale": 100,
         "compare": {"type": "high", "green": 90, "warn": 75},
+        "desc": "On-time first punch-ins ÷ scored punch-ins today, Admin "
+                "badge readers (× 100).",
     },
 ]
 
@@ -298,7 +371,7 @@ LINK_TILES: list[dict[str, Any]] = [
      "note": "Sales→Ops attrition crossover — open to explore"},
     {"key": "dfw-podium-top", "title": "DFW Podium Top", "category": "DFW",
      "note": "Top-3 leaderboards — open to explore"},
-    {"key": "bonus-calculator", "title": "Bonus Calculator", "category": "Finance",
+    {"key": "bonus-calculator", "title": "Bonus Calculator", "category": "HR",
      "note": "Per-team monthly bonus engine — open to explore"},
 ]
 
@@ -418,6 +491,45 @@ def _evaluate(
     return "neutral", None, None, None
 
 
+async def _fetch_one(
+    client: httpx.AsyncClient, auth: str, endpoint: str,
+    params: Optional[dict], value_path: str,
+) -> tuple[Optional[float], Optional[dict], str]:
+    """Call one endpoint in-process and dig a single float out of it.
+
+    Returns (value, body, hint) where hint ∈ {"ok", "locked", "unavailable"}.
+    `value` is None unless hint == "ok".
+    """
+    try:
+        resp = await client.get(
+            f"/api{endpoint}",
+            params=_resolve_params(params),
+            headers={"authorization": auth, "content-type": "application/json"},
+        )
+    except Exception:
+        return None, None, "unavailable"
+
+    if resp.status_code == 403:
+        return None, None, "locked"
+    if resp.status_code != 200:
+        return None, None, "unavailable"
+
+    try:
+        body = resp.json()
+    except ValueError:
+        return None, None, "unavailable"
+    if not isinstance(body, dict) or not body.get("success"):
+        return None, None, "unavailable"
+
+    raw = _dig(body, value_path)
+    if raw is None:
+        return None, body, "unavailable"
+    try:
+        return float(raw), body, "ok"
+    except (TypeError, ValueError):
+        return None, body, "unavailable"
+
+
 async def _fetch_tile(client: httpx.AsyncClient, auth: str, spec: dict) -> dict:
     """Call one report endpoint in-process and reduce it to a tile."""
     base = {
@@ -426,6 +538,7 @@ async def _fetch_tile(client: httpx.AsyncClient, auth: str, spec: dict) -> dict:
         "category": spec["category"],
         "label": spec["label"],
         "unit": spec["unit"],
+        "desc": spec.get("desc"),
         "deeplink": spec.get("deeplink", f"/reports/{spec['key']}"),
         "value": None,
         "baseline": None,
@@ -434,36 +547,44 @@ async def _fetch_tile(client: httpx.AsyncClient, auth: str, spec: dict) -> dict:
         "status": "unavailable",
         "as_of": None,
     }
-    try:
-        resp = await client.get(
-            f"/api{spec['endpoint']}",
-            params=_resolve_params(spec.get("params")),
-            headers={"authorization": auth, "content-type": "application/json"},
-        )
-    except Exception:
-        return base
-
-    if resp.status_code == 403:
+    scale = float(spec.get("scale", 1))
+    value, body, hint = await _fetch_one(
+        client, auth, spec["endpoint"], spec.get("params"), spec["value_path"],
+    )
+    if hint == "locked":
         return {**base, "status": "locked"}
-    if resp.status_code != 200:
+    if value is None or body is None:
         return base
+    value *= scale
 
-    try:
-        body = resp.json()
-    except ValueError:
-        return base
-    if not isinstance(body, dict) or not body.get("success"):
-        return base
+    rule = spec["compare"]
 
-    raw = _dig(body, spec["value_path"])
-    if raw is None:
-        return base
-    try:
-        value = float(raw) * float(spec.get("scale", 1))
-    except (TypeError, ValueError):
-        return base
+    # Month-over-month delta: the hero number IS (this period − baseline
+    # period), green when up. Fetches a second endpoint for the baseline so
+    # no underlying router needs to expose a MoM number itself.
+    if rule["type"] == "mom_delta":
+        bval, _bbody, _bhint = await _fetch_one(
+            client, auth, spec["baseline_endpoint"],
+            spec.get("baseline_params"), spec["baseline_value_path"],
+        )
+        if bval is None:
+            # Baseline unavailable — show this period's value, no verdict.
+            return {**base, "value": value, "status": "neutral",
+                    "as_of": _extract_as_of(body)}
+        bval *= scale
+        delta_abs = value - bval
+        delta_pct = ((value / bval - 1.0) * 100.0) if bval else None
+        return {
+            **base,
+            "value": delta_abs,
+            "baseline": bval,
+            "delta_abs": delta_abs,
+            "delta_pct": _clamp_delta(delta_pct),
+            "status": "good" if delta_abs >= 0 else "bad",
+            "as_of": _extract_as_of(body),
+        }
 
-    status, baseline, delta_abs, delta_pct = _evaluate(spec["compare"], value, body)
+    status, baseline, delta_abs, delta_pct = _evaluate(rule, value, body)
     return {
         **base,
         "value": value,
@@ -481,6 +602,7 @@ def _link_tile(spec: dict) -> dict:
         "title": spec["title"],
         "category": spec["category"],
         "note": spec.get("note"),
+        "desc": spec.get("desc", spec.get("note")),
         "deeplink": spec.get("deeplink", f"/reports/{spec['key']}"),
         "status": "link",
     }
