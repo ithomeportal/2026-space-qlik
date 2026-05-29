@@ -384,6 +384,22 @@ CUSTOM_REPORTS = [
         "owner_name": "Diego",
         "roles": ["CEO", "Executive"],
     },
+    {
+        "key": "carrier-sms-score",  # -> /reports/carrier-sms-score
+        "title": "Carrier SMS Score",
+        "description": "Carrier safety roster — name, location, Vehicle/Driver Out-of-Service rates vs national average, the 5 FMCSA BASIC measures, and the final MyCarrierPortal (MCP) risk verdict, all sortable/searchable with CSV export",
+        "note": "Source: unilink_portal_ap.carriers ⨝ fmcsa_sms_data (LEFT JOIN on dot_number) · first portal report on the AP_module DB (AP_DATABASE_URL, 5th external pool) · default active carriers only · Nat'l OOS avg Vehicle 23.2% / Driver 6.4% · BASIC amber ≥50, red ≥75 · 'Flagged only' = above either OOS avg or any BASIC ≥75 · header-click sort + search + server-streamed CSV (full filter) + row-select CSV · mirrors the AP app's /dashboard/admin/carriers Safety + MCP cards",
+        "category": "Procurement",
+        "tags": [
+            "carrier", "sms", "safety", "fmcsa", "basic", "oos",
+            "out-of-service", "mcp", "risk", "compliance", "procurement",
+        ],
+        "owner_name": "admin",
+        "roles": [
+            "CEO", "Executive", "Procurement",
+            "Operations", "CORP", "DFW",
+        ],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

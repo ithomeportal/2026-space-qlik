@@ -97,7 +97,7 @@
 7. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
 8. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
 9. **Keep-Alive** — GitHub Actions pings `/api/health` every 5 min to prevent Render cold starts
-10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator, Reports Index, CEO Cockpit. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
+10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator, Reports Index, CEO Cockpit, Carrier SMS Score. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
 > **CEO Cockpit** (`ceo-cockpit`, 2026-05-29) is an *aggregator*, not a data report: its `/api/custom/ceo-cockpit/summary` fans out in-process (httpx `ASGITransport`) to ~19 existing report KPI endpoints and renders one RAG-coloured hero KPI per report, click-through to the source. Pure `TILES` config in `routers/ceo_cockpit.py` (no own SQL), personalized by per-tile self-gating. See `docs/SPEC-CUSTOM-REPORTS.md` §31.
 
@@ -200,6 +200,7 @@ DATABASE_URL=<Aiven Postgres URL — analytics_hub>
 SAVINGS_DATABASE_URL=<Aiven aivn_datalake_gold URL — most code-made reports>
 AUTOMATIONS_DATABASE_URL=<Aiven automations_db URL — Track Award Loads, Performance for RFPs>
 FRESHSERVICE_DATABASE_URL=<Aiven fresh_services_unlk URL — IT Tickets Mgmt; percent-encode $ → %24>
+AP_DATABASE_URL=<Aiven unilink_portal_ap (read-only role) — Carrier SMS Score (carriers ⨝ fmcsa_sms_data); percent-encode $ → %24>
 FINANCIAL_DATABASE_URL=<UNLK-Financial DB (read-only) — exchange_rates (Banxico FIX=DOF); OPTIONAL, only prefills Bonus Calculator FX suggestion; percent-encode $ → %24>
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app

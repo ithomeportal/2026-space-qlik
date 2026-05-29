@@ -50,6 +50,18 @@ def get_freshservice_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def get_ap_pool(request: Request) -> asyncpg.Pool:
+    """Pool for unilink_portal_ap — the AP_module app's own DB
+    (carriers + fmcsa_sms_data). Powers the Carrier SMS Score report."""
+    pool = getattr(request.app.state, "ap_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Carrier (AP) data source not configured",
+        )
+    return pool
+
+
 def require_tag_role(*allowed: str):
     """Factory: require the user to have at least one of the given tag roles (admin bypasses).
 

@@ -140,6 +140,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Performance for RFPs":           { icon: LayoutDashboard, family: "sales" },
   "VoIP Calls Logs":                { icon: Phone,          family: "it" },
   "Risk Asss for Carriers":         { icon: ShieldAlert,    family: "procurement" },
+  "Carrier SMS Score":              { icon: ShieldCheck,    family: "procurement" },
   "IT Tickets Mgmt":                { icon: Headphones,     family: "it" },
   "Ops Portal - Overview":          { icon: LayoutGrid,     family: "operations" },
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },

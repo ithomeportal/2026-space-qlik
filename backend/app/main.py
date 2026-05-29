@@ -20,6 +20,7 @@ from app.routers import (
     bonus_calculator,
     budget_followup,
     carrier_risk,
+    carrier_sms,
     admin_access_doors,
     carriers_savings,
     ceo_cockpit,
@@ -511,6 +512,27 @@ async def lifespan(app: FastAPI):
     else:
         app.state.freshservice_pool = None
 
+    # Fifth pool for unilink_portal_ap (the AP_module app's own DB — carriers +
+    # fmcsa_sms_data). Read-only. Powers the Carrier SMS Score report.
+    if settings.AP_DATABASE_URL:
+        try:
+            app.state.ap_pool = await asyncpg.create_pool(
+                settings.AP_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                init=_set_cst_session,
+            )
+            logger.info(
+                "Carrier (AP) pool connected — powers Carrier SMS Score"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Carrier (AP) DB connect failed: {e}. Carrier SMS Score will 503."
+            )
+            app.state.ap_pool = None
+    else:
+        app.state.ap_pool = None
+
     # Optional read-only pool for UNLK-Financial's exchange_rates (Banxico FIX =
     # DOF). Used only to PREFILL a suggested FX on Bonus Calculator; HR's pinned
     # rate is authoritative, so the report works fine when this is unset.
@@ -709,6 +731,7 @@ app.include_router(voip_calls.router, prefix="/api")
 app.include_router(track_award_loads.router, prefix="/api")
 app.include_router(rfp_performance.router, prefix="/api")
 app.include_router(carrier_risk.router, prefix="/api")
+app.include_router(carrier_sms.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")
