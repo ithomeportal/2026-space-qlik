@@ -20,6 +20,7 @@ import {
   Headphones,
   LayoutDashboard,
   LayoutGrid,
+  Library,
   Medal,
   Percent,
   Phone,
@@ -152,6 +153,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },
   "KAM Performance - DFW":          { icon: Stethoscope,    family: "dfw", tag: "KAM" },
   "Bonus Calculator":               { icon: Calculator,     family: "hr" },
+  "Reports Index":                  { icon: Library,        family: "executive" },
 
   // ---- Legacy Qlik (still in catalog) ----
   "Executive Report":               { icon: BarChart3,      family: "executive" },

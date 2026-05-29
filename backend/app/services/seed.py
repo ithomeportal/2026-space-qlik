@@ -364,6 +364,16 @@ CUSTOM_REPORTS = [
             "AdminFinance",
         ],
     },
+    {
+        "key": "reports-index",  # -> /reports/reports-index
+        "title": "Reports Index",
+        "description": "Leadership directory of every report — name, summary + main KPIs + intended audience, and links to the report plus related reports",
+        "note": "Read-only catalog · full active catalog (all reports, not viewer-filtered) · audience = each report's assigned TagRoles · KPIs + related links curated in lib/reports-index-api.ts · access: CEO + Executive",
+        "category": "Executive",
+        "tags": ["index", "directory", "catalog", "reports", "leadership", "guide", "toc"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive"],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

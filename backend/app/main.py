@@ -36,6 +36,7 @@ from app.routers import (
     podium_top,
     preferences,
     reports,
+    reports_index,
     rfp_performance,
     sales_attrition_to_ops,
     search,
@@ -680,6 +681,7 @@ async def _timing_log(request: Request, call_next):
 
 app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(reports_index.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
