@@ -58,13 +58,23 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
     @r.get("/filters")
     async def filters(
         request: Request,
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
-        """Return customers + lanes scoped to *this* TM only (server-locked)."""
+        """Return customers + lanes scoped to *this* TM only (server-locked).
+
+        Under the RUAN view the entity list switches from ``customer_name`` to
+        ``client`` and is filtered to RUAN rows (parity with the parent
+        ``xray_dfw.filters``)."""
         pool = get_datalake_gold_pool(request)
+        ruan = view == xray_dfw.RUAN_VIEW
+        entity_col = "client" if ruan else "customer_name"
+        ruan_filter = (
+            " AND UPPER(COALESCE(customer_name,'')) LIKE 'RUAN%'" if ruan else ""
+        )
         cust_task = pool.fetch(
-            """
-            SELECT DISTINCT TRIM(customer_name) AS customer_name
+            f"""
+            SELECT DISTINCT TRIM({entity_col}) AS customer_name
             FROM public.mcleod_gld_budget_report_v4
             WHERE TRIM(team_id)    = 'TEAM-DFW'
               AND TRIM(team)       = $1
@@ -72,9 +82,9 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
               AND TRIM(status)     = ANY($3)
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
-              AND customer_name IS NOT NULL
-              AND TRIM(customer_name) <> ''
-              AND origin_actual_departure >= $4
+              AND {entity_col} IS NOT NULL
+              AND TRIM({entity_col}) <> ''
+              AND origin_actual_departure >= $4{ruan_filter}
             ORDER BY customer_name
             """,
             tm,
@@ -92,7 +102,7 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
               AND TRIM(br4.status)     = ANY($3)
               AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
               AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%UNILINK%'
-              AND br4.origin_actual_departure >= $4
+              AND br4.origin_actual_departure >= $4{ruan_filter.replace('customer_name', 'br4.customer_name')}
               AND TRIM(COALESCE(br4.origin_name,'')) <> ''
               AND TRIM(COALESCE(br4.dest_name,'')) <> ''
             ORDER BY lane
@@ -124,11 +134,14 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
+        exclude_customers: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.kpis(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view,
+            exclude_customers=exclude_customers, _user=_user,
         )
 
     @r.get("/trio-tables")
@@ -136,10 +149,12 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.trio_tables(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
         )
 
     @r.get("/projection")
@@ -147,10 +162,12 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.projection(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
         )
 
     @r.get("/by-customer")
@@ -161,12 +178,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.by_customer(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit, _user=_user,
         )
 
     @r.get("/by-lane")
@@ -177,12 +195,15 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
+        exclude_customers: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.by_lane(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view,
+            exclude_customers=exclude_customers, limit=limit, _user=_user,
         )
 
     @r.get("/attrition")
@@ -190,11 +211,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.attrition(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, limit=limit, _user=_user,
         )
 
     @r.get("/teams-breakdown")
@@ -202,13 +225,14 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         # The Teams tab table on the locked report still shows the same per-TM
         # rows; backend doesn't take sub_teams here -- it always returns all 4.
         # We let it through and the frontend will hide / dim non-locked rows.
         return await xray_dfw.teams_breakdown(
-            request=request, customers=customers, lanes=lanes, _user=_user,
+            request=request, customers=customers, lanes=lanes, view=view, _user=_user,
         )
 
     @r.get("/trends")
@@ -216,10 +240,12 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.trends(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
         )
 
     @r.get("/summary-table")
@@ -227,10 +253,12 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.summary_table(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
         )
 
     @r.get("/risk")
@@ -241,12 +269,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.risk(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit, _user=_user,
         )
 
     @r.get("/contract-spot")
@@ -254,10 +283,12 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.contract_spot(
-            request=request, sub_teams=tm, customers=customers, lanes=lanes, _user=_user,
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
         )
 
     @r.get("/all-orders")
@@ -268,12 +299,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         limit: int = Query(500, ge=1, le=2000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.all_orders(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit, _user=_user,
         )
 
     @r.get("/lane-analysis")
@@ -284,12 +316,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         end_date: Optional[date] = Query(None),
         customers: Optional[str] = Query(None),
         lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
         limit: int = Query(300, ge=1, le=1000),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.lane_analysis(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit, _user=_user,
         )
 
     return r
