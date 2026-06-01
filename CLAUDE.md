@@ -72,7 +72,9 @@
 - Vestigial `qlik_app_id`/`qlik_sheet_id`/`use_classic` columns remain on `reports` (always NULL) — harmless; dropping them is tangled with boot-time DDL
 
 ### Backend keep-warm (Render free tier)
-- Render spins the backend down after ~15 min idle (30-60s cold start → first page load shows empty reports). Keep it warm with `.github/workflows/keepalive.yml` (pings `/api/health` every 5 min). The Vercel cron in `vercel.json` is a daily-only backstop (Hobby plan caps crons at once/day). See `docs/SPEC-RELIABILITY.md`
+- Render spins the backend down after ~15 min idle (30-60s cold start → first page load shows empty reports; heavy endpoints like carriers-savings blow past the proxy's 45s abort → upstream-timeout alerts).
+- **Primary keep-warm: self-hosted n8n workflow** "Keep-Warm — Space Analytics Backend (Render)" (id `aF3wH6ZpvDFEPXA5` on `n8n.unlk-repos.com`) — Schedule Trigger `*/5 * * * *` → HTTP GET `/api/health` (90s timeout, success-logs off). The n8n box is always-on, so unlike GitHub Actions it never drops cron slots. Set up 2026-06-01 after GH Actions `*/5` was found firing only ~20×/day with multi-hour overnight gaps (incident 2026-06-01 13:05 UTC).
+- **Backstop: `.github/workflows/keepalive.yml`** (GH Actions `*/5`, best-effort — throttled/dropped, keep as redundancy only). The old Vercel cron (`vercel.json` → `/api/cron/keepalive`) was a no-op on Hobby (caps crons at once/day) and was **removed 2026-06-01** along with its route. See `docs/SPEC-RELIABILITY.md`
 
 ### Data, Seeding & TagRoles (full detail — `docs/SPEC-DATA.md` + `docs/SPEC-ADMIN.md`)
 - Seed idempotent (`ON CONFLICT … DO UPDATE`); never `dict.pop()` module constants (use `.get()`); auto-seed when `role_report_access` empty; `seed_custom_reports(pool)` runs every startup so a new `CUSTOM_REPORTS` entry ships itself. Router order: search BEFORE reports
@@ -81,7 +83,7 @@
 
 ### Scheduled Jobs & Reliability (full detail — `docs/SPEC-RELIABILITY.md`)
 - `daily_losses_alert` 07:00 CST (Resend); `daily_rfp_digest` 17:30 CST Mon-Fri (MS Graph, `admin-ms-api` app). Reuse `FONT_STACK`/`MONO_STACK` for HTML email (Outlook reset)
-- Render free tier cold-starts 30–60s; **GitHub Actions `keepalive.yml` pings `/api/health` every 5 min** (primary keep-warm — the Vercel `*/10` cron is a daily-only backstop since Hobby caps crons at once/day); proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
+- Render free tier cold-starts 30–60s; **always-on n8n workflow `aF3wH6ZpvDFEPXA5` pings `/api/health` every 5 min** (primary keep-warm; GitHub Actions `keepalive.yml` is a best-effort backstop — the Vercel cron was removed 2026-06-01); proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
 - App favicons: tries `/icon.svg`→`/favicon.svg`→`/favicon.ico`→HTML `<link>`; stored as base64 data URIs in `icon_data`
 
 ---
@@ -96,7 +98,7 @@
 6. **Apps (External Links)** — Favicon-iconed links, visible to all users
 7. **Daily User Sync** — APScheduler from People Management DB at 2 AM CST
 8. **User Access Matrix** — `/admin/users/[id]` report × TagRole matrix
-9. **Keep-Alive** — GitHub Actions pings `/api/health` every 5 min to prevent Render cold starts
+9. **Keep-Alive** — self-hosted n8n (`n8n.unlk-repos.com`, always-on) pings `/api/health` every 5 min (primary, reliable); GitHub Actions `keepalive.yml` is a redundant backstop
 10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, Top Losses Lanes, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator, Reports Index, CEO Cockpit, Carrier SMS Score. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
 > **CEO Cockpit** (`ceo-cockpit`, 2026-05-29) is an *aggregator*, not a data report: its `/api/custom/ceo-cockpit/summary` fans out in-process (httpx `ASGITransport`) to ~19 existing report KPI endpoints and renders one RAG-coloured hero KPI per report, click-through to the source. Pure `TILES` config in `routers/ceo_cockpit.py` (no own SQL), personalized by per-tile self-gating. See `docs/SPEC-CUSTOM-REPORTS.md` §31.
@@ -140,7 +142,6 @@ frontend/
       users/[id]/page.tsx        # User detail + access matrix
     api/auth/[...nextauth]/      # NextAuth handlers
     api/proxy/[...path]/route.ts # Backend proxy w/ retry logic
-    api/cron/keepalive/route.ts  # Vercel cron → backend /api/health (daily backstop)
     (auth)/login/page.tsx
   components/
     SearchBar.tsx
@@ -154,8 +155,7 @@ frontend/
     use-is-mobile.ts
     use-debounce.ts
   next.config.mjs                # CSP headers
-  vercel.json                    # Cron schedule (daily backstop keep-alive)
-.github/workflows/keepalive.yml  # Primary keep-warm: pings /api/health every 5 min
+.github/workflows/keepalive.yml  # Backstop keep-warm: pings /api/health every 5 min (primary is n8n aF3wH6ZpvDFEPXA5)
 
 backend/
   app/
