@@ -68,7 +68,7 @@
 - ALL reports are now code-made. `reports.report_type` (always `'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path`
 - **4-place mirror for every new report**: `CUSTOM_REPORTS` in `seed.py` · `REPORT_MAP` in `ReportIcons.tsx` · `<ReportGuard reportKey>` · backend `require_report_access("<key>")`. `role_report_access` is the single source of truth (admin UI `/admin/reports`)
 - Endpoints under `/api/custom/<feature>/...`; external DBs get their own `asyncpg` pool + env var via `get_*_pool` in `routers/deps.py`
-- Key SQL/code rules (SPEC-CODE-RULES §): no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter (accessorials) §39
+- Key SQL/code rules (SPEC-CODE-RULES §): no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter (accessorials) §39 · direct-call endpoint shims must forward EVERY param (FastAPI `Query()` default isn't applied on a Python call → 500) §40
 - Vestigial `qlik_app_id`/`qlik_sheet_id`/`use_classic` columns remain on `reports` (always NULL) — harmless; dropping them is tangled with boot-time DDL
 
 ### Backend keep-warm (Render free tier)
