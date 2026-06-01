@@ -227,17 +227,21 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         role = employee["role"]
         regular_weekly_usd = []
         for rule in weekly_rules:
-            # KAM (loads) and Freight-Match (margin) stay gated by the 100-load
-            # weekly minimum — their bracket %s are already 0 below it. Tracking&
-            # Tracing reads each week's OWN On time P&D bracket (serviceBonusPctWeekly),
-            # ungated, so the payout equals the displayed "Actual Bonus %" row
-            # (Bruno 2026-06-01).
+            # All three roles are gated by the 100-load weekly minimum. KAM (loads)
+            # and Freight-Match (margin) already carry it inside their bracket %s.
+            # Tracking & Tracing reads each week's OWN On time P&D bracket
+            # (serviceBonusPctWeekly) but is RE-GATED here to $0 below 100 loads
+            # (Bruno 2026-06-01 round 2, BRUNO -- Bonos Updates.pdf: weeks under
+            # 100 loads pay $0 even when on-time clears its bracket — Team3 Wk2/Wk4
+            # at 97/86 loads must be $0). The display field stays ungated on purpose
+            # so the green "On time P&D" Actual Bonus % row still shows the bracket %
+            # (90%/70%) while the money is $0 — Bruno drew it exactly this way.
             if role == "kam":
                 multiplier = rule["loadBonusPct"]
             elif role == "freight_match":
                 multiplier = rule["marginBonusPct"]
             else:
-                multiplier = rule["serviceBonusPctWeekly"]
+                multiplier = rule["serviceBonusPctWeekly"] if rule["meetsLoadMinimum"] else 0.0
             regular_weekly_usd.append(multiplier * rule["loads"] * PAY_PER_LOAD[role])
 
         wildcard = calculate_wildcard_bonus(employee, total_profit, normalized_service)
