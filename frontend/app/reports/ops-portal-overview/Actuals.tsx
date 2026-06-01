@@ -272,15 +272,26 @@ function ModeCell({
     : fmtUsdSigned(v)
 
   if (mode === "all") {
-    // Bruno R4: stacked Production / Budget / Variance in one cell.
+    // Bruno R5 #9: Production (big) with Budget bottom-left + Variance bottom-right.
+    // Bruno R5 #10: Production / Budget % shown beside the cell.
+    const pct = budget !== 0 ? (production / budget) * 100 : null
     return (
       <td className="px-2 py-1.5 text-center tabular-nums">
-        <div className={`font-semibold text-[#1B3A5C] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
-          {fmt(production)}
-        </div>
-        <div className="text-[10px] text-[#6B7280]">{fmt(budget)}</div>
-        <div className={`text-[10px] font-medium ${variance < 0 ? "text-[#DC2626]" : "text-[#16A34A]"}`}>
-          {fmtSigned(variance)}
+        <div className="flex items-center justify-center gap-1.5">
+          <div className="min-w-[64px]">
+            <div className={`font-semibold text-[#1B3A5C] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
+              {fmt(production)}
+            </div>
+            <div className="flex items-center justify-between gap-2 text-[10px]">
+              <span className="text-[#6B7280]">{fmt(budget)}</span>
+              <span className={variance < 0 ? "font-medium text-[#DC2626]" : "font-medium text-[#16A34A]"}>
+                {fmtSigned(variance)}
+              </span>
+            </div>
+          </div>
+          {pct !== null && (
+            <span className="text-[10px] font-semibold text-[#2563EB]">{Math.round(pct)}%</span>
+          )}
         </div>
       </td>
     )

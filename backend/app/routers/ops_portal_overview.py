@@ -132,13 +132,32 @@ def _resolve_range(
     start_date: Optional[date],
     end_date: Optional[date],
 ) -> tuple[date, date]:
-    """Same range model as xray-corp: full / ytd / mtd / custom."""
+    """Date-filter range model.
+
+    Bruno R5 (2026-06-01) reworked the filter options. ``full`` is dropped from
+    the UI but kept here as the silent default/fallback (the rolling endpoints —
+    /combo, /workdays, /team-projection, /profit-tm-gauge — still pass it):
+      - ytd         → Jan 1 → today
+      - mtd         → 1st of current month → today (Month-to-Date)
+      - this_month  → full current month (1st → last day)
+      - last_month  → full previous month
+      - custom      → user start/end
+      - full (fallback) → whole year
+    """
     today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     if rng == "mtd":
         return today_clamped.replace(day=1), today_clamped
     if rng == "ytd":
         return YEAR_START, today_clamped
+    if rng == "this_month":
+        m_start, m_end = _month_bounds(today_clamped)
+        return _clamp(m_start, YEAR_START), _clamp(m_end, YEAR_END)
+    if rng == "last_month":
+        first_this = today_clamped.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        prev_start, prev_end = _month_bounds(last_prev)
+        return _clamp(prev_start, YEAR_START), _clamp(prev_end, YEAR_END)
     if rng == "custom":
         s = _clamp(start_date, YEAR_START)
         e = _clamp(end_date, YEAR_END)
@@ -845,7 +864,7 @@ async def team_performance(
                 SELECT br4.id, br4.company_id, br4.team_id, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
-                       br4.total_charge, br4.margin_amt,
+                       br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
@@ -860,6 +879,8 @@ async def team_performance(
             FILTER (WHERE origin <> '' AND dest <> '') AS lanes,
           COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS volume,
           COALESCE(SUM(total_charge), 0)::numeric AS revenue,
+          -- Bruno R5 (2026-06-01): Total Cost between Revenue and Profit.
+          COALESCE(SUM(total_carrier_pay), 0)::numeric AS total_cost,
           COALESCE(SUM(margin_amt),  0)::numeric AS profit,
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
@@ -948,6 +969,7 @@ async def team_performance(
             "lanes":      int(prod_row["lanes"] or 0),
             "volume":     volume,
             "revenue":    revenue,
+            "total_cost": _safe_float(prod_row["total_cost"]),
             "profit":     profit,
             "margin_pct": (profit / revenue * 100.0) if revenue else 0.0,
             "rev_x_l":    (revenue / volume) if volume else 0.0,
@@ -1149,6 +1171,7 @@ async def actuals(
     load_type: Optional[str] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
+    losses_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Bottom Actuals table — per customer, stacked Production / Budget / Variance.
@@ -1168,6 +1191,8 @@ async def actuals(
     pending_workdays = _count_workdays(today, m_end)
 
     # ---- Production per customer ----------------------------------------
+    # Bruno R5 (2026-06-01): "Losses" button → restrict to margin_amt < 0 rows.
+    losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
     p_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, p_params)
     p_params.extend([s, e])
@@ -1186,6 +1211,7 @@ async def actuals(
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
                   AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  {losses_clause}
              )
         SELECT
           customer_name,
@@ -1279,8 +1305,9 @@ async def actuals(
         })
 
     # Customers in budget but with zero production — surface them so the
-    # variance row still shows the gap.
-    for name, b in bud_map.items():
+    # variance row still shows the gap. Skipped under the Losses filter
+    # (zero-production customers have no margin<0 loads to show).
+    for name, b in ({} if losses_only else bud_map).items():
         vol_budget = _safe_float(b["vol_budget"])
         rev_budget = _safe_float(b["rev_budget"])
         prof_budget = _safe_float(b["prof_budget"])
@@ -1353,6 +1380,7 @@ async def actuals_by_lane(
     load_type: Optional[str] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
+    losses_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Second table below Actuals — Production data only, grouped by lane.
@@ -1363,6 +1391,8 @@ async def actuals_by_lane(
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
+    # Bruno R5 (2026-06-01): "Losses" button → restrict to margin_amt < 0 rows.
+    losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
 
     p_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, p_params)
@@ -1388,6 +1418,7 @@ async def actuals_by_lane(
                   AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
                   AND TRIM(br4.origin_name) <> ''
                   AND TRIM(br4.dest_name)   <> ''
+                  {losses_clause}
              )
         SELECT
           origin || ' - ' || dest AS lane,
@@ -1578,6 +1609,13 @@ _BY_ORDER_SORTS = {
     "profit_desc":   "profit DESC NULLS LAST",
     "margin_asc":    "margin ASC NULLS LAST",
     "margin_desc":   "margin DESC NULLS LAST",
+    # Bruno R5 (2026-06-01): OTP/OTD/Transit columns (sort by SELECT alias).
+    "otp_asc":       "otp_pct ASC, order_id ASC",
+    "otp_desc":      "otp_pct DESC, order_id ASC",
+    "otd_asc":       "otd_pct ASC, order_id ASC",
+    "otd_desc":      "otd_pct DESC, order_id ASC",
+    "transit_asc":   "transit_seconds ASC NULLS LAST",
+    "transit_desc":  "transit_seconds DESC NULLS LAST",
 }
 
 
@@ -1592,6 +1630,7 @@ async def by_order(
     load_type: Optional[str] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(500, ge=1, le=2000),
+    losses_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Load-level Production table (one row per order).
@@ -1601,16 +1640,45 @@ async def by_order(
       Customer=customer_name · Lane=origin_name - dest_name ·
       Revenue=total_charge · Profit=margin_amt · Margin=margin_amt/total_charge.
 
+    Bruno R5 (2026-06-01) added:
+      - OTP % / OTD %  → per-order on-time flag from mcleod_gld_scorecard
+        (0 late stops → 100%, else 0%; same code list as the §5 panel).
+      - Transit Time   → dest_actual_arrival − orig_actual_departure from
+        public.mcleod_gld_customer_windows (joined on id; the PDF's
+        "origin_actual_departure − dest_actual_arrival" is reversed — we
+        compute arrival − departure so the duration is positive).
+      - In-progress timer → for status 'P' loads with no arrival yet, the UI
+        ticks now() − departed_at; the backend hands back ``departed_at`` and
+        the ``in_progress`` flag.
+      - "Losses" button → ``losses_only`` restricts to margin_amt < 0.
+
     Server-side sort on every column (the set is load-level, so a client-side
     sort of the fetched page could mis-rank). Totals are computed over the
     full filtered set in ``meta`` regardless of the limit slice.
 
-    ``departure`` is emitted via ``to_char`` (text) to dodge the asyncpg
-    date-decode overflow on any 5-digit-year McLeod typo (SPEC-CODE-RULES §4).
+    All window timestamps are emitted via ``to_char`` (text) to dodge the
+    asyncpg date-decode overflow on any 5-digit-year McLeod typo
+    (SPEC-CODE-RULES §4). The customer_windows join uses a first-match LATERAL
+    (SPEC: LEFT JOIN LATERAL … LIMIT 1) so duplicate window rows never fan out
+    the order list. Sentinel 1900/1899 placeholder dates are guarded to NULL.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     order_by = _BY_ORDER_SORTS.get(sort, _BY_ORDER_SORTS["revenue_desc"])
+    losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
+
+    # Window lookup (orig departure + dest arrival) → one pre-aggregated row per
+    # id (MAX of non-sentinel timestamps), hash-joined. Cheaper than a per-row
+    # correlated LATERAL since customer_windows has no functional index on id.
+    win_cte = """
+        win AS (
+            SELECT TRIM(UPPER(id)) AS id_key,
+                   MAX(CASE WHEN orig_actual_departure > '2000-01-01' THEN orig_actual_departure END) AS dep_ts,
+                   MAX(CASE WHEN dest_actual_arrival   > '2000-01-01' THEN dest_actual_arrival   END) AS arr_ts
+            FROM public.mcleod_gld_customer_windows
+            GROUP BY TRIM(UPPER(id))
+        )
+    """
 
     rows_params: list = []
     where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params)
@@ -1619,19 +1687,33 @@ async def by_order(
     p_e = len(rows_params) - 1
     p_lim = len(rows_params)
     rows_sql = f"""
+        WITH otp AS ({_scorecard_cte("otp")}),
+             otd AS ({_scorecard_cte("otd")}),
+             {win_cte}
         SELECT
           TRIM(br4.id)        AS order_id,
           TRIM(br4.team_id)   AS team_id,
+          TRIM(br4.status)    AS status,
           to_char(br4.origin_actual_departure, 'YYYY-MM-DD') AS departure,
           br4.customer_name   AS customer_name,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric AS revenue,
           COALESCE(br4.margin_amt, 0)::numeric   AS profit,
           CASE WHEN br4.total_charge IS NOT NULL AND br4.total_charge <> 0
-               THEN br4.margin_amt / br4.total_charge * 100.0 ELSE 0 END AS margin
+               THEN br4.margin_amt / br4.total_charge * 100.0 ELSE 0 END AS margin,
+          CASE WHEN COALESCE(otp.scorecard_count_otp, 0) = 0 THEN 100.0 ELSE 0.0 END AS otp_pct,
+          CASE WHEN COALESCE(otd.scorecard_count_otd, 0) = 0 THEN 100.0 ELSE 0.0 END AS otd_pct,
+          to_char(win.dep_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS departed_at,
+          to_char(win.arr_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS arrived_at,
+          CASE WHEN win.dep_ts IS NOT NULL AND win.arr_ts IS NOT NULL AND win.arr_ts > win.dep_ts
+               THEN EXTRACT(EPOCH FROM (win.arr_ts - win.dep_ts)) END AS transit_seconds
         FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+        LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+        LEFT JOIN win ON win.id_key = TRIM(UPPER(br4.id))
         WHERE {where_rows}
           AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+          {losses_clause}
         ORDER BY {order_by}
         LIMIT ${p_lim}
     """
@@ -1649,6 +1731,7 @@ async def by_order(
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where_tot}
           AND br4.origin_actual_departure::date BETWEEN ${t_s} AND ${t_e}
+          {losses_clause}
     """
 
     rows, tot_row = await asyncio.gather(
@@ -1656,19 +1739,31 @@ async def by_order(
         pool.fetchrow(tot_sql, *tot_params),
     )
 
-    out = [
-        {
+    out = []
+    for r in rows:
+        departed_at = r["departed_at"]
+        arrived_at = r["arrived_at"]
+        status = (r["status"] or "").strip().upper()
+        # In transit = open 'P' load that departed but hasn't arrived yet.
+        in_progress = status == "P" and not arrived_at and bool(departed_at)
+        ts = r["transit_seconds"]
+        out.append({
             "order_id":      r["order_id"],
             "team_id":       r["team_id"],
+            "status":        status,
             "departure":     r["departure"] or "",
             "customer_name": r["customer_name"] or "",
             "lane":          r["lane"] or "",
             "revenue":       _safe_float(r["revenue"]),
             "profit":        _safe_float(r["profit"]),
             "margin_pct":    _safe_float(r["margin"]),
-        }
-        for r in rows
-    ]
+            "otp_pct":       _safe_float(r["otp_pct"]),
+            "otd_pct":       _safe_float(r["otd_pct"]),
+            "departed_at":   departed_at,
+            "arrived_at":    arrived_at,
+            "transit_seconds": _safe_float(ts) if ts is not None else None,
+            "in_progress":   in_progress,
+        })
 
     t_rev = _safe_float(tot_row["rev"]) if tot_row else 0.0
     t_prof = _safe_float(tot_row["prof"]) if tot_row else 0.0
@@ -1746,7 +1841,7 @@ async def team_weekly_performance(
                        br4.id, br4.team_id, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
-                       br4.total_charge, br4.margin_amt,
+                       br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
                        COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                        COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
@@ -1762,6 +1857,7 @@ async def team_weekly_performance(
             FILTER (WHERE origin <> '' AND dest <> '') AS lanes,
           COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS volume,
           COALESCE(SUM(total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(total_carrier_pay), 0)::numeric AS total_cost,
           COALESCE(SUM(margin_amt),  0)::numeric AS profit,
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
@@ -1859,6 +1955,7 @@ async def team_weekly_performance(
             "lanes":      int(p["lanes"] or 0) if p else 0,
             "volume":     volume,
             "revenue":    revenue,
+            "total_cost": _safe_float(p["total_cost"]) if p else 0.0,
             "profit":     profit,
             "margin_pct": _safe_float((profit / revenue * 100.0) if revenue else 0.0),
             "rev_x_l":    _safe_float((revenue / volume) if volume else 0.0),

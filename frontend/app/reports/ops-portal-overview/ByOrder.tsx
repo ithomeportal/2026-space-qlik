@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
-import { ArrowDown, ArrowUp, Loader2 } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ArrowDown, ArrowUp, Clock, Loader2 } from "lucide-react"
 import {
+  fmtDuration,
   fmtPct,
   fmtUsd,
   useOppByOrder,
@@ -17,22 +18,33 @@ interface Props {
 
 // Bruno R4 (2026-05-27): load-level Production table. Server-side sort on every
 // column (the set is load-level, so sorting only the fetched page would mis-rank).
-type ColumnKey = "order" | "team" | "departure" | "customer" | "lane" | "revenue" | "profit" | "margin"
+// Bruno R5 (2026-06-01): + OTP %, OTD %, Transit Time (with a live timer for
+// loads still in progress).
+type ColumnKey =
+  | "order" | "team" | "departure" | "customer" | "lane"
+  | "revenue" | "profit" | "margin" | "otp" | "otd" | "transit"
 
 const COLUMNS: {
   k: ColumnKey
   label: string
   align: "left" | "right"
 }[] = [
-  { k: "order",     label: "Order",     align: "left" },
-  { k: "team",      label: "Team",      align: "left" },
-  { k: "departure", label: "Departure", align: "left" },
-  { k: "customer",  label: "Customer",  align: "left" },
-  { k: "lane",      label: "Lane",      align: "left" },
-  { k: "revenue",   label: "Revenue",   align: "right" },
-  { k: "profit",    label: "Profit",    align: "right" },
-  { k: "margin",    label: "Margin",    align: "right" },
+  { k: "order",     label: "Order",        align: "left" },
+  { k: "team",      label: "Team",         align: "left" },
+  { k: "departure", label: "Departure",    align: "left" },
+  { k: "customer",  label: "Customer",     align: "left" },
+  { k: "lane",      label: "Lane",         align: "left" },
+  { k: "revenue",   label: "Revenue",      align: "right" },
+  { k: "profit",    label: "Profit",       align: "right" },
+  { k: "margin",    label: "Margin",       align: "right" },
+  { k: "otp",       label: "OTP %",        align: "right" },
+  { k: "otd",       label: "OTD %",        align: "right" },
+  { k: "transit",   label: "Transit Time", align: "right" },
 ]
+
+const NUMERIC_DESC_FIRST = new Set<ColumnKey>([
+  "revenue", "profit", "margin", "otp", "otd", "transit",
+])
 
 const LIMIT = 500
 
@@ -47,13 +59,23 @@ export function ByOrder({ filters }: Props) {
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
   const total = totals?.n_orders ?? returned
 
+  // Bruno R5 #11: live in-transit timer — re-render every 30s while any load
+  // is still in progress (otherwise the clock is idle).
+  const hasInProgress = rows.some((r) => r.in_progress)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!hasInProgress) return
+    const id = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [hasInProgress])
+
   const onSort = (k: ColumnKey) => {
     if (k === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     } else {
       setSortKey(k)
       // Numeric columns default desc, text columns asc.
-      setSortDir(k === "revenue" || k === "profit" || k === "margin" ? "desc" : "asc")
+      setSortDir(NUMERIC_DESC_FIRST.has(k) ? "desc" : "asc")
     }
   }
 
@@ -107,6 +129,7 @@ export function ByOrder({ filters }: Props) {
                   <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
                     {fmtPct(totals.margin_pct)}
                   </td>
+                  <td className="px-2 py-1.5" colSpan={3} />
                 </tr>
               )}
             </thead>
@@ -131,6 +154,11 @@ export function ByOrder({ filters }: Props) {
                   <td className={`px-2 py-1.5 text-right tabular-nums ${r.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
                     {fmtPct(r.margin_pct)}
                   </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otp_pct)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otd_pct)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
+                    <TransitCell row={r} now={now} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -139,6 +167,27 @@ export function ByOrder({ filters }: Props) {
       )}
     </section>
   )
+}
+
+// Bruno R5 #11: Transit Time cell. Completed loads show arrival − departure;
+// loads still in progress tick a live clock (now − departure) in amber.
+function TransitCell({ row, now }: { row: OppOrderRow; now: number }) {
+  if (row.in_progress && row.departed_at) {
+    // Timestamp is CST wall-clock without a tz; parse as local — good enough
+    // for an elapsed-time indicator.
+    const dep = new Date(row.departed_at.replace(" ", "T")).getTime()
+    const elapsed = Number.isFinite(dep) ? (now - dep) / 1000 : 0
+    return (
+      <span className="inline-flex items-center gap-1 font-medium text-[#B45309]">
+        <Clock className="h-3 w-3 animate-pulse" />
+        {fmtDuration(elapsed)}
+      </span>
+    )
+  }
+  if (row.transit_seconds && row.transit_seconds > 0) {
+    return <span className="text-[#374151]">{fmtDuration(row.transit_seconds)}</span>
+  }
+  return <span className="text-[#9CA3AF]">—</span>
 }
 
 function SortableTh({

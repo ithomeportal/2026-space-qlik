@@ -14,6 +14,7 @@ import {
 import { ComboChart } from "./Chart"
 import { ServiceChart } from "./ServiceChart"
 import { SidePanels } from "./SidePanels"
+import { TeamLastMonthPerformance, TeamVariancePerformance } from "./TeamMonthDelta"
 import { ProductionByCustomer } from "./ProductionByCustomer"
 import { Actuals } from "./Actuals"
 import { ActualsByLane } from "./ActualsByLane"
@@ -22,13 +23,30 @@ import { ByOrder } from "./ByOrder"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
+function pad(n: number) {
+  return String(n).padStart(2, "0")
+}
+function iso(d: Date) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
 function todayIso() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  return iso(new Date())
 }
 function monthStartIso() {
   const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`
+}
+function monthEndIso() {
+  const d = new Date()
+  return iso(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+}
+function lastMonthStartIso() {
+  const d = new Date()
+  return iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)) // 1st of previous month
+}
+function lastMonthEndIso() {
+  const d = new Date()
+  return iso(new Date(d.getFullYear(), d.getMonth(), 0)) // day 0 of this month = last day of prev
 }
 function clampToYear(iso: string) {
   if (iso < YEAR_START) return YEAR_START
@@ -53,14 +71,18 @@ function OpsPortalOverviewContent() {
   const [customerInput, setCustomerInput] = useState<string>("")
   const [customer, setCustomer] = useState<string>("")
   const [loadType, setLoadType] = useState<LoadType>("")
+  // Bruno R5: "Losses" button — global toggle (margin_amt < 0) for the
+  // Production by Customer / Actuals / By Lane / By Order tables.
+  const [lossesOnly, setLossesOnly] = useState<boolean>(false)
 
   const { data: filterRes, isLoading: loadingFilters } = useOppFilters()
   const filterOptions = filterRes?.data
 
   const appliedDates = useMemo(() => {
-    if (range === "full") return { startDate: YEAR_START, endDate: YEAR_END }
-    if (range === "ytd")  return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
-    if (range === "mtd")  return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+    if (range === "ytd")        return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
+    if (range === "mtd")        return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+    if (range === "this_month") return { startDate: monthStartIso(), endDate: clampToYear(monthEndIso()) }
+    if (range === "last_month") return { startDate: lastMonthStartIso(), endDate: lastMonthEndIso() }
     return { startDate: clampToYear(startDate), endDate: clampToYear(endDate) }
   }, [range, startDate, endDate])
 
@@ -72,8 +94,9 @@ function OpsPortalOverviewContent() {
       team: team || undefined,
       customer: customer || undefined,
       loadType: loadType || undefined,
+      lossesOnly: lossesOnly || undefined,
     }),
-    [range, appliedDates, team, customer, loadType],
+    [range, appliedDates, team, customer, loadType, lossesOnly],
   )
 
   const customerSuggestions = useMemo(() => {
@@ -128,10 +151,11 @@ function OpsPortalOverviewContent() {
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
             <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
               {[
-                { k: "full" as const, label: "Full 2026" },
-                { k: "ytd" as const,  label: "YTD" },
-                { k: "mtd" as const,  label: "This Month" },
-                { k: "custom" as const, label: "Custom" },
+                { k: "ytd" as const,        label: "YTD" },
+                { k: "mtd" as const,        label: "MTD" },
+                { k: "this_month" as const, label: "This Month" },
+                { k: "last_month" as const, label: "Last Month" },
+                { k: "custom" as const,     label: "Custom" },
               ].map((opt) => (
                 <button
                   key={opt.k}
@@ -235,17 +259,41 @@ function OpsPortalOverviewContent() {
             )}
           </div>
 
+          {/* Bruno R5: Losses button — filters PdC / Actuals / By Lane / By Order to margin<0. */}
+          <button
+            onClick={() => setLossesOnly((v) => !v)}
+            title="Show only loss-making records (margin < 0) in the Production by Customer, Actuals, By Lane and By Order tables"
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              lossesOnly
+                ? "border-[#DC2626] bg-[#DC2626] text-white"
+                : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+            }`}
+          >
+            Losses
+          </button>
+
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
         </div>
       </div>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
+        {/* Bruno R5 #1: Service (OTP/OTD) chart is now the first chart. */}
+        <ServiceChart filters={filters} loadType={loadType} />
+
+        {/* Bruno R5 #5/#6/#7: the KPI MANAGEMENT container ends with its KPI
+            cards; the freed space below it holds the two new month tables. */}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
-          <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
+          <div className="space-y-4">
+            <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <TeamLastMonthPerformance filters={filters} />
+              <TeamVariancePerformance filters={filters} />
+            </div>
+          </div>
           <SidePanels filters={filters} />
         </div>
-        <ServiceChart filters={filters} loadType={loadType} />
+
         <ProductionByCustomer filters={filters} />
         <Actuals filters={filters} />
         <ActualsByLane filters={filters} />

@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Loader2, Plus } from "lucide-react"
+import { useMemo, useState } from "react"
+import { ArrowDown, ArrowUp, Loader2, Plus } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -12,6 +12,8 @@ import {
   useOppTeamPerformance,
   useOppTeamProjection,
   useOppTeamVariance,
+  type OppCustomerLoss,
+  type OppCustomerVariance,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
 import { TeamWeeklyModal } from "./TeamWeeklyModal"
@@ -66,8 +68,14 @@ function TeamBudgetVariance({ filters }: { filters: OppFilters }) {
 
 function CustomerVariance({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppCustomerVariance(filters)
-  const rows = data?.data ?? []
-  // Bruno round-2 (2026-05-13): no horizontal scroll, vertical scroll OK.
+  const raw = useMemo(() => data?.data ?? [], [data])
+  // Bruno R5 (#14): sortable on every column. Default = profit variance asc
+  // (most-negative first), matching the prior fixed order.
+  const { rows, sortKey, sortDir, onSort } = useMiniSort<OppCustomerVariance, "name" | "vol" | "profit">(raw, {
+    name: (r) => (r.customer_name || "").toUpperCase(),
+    vol: (r) => r.volume_var,
+    profit: (r) => r.profit_var,
+  }, "profit", "asc")
   return (
     <PanelCard title="Customer Monthly Variance" icon="" loading={isLoading} error={error}>
       <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
@@ -79,9 +87,9 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
           </colgroup>
           <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
             <tr>
-              <th className="px-2 py-1 text-left">Customer Name</th>
-              <th className="px-2 py-1 text-right">Vol</th>
-              <th className="px-2 py-1 text-right">Profit</th>
+              <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
+              <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
+              <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
             </tr>
           </thead>
           <tbody>
@@ -113,8 +121,14 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
 
 function CustomerLosses({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppCustomerLosses(filters)
-  const rows = data?.data ?? []
-  // Bruno round-2 (2026-05-13): no horizontal scroll, vertical scroll OK.
+  const raw = useMemo(() => data?.data ?? [], [data])
+  // Bruno R5 (#15): sortable on every column. Default = loss profit asc
+  // (biggest loss first), matching the prior fixed order.
+  const { rows, sortKey, sortDir, onSort } = useMiniSort<OppCustomerLoss, "name" | "vol" | "profit">(raw, {
+    name: (r) => (r.customer_name || "").toUpperCase(),
+    vol: (r) => r.loss_loads,
+    profit: (r) => r.loss_profit,
+  }, "profit", "asc")
   return (
     <PanelCard title="Customer Monthly Losses" icon="" loading={isLoading} error={error}>
       <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
@@ -126,9 +140,9 @@ function CustomerLosses({ filters }: { filters: OppFilters }) {
           </colgroup>
           <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
             <tr>
-              <th className="px-2 py-1 text-left">Customer Name</th>
-              <th className="px-2 py-1 text-right">Vol</th>
-              <th className="px-2 py-1 text-right">Profit</th>
+              <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
+              <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
+              <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
             </tr>
           </thead>
           <tbody>
@@ -184,6 +198,7 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
           <Row label="Lanes"       value={v ? fmtCount(v.lanes)       : "—"} />
           <Row label="Volume"      value={v ? fmtCount(v.volume)      : "—"} highlight />
           <Row label="Revenue"     value={v ? fmtUsd(v.revenue)       : "—"} />
+          <Row label="Total Cost"  value={v ? fmtUsd(v.total_cost)    : "—"} />
           <Row label="Profit"      value={v ? fmtUsd(v.profit)        : "—"} signed numeric={v?.profit ?? 0} highlight />
           <Row label="Margin P %"  value={v ? fmtPct(v.margin_pct)    : "—"} signed numeric={v?.margin_pct ?? 0} highlight />
           <Row label="Rev. x L."   value={v ? fmtUsd(v.rev_x_l)       : "—"} />
@@ -242,7 +257,7 @@ function TeamProjection({ filters }: { filters: OppFilters }) {
 // Shared bits
 // ---------------------------------------------------------------------------
 
-function PanelCard({
+export function PanelCard({
   title,
   icon,
   loading,
@@ -274,7 +289,7 @@ function PanelCard({
   )
 }
 
-function Row({
+export function Row({
   label,
   value,
   signed,
@@ -322,5 +337,81 @@ function Row({
         )}
       </td>
     </tr>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Mini sortable-table helpers (Bruno R5 #14/#15) — reused by the two Customer
+// panels. Client-side: the lists are already capped server-side at 50 rows.
+// ---------------------------------------------------------------------------
+
+type MiniDir = "asc" | "desc"
+
+function useMiniSort<T, K extends string>(
+  rows: T[],
+  accessors: Record<K, (r: T) => number | string>,
+  initialKey: K,
+  initialDir: MiniDir,
+) {
+  const [sortKey, setSortKey] = useState<K>(initialKey)
+  const [sortDir, setSortDir] = useState<MiniDir>(initialDir)
+  const sorted = useMemo(() => {
+    const acc = accessors[sortKey]
+    if (!acc) return rows
+    const mult = sortDir === "asc" ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const va = acc(a)
+      const vb = acc(b)
+      if (typeof va === "string" || typeof vb === "string") {
+        return String(va).localeCompare(String(vb)) * mult
+      }
+      return ((va as number) - (vb as number)) * mult
+    })
+    // accessors is a stable literal per render site; key/dir/rows drive it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, sortKey, sortDir])
+  const onSort = (k: K) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    } else {
+      setSortKey(k)
+      // Text col → asc, numeric col → desc on first click.
+      setSortDir(k === "name" ? "asc" : "desc")
+    }
+  }
+  return { rows: sorted, sortKey, sortDir, onSort }
+}
+
+function MiniTh<K extends string>({
+  children,
+  k,
+  align,
+  sortKey,
+  dir,
+  onSort,
+}: {
+  children: React.ReactNode
+  k: K
+  align: "left" | "right"
+  sortKey: K
+  dir: MiniDir
+  onSort: (k: K) => void
+}) {
+  const active = sortKey === k
+  const cls = align === "right" ? "text-right" : "text-left"
+  const justify = align === "right" ? "justify-end" : "justify-start"
+  return (
+    <th className={`px-2 py-1 ${cls}`}>
+      <button
+        type="button"
+        onClick={() => onSort(k)}
+        className={`inline-flex w-full items-center gap-1 ${justify} ${
+          active ? "font-bold text-[#1B3A5C]" : "hover:text-[#374151]"
+        }`}
+      >
+        {children}
+        {active && (dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+      </button>
+    </th>
   )
 }

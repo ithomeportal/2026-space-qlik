@@ -32,6 +32,7 @@ const ROWS: {
   { label: "Lanes",            field: "lanes",      kind: "count" },
   { label: "Volume",           field: "volume",     kind: "count", highlight: true },
   { label: "Revenue",          field: "revenue",    kind: "usd" },
+  { label: "Total Cost",       field: "total_cost", kind: "usd" },
   { label: "Profit",           field: "profit",     kind: "usd", signed: true, highlight: true },
   { label: "Margin P %",       field: "margin_pct", kind: "pct", signed: true, highlight: true },
   { label: "Rev. x L.",        field: "rev_x_l",    kind: "usd" },

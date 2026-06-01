@@ -22,6 +22,7 @@ import {
   fmtUsd,
   useOppCombo,
   useOppProfitTmGauge,
+  useOppService,
   useOppWorkdays,
   type LoadType,
   type OppGrain,
@@ -34,13 +35,16 @@ interface Props {
   setLoadType: (v: LoadType) => void
 }
 
-type Measure = "volume" | "revenue" | "profit" | "margin_pct"
+// Bruno R5 (2026-06-01) #2: "Service" is now a 5th measure button. It swaps the
+// combo for OTP%/OTD% lines (same data as the standalone Service chart above).
+type Measure = "volume" | "revenue" | "profit" | "margin_pct" | "service"
 
 const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
-  { k: "volume",     label: "Vol.",   fmt: fmtCount },
-  { k: "revenue",    label: "Rev.",   fmt: fmtUsd },
-  { k: "profit",     label: "Prof.",  fmt: fmtUsd },
-  { k: "margin_pct", label: "Marg.%", fmt: fmtPct },
+  { k: "volume",     label: "Vol.",    fmt: fmtCount },
+  { k: "revenue",    label: "Rev.",    fmt: fmtUsd },
+  { k: "profit",     label: "Prof.",   fmt: fmtUsd },
+  { k: "margin_pct", label: "Marg.%",  fmt: fmtPct },
+  { k: "service",    label: "Service", fmt: (v) => `${v.toFixed(1)}%` },
 ]
 
 const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
@@ -50,7 +54,9 @@ const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
 ]
 
 // Series legend keys — toggled on/off by clicking the legend pills.
-type SeriesKey = "bars" | "budget" | "avgLq" | "projected" | "losses"
+// Bruno R5 (2026-06-01) #3: "variance" (Actual − Budget) legend/tooltip entry
+// between Budget and Losses.
+type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
 
 // Compact data-point labels on the bars (Bruno R4 "show the data points").
 // Full USD on every bar overlaps; compact ($210K) keeps the chart readable.
@@ -82,16 +88,31 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   }
   const isHidden = (k: SeriesKey) => hidden.has(k)
 
-  const { data: comboRes, isLoading, error } = useOppCombo(cf, grain)
+  const isService = measure === "service"
+
+  const { data: comboRes, isLoading: comboLoading, error: comboError } = useOppCombo(cf, grain)
   const { data: workdaysRes } = useOppWorkdays()
   const { data: gaugeRes } = useOppProfitTmGauge(cf)
+  // Shares the React Query cache with the standalone Service chart (#1) — no
+  // extra fetch. Only the data we actually render in Service mode is used.
+  const { data: serviceRes, isLoading: svcLoading, error: svcError } = useOppService(cf, grain)
+
+  const isLoading = isService ? svcLoading : comboLoading
+  const error = isService ? svcError : comboError
 
   const data = comboRes?.data
   const buckets = useMemo(() => data?.buckets ?? [], [data])
 
+  const serviceBuckets = useMemo(() => serviceRes?.data?.buckets ?? [], [serviceRes])
+
+  // Two separate typed arrays (union data confuses Recharts' generic typing).
   const chartData = useMemo(
     () => buckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
     [buckets, grain],
+  )
+  const serviceData = useMemo(
+    () => serviceBuckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
+    [serviceBuckets, grain],
   )
 
   // Brush position — default to the most recent N buckets per grain.
@@ -113,13 +134,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   // ------- Per-tab series keys (Bruno round 3) ----------------------------
   // Bars / Budget / Losses each have a per-measure variant so the chart line
   // is in the same unit as the bars (drops the dual-axis pre-r3 hack).
-  const budgetKey: keyof typeof chartData[number] = (
+  const budgetKey: string = (
     measure === "revenue"    ? "budget_revenue"
     : measure === "profit"   ? "budget_profit"
     : measure === "volume"   ? "budget_loads"
     : "budget_margin_pct"
   )
-  const lossesKey: keyof typeof chartData[number] = (
+  const lossesKey: string = (
     measure === "revenue"    ? "losses_rev"
     : measure === "profit"   ? "losses_prof"
     : measure === "volume"   ? "losses_vol"
@@ -180,38 +201,58 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
           onChange={setGrain}
         />
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
-          <LegendChip
-            label={measureMeta.label}
-            color="#7DD3FC"
-            active={!isHidden("bars")}
-            onClick={() => toggle("bars")}
-          />
-          <LegendChip
-            label="BDGT"
-            color="#16A34A"
-            active={!isHidden("budget")}
-            onClick={() => toggle("budget")}
-          />
-          <LegendChip
-            label="Avg. LQ"
-            color="#9333EA"
-            dashed
-            active={!isHidden("avgLq")}
-            onClick={() => toggle("avgLq")}
-          />
-          <LegendChip
-            label="Projected TM"
-            color="#2563EB"
-            dashed
-            active={!isHidden("projected")}
-            onClick={() => toggle("projected")}
-          />
-          <LegendChip
-            label="losses x M"
-            color="#DC2626"
-            active={!isHidden("losses")}
-            onClick={() => toggle("losses")}
-          />
+          {isService ? (
+            <>
+              <span className="flex items-center gap-1.5 text-[11px] text-[#374151]">
+                <span className="inline-block h-2 w-4 rounded-sm bg-[#16A34A]" /> OTP %
+              </span>
+              <span className="flex items-center gap-1.5 text-[11px] text-[#374151]">
+                <span className="inline-block h-2 w-4 rounded-sm bg-[#2563EB]" /> OTD %
+              </span>
+            </>
+          ) : (
+            <>
+              <LegendChip
+                label={measureMeta.label}
+                color="#7DD3FC"
+                active={!isHidden("bars")}
+                onClick={() => toggle("bars")}
+              />
+              <LegendChip
+                label="BDGT"
+                color="#16A34A"
+                active={!isHidden("budget")}
+                onClick={() => toggle("budget")}
+              />
+              {/* Bruno R5 #3: Variance = Actual − Budget, between Budget and Losses. */}
+              <LegendChip
+                label="Variance"
+                color="#F59E0B"
+                active={!isHidden("variance")}
+                onClick={() => toggle("variance")}
+              />
+              <LegendChip
+                label="Avg. LQ"
+                color="#9333EA"
+                dashed
+                active={!isHidden("avgLq")}
+                onClick={() => toggle("avgLq")}
+              />
+              <LegendChip
+                label="Projected TM"
+                color="#2563EB"
+                dashed
+                active={!isHidden("projected")}
+                onClick={() => toggle("projected")}
+              />
+              <LegendChip
+                label="losses x M"
+                color="#DC2626"
+                active={!isHidden("losses")}
+                onClick={() => toggle("losses")}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -225,6 +266,53 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
           <div className="flex h-[380px] items-center justify-center text-sm text-[#DC2626]">
             Failed to load chart
           </div>
+        ) : isService ? (
+          /* Bruno R5 #2: Service mode — OTP%/OTD% lines (same as the chart above). */
+          <ResponsiveContainer width="100%" height={380}>
+            <ComposedChart data={serviceData} margin={{ top: 16, right: 24, bottom: 0, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload || !payload.length) return null
+                  const row = payload[0].payload as { label?: string; otp_pct?: number; otd_pct?: number }
+                  return (
+                    <div className="rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-md">
+                      <div className="mb-1 font-semibold text-[#111827]">{row.label}</div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="flex items-center gap-1.5">
+                          <span className="inline-block h-2 w-2 rounded-full bg-[#16A34A]" /> OTP %
+                        </span>
+                        <span className="font-medium tabular-nums">{Number(row.otp_pct ?? 0).toFixed(2)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="flex items-center gap-1.5">
+                          <span className="inline-block h-2 w-2 rounded-full bg-[#2563EB]" /> OTD %
+                        </span>
+                        <span className="font-medium tabular-nums">{Number(row.otd_pct ?? 0).toFixed(2)}%</span>
+                      </div>
+                    </div>
+                  )
+                }}
+              />
+              <Line type="monotone" dataKey="otp_pct" name="OTP %" stroke="#16A34A" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="otd_pct" name="OTD %" stroke="#2563EB" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Brush
+                dataKey="label"
+                height={20}
+                stroke="#94A3B8"
+                travellerWidth={8}
+                startIndex={brush.start}
+                endIndex={brush.end}
+                onChange={(r) => {
+                  if (r && typeof r.startIndex === "number" && typeof r.endIndex === "number") {
+                    setBrush({ start: r.startIndex, end: r.endIndex })
+                  }
+                }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height={380}>
             <ComposedChart data={chartData} margin={{ top: 16, right: 24, bottom: 0, left: 8 }}>
@@ -235,10 +323,14 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 content={({ active, payload }) => {
                   if (!active || !payload || !payload.length) return null
                   const row = payload[0].payload as Record<string, number> & { label?: string }
-                  // Bruno R4: fixed legend order — Actual · Budget · Losses · Avg · Projected.
+                  // Bruno R4: fixed order — Actual · Budget · Losses · Avg · Projected.
+                  // Bruno R5 #3: + Variance (Actual − Budget) between Budget and Losses.
+                  const actualVal = Number(row[measure] ?? 0)
+                  const budgetVal = Number(row[budgetKey] ?? 0)
                   const items = [
-                    { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: Number(row[measure] ?? 0) },
-                    { key: "budget" as SeriesKey,    label: "Budget",    color: "#16A34A", value: Number(row[budgetKey] ?? 0) },
+                    { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: actualVal },
+                    { key: "budget" as SeriesKey,    label: "Budget",    color: "#16A34A", value: budgetVal },
+                    { key: "variance" as SeriesKey,  label: "Variance",  color: "#F59E0B", value: actualVal - budgetVal },
                     { key: "losses" as SeriesKey,    label: "Losses",    color: "#DC2626", value: Number(row[lossesKey] ?? 0) },
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },

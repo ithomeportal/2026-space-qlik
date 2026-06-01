@@ -30,7 +30,9 @@ const RETRY = {
 // Filter contract
 // ---------------------------------------------------------------------------
 
-export type OppRange = "mtd" | "ytd" | "full" | "custom"
+// Bruno R5 (2026-06-01): "full" dropped from the UI but kept here as the
+// silent default for the rolling endpoints (combo/service/projection/gauge).
+export type OppRange = "mtd" | "ytd" | "this_month" | "last_month" | "full" | "custom"
 export type LoadType = "" | "contract" | "spot"
 
 export interface OppFilters {
@@ -40,6 +42,8 @@ export interface OppFilters {
   team?: string
   customer?: string
   loadType?: LoadType
+  /** Bruno R5: "Losses" button — restrict tables to margin_amt < 0 rows. */
+  lossesOnly?: boolean
 }
 
 function qs(f: OppFilters, extra?: Record<string, string>): string {
@@ -50,6 +54,7 @@ function qs(f: OppFilters, extra?: Record<string, string>): string {
   if (f.team) q.set("team", f.team)
   if (f.customer) q.set("customer", f.customer)
   if (f.loadType) q.set("load_type", f.loadType)
+  if (f.lossesOnly) q.set("losses_only", "true")
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -137,6 +142,7 @@ export interface OppTeamPerformance {
   lanes: number
   volume: number
   revenue: number
+  total_cost: number
   profit: number
   margin_pct: number
   rev_x_l: number
@@ -256,15 +262,27 @@ export interface OppService {
 }
 
 // Bruno R4: load-level Production rows ("By Order" table).
+// Bruno R5 (2026-06-01): + OTP/OTD %, Transit Time, in-progress live timer.
 export interface OppOrderRow {
   order_id: string
   team_id: string
+  status: string
   departure: string
   customer_name: string
   lane: string
   revenue: number
   profit: number
   margin_pct: number
+  otp_pct: number
+  otd_pct: number
+  /** ISO timestamp the load departed origin (sentinel-guarded, may be null). */
+  departed_at: string | null
+  /** ISO timestamp the load arrived destination (null while in transit). */
+  arrived_at: string | null
+  /** Completed transit seconds (arrival − departure); null if unknown. */
+  transit_seconds: number | null
+  /** Open 'P' load that departed but has not arrived — UI ticks a live clock. */
+  in_progress: boolean
 }
 
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
@@ -276,6 +294,7 @@ export interface OppWeekPerf {
   lanes: number
   volume: number
   revenue: number
+  total_cost: number
   profit: number
   margin_pct: number
   rev_x_l: number
@@ -387,7 +406,7 @@ export function useOppActuals(f: OppFilters, opts?: { sort?: string; limit?: num
     queryKey: [
       "opp-actuals",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
       sort, limit,
     ],
     queryFn: () =>
@@ -408,7 +427,7 @@ export function useOppActualsByLane(
     queryKey: [
       "opp-actuals-by-lane",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
       sort, limit,
     ],
     queryFn: () =>
@@ -443,7 +462,7 @@ export function useOppByOrder(
     queryKey: [
       "opp-by-order",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
       sort, limit,
     ],
     queryFn: () =>
@@ -498,6 +517,17 @@ export function fmtCount(v: number): string {
 export function fmtPct(v: number): string {
   if (!Number.isFinite(v)) return "0%"
   return `${v.toFixed(2)}%`
+}
+
+// Bruno R5: Transit Time / live in-transit timer → "Nd Nh" or "Nh Nm".
+export function fmtDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—"
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
 }
 
 export function fmtMonth(iso: string): string {
