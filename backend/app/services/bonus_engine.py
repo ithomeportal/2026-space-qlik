@@ -198,18 +198,20 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 "meetsLoadMinimum": meets_load_minimum,
                 "loadBonusPct": get_bracket_bonus(loads, LOAD_COUNT_BRACKETS),
                 "marginBonusPct": get_bracket_bonus(margin_pct, MARGIN_BRACKETS) if meets_load_minimum else 0.0,
+                # Legacy period/monthly service bracket. No longer drives payout as
+                # of Bruno 2026-06-01 (see serviceBonusPctWeekly below); kept for the
+                # wire type / possible tooltips. Wildcard still uses the period avg.
                 "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS) if meets_load_minimum else 0.0,
-                # Display-only per-week On time P&D (Bruno 2026-05-28). The payout
-                # above intentionally uses the period/monthly service average.
+                # Per-week On time P&D (Bruno 2026-05-28).
                 "serviceAveragePct": week_service_average,
-                # Display-only per-week On time P&D "Actual Bonus %" — mirrors the
-                # Load/Margin rows so each week reads its OWN service against the
-                # bracket, gated by that week's 100-load minimum (Bruno 2026-05-28
-                # round 2). serviceBonusPct above (period avg) still drives payout.
-                "serviceBonusPctWeekly": (
-                    get_bracket_bonus(normalize_percent(week_service_average), SERVICE_BRACKETS)
-                    if meets_load_minimum
-                    else 0.0
+                # Per-week On time P&D "Actual Bonus %" AND the Tracking&Tracing
+                # payout driver (Bruno 2026-06-01). Each week reads its OWN service
+                # against SERVICE_BRACKETS and is NOT gated by the 100-load weekly
+                # minimum — so the On time P&D money always equals the displayed
+                # bracket %, and a high-service week still pays even under 100 loads
+                # (Team3 Wk4 case). Load Count / Freight-Match keep the load gate.
+                "serviceBonusPctWeekly": get_bracket_bonus(
+                    normalize_percent(week_service_average), SERVICE_BRACKETS
                 ),
             }
         )
@@ -225,14 +227,17 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         role = employee["role"]
         regular_weekly_usd = []
         for rule in weekly_rules:
-            # marginBonusPct / serviceBonusPct are already 0 in weeks under the
-            # 100-load minimum, so each role just reads its own bracket %.
+            # KAM (loads) and Freight-Match (margin) stay gated by the 100-load
+            # weekly minimum — their bracket %s are already 0 below it. Tracking&
+            # Tracing reads each week's OWN On time P&D bracket (serviceBonusPctWeekly),
+            # ungated, so the payout equals the displayed "Actual Bonus %" row
+            # (Bruno 2026-06-01).
             if role == "kam":
                 multiplier = rule["loadBonusPct"]
             elif role == "freight_match":
                 multiplier = rule["marginBonusPct"]
             else:
-                multiplier = rule["serviceBonusPct"]
+                multiplier = rule["serviceBonusPctWeekly"]
             regular_weekly_usd.append(multiplier * rule["loads"] * PAY_PER_LOAD[role])
 
         wildcard = calculate_wildcard_bonus(employee, total_profit, normalized_service)

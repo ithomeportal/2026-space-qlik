@@ -63,12 +63,12 @@ export interface WeeklyRule {
   revenue: number
   grossProfit: number
   marginPct: number // decimal
-  meetsLoadMinimum: boolean // weekly loads >= 100 — gates every role's bonus
+  meetsLoadMinimum: boolean // weekly loads >= 100 — gates KAM (loads) + Freight-Match (margin)
   loadBonusPct: number
   marginBonusPct: number
-  serviceBonusPct: number // period/monthly service bracket — drives payout
-  serviceAveragePct: number // percentage — per-week (OTP+OTD)/2, display only
-  serviceBonusPctWeekly: number // per-week service bracket, load-gated — display only
+  serviceBonusPct: number // legacy period/monthly service bracket — no longer drives payout (2026-06-01)
+  serviceAveragePct: number // percentage — per-week (OTP+OTD)/2
+  serviceBonusPctWeekly: number // per-week On time P&D bracket, UNGATED — drives the On time P&D payout (2026-06-01)
 }
 
 export interface ProfitBracketBonus {
