@@ -480,7 +480,8 @@ async def combo(
           COALESCE(SUM(br4.margin_amt)   FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses_prof
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
-          AND br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+          AND br4.origin_actual_departure >= ${p_ws}
+          AND br4.origin_actual_departure < (${p_we}::date + INTERVAL '1 day')
         GROUP BY 1
     """
 
@@ -801,7 +802,8 @@ async def customer_losses(
           COALESCE(SUM(CASE WHEN br4.margin_amt < 0 THEN br4.margin_amt END), 0)::numeric AS loss_profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
-          AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+          AND br4.origin_actual_departure >= ${p_s}
+          AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
         GROUP BY br4.customer_name
         HAVING COUNT(*) FILTER (WHERE br4.margin_amt < 0) > 0
         ORDER BY loss_profit ASC NULLS LAST
@@ -871,7 +873,8 @@ async def team_performance(
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
              )
         SELECT
           COUNT(DISTINCT customer_name) AS customers,
@@ -1116,7 +1119,8 @@ async def profit_tm_gauge(
         SELECT COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit_mtd
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
-          AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+          AND br4.origin_actual_departure >= ${p_s}
+          AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
     """
 
     # Budget MTD profit (target)
@@ -1210,7 +1214,8 @@ async def actuals(
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
                   {losses_clause}
              )
         SELECT
@@ -1415,7 +1420,8 @@ async def actuals_by_lane(
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
                   AND TRIM(br4.origin_name) <> ''
                   AND TRIM(br4.dest_name)   <> ''
                   {losses_clause}
@@ -1554,7 +1560,8 @@ async def service(
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                  AND br4.origin_actual_departure >= ${p_ws}
+                  AND br4.origin_actual_departure < (${p_we}::date + INTERVAL '1 day')
              )
         SELECT
           bucket_start,
@@ -1712,7 +1719,8 @@ async def by_order(
         LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
         LEFT JOIN win ON win.id_key = TRIM(UPPER(br4.id))
         WHERE {where_rows}
-          AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+          AND br4.origin_actual_departure >= ${p_s}
+          AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
           {losses_clause}
         ORDER BY {order_by}
         LIMIT ${p_lim}
@@ -1730,7 +1738,8 @@ async def by_order(
           COALESCE(SUM(br4.margin_amt), 0)::numeric   AS prof
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where_tot}
-          AND br4.origin_actual_departure::date BETWEEN ${t_s} AND ${t_e}
+          AND br4.origin_actual_departure >= ${t_s}
+          AND br4.origin_actual_departure < (${t_e}::date + INTERVAL '1 day')
           {losses_clause}
     """
 
@@ -1848,7 +1857,8 @@ async def team_weekly_performance(
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
                 WHERE {where}
-                  AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
              )
         SELECT
           wk,

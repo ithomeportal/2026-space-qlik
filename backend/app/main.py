@@ -4,8 +4,10 @@ import time
 from contextlib import asynccontextmanager
 
 import asyncpg
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -133,6 +135,43 @@ async def _scheduled_lane_rates_prewarm():
         logger.error(f"Lane-rates prewarm failed: {e}")
 
 
+async def _scheduled_datalake_warmup():
+    """Keep the aivn_datalake_gold shared buffers hot.
+
+    The keep-warm pings only hit ``/api/health`` (no DB), so they wake the
+    Render dyno but leave the datalake's Postgres page cache cold — the first
+    real user hit on a heavy report then pays a 20-28s cold-scan penalty
+    (especially when an external McLeod->gold bulk load has evicted our hot
+    pages). This job runs the heaviest ops-portal-overview queries in-process
+    every 5 min so those tables' index/heap pages stay resident, turning the
+    user's first hit from ~25s into ~1-5s. Best-effort: log-and-swallow.
+    """
+    pool = getattr(app.state, "savings_pool", None)
+    if pool is None:
+        return
+    # Synthetic admin header — admin bypasses require_report_access (deps.py),
+    # so the warmup runs the exact same SQL real users trigger.
+    auth = 'Bearer {"sub":"warmup","email":"warmup@internal","name":"warmup","roles":["admin"]}'
+    endpoints = (
+        "/api/custom/ops-portal-overview/actuals",
+        "/api/custom/ops-portal-overview/service",
+        "/api/custom/ops-portal-overview/by-order",
+    )
+    try:
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://warmup.internal", timeout=60.0,
+        ) as client:
+            results = await asyncio.gather(
+                *[client.get(ep, headers={"authorization": auth}) for ep in endpoints],
+                return_exceptions=True,
+            )
+        ok = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+        logger.info(f"Datalake warmup: {ok}/{len(endpoints)} endpoints hot")
+    except Exception as e:
+        logger.warning(f"Datalake warmup failed: {e}")
+
+
 async def _backfill_favicons(pool: asyncpg.Pool):
     """Background task: backfill missing favicons without blocking startup."""
     try:
@@ -184,6 +223,9 @@ async def lifespan(app: FastAPI):
                 settings.DATABASE_URL,
                 min_size=2,
                 max_size=10,
+                # Fail fast (just under the proxy's 45s abort) so a runaway/cold
+                # query releases its connection instead of hogging the pool.
+                command_timeout=40,
                 init=_set_cst_session,
             )
             # Ensure apps tables exist
@@ -454,12 +496,18 @@ async def lifespan(app: FastAPI):
         try:
             app.state.savings_pool = await asyncpg.create_pool(
                 settings.SAVINGS_DATABASE_URL,
-                min_size=1,
-                max_size=4,
+                # This pool now backs ~23 code-made reports (the whole exec/ops
+                # suite). Heavy pages (ops-portal-overview) fan out 10-15 panels
+                # concurrently, so 4 connections starved the queue. 2/8 + a
+                # 42s command_timeout (just under the proxy's 45s abort) lets
+                # slow/cold queries fail fast and free their connection.
+                min_size=2,
+                max_size=8,
+                command_timeout=42,
                 init=_set_cst_session,
             )
             logger.info(
-                "Datalake (gold) pool connected — powers eSavings, Budget Follow Up & XRay CORP Mng"
+                "Datalake (gold) pool connected — powers the exec/ops report suite (~23 reports)"
             )
         except Exception as e:
             logger.warning(
@@ -478,6 +526,7 @@ async def lifespan(app: FastAPI):
                 settings.AUTOMATIONS_DATABASE_URL,
                 min_size=1,
                 max_size=4,
+                command_timeout=40,
                 init=_set_cst_session,
             )
             logger.info(
@@ -499,6 +548,7 @@ async def lifespan(app: FastAPI):
                 settings.FRESHSERVICE_DATABASE_URL,
                 min_size=1,
                 max_size=4,
+                command_timeout=40,
                 init=_set_cst_session,
             )
             logger.info(
@@ -520,6 +570,7 @@ async def lifespan(app: FastAPI):
                 settings.AP_DATABASE_URL,
                 min_size=1,
                 max_size=4,
+                command_timeout=40,
                 init=_set_cst_session,
             )
             logger.info(
@@ -542,6 +593,7 @@ async def lifespan(app: FastAPI):
                 settings.FINANCIAL_DATABASE_URL,
                 min_size=1,
                 max_size=2,
+                command_timeout=40,
                 init=_set_cst_session,
             )
             logger.info("Financial pool connected — Bonus Calculator DOF FX suggestion")
@@ -612,6 +664,22 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
         logger.info("Scheduled lane-rates prewarm at 5:00 AM CST")
+
+    # Keep the datalake (gold) Postgres buffers hot every 5 min so heavy report
+    # queries never pay the 20-28s cold-scan penalty on a user's first hit.
+    # /api/health pings keep the dyno warm but issue zero DB queries; this fills
+    # that gap. Best-effort, in-process (ASGITransport), log-and-swallow.
+    if settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_datalake_warmup,
+            IntervalTrigger(minutes=5),
+            id="datalake_warmup",
+            name="Warm datalake gold shared buffers (ops-portal-overview queries)",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Scheduled datalake warmup every 5 min")
 
     # Schedule daily RFP Performance digest at 5:30 PM CST (Mon-Fri only).
     # Needs the automations_db pool (rfp_results_history) and MS Graph creds.
