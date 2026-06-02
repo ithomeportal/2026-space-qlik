@@ -56,27 +56,24 @@ export interface PodiumTodayRow {
   profit: number | null
 }
 
-export interface PodiumByTeamEntry {
-  team: string
-  today_top_loads: PodiumTodayRow[]
-  today_top_profit: PodiumTodayRow[]
-}
-
 export interface PodiumLeaderboards {
   week_top_profit: PodiumWeekProfitRow[]
   week_top_margin: PodiumWeekMarginRow[]
   week_top_loads:  PodiumLoadsRow[]
   today_top_loads: PodiumTodayRow[]
   today_top_profit: PodiumTodayRow[]
-  by_team: PodiumByTeamEntry[]
+  locked_team: string | null
 }
 
 const FIFTEEN_MIN = 15 * 60 * 1000
 
-export function usePodiumTop() {
+// `apiPrefix` lets the main report and the four server-locked per-team reports
+// (Bruno R7: dfw-podium-top-tm1 … -tm4) share one hook. Defaults to the main
+// all-DFW report.
+export function usePodiumTop(apiPrefix = "custom/dfw-podium-top") {
   return useQuery({
-    queryKey: ["dfw-podium-top", "podiums"],
-    queryFn: () => apiFetch<PodiumLeaderboards>(`custom/dfw-podium-top/podiums`),
+    queryKey: [apiPrefix, "podiums"],
+    queryFn: () => apiFetch<PodiumLeaderboards>(`${apiPrefix}/podiums`),
     refetchInterval: FIFTEEN_MIN,
     refetchIntervalInBackground: false,
     staleTime: 5 * 60 * 1000,

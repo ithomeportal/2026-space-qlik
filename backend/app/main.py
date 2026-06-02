@@ -788,6 +788,8 @@ app.include_router(dfw_access_doors.router, prefix="/api")
 app.include_router(admin_access_doors.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
+for _podium_team_router in podium_top.team_routers:
+    app.include_router(_podium_team_router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")

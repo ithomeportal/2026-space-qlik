@@ -174,12 +174,54 @@ CUSTOM_REPORTS = [
     {
         "key": "dfw-podium-top",  # -> /reports/dfw-podium-top
         "title": "DFW Podium Top",
-        "description": "DFW Top-3 Bookers leaderboards — This-Week Profit / Margin / Loads + Today Loads / Profit",
-        "note": "Companion to Podium Set DFW · no date filter · top-3 only · TEAM-DFW · source: order_post_hist + budget_report_v4 (same CTE as podium-dfw)",
+        "description": "DFW Bookers leaderboards — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists",
+        "note": "Companion to Podium Set DFW · no date filter · TEAM-DFW · This-Week top-3 + Today full list (Bruno R6) · source: order_post_hist + budget_report_v4 (same CTE as podium-dfw)",
         "category": "Operations",
         "tags": ["dfw", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
         "roles": ["DFW"],
+    },
+    # Bruno R7 (2026-06-02): per-team duplicates of DFW Podium Top, one report
+    # per DFW sub-team, server-locked to that TM (mirrors XRay DFW TM1..TM4).
+    {
+        "key": "dfw-podium-top-tm1",  # -> /reports/dfw-podium-top-tm1
+        "title": "DFW Podium Top TM1",
+        "description": "DFW Podium Top locked to TM1 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM1 only",
+        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM1 + leadership",
+        "category": "Operations",
+        "tags": ["dfw", "tm1", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM1", "CEO", "Executive"],
+    },
+    {
+        "key": "dfw-podium-top-tm2",  # -> /reports/dfw-podium-top-tm2
+        "title": "DFW Podium Top TM2",
+        "description": "DFW Podium Top locked to TM2 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM2 only",
+        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM2 + leadership",
+        "category": "Operations",
+        "tags": ["dfw", "tm2", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM2", "CEO", "Executive"],
+    },
+    {
+        "key": "dfw-podium-top-tm3",  # -> /reports/dfw-podium-top-tm3
+        "title": "DFW Podium Top TM3",
+        "description": "DFW Podium Top locked to TM3 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM3 only",
+        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM3 + leadership",
+        "category": "Operations",
+        "tags": ["dfw", "tm3", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM3", "CEO", "Executive"],
+    },
+    {
+        "key": "dfw-podium-top-tm4",  # -> /reports/dfw-podium-top-tm4
+        "title": "DFW Podium Top TM4",
+        "description": "DFW Podium Top locked to TM4 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM4 only",
+        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM4 + leadership",
+        "category": "Operations",
+        "tags": ["dfw", "tm4", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
+        "owner_name": "Diego",
+        "roles": ["DFW-TM4", "CEO", "Executive"],
     },
     {
         "key": "losses-lanes",  # -> /reports/losses-lanes
