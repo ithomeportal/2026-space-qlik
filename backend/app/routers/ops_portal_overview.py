@@ -1665,27 +1665,20 @@ async def by_order(
 
     All window timestamps are emitted via ``to_char`` (text) to dodge the
     asyncpg date-decode overflow on any 5-digit-year McLeod typo
-    (SPEC-CODE-RULES §4). The customer_windows join uses a first-match LATERAL
-    (SPEC: LEFT JOIN LATERAL … LIMIT 1) so duplicate window rows never fan out
-    the order list. Sentinel 1900/1899 placeholder dates are guarded to NULL.
+    (SPEC-CODE-RULES §4). The customer_windows join is a correlated LATERAL that
+    MAXes the (sentinel-guarded) departure/arrival per id — backed by the
+    functional index ``idx_customer_windows_id_upper`` on ``TRIM(UPPER(id))``
+    (created 2026-06-02). The aggregate (not LIMIT 1) keeps the original
+    MAX-of-non-sentinel semantics so a 1900 placeholder row never wins, and the
+    single-row aggregate can't fan out the order list. Replaces the prior
+    full-table pre-agg CTE that scanned all ~195k window rows every call
+    (SPEC-CODE-RULES §42 chose that only because the index was missing).
+    Sentinel 1900/1899 placeholder dates are guarded to NULL.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     order_by = _BY_ORDER_SORTS.get(sort, _BY_ORDER_SORTS["revenue_desc"])
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
-
-    # Window lookup (orig departure + dest arrival) → one pre-aggregated row per
-    # id (MAX of non-sentinel timestamps), hash-joined. Cheaper than a per-row
-    # correlated LATERAL since customer_windows has no functional index on id.
-    win_cte = """
-        win AS (
-            SELECT TRIM(UPPER(id)) AS id_key,
-                   MAX(CASE WHEN orig_actual_departure > '2000-01-01' THEN orig_actual_departure END) AS dep_ts,
-                   MAX(CASE WHEN dest_actual_arrival   > '2000-01-01' THEN dest_actual_arrival   END) AS arr_ts
-            FROM public.mcleod_gld_customer_windows
-            GROUP BY TRIM(UPPER(id))
-        )
-    """
 
     rows_params: list = []
     where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params)
@@ -1695,8 +1688,7 @@ async def by_order(
     p_lim = len(rows_params)
     rows_sql = f"""
         WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
-             {win_cte}
+             otd AS ({_scorecard_cte("otd")})
         SELECT
           TRIM(br4.id)        AS order_id,
           TRIM(br4.team_id)   AS team_id,
@@ -1717,7 +1709,12 @@ async def by_order(
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
         LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
-        LEFT JOIN win ON win.id_key = TRIM(UPPER(br4.id))
+        LEFT JOIN LATERAL (
+            SELECT MAX(CASE WHEN cw.orig_actual_departure > '2000-01-01' THEN cw.orig_actual_departure END) AS dep_ts,
+                   MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS arr_ts
+            FROM public.mcleod_gld_customer_windows cw
+            WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
+        ) win ON TRUE
         WHERE {where_rows}
           AND br4.origin_actual_departure >= ${p_s}
           AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
