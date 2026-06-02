@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
   success: boolean
@@ -24,6 +24,11 @@ const RETRY = {
     return failureCount < 2
   },
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+  // Keep showing the previous result (dimmed) while a filter change refetches,
+  // instead of every panel blanking to a spinner / "Failed to load" at once.
+  // This both removes the visible flash and lets a slow/cold backend catch up
+  // without the user perceiving a failure.
+  placeholderData: keepPreviousData,
 }
 
 // ---------------------------------------------------------------------------

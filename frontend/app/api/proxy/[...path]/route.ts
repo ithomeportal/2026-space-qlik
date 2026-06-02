@@ -105,12 +105,27 @@ async function proxyRequest(
     } catch (err) {
       clearTimeout(timeout)
       const isAbort = err instanceof Error && err.name === "AbortError"
-      if (attempt < maxAttempts - 1) {
+      // Only retry genuine network errors (connection refused during a cold
+      // start, etc.) — NOT a 45s abort. An aborted request already consumed a
+      // scarce backend connection for the full window; retrying the same slow
+      // query 2× more just multiplies load on the exact endpoints that are
+      // already starving the pool. Fail fast and let React Query retry later.
+      if (!isAbort && attempt < maxAttempts - 1) {
         console.warn(
-          `[proxy] ${req.method} ${pathStr} network error (${isAbort ? "timeout" : "fetch"}) attempt ${attempt + 1}, retrying`,
+          `[proxy] ${req.method} ${pathStr} network error (fetch) attempt ${attempt + 1}, retrying`,
         )
         await sleep(RETRY_DELAYS_MS[attempt])
         continue
+      }
+      if (isAbort) {
+        const duration = Date.now() - started
+        console.warn(
+          `[proxy] ${req.method} ${pathStr} → aborted after ${duration}ms (no retry)`,
+        )
+        return NextResponse.json(
+          { success: false, error: "Backend timed out — please retry shortly" },
+          { status: 504, headers: { "Retry-After": "10" } },
+        )
       }
       const duration = Date.now() - started
       console.warn(
