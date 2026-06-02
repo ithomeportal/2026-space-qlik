@@ -59,7 +59,8 @@ const COLUMNS: {
 ]
 
 export function Actuals({ filters }: Props) {
-  const [mode, setMode] = useState<Mode>("production")
+  // Bruno R6 (2026-06-02): default the Actuals table to the "All" filter view.
+  const [mode, setMode] = useState<Mode>("all")
   const [sortKey, setSortKey] = useState<ColumnKey>("rev")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
 

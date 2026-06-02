@@ -12,10 +12,8 @@ import {
   type OppRange,
 } from "@/lib/ops-portal-overview-api"
 import { ComboChart } from "./Chart"
-import { ServiceChart } from "./ServiceChart"
 import { SidePanels } from "./SidePanels"
 import { TeamLastMonthPerformance, TeamVariancePerformance } from "./TeamMonthDelta"
-import { ProductionByCustomer } from "./ProductionByCustomer"
 import { Actuals } from "./Actuals"
 import { ActualsByLane } from "./ActualsByLane"
 import { ByOrder } from "./ByOrder"
@@ -278,8 +276,7 @@ function OpsPortalOverviewContent() {
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
-        {/* Bruno R5 #1: Service (OTP/OTD) chart is now the first chart. */}
-        <ServiceChart filters={filters} loadType={loadType} />
+        {/* Bruno R6 (2026-06-02): Service (OTP/OTD) chart removed. */}
 
         {/* Bruno R5 #5/#6/#7: the KPI MANAGEMENT container ends with its KPI
             cards; the freed space below it holds the two new month tables. */}
@@ -294,7 +291,7 @@ function OpsPortalOverviewContent() {
           <SidePanels filters={filters} />
         </div>
 
-        <ProductionByCustomer filters={filters} />
+        {/* Bruno R6 (2026-06-02): Production by Customer table removed. */}
         <Actuals filters={filters} />
         <ActualsByLane filters={filters} />
         <ByOrder filters={filters} />
