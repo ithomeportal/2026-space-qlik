@@ -275,4 +275,4 @@ tenant/IdP/app details are in `docs/SPEC-QLIK.md` + `docs/SPEC-QLIK-INVENTORY.md
 | `docs/SPEC-CUSTOM-REPORTS.md` | Code-made (non-Qlik) reports — full per-report spec + checklist |
 | `docs/SPEC-CODE-RULES.md` | Cross-cutting code rules (sargability, CST clock, asyncpg, Render env, Outlook fonts, etc.) |
 | `docs/SPEC-RFP-DAILY-DIGEST.md` | RFP Performance daily email digest details |
-| `docs/SPEC-BONUS-CALCULATOR.md` | Bonus Calculator (CEO+HR) — engine port, live-datalake feed, 6th→6th period, HR-pinned FX, roster |
+| `docs/SPEC-BONUS-CALCULATOR.md` | Bonus Calculator (CEO+HR) — engine port, live-datalake feed, calendar-month Mon→Sun weeks (cutoff 5th of next month), one monthly On time P&D basis (R8), HR-pinned FX, roster. ⚠ Rules flip-flop — ALWAYS read the spec's top changelog block first (§41) |
