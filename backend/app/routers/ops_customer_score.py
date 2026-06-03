@@ -337,7 +337,7 @@ async def filters(
     cust_rows = await pool.fetch(
         f"""
         SELECT DISTINCT TRIM(sc.customer_name) AS customer_name
-        FROM public.mcleod_gld_scorecard sc
+        FROM public.mcleod_gld_scorecard_portal sc
         WHERE {cust_where}
           AND sc.orig_actual_departure >= ${len(cust_params)}
           AND sc.customer_name IS NOT NULL
@@ -357,7 +357,7 @@ async def filters(
     carr_rows = await pool.fetch(
         f"""
         SELECT DISTINCT TRIM(sc.payee_name) AS payee_name
-        FROM public.mcleod_gld_scorecard sc
+        FROM public.mcleod_gld_scorecard_portal sc
         WHERE {carr_where}
           AND sc.orig_actual_departure >= ${len(carr_params)}
           AND sc.payee_name IS NOT NULL
@@ -496,7 +496,7 @@ async def _pinned_payload(pool, side: str, params_seed: list, where: str) -> dic
         WHERE sc.{date_col}::date BETWEEN ${p_kpi_y} AND ${p_kpi_today}
           AND {fail_pred_kpi}
       ) AS y_fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.{date_col}::date BETWEEN ${p_kpi_y} AND ${p_kpi_today}
     """
@@ -518,7 +518,7 @@ async def _pinned_payload(pool, side: str, params_seed: list, where: str) -> dic
       DATE_TRUNC('month', sc.{date_col})::date AS bucket,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_12m}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.{date_col}::date BETWEEN ${p_12m_start_idx} AND ${p_12m_today}
     GROUP BY DATE_TRUNC('month', sc.{date_col})
@@ -544,7 +544,7 @@ async def _pinned_payload(pool, side: str, params_seed: list, where: str) -> dic
       EXTRACT(WEEK    FROM sc.{date_col})::int AS iso_week,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_10w}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.{date_col}::date BETWEEN ${p_10w_start_idx} AND ${p_10w_today}
     GROUP BY 1, 2, 3
@@ -722,7 +722,7 @@ async def _overview(
     SELECT
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
     """
 
@@ -731,7 +731,7 @@ async def _overview(
       TRIM(sc.team_id) AS team_id,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
     GROUP BY TRIM(sc.team_id)
     ORDER BY fail DESC NULLS LAST, team_id
@@ -742,7 +742,7 @@ async def _overview(
       TRIM(sc.customer_name) AS customer_name,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.customer_name IS NOT NULL
       AND TRIM(sc.customer_name) <> ''
@@ -757,7 +757,7 @@ async def _overview(
     SELECT
       TRIM(sc.edi_standard_code) AS edi_standard_code,
       COUNT(DISTINCT sc.id) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND {fail_pred}
     GROUP BY TRIM(sc.edi_standard_code)
@@ -916,7 +916,7 @@ async def _detail(
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_kpi}) AS fail,
       COUNT(DISTINCT sc.id) FILTER (WHERE {not_pred_kpi}) AS not_fault_fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
     """
 
@@ -933,7 +933,7 @@ async def _detail(
       TRIM(sc.customer_name) AS customer_name,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_simple}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.customer_name IS NOT NULL
       AND TRIM(sc.customer_name) <> ''
@@ -950,7 +950,7 @@ async def _detail(
       TRIM(sc.dest_city_name) || ', ' || TRIM(sc.dest_state) AS destination,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred_simple}) AS fail
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.customer_name IS NOT NULL
       AND TRIM(sc.customer_name) <> ''
@@ -1118,7 +1118,7 @@ async def _fault_rows(
 
     count_sql = f"""
     SELECT COUNT(*) AS n
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.total_charge <> 0
       AND {fail_pred}
@@ -1142,7 +1142,7 @@ async def _fault_rows(
       sc.dsp_comment,
       TRIM(sc.payee_name) AS payee_name,
       TRIM(sc.entered_user_id) AS entered_user_id
-    FROM public.mcleod_gld_scorecard sc
+    FROM public.mcleod_gld_scorecard_portal sc
     WHERE {where}
       AND sc.total_charge <> 0
       AND {fail_pred}
@@ -1292,7 +1292,7 @@ async def freshness(
           MAX(orig_actual_departure) AS last_pu,
           MAX(dest_actual_departure) AS last_del,
           COUNT(*)                   AS rows_in_scope
-        FROM public.mcleod_gld_scorecard
+        FROM public.mcleod_gld_scorecard_portal
         WHERE team_id    = ANY($1)
           AND company_id = ANY($2)
           AND status     = ANY($3)

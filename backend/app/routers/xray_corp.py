@@ -175,7 +175,7 @@ def _scorecard_cte(kind: str) -> str:
       TRIM(id)         AS id_key,
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
-    FROM public.mcleod_gld_scorecard
+    FROM public.mcleod_gld_scorecard_portal
     WHERE team_id    IN ({teams_sql})
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})

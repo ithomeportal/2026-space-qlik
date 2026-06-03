@@ -135,22 +135,24 @@ async def _scheduled_lane_rates_prewarm():
         logger.error(f"Lane-rates prewarm failed: {e}")
 
 
-async def _scheduled_scorecard_bloat_check():
-    """Background job: weekly watchdog for mcleod_gld_scorecard heap bloat.
+async def _scheduled_scorecard_mirror_check():
+    """Background job: daily freshness watchdog for the portal-owned
+    mcleod_gld_scorecard_portal mirror.
 
-    Emails Diego when the table re-bloats past threshold so the off-hours
-    avnadmin repack gets run before Ops Portal Overview slows down again. The
-    backend's gold role is SELECT-only, so it can measure but not VACUUM FULL.
-    See app/services/scorecard_bloat_monitor.py.
+    The portal reads an n8n-maintained TRUNCATE+load mirror (can't bloat), so the
+    health signal flipped from "bloated?" to "fresh?". Emails Diego if the n8n
+    refresh has stalled (source advanced but mirror didn't catch up) or the
+    mirror is missing/empty. SELECT-only. See
+    app/services/scorecard_mirror_monitor.py.
     """
     try:
         pool = getattr(app.state, "savings_pool", None)
-        from app.services.scorecard_bloat_monitor import check_scorecard_bloat
+        from app.services.scorecard_mirror_monitor import check_scorecard_mirror
 
-        result = await check_scorecard_bloat(pool)
-        logger.info(f"Scorecard bloat check complete: {result}")
+        result = await check_scorecard_mirror(pool)
+        logger.info(f"Scorecard mirror check complete: {result}")
     except Exception as e:
-        logger.error(f"Scorecard bloat check failed: {e}")
+        logger.error(f"Scorecard mirror check failed: {e}")
 
 
 async def _scheduled_datalake_warmup():
@@ -699,19 +701,19 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Scheduled datalake warmup every 5 min")
 
-    # Schedule weekly scorecard heap-bloat watchdog — Mon 6:15 AM CST (before
-    # the 7 AM losses alert). Needs the gold pool + RESEND_API_KEY. The backend
-    # holds a SELECT-only gold role so it can only measure + email; the actual
-    # off-hours VACUUM FULL / pg_repack stays a manual avnadmin task.
+    # Schedule daily scorecard-mirror freshness watchdog — 6:15 AM CST. The
+    # portal reads an n8n TRUNCATE+load mirror (mcleod_gld_scorecard_portal) that
+    # can't bloat, so we watch freshness instead: alert if the n8n refresh has
+    # stalled or the mirror is missing/empty. SELECT-only + RESEND_API_KEY.
     if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
         scheduler.add_job(
-            _scheduled_scorecard_bloat_check,
-            CronTrigger(day_of_week="mon", hour=6, minute=15, timezone="America/Chicago"),
-            id="weekly_scorecard_bloat_check",
-            name="Watch mcleod_gld_scorecard for heap re-bloat",
+            _scheduled_scorecard_mirror_check,
+            CronTrigger(hour=6, minute=15, timezone="America/Chicago"),
+            id="daily_scorecard_mirror_check",
+            name="Watch mcleod_gld_scorecard_portal mirror freshness",
             replace_existing=True,
         )
-        logger.info("Scheduled scorecard bloat check Mon 6:15 AM CST")
+        logger.info("Scheduled scorecard mirror freshness check daily 6:15 AM CST")
 
     # Schedule daily RFP Performance digest at 5:30 PM CST (Mon-Fri only).
     # Needs the automations_db pool (rfp_results_history) and MS Graph creds.
