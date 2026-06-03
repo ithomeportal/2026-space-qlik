@@ -118,14 +118,14 @@ export function PivotsTab({
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3 text-[11px] text-[#374151]">
-          {/* Bruno round-3: bigger legend explaining the row color band. */}
+          {/* Bruno R8 (2026-06-03): exact legend wording. */}
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-[#DCFCE7]" />
-            <span>cell ≥ row 8w avg</span>
+            <span>Cell &gt;= Row 8W Avg</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-[#FEE2E2]" />
-            <span>cell &lt; row 8w avg</span>
+            <span>Cell &lt; Row 8W Avg</span>
           </span>
           <span className="text-[#9CA3AF]">· current week excluded</span>
         </div>
@@ -301,6 +301,11 @@ function PivotPanel({
       }
       return any ? s : null
     })
+    // Bruno R8 (2026-06-03): for additive metrics the Totals reference is the
+    // SUM of the 8-week avg column (Σ per-row refs) — the totals 8-week-avg
+    // cell displays it and the weekly totals shade green when >= it. Margin
+    // isn't additive, so it keeps the weighted-avg basis (Σ profit / Σ rev
+    // over the 8 most recent weeks).
     const totalRef: number | null = (() => {
       if (pivotEntries.length === 0) return null
       if (metric === "margin") {
@@ -322,10 +327,11 @@ function PivotPanel({
         }
         return rev > 0 ? prof / rev : null
       }
-      const nonNull = perWeek.filter((v): v is number => v !== null)
-      if (nonNull.length === 0) return null
-      const slice = nonNull.slice(0, 8)
-      return slice.reduce((a, b) => a + b, 0) / slice.length
+      const refs = pivotEntries
+        .map((row) => row.ref)
+        .filter((v): v is number => v !== null)
+      if (refs.length === 0) return null
+      return refs.reduce((a, b) => a + b, 0)
     })()
 
     return {
@@ -647,10 +653,10 @@ function DimKeyCell({
 
 function cellShade(v: number | null, ref: number | null): string {
   if (v === null || ref === null) return "text-[#9CA3AF]"
-  // Treat 0 as below-average for non-zero ref (Bruno's coloring rule).
-  if (v > ref) return "bg-[#DCFCE7] text-[#15803D]"
-  if (v < ref) return "bg-[#FEE2E2] text-[#DC2626]"
-  return "text-[#374151]"
+  // Bruno R8 (2026-06-03): a cell EQUAL to its reference is green too —
+  // green when >= the row 8w avg (or the totals ref), red strictly below.
+  if (v >= ref) return "bg-[#DCFCE7] text-[#15803D]"
+  return "bg-[#FEE2E2] text-[#DC2626]"
 }
 
 function fmtMonDay(iso: string): string {

@@ -55,7 +55,7 @@ export function BarPanel({
             <span className="font-semibold" style={{ color: axisColor }}>
               ━━
             </span>{" "}
-            8w avg: <span className="font-semibold">{fmt(refValue)}</span>
+            8W Avg: <span className="font-semibold">{fmt(refValue)}</span>
           </div>
         )}
       </div>
@@ -105,6 +105,7 @@ export function BarPanel({
           </div>
         ))}
       </div>
+      {/* Bruno R8 (2026-06-03): exact legend wording. */}
       {showLegend && (
         <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-[#374151]">
           <span className="inline-flex items-center gap-1.5">
@@ -112,11 +113,11 @@ export function BarPanel({
               className="inline-block h-3 w-3 rounded-sm"
               style={{ backgroundColor: color }}
             />
-            <span>≥ 8w avg</span>
+            <span>Above 8W Avg</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-[#D1D5DB]" />
-            <span>below 8w avg</span>
+            <span>Below 8W Avg</span>
           </span>
         </div>
       )}

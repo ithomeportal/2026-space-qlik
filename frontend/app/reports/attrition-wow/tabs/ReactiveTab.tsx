@@ -32,15 +32,15 @@ interface Props {
 
 type Bucket = ReactiveRow["bucket"]
 
-// Bruno (2026-05-25 pages 3-4): the Spot buckets render a lane-grained,
-// Spot-only table (Customer, Lane, Loads, Rev, Profit, Margin, Last Load,
-// Days Since) sourced from /lane-summary instead of the variance schema.
+// Bruno R8 (2026-06-03, reverses 2026-05-25 pages 3-4): the Spot buckets are
+// customer-grained (no Lane column), include ALL contract types (the
+// contract_type = SPOT filter is gone) and show Contract Type as a column.
+// Still sourced from /lane-summary (now per team/customer/contract_type).
 const SPOT_BUCKETS: ReadonlySet<Bucket> = new Set<Bucket>([
   "spot_recent",
   "spot_stale",
   "gt_1y",
 ])
-const SPOT_CONTRACT = "SPOT"
 
 const BUCKET_LABELS: Record<Bucket, { title: string; subtitle: string; days: string }> = {
   lw: {
@@ -96,19 +96,17 @@ export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
   const { data: res, isLoading, error } = useAttritionReactive(filters)
   const rows = res?.data ?? []
 
-  // Spot buckets come from /lane-summary (lane-grained, Spot only).
+  // Spot buckets come from /lane-summary (per customer × contract type — all
+  // contract types since R8).
   const { data: laneRes, error: laneError } = useAttritionLaneSummary(filters)
   const laneRows = useMemo(
-    () =>
-      (laneRes?.data ?? []).filter(
-        (r) => r.contract_type === SPOT_CONTRACT && SPOT_BUCKETS.has(r.bucket),
-      ),
+    () => (laneRes?.data ?? []).filter((r) => SPOT_BUCKETS.has(r.bucket)),
     [laneRes],
   )
 
   // Counts per bucket so empty sections collapse cleanly. Variance buckets
-  // count customers (from /reactive-summary); Spot buckets count customer×lane
-  // rows (from /lane-summary).
+  // count customers (from /reactive-summary); Spot buckets count
+  // customer×contract-type rows (from /lane-summary).
   const counts = useMemo(() => {
     const c: Record<Bucket, number> = {
       lw: 0,
@@ -154,7 +152,7 @@ export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
         const isSpot = SPOT_BUCKETS.has(b)
         const total = counts[b]
         const open = openBuckets.has(b)
-        const countNoun = isSpot ? "Lanes" : `${entityLabel}s`
+        const countNoun = `${entityLabel}s`
         return (
           <div
             key={b}
@@ -167,11 +165,6 @@ export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
               <div>
                 <div className="text-sm font-semibold text-[#1B3A5C]">
                   {meta.title}
-                  {isSpot && (
-                    <span className="ml-2 rounded-full bg-[#EDE9FE] px-2 py-0.5 text-[10px] font-normal text-[#6D28D9]">
-                      contract = Spot
-                    </span>
-                  )}
                 </div>
                 <div className="mt-0.5 text-[11px] text-[#6B7280]">
                   {meta.subtitle} · {countNoun}: {total}
@@ -198,8 +191,7 @@ export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
             )}
             {open && total === 0 && (
               <div className="px-4 py-6 text-center text-xs text-[#9CA3AF]">
-                No {isSpot ? "lanes" : entityLabel.toLowerCase() + "s"} in this
-                bucket.
+                No {entityLabel.toLowerCase()}s in this bucket.
               </div>
             )}
           </div>
@@ -210,8 +202,9 @@ export function ReactiveTab({ filters, onCustomerClick, entityLabel }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// SpotTable — lane-grained Spot-only table for the Recent/Stale/>1yr buckets
-// (Bruno 2026-05-25 pages 3-4). Every column sortable.
+// SpotTable — customer × contract-type table for the Recent/Stale/>1yr
+// buckets (Bruno R8 2026-06-03: Lane column removed, all contract types,
+// Contract Type column added). Every column sortable.
 // ---------------------------------------------------------------------------
 
 function SpotTable({
@@ -234,7 +227,7 @@ function SpotTable({
         <thead className="bg-[#F0FDFA] text-[10px] uppercase tracking-wider text-[#0F766E]">
           <tr>
             <SortableTh<LaneSummaryRow> columnKey="customer" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">{entityLabel}</SortableTh>
-            <SortableTh<LaneSummaryRow> columnKey="lane" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Lane</SortableTh>
+            <SortableTh<LaneSummaryRow> columnKey="contract_type" sortKey={sortKey} sortDir={sortDir} onToggle={toggle} align="left">Contract Type</SortableTh>
             <SortableTh<LaneSummaryRow> columnKey="total_loads" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Loads</SortableTh>
             <SortableTh<LaneSummaryRow> columnKey="total_revenue" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Revenue</SortableTh>
             <SortableTh<LaneSummaryRow> columnKey="total_profit" sortKey={sortKey} sortDir={sortDir} onToggle={toggle}>Profit</SortableTh>
@@ -245,7 +238,7 @@ function SpotTable({
         </thead>
         <tbody className="divide-y divide-[#F3F4F6]">
           {sorted.map((r, i) => (
-            <tr key={`${r.customer}-${r.lane}-${i}`} className="hover:bg-[#FAFAFA]">
+            <tr key={`${r.customer}-${r.contract_type}-${i}`} className="hover:bg-[#FAFAFA]">
               <td className="px-3 py-1.5 max-w-[220px] truncate" title={r.customer ?? ""}>
                 {r.customer && onCustomerClick ? (
                   <button
@@ -259,8 +252,8 @@ function SpotTable({
                   <span className="text-[#111827]">{r.customer || "—"}</span>
                 )}
               </td>
-              <td className="px-3 py-1.5 max-w-[260px] truncate font-mono text-[#374151]" title={r.lane ?? ""}>
-                {r.lane || "—"}
+              <td className="px-3 py-1.5 font-mono text-[#374151]">
+                {r.contract_type || "—"}
               </td>
               <td className="px-3 py-1.5 text-right font-mono">{fmtCount(r.total_loads)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{fmtUsd(r.total_revenue)}</td>

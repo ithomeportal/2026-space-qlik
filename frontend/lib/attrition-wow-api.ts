@@ -211,10 +211,12 @@ export interface AttritionReactive {
   }
 }
 
+// Bruno R8 (2026-06-03): /lane-summary rows aggregate per (team_id, customer,
+// contract_type) — the lane grain (and the lane field) is gone; the route path
+// keeps its name for wire stability.
 export interface LaneSummaryRow {
   team: string | null
   customer: string | null
-  lane: string | null
   contract_type: string | null
   avg_loads_l8w: number
   avg_rev_l8w: number

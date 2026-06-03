@@ -834,14 +834,18 @@ async def reactive_summary(
         WITH base AS (
           SELECT
             br4.origin_actual_departure::date AS dep_date,
-            {_team_dim("br4")}                AS team_id,
+            -- Bruno R8 (2026-06-03): Customer Performance is the ONE tab that
+            -- stays at team_id grain — NOT the TM1..TM4 sub-team breakout
+            -- (_team_dim). With the sub-team grain a TEAM-DFW customer was
+            -- duplicated once per TM row; team_id grain dedupes them.
+            TRIM(br4.team_id)                 AS team_id,
             {_entity_expr("br4", view)}       AS customer_name,
             br4.id                            AS load_id,
             br4.total_charge,
             br4.margin_amt
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
-            AND br4.origin_actual_departure::date >= ${p_earliest}
+            AND br4.origin_actual_departure >= ${p_earliest}
         ),
         -- Bruno round-3: identify the gap between a customer's most-recent and
         -- second-most-recent paying load. Powers the "Reactive LW?" column —
@@ -1017,12 +1021,18 @@ async def lane_summary(
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
-    """Per (team, customer, lane, contract_type) reactive aggregation.
+    """Per (team, customer, contract_type) reactive aggregation.
 
-    Powers the Customer-Performance Spot tables (Bruno 2026-05-25 pages 3-4):
-    Recent Spot (64-248d), Stale Spot (249-365d), >1 Year. Each row carries
-    total loads/revenue/profit/margin + last_load_date + days_since so the
-    frontend renders the lane-grained schema directly.
+    Powers the Customer-Performance Spot tables: Recent Spot (64-248d),
+    Stale Spot (249-365d), >1 Year. Each row carries total
+    loads/revenue/profit/margin + last_load_date + days_since.
+
+    Bruno R8 (2026-06-03): the LANE grain is GONE — rows aggregate per
+    (team_id, customer, contract_type) and the route keeps its /lane-summary
+    path for wire stability. The frontend also stopped filtering these
+    buckets to contract=SPOT (all contract types now, with the type shown
+    as a column). Team grain is raw team_id (no TM sub-team breakout) so
+    TEAM-DFW customers aren't duplicated — same rule as /reactive-summary.
     """
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -1052,20 +1062,19 @@ async def lane_summary(
         WITH base AS (
           SELECT
             br4.origin_actual_departure::date AS dep_date,
-            {_team_dim("br4")}                 AS team_id,
+            TRIM(br4.team_id)                  AS team_id,
             {_entity_expr("br4", view)}        AS customer_name,
-            {_lane_expr("br4")}                AS lane,
             UPPER(TRIM(COALESCE(br4.contract_type_descr,''))) AS contract_type,
             br4.id                             AS load_id,
             br4.total_charge,
             br4.margin_amt
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
-            AND br4.origin_actual_departure::date >= ${p_earliest}
+            AND br4.origin_actual_departure >= ${p_earliest}
         ),
         agg AS (
           SELECT
-            team_id, customer_name, lane, contract_type,
+            team_id, customer_name, contract_type,
             COUNT(*) FILTER (WHERE total_charge <> 0 AND dep_date BETWEEN ${p_l8s} AND ${p_l8e}) / 8.0 AS avg_loads_l8w,
             COALESCE(SUM(total_charge) FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}), 0) / 8.0 AS avg_rev_l8w,
             COALESCE(SUM(margin_amt)   FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}), 0) / 8.0 AS avg_profit_l8w,
@@ -1082,13 +1091,12 @@ async def lane_summary(
             COALESCE(SUM(margin_amt),   0)::numeric AS total_profit,
             MAX(dep_date) AS last_load_date
           FROM base
-          GROUP BY team_id, customer_name, lane, contract_type
+          GROUP BY team_id, customer_name, contract_type
         )
         SELECT *,
           (${p_today} - last_load_date) AS days_since_last_load
         FROM agg
         WHERE customer_name IS NOT NULL AND customer_name <> ''
-          AND lane IS NOT NULL AND lane <> ' - '
         """,
         *params,
     )
@@ -1122,7 +1130,6 @@ async def lane_summary(
         out.append({
             "team":           r["team_id"],
             "customer":       r["customer_name"],
-            "lane":           r["lane"],
             "contract_type":  r["contract_type"],
             "avg_loads_l8w":  l8_loads,
             "avg_rev_l8w":    l8_rev,
@@ -1160,7 +1167,7 @@ async def lane_summary(
             "bucket": _bucket(days),
         })
 
-    out.sort(key=lambda x: (x["team"] or "", x["customer"] or "", x["lane"] or ""))
+    out.sort(key=lambda x: (x["team"] or "", x["customer"] or "", x["contract_type"] or ""))
     return {"success": True, "data": out}
 
 
