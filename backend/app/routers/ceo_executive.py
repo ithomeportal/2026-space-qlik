@@ -66,6 +66,9 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
+# Bruno R9 (2026-06-03): Custom range may reach back to last year and two
+# years ago (v4 has full 2024+2025 data). MTD/YTD/Full stay pinned to 2026.
+CUSTOM_MIN = date(2024, 1, 1)
 
 # Division universe — CORP team_ids + the single DFW team_id.
 CORP_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5")
@@ -88,10 +91,15 @@ router = APIRouter(tags=["ceo-executive"], prefix="/custom/ceo-executive")
 
 
 def _clamp(d: Optional[date], default: date) -> date:
+    """Clamp a Custom-range bound to [CUSTOM_MIN, YEAR_END].
+
+    Only the range="custom" branch calls this — preset ranges stay pinned
+    to the 2026 calendar year.
+    """
     if d is None:
         return default
-    if d < YEAR_START:
-        return YEAR_START
+    if d < CUSTOM_MIN:
+        return CUSTOM_MIN
     if d > YEAR_END:
         return YEAR_END
     return d

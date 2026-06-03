@@ -19,6 +19,9 @@ import { Orders } from "./tabs/Orders"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
+// Bruno R9 (2026-06-03): Custom range may reach back to last year and two
+// years ago. Presets (MTD/YTD/Full 2026) stay pinned to the 2026 year.
+const CUSTOM_MIN = "2024-01-01"
 
 // Fallback team lists used before /filters resolves, and to drop a team
 // selection that is incompatible with the current division.
@@ -48,6 +51,13 @@ function monthStartIso() {
 
 function clampToYear(iso: string) {
   if (iso < YEAR_START) return YEAR_START
+  if (iso > YEAR_END) return YEAR_END
+  return iso
+}
+
+// Custom range gets a wider floor (back to 2024) than the presets.
+function clampCustom(iso: string) {
+  if (iso < CUSTOM_MIN) return CUSTOM_MIN
   if (iso > YEAR_END) return YEAR_END
   return iso
 }
@@ -102,7 +112,7 @@ function CeoExecutiveContent() {
       return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
     if (range === "mtd")
       return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
-    return { startDate: clampToYear(startDate), endDate: clampToYear(endDate) }
+    return { startDate: clampCustom(startDate), endDate: clampCustom(endDate) }
   }, [range, startDate, endDate])
 
   const filters: CeoFilters = useMemo(
@@ -175,7 +185,7 @@ function CeoExecutiveContent() {
               <div className="flex items-center gap-1 text-xs">
                 <input
                   type="date"
-                  min={YEAR_START}
+                  min={CUSTOM_MIN}
                   max={YEAR_END}
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
@@ -184,7 +194,7 @@ function CeoExecutiveContent() {
                 <span className="text-[#6B7280]">→</span>
                 <input
                   type="date"
-                  min={YEAR_START}
+                  min={CUSTOM_MIN}
                   max={YEAR_END}
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
