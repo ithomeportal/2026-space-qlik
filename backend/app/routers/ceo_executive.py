@@ -1132,10 +1132,44 @@ async def risk(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
 
+    # ---- Universe totals (Bruno 2026-06-03) -----------------------------
+    # One shared totals row for all three Risk tables, computed over the
+    # full negative-loads universe (status D/P via _scope_where +
+    # margin_amt < 0). The row LIMITs below are payload caps, not the
+    # totals' source — YTD already has 4k+ negative loads, so client-side
+    # sums over capped rows would never reconcile.
+    tt_params: list = []
+    tt_where = _scope_where("br4", team, customer, tt_params, division=division)
+    tt_params.extend([s, e])
+    tt_df = (
+        f"br4.origin_actual_departure >= ${len(tt_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(tt_params)}::date + 1)"
+    )
+    tt_task = pool.fetchrow(
+        f"""
+        SELECT
+          COUNT(*) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {tt_where} AND {tt_df}
+          AND br4.margin_amt < 0
+        """,
+        *tt_params,
+    )
+
     # ---- Worst Margins by Lanes ----------------------------------------
     # Date filter is half-open `>= s AND < e+1` so Postgres can use the btree
     # on origin_actual_departure (idx_v4_dep). Wrapping the column in `::date`
     # was killing sargability and forcing a full seq-scan of v4 (380 MB).
+    #
+    # Bruno 2026-06-03: all three Risk tables share ONE universe — status D/P
+    # (already in _scope_where) + per-row margin_amt < 0 — so their totals
+    # reconcile. Previously this table filtered at the LANE level
+    # (HAVING SUM(margin_amt) < 0), blending positive loads into net-negative
+    # lanes and dropping negative loads in net-positive lanes (647 vs 687).
+    # Loads are plain COUNT(*) (zero-charge accessorial rows count too, same
+    # as the by-Order listing) and LIMITs are generous caps, not page sizes.
     wm_params: list = []
     wm_where = _scope_where("br4", team, customer, wm_params, division=division)
     wm_params.extend([s, e])
@@ -1149,7 +1183,7 @@ async def risk(
           TRIM(br4.customer_name) AS customer,
           TRIM(br4.origin_name)   AS origin,
           TRIM(br4.dest_name)     AS destination,
-          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COUNT(*) AS loads,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
           COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
           CASE WHEN SUM(br4.total_charge) > 0
@@ -1160,10 +1194,10 @@ async def risk(
           GREATEST(0, SUM(br4.total_charge)::numeric * 0.20 - SUM(br4.margin_amt)::numeric) AS diff_20
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {wm_where} AND {wm_df}
+          AND br4.margin_amt < 0
         GROUP BY TRIM(br4.customer_name), TRIM(br4.origin_name), TRIM(br4.dest_name)
-        HAVING COALESCE(SUM(br4.margin_amt), 0) < 0
         ORDER BY profit ASC NULLS LAST
-        LIMIT 200
+        LIMIT 2000
         """,
         *wm_params,
     )
@@ -1218,7 +1252,7 @@ async def risk(
         WHERE {no_where} AND {no_df}
           AND br4.margin_amt < 0
         ORDER BY br4.margin_amt ASC
-        LIMIT 500
+        LIMIT 5000
         """,
         *no_params,
     )
@@ -1241,7 +1275,7 @@ async def risk(
         )
         SELECT
           TRIM(br4.customer_name) AS customer,
-          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
+          COUNT(*) AS loads,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
           COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
           CASE WHEN (SELECT total_margin FROM tot) <> 0
@@ -1252,16 +1286,25 @@ async def risk(
           AND br4.margin_amt < 0
         GROUP BY TRIM(br4.customer_name)
         ORDER BY profit ASC
-        LIMIT 200
+        LIMIT 1000
         """,
         *nc_params,
     )
 
-    wm, no, nc = await asyncio.gather(wm_task, no_task, nc_task)
+    tt, wm, no, nc = await asyncio.gather(tt_task, wm_task, no_task, nc_task)
+
+    tot_revenue = float(tt["revenue"] or 0)
+    tot_profit = float(tt["profit"] or 0)
 
     return {
         "success": True,
         "data": {
+            "totals": {
+                "loads": int(tt["loads"] or 0),
+                "revenue": tot_revenue,
+                "profit": tot_profit,
+                "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
+            },
             "worst_lanes": [
                 {
                     "customer": r["customer"],

@@ -209,7 +209,15 @@ export interface CeoNegCustomer {
   conc_pct: number
 }
 
+export interface CeoRiskTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+}
+
 export interface CeoRisk {
+  totals: CeoRiskTotals
   worst_lanes: CeoWorstLane[]
   neg_orders: CeoNegOrder[]
   neg_customers: CeoNegCustomer[]

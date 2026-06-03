@@ -9,6 +9,7 @@ import {
   type CeoFilters,
   type CeoNegCustomer,
   type CeoNegOrder,
+  type CeoRiskTotals,
   type CeoWorstLane,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
@@ -25,39 +26,41 @@ export function Risk({ filters, onCustomerSelect }: Props) {
   const d = data?.data
 
   // Bruno R7 (2026-05-26): table order — NegCustomers, WorstLanes, NegOrders.
+  // Bruno R8 (2026-06-03): one shared server-side Totals row (status D/P +
+  // margin_amt < 0 universe) so all three tables reconcile exactly.
   return (
     <div className="space-y-6">
       <CeoErrorBanner label="Risk" errors={[error]} />
 
-      <NegCustomersTable rows={d?.neg_customers ?? []} loading={isLoading} onCustomerSelect={onCustomerSelect} />
-      <WorstLanesTable rows={d?.worst_lanes ?? []} loading={isLoading} onCustomerSelect={onCustomerSelect} />
-      <NegOrdersTable rows={d?.neg_orders ?? []} loading={isLoading} onCustomerSelect={onCustomerSelect} />
+      <NegCustomersTable rows={d?.neg_customers ?? []} totals={d?.totals} loading={isLoading} onCustomerSelect={onCustomerSelect} />
+      <WorstLanesTable rows={d?.worst_lanes ?? []} totals={d?.totals} loading={isLoading} onCustomerSelect={onCustomerSelect} />
+      <NegOrdersTable rows={d?.neg_orders ?? []} totals={d?.totals} loading={isLoading} onCustomerSelect={onCustomerSelect} />
     </div>
   )
 }
 
 function WorstLanesTable({
   rows,
+  totals,
   loading,
   onCustomerSelect,
 }: {
   rows: CeoWorstLane[]
+  totals?: CeoRiskTotals
   loading?: boolean
   onCustomerSelect?: (customer: string) => void
 }) {
   const { sorted, sortKey, sortDir, toggle } = useSortable<CeoWorstLane>(rows, "profit", "asc")
-  const tot = rows.reduce(
+  // diff columns are per-lane GREATEST() clamps — no universe equivalent, so
+  // they stay a client-side sum over the returned lanes.
+  const diffs = rows.reduce(
     (acc, r) => ({
-      loads: acc.loads + (r.loads ?? 0),
-      revenue: acc.revenue + (r.revenue ?? 0),
-      profit: acc.profit + (r.profit ?? 0),
       diff_15: acc.diff_15 + (r.diff_15 ?? 0),
       diff_18: acc.diff_18 + (r.diff_18 ?? 0),
       diff_20: acc.diff_20 + (r.diff_20 ?? 0),
     }),
-    { loads: 0, revenue: 0, profit: 0, diff_15: 0, diff_18: 0, diff_20: 0 },
+    { diff_15: 0, diff_18: 0, diff_20: 0 },
   )
-  const totMargin = tot.revenue > 0 ? (tot.profit / tot.revenue) * 100 : 0
 
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -88,13 +91,13 @@ function WorstLanesTable({
             <tbody>
               <tr className="sticky top-[26px] bg-[#FECACA] font-semibold">
                 <td className="px-2 py-1" colSpan={3}>Totals</td>
-                <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_15)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_18)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.diff_20)}</td>
+                <td className="px-1 py-1 text-right">{fmtCount(totals?.loads ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.revenue ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.profit ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtPct(totals?.margin_pct ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(diffs.diff_15)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(diffs.diff_18)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(diffs.diff_20)}</td>
               </tr>
               {sorted.map((r, i) => (
                 <tr key={i} className="border-t border-[#F3F4F6]">
@@ -122,23 +125,19 @@ function WorstLanesTable({
 
 function NegOrdersTable({
   rows,
+  totals,
   loading,
   onCustomerSelect,
 }: {
   rows: CeoNegOrder[]
+  totals?: CeoRiskTotals
   loading?: boolean
   onCustomerSelect?: (customer: string) => void
 }) {
   const { sorted, sortKey, sortDir, toggle } = useSortable<CeoNegOrder>(rows, "profit", "asc")
-  const tot = rows.reduce(
-    (acc, r) => ({
-      revenue: acc.revenue + (r.revenue ?? 0),
-      profit: acc.profit + (r.profit ?? 0),
-      conc_pct: acc.conc_pct + (r.conc_pct ?? 0),
-    }),
-    { revenue: 0, profit: 0, conc_pct: 0 },
-  )
-  const totMargin = tot.revenue > 0 ? (tot.profit / tot.revenue) * 100 : 0
+  const concSum = rows.reduce((acc, r) => acc + (r.conc_pct ?? 0), 0)
+  const universeLoads = totals?.loads ?? rows.length
+  const truncated = rows.length < universeLoads
 
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -171,11 +170,13 @@ function NegOrdersTable({
             </thead>
             <tbody>
               <tr className="sticky top-[28px] bg-[#FECACA] font-semibold">
-                <td className="px-2 py-1" colSpan={8}>Totals ({rows.length})</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(totMargin)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(tot.conc_pct)}</td>
+                <td className="px-2 py-1" colSpan={8}>
+                  Totals ({fmtCount(universeLoads)}{truncated ? ` · worst ${fmtCount(rows.length)} shown` : ""})
+                </td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.revenue ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.profit ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtPct(totals?.margin_pct ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtPct(concSum)}</td>
               </tr>
               {sorted.map((r) => (
                 <tr key={r.id} className="border-t border-[#F3F4F6]">
@@ -205,23 +206,17 @@ function NegOrdersTable({
 
 function NegCustomersTable({
   rows,
+  totals,
   loading,
   onCustomerSelect,
 }: {
   rows: CeoNegCustomer[]
+  totals?: CeoRiskTotals
   loading?: boolean
   onCustomerSelect?: (customer: string) => void
 }) {
   const { sorted, sortKey, sortDir, toggle } = useSortable<CeoNegCustomer>(rows, "profit", "asc")
-  const tot = rows.reduce(
-    (acc, r) => ({
-      loads: acc.loads + (r.loads ?? 0),
-      revenue: acc.revenue + (r.revenue ?? 0),
-      profit: acc.profit + (r.profit ?? 0),
-      conc_pct: acc.conc_pct + (r.conc_pct ?? 0),
-    }),
-    { loads: 0, revenue: 0, profit: 0, conc_pct: 0 },
-  )
+  const concSum = rows.reduce((acc, r) => acc + (r.conc_pct ?? 0), 0)
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEE2E2] px-3 py-2 text-sm font-semibold text-[#991B1B]">
@@ -246,10 +241,10 @@ function NegCustomersTable({
             <tbody>
               <tr className="sticky top-[26px] bg-[#FECACA] font-semibold">
                 <td className="px-2 py-1">Totals</td>
-                <td className="px-1 py-1 text-right">{fmtCount(tot.loads)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.revenue)}</td>
-                <td className="px-1 py-1 text-right">{fmtUsd(tot.profit)}</td>
-                <td className="px-1 py-1 text-right">{fmtPct(tot.conc_pct)}</td>
+                <td className="px-1 py-1 text-right">{fmtCount(totals?.loads ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.revenue ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtUsd(totals?.profit ?? 0)}</td>
+                <td className="px-1 py-1 text-right">{fmtPct(concSum)}</td>
               </tr>
               {sorted.map((r) => (
                 <tr key={r.customer} className="border-t border-[#F3F4F6]">
