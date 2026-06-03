@@ -135,6 +135,24 @@ async def _scheduled_lane_rates_prewarm():
         logger.error(f"Lane-rates prewarm failed: {e}")
 
 
+async def _scheduled_scorecard_bloat_check():
+    """Background job: weekly watchdog for mcleod_gld_scorecard heap bloat.
+
+    Emails Diego when the table re-bloats past threshold so the off-hours
+    avnadmin repack gets run before Ops Portal Overview slows down again. The
+    backend's gold role is SELECT-only, so it can measure but not VACUUM FULL.
+    See app/services/scorecard_bloat_monitor.py.
+    """
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.scorecard_bloat_monitor import check_scorecard_bloat
+
+        result = await check_scorecard_bloat(pool)
+        logger.info(f"Scorecard bloat check complete: {result}")
+    except Exception as e:
+        logger.error(f"Scorecard bloat check failed: {e}")
+
+
 async def _scheduled_datalake_warmup():
     """Keep the aivn_datalake_gold shared buffers hot.
 
@@ -680,6 +698,20 @@ async def lifespan(app: FastAPI):
             coalesce=True,
         )
         logger.info("Scheduled datalake warmup every 5 min")
+
+    # Schedule weekly scorecard heap-bloat watchdog — Mon 6:15 AM CST (before
+    # the 7 AM losses alert). Needs the gold pool + RESEND_API_KEY. The backend
+    # holds a SELECT-only gold role so it can only measure + email; the actual
+    # off-hours VACUUM FULL / pg_repack stays a manual avnadmin task.
+    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+        scheduler.add_job(
+            _scheduled_scorecard_bloat_check,
+            CronTrigger(day_of_week="mon", hour=6, minute=15, timezone="America/Chicago"),
+            id="weekly_scorecard_bloat_check",
+            name="Watch mcleod_gld_scorecard for heap re-bloat",
+            replace_existing=True,
+        )
+        logger.info("Scheduled scorecard bloat check Mon 6:15 AM CST")
 
     # Schedule daily RFP Performance digest at 5:30 PM CST (Mon-Fri only).
     # Needs the automations_db pool (rfp_results_history) and MS Graph creds.
