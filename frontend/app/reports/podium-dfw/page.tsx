@@ -2,7 +2,16 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Loader2, Trophy } from "lucide-react"
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  ArrowUpDown,
+  Loader2,
+  Search,
+  Trophy,
+  X,
+} from "lucide-react"
 import {
   usePodiumOverview,
   fmtCurrency,
@@ -33,6 +42,75 @@ function normalizeTeam(v: string | null | undefined): string {
   return (v ?? "").trim().toUpperCase()
 }
 
+// ---------------------------------------------------------------------------
+// Text filters (before the KPI cards) — case-insensitive contains match.
+// ---------------------------------------------------------------------------
+type TextFilters = {
+  customer: string
+  order: string
+  origin: string
+  destination: string
+}
+
+const EMPTY_FILTERS: TextFilters = {
+  customer: "",
+  order: "",
+  origin: "",
+  destination: "",
+}
+
+const FILTER_FIELDS: { key: keyof TextFilters; label: string; placeholder: string }[] = [
+  { key: "customer",    label: "Customer",    placeholder: "Search customer…" },
+  { key: "order",       label: "Order",       placeholder: "Search #order…" },
+  { key: "origin",      label: "Origin",      placeholder: "Search origin…" },
+  { key: "destination", label: "Destination", placeholder: "Search destination…" },
+]
+
+function containsCi(value: string | null | undefined, needle: string): boolean {
+  if (!needle) return true
+  return (value ?? "").toLowerCase().includes(needle)
+}
+
+// ---------------------------------------------------------------------------
+// Column sorting — click a header to cycle asc → desc → default order.
+// ---------------------------------------------------------------------------
+type SortKey =
+  | "team"
+  | "order_id"
+  | "posted_by"
+  | "posted_date"
+  | "customer"
+  | "origin"
+  | "destination"
+  | "profit"
+  | "revenue"
+  | "margin_pct"
+  | "contract_type"
+
+type SortDir = "asc" | "desc"
+
+const NUMERIC_KEYS: ReadonlySet<SortKey> = new Set<SortKey>([
+  "profit",
+  "revenue",
+  "margin_pct",
+])
+
+function compareRows(a: PodiumRow, b: PodiumRow, key: SortKey, dir: SortDir): number {
+  const av = a[key]
+  const bv = b[key]
+  // Nulls/blank always sink to the bottom regardless of direction.
+  const aEmpty = av === null || av === undefined || av === ""
+  const bEmpty = bv === null || bv === undefined || bv === ""
+  if (aEmpty && bEmpty) return 0
+  if (aEmpty) return 1
+  if (bEmpty) return -1
+  const cmp = NUMERIC_KEYS.has(key)
+    ? (av as number) - (bv as number)
+    : // posted_date is an ISO string — lexicographic compare is chronological.
+      String(av).localeCompare(String(bv), "en-US", { sensitivity: "base" })
+  return dir === "asc" ? cmp : -cmp
+}
+
 export default function PodiumDfwPage() {
   return (
     <ReportGuard reportKey="podium-dfw">
@@ -44,21 +122,40 @@ export default function PodiumDfwPage() {
 function PodiumDfwContent() {
   const [range, setRange] = useState<PodiumRange>("today")
   const [teamFilter, setTeamFilter] = useState<TeamFilter>("all")
+  const [filters, setFilters] = useState<TextFilters>(EMPTY_FILTERS)
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   const q = usePodiumOverview(range)
 
   const rawRows = q.data?.data?.rows ?? []
 
   // Filter rows by team (client-side — datalake already returns all DFW rows).
-  const rows = useMemo(() => {
+  const teamRows = useMemo(() => {
     if (teamFilter === "all") return rawRows
     const target = teamFilter.toUpperCase()
     return rawRows.filter((r) => normalizeTeam(r.team) === target)
   }, [rawRows, teamFilter])
 
+  // Text filters (Customer / Order / Origin / Destination) on top of the team scope.
+  const anyTextFilter = FILTER_FIELDS.some((f) => filters[f.key].trim() !== "")
+  const rows = useMemo(() => {
+    if (!anyTextFilter) return teamRows
+    const customer = filters.customer.trim().toLowerCase()
+    const order = filters.order.trim().toLowerCase()
+    const origin = filters.origin.trim().toLowerCase()
+    const destination = filters.destination.trim().toLowerCase()
+    return teamRows.filter(
+      (r) =>
+        containsCi(r.customer, customer) &&
+        containsCi(r.order_id, order) &&
+        containsCi(r.origin, origin) &&
+        containsCi(r.destination, destination),
+    )
+  }, [teamRows, filters, anyTextFilter])
+
   // Recompute KPIs from the filtered rows so cards stay in sync with the table.
   // Backend KPI math uses the same rows + sum — safe to mirror here.
   const kpis = useMemo(() => {
-    if (teamFilter === "all") return q.data?.data?.kpis
+    if (teamFilter === "all" && !anyTextFilter) return q.data?.data?.kpis
     let profit = 0
     let revenue = 0
     for (const r of rows) {
@@ -71,11 +168,12 @@ function PodiumDfwContent() {
       revenue,
       margin_pct: revenue > 0 ? profit / revenue : null,
     }
-  }, [rows, teamFilter, q.data?.data?.kpis])
+  }, [rows, teamFilter, anyTextFilter, q.data?.data?.kpis])
 
-  // Podium medal lookup: top-3 by profit (descending, nulls excluded).
+  // Podium medal lookup: top-3 by profit within the team scope (pre-search,
+  // so a medal still marks the overall podium even while searching).
   const medalByOrder = useMemo(() => {
-    const ranked = rows
+    const ranked = teamRows
       .filter((r): r is PodiumRow & { profit: number } =>
         typeof r.profit === "number" && r.profit > 0,
       )
@@ -87,7 +185,21 @@ function PodiumDfwContent() {
       map.set(r.order_id, ["🥇", "🥈", "🥉"][idx] ?? "")
     })
     return map
-  }, [rows])
+  }, [teamRows])
+
+  // Apply the active column sort (default = backend order: posted_date DESC).
+  const sortedRows = useMemo(() => {
+    if (!sort) return rows
+    return rows.slice().sort((a, b) => compareRows(a, b, sort.key, sort.dir))
+  }, [rows, sort])
+
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" }
+      if (prev.dir === "asc") return { key, dir: "desc" }
+      return null // third click resets to the default order
+    })
+  }
 
   const lastUpdated = q.dataUpdatedAt ? new Date(q.dataUpdatedAt) : null
 
@@ -192,6 +304,55 @@ function PodiumDfwContent() {
           </div>
         ) : null}
 
+        {/* Filters — Customer / Order / Origin / Destination */}
+        <section className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5">
+          <div className="flex flex-wrap items-end gap-3">
+            {FILTER_FIELDS.map((f) => (
+              <label key={f.key} className="flex min-w-[180px] flex-1 flex-col gap-1 md:max-w-[280px]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                  {f.label}
+                </span>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9CA3AF]" />
+                  <input
+                    type="text"
+                    value={filters[f.key]}
+                    onChange={(e) =>
+                      setFilters((prev) => ({ ...prev, [f.key]: e.target.value }))
+                    }
+                    placeholder={f.placeholder}
+                    className="w-full rounded-md border border-[#E5E7EB] bg-white py-1.5 pl-7 pr-7 text-xs text-[#111827] placeholder:text-[#9CA3AF] focus:border-[#1B3A5C] focus:outline-none focus:ring-1 focus:ring-[#1B3A5C]"
+                  />
+                  {filters[f.key] !== "" && (
+                    <button
+                      onClick={() => setFilters((prev) => ({ ...prev, [f.key]: "" }))}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#374151]"
+                      aria-label={`Clear ${f.label} filter`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </label>
+            ))}
+            {anyTextFilter && (
+              <button
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="inline-flex items-center gap-1 rounded-md border border-[#E5E7EB] px-2.5 py-1.5 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+              >
+                <X className="h-3.5 w-3.5" />
+                Clear all
+              </button>
+            )}
+          </div>
+          {anyTextFilter && (
+            <p className="mt-1.5 text-[11px] text-[#6B7280]">
+              Showing {rows.length} of {teamRows.length} row
+              {teamRows.length === 1 ? "" : "s"} — KPI cards reflect the filtered set.
+            </p>
+          )}
+        </section>
+
         {/* KPI cards */}
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <KpiCard label="Loads"    value={fmtInt(kpis?.loads)}         color="#DC2626" />
@@ -219,33 +380,49 @@ function PodiumDfwContent() {
           ) : rows.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
               <Trophy className="h-6 w-6 text-[#D1D5DB]" />
-              <p className="text-sm text-[#374151]">
-                No loads posted yet {rangeLabel(range).toLowerCase()}.
-              </p>
-              <p className="text-xs text-[#9CA3AF]">
-                Rate Confirmations will appear here as soon as they hit McLeod.
-              </p>
+              {anyTextFilter && teamRows.length > 0 ? (
+                <>
+                  <p className="text-sm text-[#374151]">
+                    No rows match the current filters.
+                  </p>
+                  <button
+                    onClick={() => setFilters(EMPTY_FILTERS)}
+                    className="text-xs text-[#1B3A5C] underline hover:text-[#111827]"
+                  >
+                    Clear filters
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-[#374151]">
+                    No loads posted yet {rangeLabel(range).toLowerCase()}.
+                  </p>
+                  <p className="text-xs text-[#9CA3AF]">
+                    Rate Confirmations will appear here as soon as they hit McLeod.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="max-h-[calc(100vh-260px)] overflow-auto">
               <table className="w-full border-separate border-spacing-0 text-xs">
                 <thead className="sticky top-0 z-10 bg-[#F3F4F6] text-[#374151]">
                   <tr>
-                    <Th>Team</Th>
-                    <Th>#Order</Th>
-                    <Th>Posted by</Th>
-                    <Th>Date</Th>
-                    <Th>Customer</Th>
-                    <Th>Origin</Th>
-                    <Th>Destination</Th>
-                    <Th className="text-right">Profit</Th>
-                    <Th className="text-right">Revenue</Th>
-                    <Th className="text-right">Margin %</Th>
-                    <Th>Contract Type</Th>
+                    <SortableTh label="Team"          sortKey="team"          sort={sort} onSort={toggleSort} />
+                    <SortableTh label="#Order"        sortKey="order_id"      sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Posted by"     sortKey="posted_by"     sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Date"          sortKey="posted_date"   sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Customer"      sortKey="customer"      sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Origin"        sortKey="origin"        sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Destination"   sortKey="destination"   sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Profit"        sortKey="profit"        sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="Revenue"       sortKey="revenue"       sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="Margin %"      sortKey="margin_pct"    sort={sort} onSort={toggleSort} align="right" />
+                    <SortableTh label="Contract Type" sortKey="contract_type" sort={sort} onSort={toggleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, idx) => {
+                  {sortedRows.map((r, idx) => {
                     const medal = r.order_id ? medalByOrder.get(r.order_id) : undefined
                     return (
                       <tr
@@ -323,18 +500,38 @@ function KpiCard({
   )
 }
 
-function Th({
-  children,
-  className = "",
+function SortableTh({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = "left",
 }: {
-  children: React.ReactNode
-  className?: string
+  label: string
+  sortKey: SortKey
+  sort: { key: SortKey; dir: SortDir } | null
+  onSort: (key: SortKey) => void
+  align?: "left" | "right"
 }) {
+  const active = sort?.key === sortKey
+  const Icon = active ? (sort!.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown
   return (
     <th
-      className={`border-b border-[#E5E7EB] px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider ${className}`}
+      className={`border-b border-[#E5E7EB] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+      aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
     >
-      {children}
+      <button
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-[#111827] ${
+          active ? "text-[#1B3A5C]" : ""
+        } ${align === "right" ? "flex-row-reverse" : ""}`}
+        title={`Sort by ${label}`}
+      >
+        {label}
+        <Icon className={`h-3 w-3 ${active ? "" : "text-[#9CA3AF]"}`} />
+      </button>
     </th>
   )
 }
