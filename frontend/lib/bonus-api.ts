@@ -66,9 +66,9 @@ export interface WeeklyRule {
   meetsLoadMinimum: boolean // weekly loads >= 100 — gates ALL three role payouts (KAM, Freight-Match, Tracking&Tracing)
   loadBonusPct: number
   marginBonusPct: number
-  serviceBonusPct: number // legacy period/monthly service bracket — no longer drives payout (2026-06-01)
-  serviceAveragePct: number // percentage — per-week (OTP+OTD)/2
-  serviceBonusPctWeekly: number // per-week On time P&D bracket, ungated — display only (green "Actual Bonus %" row); payout re-gated by meetsLoadMinimum (2026-06-01 r2)
+  serviceBonusPct: number // MONTHLY On time P&D bracket gated by the week's 100-load minimum — the T&T payout driver again (R8 2026-06-03; per-week service calc removed)
+  serviceAveragePct: number // percentage — R8: the calendar-month On time P&D, identical across all weeks (was each week's own avg in R4-R7)
+  serviceBonusPctWeekly: number // monthly On time P&D bracket, UNGATED — display only (green "Actual Bonus %" row); row ≠ money on sub-100-load weeks (R7 convention)
 }
 
 export interface ProfitBracketBonus {
@@ -84,8 +84,8 @@ export interface BonusEmployee {
   weeklyUsd: number[]
   regularWeeklyUsd: number[]
   bonusUsd: number
-  wildcardWeeklyUsd: number
-  wildcardBonusUsd: number
+  wildcardWeeklyUsd: number // weekly wildcard payment — what the payout table's Wildcard column shows (R8 2026-06-03)
+  wildcardBonusUsd: number // monthly total (weekly × #weeks) — no longer displayed, kept on the wire
   wildcardAppliedUsd: number
   wildcardRoleBonusPct: number
   wildcardBasePayUsd: number
@@ -107,8 +107,8 @@ export interface BonusTeam {
   pickupServicePct: number
   deliveryServicePct: number
   fxRate: number
-  serviceAveragePct: number
-  wildcardEligible: boolean
+  serviceAveragePct: number // R8: equals monthlyServicePct (one service basis — display, T&T bracket, wildcard gate)
+  wildcardEligible: boolean // monthly profit > $100k AND monthlyServicePct >= 95% (R8 fixed the period-avg basis bug)
   wildcardServiceBracketPct: number
   wildcardEquivalentLoads: number
   wildcardEquivalentMarginPct: number

@@ -453,6 +453,11 @@ async def build_bonus_report_data(gold, primary, financial, period: Optional[str
                 "name": DEFAULT_TEAM_NAMES[team_id],
                 "pickupServicePct": mtr["pickupServicePct"],
                 "deliveryServicePct": mtr["deliveryServicePct"],
+                # R8 (Bruno 2026-06-03): the calendar-month On time P&D — the same
+                # number the team header SERVICE KPI shows — is now the engine's
+                # ONE service basis (weekly display, T&T bracket, wildcard gate).
+                # The period (weeks-union) pickup/delivery stay as fallback only.
+                "monthlyServicePct": mtr["monthlyServicePct"],
                 "fxRate": team_fx,
                 "weeks": mtr["weeks"],
                 "employees": roster.get(team_id, []),

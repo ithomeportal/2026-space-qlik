@@ -158,10 +158,13 @@ function PayoutTable({ team, weekLabels }: { team: BonusTeam; weekLabels: string
                   <td key={i} className="px-2 py-2 text-center text-[#334155]">{usd(v)}</td>
                 ))}
                 <td className="px-2 py-2 text-center font-semibold text-[#1F2937]">{usd(e.bonusUsd)}</td>
+                {/* Bruno R8 (2026-06-03): show ONLY the weekly wildcard payment
+                    amount here (e.g. $160.00), matching the Weekly Wildcard To
+                    Pay panel — not the monthly total (weekly × #weeks). */}
                 <td className="px-2 py-2 text-center text-[#334155]">
                   {e.wildcardBonusUsd > 0 ? (
                     <div>
-                      <span className="font-semibold">{usd(e.wildcardBonusUsd)}</span>
+                      <span className="font-semibold">{usd(e.wildcardWeeklyUsd)}</span>
                       {wildcardActive && (
                         <span className="block text-[9px] font-bold uppercase tracking-wider" style={{ color: COLORS.wildcardTitle }}>
                           weekly minimum
