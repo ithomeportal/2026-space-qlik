@@ -2,16 +2,8 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  ArrowUpDown,
-  Loader2,
-  Search,
-  Trophy,
-  X,
-} from "lucide-react"
+import { ArrowLeft, Loader2, Search, Trophy, X } from "lucide-react"
+import { useSortable, SortableTh } from "@/components/SortableTable"
 import {
   usePodiumOverview,
   fmtCurrency,
@@ -71,46 +63,6 @@ function containsCi(value: string | null | undefined, needle: string): boolean {
   return (value ?? "").toLowerCase().includes(needle)
 }
 
-// ---------------------------------------------------------------------------
-// Column sorting — click a header to cycle asc → desc → default order.
-// ---------------------------------------------------------------------------
-type SortKey =
-  | "team"
-  | "order_id"
-  | "posted_by"
-  | "posted_date"
-  | "customer"
-  | "origin"
-  | "destination"
-  | "profit"
-  | "revenue"
-  | "margin_pct"
-  | "contract_type"
-
-type SortDir = "asc" | "desc"
-
-const NUMERIC_KEYS: ReadonlySet<SortKey> = new Set<SortKey>([
-  "profit",
-  "revenue",
-  "margin_pct",
-])
-
-function compareRows(a: PodiumRow, b: PodiumRow, key: SortKey, dir: SortDir): number {
-  const av = a[key]
-  const bv = b[key]
-  // Nulls/blank always sink to the bottom regardless of direction.
-  const aEmpty = av === null || av === undefined || av === ""
-  const bEmpty = bv === null || bv === undefined || bv === ""
-  if (aEmpty && bEmpty) return 0
-  if (aEmpty) return 1
-  if (bEmpty) return -1
-  const cmp = NUMERIC_KEYS.has(key)
-    ? (av as number) - (bv as number)
-    : // posted_date is an ISO string — lexicographic compare is chronological.
-      String(av).localeCompare(String(bv), "en-US", { sensitivity: "base" })
-  return dir === "asc" ? cmp : -cmp
-}
-
 export default function PodiumDfwPage() {
   return (
     <ReportGuard reportKey="podium-dfw">
@@ -123,7 +75,6 @@ function PodiumDfwContent() {
   const [range, setRange] = useState<PodiumRange>("today")
   const [teamFilter, setTeamFilter] = useState<TeamFilter>("all")
   const [filters, setFilters] = useState<TextFilters>(EMPTY_FILTERS)
-  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   const q = usePodiumOverview(range)
 
   const rawRows = q.data?.data?.rows ?? []
@@ -187,19 +138,10 @@ function PodiumDfwContent() {
     return map
   }, [teamRows])
 
-  // Apply the active column sort (default = backend order: posted_date DESC).
-  const sortedRows = useMemo(() => {
-    if (!sort) return rows
-    return rows.slice().sort((a, b) => compareRows(a, b, sort.key, sort.dir))
-  }, [rows, sort])
-
-  const toggleSort = (key: SortKey) => {
-    setSort((prev) => {
-      if (!prev || prev.key !== key) return { key, dir: "asc" }
-      if (prev.dir === "asc") return { key, dir: "desc" }
-      return null // third click resets to the default order
-    })
-  }
+  // Shared client-side column sort (SPEC-CODE-RULES §38). No defaultKey →
+  // backend order (posted_date DESC, profit DESC, revenue DESC) until a
+  // header is clicked.
+  const sort = useSortable(rows)
 
   const lastUpdated = q.dataUpdatedAt ? new Date(q.dataUpdatedAt) : null
 
@@ -408,21 +350,21 @@ function PodiumDfwContent() {
               <table className="w-full border-separate border-spacing-0 text-xs">
                 <thead className="sticky top-0 z-10 bg-[#F3F4F6] text-[#374151]">
                   <tr>
-                    <SortableTh label="Team"          sortKey="team"          sort={sort} onSort={toggleSort} />
-                    <SortableTh label="#Order"        sortKey="order_id"      sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Posted by"     sortKey="posted_by"     sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Date"          sortKey="posted_date"   sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Customer"      sortKey="customer"      sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Origin"        sortKey="origin"        sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Destination"   sortKey="destination"   sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Profit"        sortKey="profit"        sort={sort} onSort={toggleSort} align="right" />
-                    <SortableTh label="Revenue"       sortKey="revenue"       sort={sort} onSort={toggleSort} align="right" />
-                    <SortableTh label="Margin %"      sortKey="margin_pct"    sort={sort} onSort={toggleSort} align="right" />
-                    <SortableTh label="Contract Type" sortKey="contract_type" sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Team"          columnKey="team"          state={sort} className={TH_CLASS} />
+                    <SortableTh label="#Order"        columnKey="order_id"      state={sort} className={TH_CLASS} />
+                    <SortableTh label="Posted by"     columnKey="posted_by"     state={sort} className={TH_CLASS} />
+                    <SortableTh label="Date"          columnKey="posted_date"   state={sort} className={TH_CLASS} />
+                    <SortableTh label="Customer"      columnKey="customer"      state={sort} className={TH_CLASS} />
+                    <SortableTh label="Origin"        columnKey="origin"        state={sort} className={TH_CLASS} />
+                    <SortableTh label="Destination"   columnKey="destination"   state={sort} className={TH_CLASS} />
+                    <SortableTh label="Profit"        columnKey="profit"        state={sort} className={TH_CLASS} align="right" />
+                    <SortableTh label="Revenue"       columnKey="revenue"       state={sort} className={TH_CLASS} align="right" />
+                    <SortableTh label="Margin %"      columnKey="margin_pct"    state={sort} className={TH_CLASS} align="right" />
+                    <SortableTh label="Contract Type" columnKey="contract_type" state={sort} className={TH_CLASS} />
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRows.map((r, idx) => {
+                  {sort.sorted.map((r, idx) => {
                     const medal = r.order_id ? medalByOrder.get(r.order_id) : undefined
                     return (
                       <tr
@@ -500,41 +442,8 @@ function KpiCard({
   )
 }
 
-function SortableTh({
-  label,
-  sortKey,
-  sort,
-  onSort,
-  align = "left",
-}: {
-  label: string
-  sortKey: SortKey
-  sort: { key: SortKey; dir: SortDir } | null
-  onSort: (key: SortKey) => void
-  align?: "left" | "right"
-}) {
-  const active = sort?.key === sortKey
-  const Icon = active ? (sort!.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown
-  return (
-    <th
-      className={`border-b border-[#E5E7EB] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
-      aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
-    >
-      <button
-        onClick={() => onSort(sortKey)}
-        className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-[#111827] ${
-          active ? "text-[#1B3A5C]" : ""
-        } ${align === "right" ? "flex-row-reverse" : ""}`}
-        title={`Sort by ${label}`}
-      >
-        {label}
-        <Icon className={`h-3 w-3 ${active ? "" : "text-[#9CA3AF]"}`} />
-      </button>
-    </th>
-  )
-}
+// Match the report's original header look on the shared <SortableTh>.
+const TH_CLASS = "border-b border-[#E5E7EB] text-[11px] uppercase tracking-wider"
 
 function Td({
   children,
