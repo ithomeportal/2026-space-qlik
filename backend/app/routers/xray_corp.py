@@ -1202,7 +1202,10 @@ async def risk(
         *params,
     )
 
-    # Negative loads by order — one row per order, LEFT JOIN movement
+    # Negative loads by order — carrier via LEFT JOIN LATERAL (one index seek
+    # per neg row). The old ROW_NUMBER() CTE pre-aggregated the ENTIRE movement
+    # table per request — same latent command_timeout 500 Bruno hit on
+    # xray-dfw All Orders (fixed 2026-06-03, commit dfaf41f).
     neg_orders_task = pool.fetch(
         f"""
         WITH neg AS (
@@ -1214,19 +1217,13 @@ async def risk(
             WHERE {where} AND {date_frag}
               AND br4.margin_amt < 0 AND br4.total_charge <> 0
         ),
-        mov1 AS (
-            SELECT TRIM(order_id) AS order_id_key, company_id, payee_name,
-                   ROW_NUMBER() OVER (PARTITION BY TRIM(order_id), company_id
-                                      ORDER BY movement_id) AS rn
-            FROM public.mcleod_gld_movement
-        ),
         totals AS (
             SELECT SUM(margin_amt)::numeric AS total_neg_margin FROM neg
         )
         SELECT
             neg.id,
             neg.customer_name AS customer,
-            COALESCE(mov1.payee_name, '—') AS carrier,
+            COALESCE(mov.payee_name, '—') AS carrier,
             neg.origin,
             neg.destination,
             neg.total_charge AS revenue,
@@ -1236,9 +1233,13 @@ async def risk(
                  THEN neg.margin_amt / totals.total_neg_margin * 100
                  ELSE 0 END AS conc_pct
         FROM neg
-        LEFT JOIN mov1 ON mov1.rn = 1
-                     AND TRIM(neg.id) = mov1.order_id_key
-                     AND neg.company_id = mov1.company_id
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = neg.id AND m.company_id = neg.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
         CROSS JOIN totals
         ORDER BY profit ASC
         LIMIT ${lim_idx}
@@ -1400,21 +1401,21 @@ async def all_orders(
     params: list = []
     where = _scope_where("br4", team, customer, params)
     params.extend([s, e, limit])
-    date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
+    # Sargable half-open bounds (SPEC-CODE-RULES §43) + LATERAL carrier seek —
+    # the old ROW_NUMBER() CTE pre-aggregated the ENTIRE movement table per
+    # request (same latent 500 Bruno hit on xray-dfw All Orders, 2026-06-03).
+    date_frag = (
+        f"br4.origin_actual_departure >= ${len(params)-2}"
+        f" AND br4.origin_actual_departure < (${len(params)-1}::date + 1)"
+    )
 
     rows = await pool.fetch(
         f"""
-        WITH mov1 AS (
-            SELECT TRIM(order_id) AS order_id_key, company_id, payee_name,
-                   ROW_NUMBER() OVER (PARTITION BY TRIM(order_id), company_id
-                                      ORDER BY movement_id) AS rn
-            FROM public.mcleod_gld_movement
-        )
         SELECT
           TRIM(br4.team_id) AS team,
           br4.id,
           br4.customer_name AS customer,
-          COALESCE(mov1.payee_name, '—') AS carrier,
+          COALESCE(mov.payee_name, '—') AS carrier,
           TRIM(br4.origin_name) AS origin,
           TRIM(br4.dest_name)   AS destination,
           br4.origin_actual_departure AS departure,
@@ -1425,9 +1426,13 @@ async def all_orders(
           GREATEST(0, br4.total_charge * 0.18 - br4.margin_amt)::numeric AS diff_18,
           GREATEST(0, br4.total_charge * 0.20 - br4.margin_amt)::numeric AS diff_20
         FROM public.mcleod_gld_budget_report_v4 br4
-        LEFT JOIN mov1 ON mov1.rn = 1
-                       AND TRIM(br4.id) = mov1.order_id_key
-                       AND br4.company_id = mov1.company_id
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
         WHERE {where} AND {date_frag}
           AND br4.total_charge <> 0
         ORDER BY br4.origin_actual_departure DESC NULLS LAST
