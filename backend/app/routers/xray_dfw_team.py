@@ -301,11 +301,16 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         lanes: Optional[str] = Query(None),
         view: Optional[str] = Query(None),
         limit: int = Query(500, ge=1, le=2000),
+        # Bruno 2026-06-03 pagination — declared AND forwarded explicitly per
+        # SPEC-CODE-RULES §40 (a direct Python call never applies Query()
+        # defaults; an omitted param would arrive as FieldInfo and 500).
+        page: int = Query(1, ge=1),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.all_orders(
             request=request, range=range, start_date=start_date, end_date=end_date,
-            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit, _user=_user,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view, limit=limit,
+            page=page, _user=_user,
         )
 
     @r.get("/lane-analysis")

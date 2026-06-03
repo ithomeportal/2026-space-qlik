@@ -1,6 +1,7 @@
 "use client"
 
-import { Loader2 } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
+import { useEffect, useState } from "react"
 import {
   Bar,
   CartesianGrid,
@@ -49,12 +50,27 @@ export function ContractSpot({
     lanes: filters.lanes,
     view: filters.view,
   }
+  // Bruno 2026-06-03: All Orders is server-paginated, 500/page. Reset to
+  // page 1 whenever the filter scope changes.
+  const [page, setPage] = useState(1)
+  const filterKey = JSON.stringify(filters)
+  useEffect(() => {
+    setPage(1)
+  }, [filterKey])
+
   const { data: csRes, isLoading: loadingCs, error: csErr } = useXrayDfwContractSpot(trioFilter)
-  const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayDfwAllOrders(filters)
+  const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayDfwAllOrders(filters, page)
   const { data: laRes, isLoading: loadingLa, error: laErr } = useXrayDfwLaneAnalysis(filters)
   const cs = csRes?.data
-  const orders = ordersRes?.data ?? []
-  const lanes = laRes?.data ?? []
+  const ordersPage = ordersRes?.data
+  const orders = ordersPage?.rows ?? []
+  const ordersTotals = ordersPage?.totals
+  const lanes = laRes?.data?.rows ?? []
+  const laneTotals = laRes?.data?.totals
+
+  const totalOrders = ordersPage?.total ?? 0
+  const pageSize = ordersPage?.page_size ?? 500
+  const pageCount = Math.max(1, Math.ceil(totalOrders / pageSize))
 
   const orderSort = useSortable(orders)
   const laneSort = useSortable(lanes)
@@ -125,9 +141,35 @@ export function ContractSpot({
       </div>
 
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
-        <div className="border-b border-[#E5E7EB] bg-[#FEF3C7] px-3 py-2 text-sm font-semibold text-[#111827]">
-          All Orders
-          <span className="ml-2 text-xs text-[#6B7280]">(first 500 by most recent departure)</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E7EB] bg-[#FEF3C7] px-3 py-2 text-sm font-semibold text-[#111827]">
+          <div>
+            All Orders
+            <span className="ml-2 text-xs font-normal text-[#6B7280]">
+              {fmtCount(totalOrders)} orders · 500 per page · most recent departure first
+            </span>
+          </div>
+          {/* Bruno 2026-06-03: server pagination, 500/page. */}
+          <div className="flex items-center gap-2 text-xs font-normal text-[#374151]">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="inline-flex items-center rounded border border-[#E5E7EB] bg-white px-2 py-1 disabled:opacity-40"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> Prev
+            </button>
+            <span>
+              Page {page} of {fmtCount(pageCount)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              disabled={page >= pageCount}
+              className="inline-flex items-center rounded border border-[#E5E7EB] bg-white px-2 py-1 disabled:opacity-40"
+            >
+              Next <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
         {loadingOrd ? (
           <Spin />
@@ -152,6 +194,25 @@ export function ContractSpot({
                 </tr>
               </thead>
               <tbody>
+                {/* Bruno 2026-06-03: universe Totals row (all pages, not just
+                    the visible one). */}
+                {ordersTotals && (
+                  <tr className="sticky top-[29px] z-10 bg-[#FDE68A] font-semibold">
+                    <td className="px-3 py-1.5" colSpan={7}>
+                      Totals ({fmtCount(ordersTotals.loads)} orders)
+                    </td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.revenue)}</td>
+                    <td className={`px-3 py-1.5 text-right ${ordersTotals.profit < 0 ? "text-[#DC2626]" : ""}`}>
+                      {fmtUsd(ordersTotals.profit)}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right ${ordersTotals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
+                      {fmtPct(ordersTotals.margin_pct)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_15)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_18)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_20)}</td>
+                  </tr>
+                )}
                 {orderSort.sorted.map((r) => (
                   <tr key={r.id} className="border-t border-[#F3F4F6] hover:bg-[#FEFCE8]">
                     <td className="px-3 py-1.5">{r.team}</td>
@@ -215,6 +276,26 @@ export function ContractSpot({
                 </tr>
               </thead>
               <tbody>
+                {/* Bruno 2026-06-03: universe Totals row over ALL lanes. */}
+                {laneTotals && (
+                  <tr className="sticky top-[29px] z-10 bg-[#DDD6FE] font-semibold">
+                    <td className="px-3 py-1.5" colSpan={3}>Totals</td>
+                    <td className="px-3 py-1.5 text-right">{fmtPct(laneTotals.conc_pct)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtCount(laneTotals.loads)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.revenue)}</td>
+                    <td className={`px-3 py-1.5 text-right ${laneTotals.profit < 0 ? "text-[#DC2626]" : ""}`}>
+                      {fmtUsd(laneTotals.profit)}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right ${laneTotals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
+                      {fmtPct(laneTotals.margin_pct)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.avg_r_per_l)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.avg_p_per_l)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.diff_15)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.diff_18)}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtUsd(laneTotals.diff_20)}</td>
+                  </tr>
+                )}
                 {laneSort.sorted.map((r, i) => (
                   <tr key={i} className="border-t border-[#F3F4F6] hover:bg-[#FAF5FF]">
                     <td className="px-3 py-1.5">

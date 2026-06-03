@@ -1299,11 +1299,14 @@ async def risk(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
     )
     params.extend([s, e, limit])
-    date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
+    # Half-open, no ::date cast on the indexed timestamp (SPEC-CODE-RULES §43).
+    date_frag = (
+        f"br4.origin_actual_departure >= ${len(params)-2}"
+        f" AND br4.origin_actual_departure < (${len(params)-1}::date + 1)"
+    )
     lim_idx = len(params)
 
-    worst_lanes_task = pool.fetch(
-        f"""
+    worst_lanes_select = f"""
         SELECT
           {ent} AS customer,
           TRIM(br4.origin_name) AS origin,
@@ -1321,12 +1324,68 @@ async def risk(
         WHERE {where} AND {date_frag}
         GROUP BY {ent}, TRIM(br4.origin_name), TRIM(br4.dest_name)
         HAVING SUM(br4.margin_amt) < 0
+    """
+
+    worst_lanes_task = pool.fetch(
+        f"""
+        {worst_lanes_select}
         ORDER BY profit ASC
         LIMIT ${lim_idx}
         """,
         *params,
     )
 
+    # Bruno 2026-06-03: pinned Totals rows, computed server-side over the FULL
+    # result set (the display LIMIT must never truncate a Totals row — same
+    # lesson as ceo-executive Risk, 2026-06-03). `worst_lanes_select` only
+    # references the scope + date placeholders ($1..$N+2, identical text for a
+    # fresh params list without the trailing limit), so it can be reused here
+    # with its own params (feedback: per-query params lists for asyncpg).
+    wl_tot_params: list = []
+    _scope_where(
+        "br4", sub_team_list, customers_list, wl_tot_params, view=view, lanes=lanes_list,
+    )
+    wl_tot_params.extend([s, e])
+    worst_lanes_tot_task = pool.fetchrow(
+        f"""
+        SELECT
+          COALESCE(SUM(t.loads), 0)    AS loads,
+          COALESCE(SUM(t.revenue), 0)::numeric AS revenue,
+          COALESCE(SUM(t.profit), 0)::numeric  AS profit,
+          COALESCE(SUM(t.diff_15), 0)::numeric AS diff_15,
+          COALESCE(SUM(t.diff_18), 0)::numeric AS diff_18,
+          COALESCE(SUM(t.diff_20), 0)::numeric AS diff_20
+        FROM ({worst_lanes_select}) t
+        """,
+        *wl_tot_params,
+    )
+
+    neg_tot_params: list = []
+    neg_tot_where = _scope_where(
+        "br4", sub_team_list, customers_list, neg_tot_params, view=view, lanes=lanes_list,
+    )
+    neg_tot_params.extend([s, e])
+    neg_tot_date = (
+        f"br4.origin_actual_departure >= ${len(neg_tot_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(neg_tot_params)}::date + 1)"
+    )
+    neg_tot_task = pool.fetchrow(
+        f"""
+        SELECT
+          COUNT(*) AS loads,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {neg_tot_where} AND {neg_tot_date}
+          AND br4.margin_amt < 0 AND br4.total_charge <> 0
+        """,
+        *neg_tot_params,
+    )
+
+    # Carrier via LEFT JOIN LATERAL (one index seek per neg row using
+    # idx_movement_order_company_mv) — the old ROW_NUMBER() CTE pre-aggregated
+    # the whole movement table per request (same 5.9s-class pattern CEO
+    # Executive dropped on 2026-04-27).
     neg_orders_task = pool.fetch(
         f"""
         WITH neg AS (
@@ -1338,19 +1397,13 @@ async def risk(
             WHERE {where} AND {date_frag}
               AND br4.margin_amt < 0 AND br4.total_charge <> 0
         ),
-        mov1 AS (
-            SELECT TRIM(order_id) AS order_id_key, company_id, payee_name,
-                   ROW_NUMBER() OVER (PARTITION BY TRIM(order_id), company_id
-                                      ORDER BY movement_id) AS rn
-            FROM public.mcleod_gld_movement
-        ),
         totals AS (
             SELECT SUM(margin_amt)::numeric AS total_neg_margin FROM neg
         )
         SELECT
             neg.id,
             neg.customer_name AS customer,
-            COALESCE(mov1.payee_name, '—') AS carrier,
+            COALESCE(mov.payee_name, '—') AS carrier,
             neg.origin,
             neg.destination,
             neg.total_charge AS revenue,
@@ -1360,9 +1413,13 @@ async def risk(
                  THEN neg.margin_amt / totals.total_neg_margin * 100
                  ELSE 0 END AS conc_pct
         FROM neg
-        LEFT JOIN mov1 ON mov1.rn = 1
-                     AND TRIM(neg.id) = mov1.order_id_key
-                     AND neg.company_id = mov1.company_id
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = neg.id AND m.company_id = neg.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
         CROSS JOIN totals
         ORDER BY profit ASC
         LIMIT ${lim_idx}
@@ -1416,15 +1473,16 @@ async def risk(
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {loss_where}
           AND br4.margin_amt < 0
-          AND br4.origin_actual_departure::date >= ${len(loss_params)}
+          AND br4.origin_actual_departure >= ${len(loss_params)}
         GROUP BY GROUPING SETS ((month_bucket), (week_bucket))
         ORDER BY month_bucket DESC NULLS LAST, week_bucket DESC NULLS LAST
         """,
         *loss_params,
     )
 
-    worst_lanes, neg_orders, neg_customer, losses_rows = await asyncio.gather(
+    worst_lanes, neg_orders, neg_customer, losses_rows, wl_tot, neg_tot = await asyncio.gather(
         worst_lanes_task, neg_orders_task, neg_customer_task, losses_task,
+        worst_lanes_tot_task, neg_tot_task,
     )
 
     losses_month, losses_week = [], []
@@ -1435,6 +1493,11 @@ async def risk(
         elif r["week_bucket"] is not None:
             losses_week.append({"bucket": r["week_bucket"].isoformat(), **base})
 
+    wl_revenue = float(wl_tot["revenue"] or 0)
+    wl_profit = float(wl_tot["profit"] or 0)
+    neg_revenue = float(neg_tot["revenue"] or 0)
+    neg_profit = float(neg_tot["profit"] or 0)
+
     return {
         "success": True,
         "data": {
@@ -1443,6 +1506,25 @@ async def risk(
             "neg_customers": [dict(r) for r in neg_customer],
             "losses_month": losses_month[:8],
             "losses_week": losses_week[:8],
+            # Bruno 2026-06-03: pinned Totals rows — full-universe figures,
+            # independent of the per-table display LIMITs.
+            "totals": {
+                "worst_lanes": {
+                    "loads": int(wl_tot["loads"] or 0),
+                    "revenue": wl_revenue,
+                    "profit": wl_profit,
+                    "margin_pct": (wl_profit / wl_revenue * 100.0) if wl_revenue > 0 else 0.0,
+                    "diff_15": float(wl_tot["diff_15"] or 0),
+                    "diff_18": float(wl_tot["diff_18"] or 0),
+                    "diff_20": float(wl_tot["diff_20"] or 0),
+                },
+                "neg": {
+                    "loads": int(neg_tot["loads"] or 0),
+                    "revenue": neg_revenue,
+                    "profit": neg_profit,
+                    "margin_pct": (neg_profit / neg_revenue * 100.0) if neg_revenue > 0 else 0.0,
+                },
+            },
         },
     }
 
@@ -1522,8 +1604,18 @@ async def all_orders(
     lanes: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
+    page: int = Query(1, ge=1),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
+    """All Orders — server-paginated (Bruno 2026-06-03: 500/page).
+
+    The old implementation 500'd on large windows: a ROW_NUMBER() CTE
+    pre-aggregated the ENTIRE movement table per request and the ::date
+    cast on origin_actual_departure defeated idx_v4_dep (full seq scan) —
+    together they blew past the pool command_timeout. Now: LATERAL carrier
+    seek per returned row + sargable half-open date bounds + LIMIT/OFFSET,
+    plus a separate aggregate for the universe Totals row + total count.
+    """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
@@ -1534,22 +1626,19 @@ async def all_orders(
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
     )
-    params.extend([s, e, limit])
-    date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
+    params.extend([s, e, limit, (page - 1) * limit])
+    date_frag = (
+        f"br4.origin_actual_departure >= ${len(params)-3}"
+        f" AND br4.origin_actual_departure < (${len(params)-2}::date + 1)"
+    )
 
-    rows = await pool.fetch(
+    rows_task = pool.fetch(
         f"""
-        WITH mov1 AS (
-            SELECT TRIM(order_id) AS order_id_key, company_id, payee_name,
-                   ROW_NUMBER() OVER (PARTITION BY TRIM(order_id), company_id
-                                      ORDER BY movement_id) AS rn
-            FROM public.mcleod_gld_movement
-        )
         SELECT
           TRIM(br4.team) AS team,
           br4.id,
           {_entity_expr("br4", view)} AS customer,
-          COALESCE(mov1.payee_name, '—') AS carrier,
+          COALESCE(mov.payee_name, '—') AS carrier,
           TRIM(br4.origin_name) AS origin,
           TRIM(br4.dest_name)   AS destination,
           br4.origin_actual_departure AS departure,
@@ -1560,23 +1649,76 @@ async def all_orders(
           GREATEST(0, br4.total_charge * 0.18 - br4.margin_amt)::numeric AS diff_18,
           GREATEST(0, br4.total_charge * 0.20 - br4.margin_amt)::numeric AS diff_20
         FROM public.mcleod_gld_budget_report_v4 br4
-        LEFT JOIN mov1 ON mov1.rn = 1
-                       AND TRIM(br4.id) = mov1.order_id_key
-                       AND br4.company_id = mov1.company_id
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
         WHERE {where} AND {date_frag}
           AND br4.total_charge <> 0
         ORDER BY br4.origin_actual_departure DESC NULLS LAST
-        LIMIT ${len(params)}
+        LIMIT ${len(params)-1} OFFSET ${len(params)}
         """,
         *params,
     )
+
+    # Universe totals + count (no movement join needed) — own params list.
+    tot_params: list = []
+    tot_where = _scope_where(
+        "br4", sub_team_list, customers_list, tot_params, view=view, lanes=lanes_list,
+    )
+    tot_params.extend([s, e])
+    tot_date = (
+        f"br4.origin_actual_departure >= ${len(tot_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(tot_params)}::date + 1)"
+    )
+    tot_task = pool.fetchrow(
+        f"""
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
+          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.15 - br4.margin_amt)), 0)::numeric AS diff_15,
+          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.18 - br4.margin_amt)), 0)::numeric AS diff_18,
+          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.20 - br4.margin_amt)), 0)::numeric AS diff_20
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {tot_where} AND {tot_date}
+          AND br4.total_charge <> 0
+        """,
+        *tot_params,
+    )
+
+    rows, tot = await asyncio.gather(rows_task, tot_task)
+
     out = []
     for r in rows:
         d = dict(r)
         dep = d.pop("departure")
         d["departure"] = dep.isoformat() if isinstance(dep, datetime) else (dep.isoformat() if dep else None)
         out.append(d)
-    return {"success": True, "data": out}
+
+    tot_revenue = float(tot["revenue"] or 0)
+    tot_profit = float(tot["profit"] or 0)
+    return {
+        "success": True,
+        "data": {
+            "rows": out,
+            "total": int(tot["total"] or 0),
+            "page": page,
+            "page_size": limit,
+            "totals": {
+                "loads": int(tot["total"] or 0),
+                "revenue": tot_revenue,
+                "profit": tot_profit,
+                "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
+                "diff_15": float(tot["diff_15"] or 0),
+                "diff_18": float(tot["diff_18"] or 0),
+                "diff_20": float(tot["diff_20"] or 0),
+            },
+        },
+    }
 
 
 @router.get("/lane-analysis")
@@ -1603,10 +1745,13 @@ async def lane_analysis(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
     )
     params.extend([s, e, limit])
-    date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
+    # Half-open, no ::date cast (SPEC-CODE-RULES §43).
+    date_frag = (
+        f"br4.origin_actual_departure >= ${len(params)-2}"
+        f" AND br4.origin_actual_departure < (${len(params)-1}::date + 1)"
+    )
 
-    rows = await pool.fetch(
-        f"""
+    lane_select = f"""
         WITH base AS (
             SELECT {_entity_expr("br4", view)} AS customer_name,
                    TRIM(br4.origin_name) AS origin,
@@ -1633,9 +1778,59 @@ async def lane_analysis(
         FROM base CROSS JOIN totals
         WHERE origin <> '' AND destination <> '' AND customer_name IS NOT NULL
         GROUP BY base.customer_name, origin, destination, totals.total_margin
+    """
+
+    rows_task = pool.fetch(
+        f"""
+        {lane_select}
         ORDER BY conc_pct DESC NULLS LAST
         LIMIT ${len(params)}
         """,
         *params,
     )
-    return {"success": True, "data": [dict(r) for r in rows]}
+
+    # Bruno 2026-06-03: universe Totals row over ALL lanes (the display LIMIT
+    # must not truncate it). `lane_select` only references the scope + date
+    # placeholders, so it reuses cleanly with a fresh params list sans limit.
+    tot_params: list = []
+    _scope_where(
+        "br4", sub_team_list, customers_list, tot_params, view=view, lanes=lanes_list,
+    )
+    tot_params.extend([s, e])
+    tot_task = pool.fetchrow(
+        f"""
+        SELECT
+          COALESCE(SUM(t.loads), 0)    AS loads,
+          COALESCE(SUM(t.revenue), 0)::numeric AS revenue,
+          COALESCE(SUM(t.profit), 0)::numeric  AS profit,
+          COALESCE(SUM(t.diff_15), 0)::numeric AS diff_15,
+          COALESCE(SUM(t.diff_18), 0)::numeric AS diff_18,
+          COALESCE(SUM(t.diff_20), 0)::numeric AS diff_20
+        FROM ({lane_select}) t
+        """,
+        *tot_params,
+    )
+
+    rows, tot = await asyncio.gather(rows_task, tot_task)
+
+    tot_loads = int(tot["loads"] or 0)
+    tot_revenue = float(tot["revenue"] or 0)
+    tot_profit = float(tot["profit"] or 0)
+    return {
+        "success": True,
+        "data": {
+            "rows": [dict(r) for r in rows],
+            "totals": {
+                "loads": tot_loads,
+                "revenue": tot_revenue,
+                "profit": tot_profit,
+                "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
+                "avg_r_per_l": (tot_revenue / tot_loads) if tot_loads else 0.0,
+                "avg_p_per_l": (tot_profit / tot_loads) if tot_loads else 0.0,
+                "conc_pct": 100.0 if tot_profit != 0 else 0.0,
+                "diff_15": float(tot["diff_15"] or 0),
+                "diff_18": float(tot["diff_18"] or 0),
+                "diff_20": float(tot["diff_20"] or 0),
+            },
+        },
+    }

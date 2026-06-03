@@ -272,12 +272,35 @@ export interface XrayDfwLossPoint {
   profit: number
 }
 
+// Bruno 2026-06-03: server-side full-universe Totals rows (independent of the
+// per-table display LIMITs).
+export interface XrayDfwWorstLaneTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+  diff_15: number
+  diff_18: number
+  diff_20: number
+}
+
+export interface XrayDfwNegTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+}
+
 export interface XrayDfwRisk {
   worst_lanes: XrayDfwWorstLane[]
   neg_orders: XrayDfwNegOrder[]
   neg_customers: XrayDfwNegCustomer[]
   losses_month: XrayDfwLossPoint[]
   losses_week: XrayDfwLossPoint[]
+  totals: {
+    worst_lanes: XrayDfwWorstLaneTotals
+    neg: XrayDfwNegTotals
+  }
 }
 
 export interface XrayDfwContractSpotPoint {
@@ -323,6 +346,44 @@ export interface XrayDfwLaneAnalysisRow {
   diff_15: number
   diff_18: number
   diff_20: number
+}
+
+// Bruno 2026-06-03: /all-orders is server-paginated (500/page) and both
+// Contract-vs-Spot tables carry full-universe Totals rows.
+export interface XrayDfwAllOrdersTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+  diff_15: number
+  diff_18: number
+  diff_20: number
+}
+
+export interface XrayDfwAllOrdersPage {
+  rows: XrayDfwAllOrder[]
+  total: number
+  page: number
+  page_size: number
+  totals: XrayDfwAllOrdersTotals
+}
+
+export interface XrayDfwLaneAnalysisTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+  avg_r_per_l: number
+  avg_p_per_l: number
+  conc_pct: number
+  diff_15: number
+  diff_18: number
+  diff_20: number
+}
+
+export interface XrayDfwLaneAnalysisData {
+  rows: XrayDfwLaneAnalysisRow[]
+  totals: XrayDfwLaneAnalysisTotals
 }
 
 // ---------------------------------------------------------------------------
@@ -491,13 +552,20 @@ export function useXrayDfwContractSpot(
   })
 }
 
-export function useXrayDfwAllOrders(f: XrayDfwFilters, enabled = true) {
+// Server-paginated (Bruno 2026-06-03, 500/page). `placeholderData` keeps the
+// previous page visible while the next one loads (no spinner flash).
+export function useXrayDfwAllOrders(f: XrayDfwFilters, page = 1, enabled = true) {
   const prefix = useApiPrefix()
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: [prefix, "all-orders", f],
-    queryFn: () => apiFetch<XrayDfwAllOrder[]>(`${prefix}/all-orders${dfwQs(f)}`),
+    queryKey: [prefix, "all-orders", f, page],
+    queryFn: () => {
+      const qs = dfwQs(f)
+      const sep = qs ? "&" : "?"
+      return apiFetch<XrayDfwAllOrdersPage>(`${prefix}/all-orders${qs}${sep}page=${page}`)
+    },
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -507,7 +575,7 @@ export function useXrayDfwLaneAnalysis(f: XrayDfwFilters, enabled = true) {
     ...XRAY_DFW_RETRY,
     enabled,
     queryKey: [prefix, "lane-analysis", f],
-    queryFn: () => apiFetch<XrayDfwLaneAnalysisRow[]>(`${prefix}/lane-analysis${dfwQs(f)}`),
+    queryFn: () => apiFetch<XrayDfwLaneAnalysisData>(`${prefix}/lane-analysis${dfwQs(f)}`),
   })
 }
 
