@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, LayoutGrid, Loader2 } from "lucide-react"
 import { ReportGuard } from "@/components/ReportGuard"
+import { MultiSelectChips, type FilterMode } from "@/components/MultiSelectChips"
 import {
   useOppActuals,
   useOppFilters,
@@ -72,6 +73,9 @@ function OpsPortalOverviewContent() {
   // Bruno R5: "Losses" button — global toggle (margin_amt < 0) for the
   // Production by Customer / Actuals / By Lane / By Order tables.
   const [lossesOnly, setLossesOnly] = useState<boolean>(false)
+  // Bruno R7 (2026-06-05): Lane filter — multi-select with Include⇄Exclude.
+  const [laneIds, setLaneIds] = useState<string[]>([])
+  const [laneMode, setLaneMode] = useState<FilterMode>("include")
 
   const { data: filterRes, isLoading: loadingFilters } = useOppFilters()
   const filterOptions = filterRes?.data
@@ -93,8 +97,10 @@ function OpsPortalOverviewContent() {
       customer: customer || undefined,
       loadType: loadType || undefined,
       lossesOnly: lossesOnly || undefined,
+      lanes: laneMode === "include" && laneIds.length > 0 ? laneIds : undefined,
+      excludeLanes: laneMode === "exclude" && laneIds.length > 0 ? laneIds : undefined,
     }),
-    [range, appliedDates, team, customer, loadType, lossesOnly],
+    [range, appliedDates, team, customer, loadType, lossesOnly, laneIds, laneMode],
   )
 
   const customerSuggestions = useMemo(() => {
@@ -134,6 +140,8 @@ function OpsPortalOverviewContent() {
             Team: {team || "All"}
             {" · "}
             Customer: {customer || "All"}
+            {laneIds.length > 0 &&
+              ` · Lanes: ${laneMode === "exclude" ? "excl " : ""}${laneIds.length}`}
             {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
           </div>
           <div className="text-[11px] text-[#9CA3AF]">
@@ -256,6 +264,18 @@ function OpsPortalOverviewContent() {
               </button>
             )}
           </div>
+
+          {/* Bruno R7 (2026-06-05): Lane filter — multi-select + Include⇄Exclude. */}
+          <MultiSelectChips
+            label="Lane"
+            options={filterOptions?.lanes ?? []}
+            selected={laneIds}
+            onChange={setLaneIds}
+            mode={laneMode}
+            onModeChange={setLaneMode}
+            placeholder={loadingFilters ? "Loading…" : "All lanes"}
+            width={240}
+          />
 
           {/* Bruno R5: Losses button — filters PdC / Actuals / By Lane / By Order to margin<0. */}
           <button

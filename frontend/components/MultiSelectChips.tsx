@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, X } from "lucide-react"
 
+export type FilterMode = "include" | "exclude"
+
 interface Props {
   label: string
   options: string[]
@@ -11,13 +13,18 @@ interface Props {
   placeholder?: string
   width?: number
   disabled?: boolean
+  /** Optional Include⇄Exclude toggle (Ops Portal Overview R7 Lane filter).
+   *  Omit both props to keep the plain include-only picker (XRay DFW). */
+  mode?: FilterMode
+  onModeChange?: (next: FilterMode) => void
 }
 
 /**
  * Compact, pure-React/HTML multi-select used in the XRay DFW filter strip
  * (Bruno 2026-05-28). No Base UI / cmdk — see CLAUDE.md "Search bar is pure
  * React/HTML". When nothing is selected the trigger reads "All …" and the
- * backend treats the empty array as "no filter".
+ * backend treats the empty array as "no filter" (so the include/exclude mode
+ * is irrelevant until at least one option is checked).
  */
 export function MultiSelectChips({
   label,
@@ -27,6 +34,8 @@ export function MultiSelectChips({
   placeholder,
   width = 220,
   disabled = false,
+  mode,
+  onModeChange,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -78,8 +87,14 @@ export function MultiSelectChips({
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {selected.length > 0 && (
-            <span className="shrink-0 rounded-full bg-[#DBEAFE] px-1.5 py-px text-[10px] font-semibold text-[#1D4ED8]">
-              {selected.length}
+            <span
+              className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold ${
+                mode === "exclude"
+                  ? "bg-[#FEE2E2] text-[#991B1B]"
+                  : "bg-[#DBEAFE] text-[#1D4ED8]"
+              }`}
+            >
+              {onModeChange ? `${mode === "exclude" ? "excl" : "incl"} ${selected.length}` : selected.length}
             </span>
           )}
           <span className="truncate">{summary}</span>
@@ -103,6 +118,34 @@ export function MultiSelectChips({
           style={{ width: width + 40 }}
           className="absolute left-0 top-full z-30 mt-1 rounded-md border border-[#E5E7EB] bg-white shadow-lg"
         >
+          {onModeChange && (
+            <div className="flex items-center gap-1 border-b border-[#F3F4F6] px-1.5 py-1.5">
+              <div className="inline-flex rounded-full bg-[#F3F4F6] p-0.5 text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => onModeChange("include")}
+                  className={`rounded-full px-2.5 py-0.5 transition ${
+                    mode !== "exclude"
+                      ? "bg-[#1D4ED8] text-white shadow-sm"
+                      : "text-[#374151] hover:text-[#111827]"
+                  }`}
+                >
+                  Include
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onModeChange("exclude")}
+                  className={`rounded-full px-2.5 py-0.5 transition ${
+                    mode === "exclude"
+                      ? "bg-[#991B1B] text-white shadow-sm"
+                      : "text-[#374151] hover:text-[#111827]"
+                  }`}
+                >
+                  Exclude
+                </button>
+              </div>
+            </div>
+          )}
           <div className="border-b border-[#F3F4F6] p-1.5">
             <input
               autoFocus

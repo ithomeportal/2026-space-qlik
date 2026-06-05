@@ -74,7 +74,7 @@ function labelFmt(measure: Measure, v: number): string {
 }
 
 export function ComboChart({ filters, loadType, setLoadType }: Props) {
-  const cf = { team: filters.team, customer: filters.customer, loadType }
+  const cf = { team: filters.team, customer: filters.customer, loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const [grain, setGrain] = useState<OppGrain>("month")
   const [measure, setMeasure] = useState<Measure>("revenue")
   const [hidden, setHidden] = useState<Set<SeriesKey>>(new Set())

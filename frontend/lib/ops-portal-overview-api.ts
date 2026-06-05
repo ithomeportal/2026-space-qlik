@@ -49,6 +49,15 @@ export interface OppFilters {
   loadType?: LoadType
   /** Bruno R5: "Losses" button — restrict tables to margin_amt < 0 rows. */
   lossesOnly?: boolean
+  /** Bruno R7 (2026-06-05): Lane multi-select — include list. */
+  lanes?: string[]
+  /** Bruno R7: Lane multi-select — exclude list (mode toggle). */
+  excludeLanes?: string[]
+}
+
+/** Stable queryKey fragment for the lane arrays. */
+function laneKey(f: Pick<OppFilters, "lanes" | "excludeLanes">): string {
+  return `${(f.lanes ?? []).join("|")}~${(f.excludeLanes ?? []).join("|")}`
 }
 
 function qs(f: OppFilters, extra?: Record<string, string>): string {
@@ -60,6 +69,8 @@ function qs(f: OppFilters, extra?: Record<string, string>): string {
   if (f.customer) q.set("customer", f.customer)
   if (f.loadType) q.set("load_type", f.loadType)
   if (f.lossesOnly) q.set("losses_only", "true")
+  for (const lane of f.lanes ?? []) q.append("lanes", lane)
+  for (const lane of f.excludeLanes ?? []) q.append("exclude_lanes", lane)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -72,6 +83,8 @@ function qs(f: OppFilters, extra?: Record<string, string>): string {
 export interface OppFilterOptions {
   teams: string[]
   customers: string[]
+  /** Bruno R7: distinct "origin - dest" lane keys (YTD scope). */
+  lanes: string[]
   year_start: string
   year_end: string
 }
@@ -343,12 +356,12 @@ export function useOppWorkdays() {
 }
 
 export function useOppCombo(
-  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   grain: OppGrain = "month",
 ) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-combo", grain, f.team || "", f.customer || "", f.loadType || ""],
+    queryKey: ["opp-combo", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<OppCombo>(`${BASE}/combo${qs(filters, { grain })}`),
     ...RETRY,
   })
@@ -372,7 +385,7 @@ export function useOppCustomerVariance(f: OppFilters) {
 
 export function useOppCustomerLosses(f: OppFilters) {
   return useQuery({
-    queryKey: ["opp-customer-losses", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType],
+    queryKey: ["opp-customer-losses", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
     queryFn: () => apiFetch<OppCustomerLoss[]>(`${BASE}/customer-losses${qs(f)}`),
     ...RETRY,
   })
@@ -380,25 +393,25 @@ export function useOppCustomerLosses(f: OppFilters) {
 
 export function useOppTeamPerformance(f: OppFilters) {
   return useQuery({
-    queryKey: ["opp-team-performance", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType],
+    queryKey: ["opp-team-performance", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
     queryFn: () => apiFetch<OppTeamPerformance>(`${BASE}/team-performance${qs(f)}`),
     ...RETRY,
   })
 }
 
-export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "loadType">) {
+export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-team-projection", f.team || "", f.customer || "", f.loadType || ""],
+    queryKey: ["opp-team-projection", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<OppTeamProjection>(`${BASE}/team-projection${qs(filters)}`),
     ...RETRY,
   })
 }
 
-export function useOppProfitTmGauge(f: Pick<OppFilters, "team" | "customer" | "loadType">) {
+export function useOppProfitTmGauge(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-profit-tm-gauge", f.team || "", f.customer || "", f.loadType || ""],
+    queryKey: ["opp-profit-tm-gauge", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<OppProfitTmGauge>(`${BASE}/profit-tm-gauge${qs(filters)}`),
     ...RETRY,
   })
@@ -411,7 +424,7 @@ export function useOppActuals(f: OppFilters, opts?: { sort?: string; limit?: num
     queryKey: [
       "opp-actuals",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -432,7 +445,7 @@ export function useOppActualsByLane(
     queryKey: [
       "opp-actuals-by-lane",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -445,12 +458,12 @@ export function useOppActualsByLane(
 
 // Bruno R4: "Service" KPI MANAGEMENT chart — OTP/OTD over the grain.
 export function useOppService(
-  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   grain: OppGrain = "month",
 ) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-service", grain, f.team || "", f.customer || "", f.loadType || ""],
+    queryKey: ["opp-service", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<OppService>(`${BASE}/service${qs(filters, { grain })}`),
     ...RETRY,
   })
@@ -467,7 +480,7 @@ export function useOppByOrder(
     queryKey: [
       "opp-by-order",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false,
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -480,12 +493,12 @@ export function useOppByOrder(
 
 // Bruno R4: "Team Weekly Performance" modal data.
 export function useOppTeamWeekly(
-  f: Pick<OppFilters, "team" | "customer" | "loadType">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   enabled: boolean,
 ) {
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-team-weekly", f.team || "", f.customer || "", f.loadType || ""],
+    queryKey: ["opp-team-weekly", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${BASE}/team-weekly-performance${qs(filters)}`),
     enabled,
     ...RETRY,

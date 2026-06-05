@@ -65,7 +65,7 @@ function bandCls(pct: number): string {
 }
 
 export function TeamWeeklyModal({ filters, onClose }: Props) {
-  const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType }
+  const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const { data, isLoading, error } = useOppTeamWeekly(cf, true)
   const weeks: OppWeekPerf[] = data?.data?.weeks ?? []
 

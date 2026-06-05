@@ -227,7 +227,7 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
 // ---------------------------------------------------------------------------
 
 function TeamProjection({ filters }: { filters: OppFilters }) {
-  const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType }
+  const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const { data, isLoading, error } = useOppTeamProjection(cf)
   const v = data?.data
   return (
