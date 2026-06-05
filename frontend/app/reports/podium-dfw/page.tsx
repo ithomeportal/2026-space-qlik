@@ -42,6 +42,8 @@ type TextFilters = {
   order: string
   origin: string
   destination: string
+  postedBy: string
+  contractType: string
 }
 
 const EMPTY_FILTERS: TextFilters = {
@@ -49,13 +51,17 @@ const EMPTY_FILTERS: TextFilters = {
   order: "",
   origin: "",
   destination: "",
+  postedBy: "",
+  contractType: "",
 }
 
 const FILTER_FIELDS: { key: keyof TextFilters; label: string; placeholder: string }[] = [
-  { key: "customer",    label: "Customer",    placeholder: "Search customer…" },
-  { key: "order",       label: "Order",       placeholder: "Search #order…" },
-  { key: "origin",      label: "Origin",      placeholder: "Search origin…" },
-  { key: "destination", label: "Destination", placeholder: "Search destination…" },
+  { key: "customer",     label: "Customer",      placeholder: "Search customer…" },
+  { key: "order",        label: "Order",         placeholder: "Search #order…" },
+  { key: "origin",       label: "Origin",        placeholder: "Search origin…" },
+  { key: "destination",  label: "Destination",   placeholder: "Search destination…" },
+  { key: "postedBy",     label: "Posted by",     placeholder: "Search posted by…" },
+  { key: "contractType", label: "Contract Type", placeholder: "Search contract type…" },
 ]
 
 function containsCi(value: string | null | undefined, needle: string): boolean {
@@ -86,7 +92,8 @@ function PodiumDfwContent() {
     return rawRows.filter((r) => normalizeTeam(r.team) === target)
   }, [rawRows, teamFilter])
 
-  // Text filters (Customer / Order / Origin / Destination) on top of the team scope.
+  // Text filters (Customer / Order / Origin / Destination / Posted by /
+  // Contract Type) on top of the team scope.
   const anyTextFilter = FILTER_FIELDS.some((f) => filters[f.key].trim() !== "")
   const rows = useMemo(() => {
     if (!anyTextFilter) return teamRows
@@ -94,12 +101,16 @@ function PodiumDfwContent() {
     const order = filters.order.trim().toLowerCase()
     const origin = filters.origin.trim().toLowerCase()
     const destination = filters.destination.trim().toLowerCase()
+    const postedBy = filters.postedBy.trim().toLowerCase()
+    const contractType = filters.contractType.trim().toLowerCase()
     return teamRows.filter(
       (r) =>
         containsCi(r.customer, customer) &&
         containsCi(r.order_id, order) &&
         containsCi(r.origin, origin) &&
-        containsCi(r.destination, destination),
+        containsCi(r.destination, destination) &&
+        containsCi(r.posted_by, postedBy) &&
+        containsCi(r.contract_type, contractType),
     )
   }, [teamRows, filters, anyTextFilter])
 
@@ -246,7 +257,7 @@ function PodiumDfwContent() {
           </div>
         ) : null}
 
-        {/* Filters — Customer / Order / Origin / Destination */}
+        {/* Filters — Customer / Order / Origin / Destination / Posted by / Contract Type */}
         <section className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5">
           <div className="flex flex-wrap items-end gap-3">
             {FILTER_FIELDS.map((f) => (
