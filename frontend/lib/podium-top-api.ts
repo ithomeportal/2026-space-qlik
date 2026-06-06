@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
   success: boolean
@@ -69,14 +69,19 @@ const FIFTEEN_MIN = 15 * 60 * 1000
 
 // `apiPrefix` lets the main report and the four server-locked per-team reports
 // (Bruno R7: dfw-podium-top-tm1 … -tm4) share one hook. Defaults to the main
-// all-DFW report.
-export function usePodiumTop(apiPrefix = "custom/dfw-podium-top") {
+// all-DFW report. `equipment` (R8) is a server-side contains filter — pass the
+// debounced value so each keystroke doesn't fire a request.
+export function usePodiumTop(apiPrefix = "custom/dfw-podium-top", equipment = "") {
+  const trimmed = equipment.trim()
+  const qs = trimmed ? `?equipment=${encodeURIComponent(trimmed)}` : ""
   return useQuery({
-    queryKey: [apiPrefix, "podiums"],
-    queryFn: () => apiFetch<PodiumLeaderboards>(`${apiPrefix}/podiums`),
+    queryKey: [apiPrefix, "podiums", trimmed],
+    queryFn: () => apiFetch<PodiumLeaderboards>(`${apiPrefix}/podiums${qs}`),
     refetchInterval: FIFTEEN_MIN,
     refetchIntervalInBackground: false,
     staleTime: 5 * 60 * 1000,
+    // Keep showing the previous leaderboards while a new filter loads (§43).
+    placeholderData: keepPreviousData,
     ...PODIUM_TOP_RETRY,
   })
 }

@@ -19,6 +19,11 @@ Bruno R6 (2026-06-02, ``BRUNO -- DFW Podium Top Updates.pdf``):
     (``dfw-podium-top-tm1`` … ``-tm4``). Each calls the same query with
     ``team`` pinned to a single TM, so a TM1 user only ever sees TM1 rows.
 
+R8 (2026-06-06): optional ``equipment`` query param — case-insensitive
+*contains* match on the load's equipment type (v4 ``equipment_type_descr``
+falling back to the trimmed ``equipment_type_id`` code). All five
+leaderboards recompute over only the matching loads.
+
 Same data contract as ``podium_dfw.py``: the rate-conf base CTE is identical
 (``mcleod_gld_order_post_hist`` filtered ``posted_type='C'`` /
 ``comments='Rate Conf Received'`` joined to ``mcleod_gld_budget_report_v4``
@@ -34,7 +39,7 @@ each session to ``America/Chicago`` (`main._set_cst_session`) so plain
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
@@ -60,6 +65,12 @@ rate_conf AS MATERIALIZED (
         rp.posted_date              AS posted_date,
         TRIM(rp.posted_by_name)     AS posted_by,
         br.team                     AS team,
+        -- descr when present ('Van'), else trimmed code ('F48') -- both v4
+        -- columns are blank-padded / sometimes empty. SELECT-side TRIM only.
+        COALESCE(
+            NULLIF(TRIM(br.equipment_type_descr), ''),
+            NULLIF(TRIM(br.equipment_type_id), '')
+        )                           AS equipment_type,
         br.margin_amt::float        AS profit,
         br.total_charge::float      AS revenue
     FROM (
@@ -78,22 +89,36 @@ rate_conf AS MATERIALIZED (
 """
 
 
-async def _fetch_podiums(request: Request, team: Optional[str] = None) -> dict:
+async def _fetch_podiums(
+    request: Request,
+    team: Optional[str] = None,
+    equipment: str = "",
+) -> dict:
     """Run the leaderboard query, optionally locked to a single DFW sub-team.
 
     When ``team`` is given (``TM1``..``TM4``) every leaderboard is scoped to
-    that sub-team via ``rate_conf.team = $2``. The weekly cards stay top-3
+    that sub-team via ``rate_conf.team = $n``. The weekly cards stay top-3
     (Bruno R5 "keep unchanged"); the Today cards return all bookers (R6).
+
+    ``equipment`` (R8, 2026-06-06) is a case-insensitive *contains* match on
+    ``rate_conf.equipment_type`` — every leaderboard recomputes over only the
+    matching loads. Empty string = no filter. NULL-equipment loads never match
+    a non-empty search (ILIKE on NULL is NULL).
     """
     pool = get_datalake_gold_pool(request)
     params: list = [_pad_variants(list(PODIUM_TOP_TEAMS), width=8)]
 
-    # Optional server-locked team filter (per-team reports). $2 only exists
-    # when team is set, so the predicate is added in lockstep with the param.
-    team_filter = ""
+    # Optional filters — predicates are added in lockstep with their params so
+    # the $n placeholders always line up (asyncpg numbering rule).
+    extra_filter = ""
     if team:
         params.append(team)
-        team_filter = "          AND TRIM(team) = $2\n"
+        extra_filter += f"          AND TRIM(team) = ${len(params)}\n"
+    if equipment.strip():
+        params.append(equipment.strip())
+        extra_filter += (
+            f"          AND equipment_type ILIKE '%' || ${len(params)} || '%'\n"
+        )
 
     sql = f"""
     WITH {_RATE_CONF_CTE},
@@ -109,7 +134,7 @@ async def _fetch_podiums(request: Request, team: Optional[str] = None) -> dict:
         WHERE posted_date::date >= date_trunc('week', CURRENT_DATE)::date
           AND posted_date::date <  date_trunc('week', CURRENT_DATE)::date + 7
           AND posted_by IS NOT NULL AND posted_by <> ''
-{team_filter}        GROUP BY posted_by
+{extra_filter}        GROUP BY posted_by
     ),
     -- Today aggregation: both loads + profit on every row so each leaderboard
     -- shows both numbers regardless of which metric was the primary sort.
@@ -120,7 +145,7 @@ async def _fetch_podiums(request: Request, team: Optional[str] = None) -> dict:
         FROM rate_conf
         WHERE posted_date::date = CURRENT_DATE
           AND posted_by IS NOT NULL AND posted_by <> ''
-{team_filter}        GROUP BY posted_by
+{extra_filter}        GROUP BY posted_by
     )
     SELECT
         (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
@@ -169,9 +194,10 @@ router = APIRouter(tags=["dfw-podium-top"], prefix="/custom/dfw-podium-top")
 @router.get("/podiums")
 async def podiums(
     request: Request,
+    equipment: str = Query("", max_length=80),
     _user: dict = Depends(require_report_access("dfw-podium-top")),
 ):
-    return await _fetch_podiums(request, team=None)
+    return await _fetch_podiums(request, team=None, equipment=equipment)
 
 
 # --- Per-team reports: DFW Podium Top TM1..TM4 (Bruno R7) -------------------
@@ -189,9 +215,10 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
     @r.get("/podiums")
     async def podiums_team(
         request: Request,
+        equipment: str = Query("", max_length=80),
         _user: dict = Depends(gate),
     ):
-        return await _fetch_podiums(request, team=tm)
+        return await _fetch_podiums(request, team=tm, equipment=equipment)
 
     return r
 

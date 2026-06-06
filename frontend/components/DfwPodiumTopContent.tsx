@@ -1,12 +1,14 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Loader2, Trophy } from "lucide-react"
+import { ArrowLeft, Loader2, Search, Trophy, X } from "lucide-react"
 import {
   usePodiumTop,
   type PodiumLeaderboards,
 } from "@/lib/podium-top-api"
 import { fmtCurrency, fmtInt, fmtPct } from "@/lib/podium-dfw-api"
+import { useDebounce } from "@/lib/use-debounce"
 import { ReportGuard } from "@/components/ReportGuard"
 
 // Shared body for "DFW Podium Top" and its four server-locked per-team
@@ -29,8 +31,14 @@ export function DfwPodiumTopContent({
 }
 
 function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
-  const q = usePodiumTop(apiPrefix)
+  // Equipment Type filter (R8) — server-side contains match; all leaderboards
+  // recompute over only the matching loads. Debounced so typing doesn't fire
+  // a request per keystroke.
+  const [equipment, setEquipment] = useState("")
+  const debouncedEquipment = useDebounce(equipment, 300)
+  const q = usePodiumTop(apiPrefix, debouncedEquipment)
   const data = q.data?.data
+  const equipmentActive = debouncedEquipment.trim() !== ""
   const lastUpdated = q.dataUpdatedAt ? new Date(q.dataUpdatedAt) : null
 
   return (
@@ -82,6 +90,42 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
             {q.error instanceof Error ? ` (${q.error.message})` : ""}
           </div>
         ) : null}
+
+        {/* Equipment Type filter (R8) */}
+        <section className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex min-w-[180px] flex-col gap-1 md:max-w-[280px]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                Equipment Type
+              </span>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9CA3AF]" />
+                <input
+                  type="text"
+                  value={equipment}
+                  onChange={(e) => setEquipment(e.target.value)}
+                  placeholder="Search equipment…"
+                  className="w-full rounded-md border border-[#E5E7EB] bg-white py-1.5 pl-7 pr-7 text-xs text-[#111827] placeholder:text-[#9CA3AF] focus:border-[#1B3A5C] focus:outline-none focus:ring-1 focus:ring-[#1B3A5C]"
+                />
+                {equipment !== "" && (
+                  <button
+                    onClick={() => setEquipment("")}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#9CA3AF] hover:bg-[#F3F4F6] hover:text-[#374151]"
+                    aria-label="Clear Equipment Type filter"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </label>
+            {equipmentActive && (
+              <p className="pb-1.5 text-[11px] text-[#6B7280]">
+                Leaderboards reflect only loads whose equipment matches
+                &ldquo;{debouncedEquipment.trim()}&rdquo;.
+              </p>
+            )}
+          </div>
+        </section>
 
         <Podiums data={data} loading={q.isLoading} />
       </div>
