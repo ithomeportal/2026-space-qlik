@@ -46,6 +46,7 @@ export interface PodiumRow {
   revenue: number | null
   margin_pct: number | null
   contract_type: string | null
+  equipment_type: string | null
   company_id: string | null
 }
 

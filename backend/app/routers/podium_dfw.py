@@ -69,6 +69,13 @@ rate_conf AS MATERIALIZED (
         br.dest_name                AS destination,
         br.customer_name            AS customer,
         br.contract_type_descr      AS contract_type,
+        -- descr when present ('Van', 'Flatbed'), else the trimmed code
+        -- ('F48', 'FT') -- both columns are blank-padded / sometimes empty.
+        -- SELECT-side TRIM only; never in WHERE/JOIN (sargability rule).
+        COALESCE(
+            NULLIF(TRIM(br.equipment_type_descr), ''),
+            NULLIF(TRIM(br.equipment_type_id), '')
+        )                           AS equipment_type,
         br.company_id               AS company_id,
         br.margin_amt::float        AS profit,
         br.total_charge::float      AS revenue
@@ -142,7 +149,7 @@ async def overview(
         CASE WHEN COALESCE(revenue, 0) > 0
              THEN profit / NULLIF(revenue, 0)
              ELSE NULL END                                    AS margin_pct,
-        contract_type, company_id
+        contract_type, equipment_type, company_id
     FROM rate_conf
     WHERE {where}
     ORDER BY posted_date DESC NULLS LAST,
@@ -170,6 +177,7 @@ async def overview(
             "revenue":       r["revenue"],
             "margin_pct":    r["margin_pct"],
             "contract_type": r["contract_type"],
+            "equipment_type": r["equipment_type"],
             "company_id":    r["company_id"],
         }
         for r in rows_out

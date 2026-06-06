@@ -44,6 +44,7 @@ type TextFilters = {
   destination: string
   postedBy: string
   contractType: string
+  equipmentType: string
 }
 
 const EMPTY_FILTERS: TextFilters = {
@@ -53,6 +54,7 @@ const EMPTY_FILTERS: TextFilters = {
   destination: "",
   postedBy: "",
   contractType: "",
+  equipmentType: "",
 }
 
 const FILTER_FIELDS: { key: keyof TextFilters; label: string; placeholder: string }[] = [
@@ -62,6 +64,7 @@ const FILTER_FIELDS: { key: keyof TextFilters; label: string; placeholder: strin
   { key: "destination",  label: "Destination",   placeholder: "Search destination…" },
   { key: "postedBy",     label: "Posted by",     placeholder: "Search posted by…" },
   { key: "contractType", label: "Contract Type", placeholder: "Search contract type…" },
+  { key: "equipmentType", label: "Equipment Type", placeholder: "Search equipment…" },
 ]
 
 function containsCi(value: string | null | undefined, needle: string): boolean {
@@ -103,6 +106,7 @@ function PodiumDfwContent() {
     const destination = filters.destination.trim().toLowerCase()
     const postedBy = filters.postedBy.trim().toLowerCase()
     const contractType = filters.contractType.trim().toLowerCase()
+    const equipmentType = filters.equipmentType.trim().toLowerCase()
     return teamRows.filter(
       (r) =>
         containsCi(r.customer, customer) &&
@@ -110,7 +114,8 @@ function PodiumDfwContent() {
         containsCi(r.origin, origin) &&
         containsCi(r.destination, destination) &&
         containsCi(r.posted_by, postedBy) &&
-        containsCi(r.contract_type, contractType),
+        containsCi(r.contract_type, contractType) &&
+        containsCi(r.equipment_type, equipmentType),
     )
   }, [teamRows, filters, anyTextFilter])
 
@@ -372,6 +377,7 @@ function PodiumDfwContent() {
                     <SortableTh label="Revenue"       columnKey="revenue"       state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Margin %"      columnKey="margin_pct"    state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Contract Type" columnKey="contract_type" state={sort} className={TH_CLASS} />
+                    <SortableTh label="Equipment Type" columnKey="equipment_type" state={sort} className={TH_CLASS} />
                   </tr>
                 </thead>
                 <tbody>
@@ -406,6 +412,7 @@ function PodiumDfwContent() {
                           {fmtPct(r.margin_pct)}
                         </Td>
                         <Td>{r.contract_type ?? "—"}</Td>
+                        <Td>{r.equipment_type ?? "—"}</Td>
                       </tr>
                     )
                   })}
