@@ -13,12 +13,20 @@ Rules (do NOT simplify without HR sign-off — see docs/SPEC-BONUS-CALCULATOR.md
   $1.60, gated by the 100-load weekly minimum. (R8, Bruno 2026-06-03: the per-week
   service calculation from R4-R7 is REMOVED — every week shows and pays on the one
   calendar-month On time P&D, the same number as the team header SERVICE KPI.)
-- Wildcard: monthly team profit > $100,000 AND the SAME monthly service avg >= 95%;
+- Wildcard: team profit > $100,000 AND the SAME monthly service avg >= 95%;
   pays max(regular, wildcard). (R8 bug fix: eligibility previously read the
   weeks-union period average, which could clear 95% while the displayed monthly
-  SERVICE was below it — Team 1 May: 94.67% shown yet "Eligible".)
-- Profit add-ons (per employee): >$130k +$500, >$150k +$500, >=$170k +$500 (ladder == Bruno's $500/$1,000/$1,500)
-- Team-1 KAM: monthly profit > $150,000 -> $14,400 MXN / DOF fx
+  SERVICE was below it — Team 1 May: 94.67% shown yet "Eligible".) NOTE: the
+  $100k profit gate still reads the weekly-bucket sum (`total_profit`); whether
+  it should move to calendar-month profit like the add-ons is OPEN — emailed
+  Bruno 2026-06-08, awaiting reply (see SPEC §R9 PENDING block).
+- Profit add-ons (per employee): >$130k +$500, >$150k +$500, >=$170k +$500
+  (ladder == Bruno's $500/$1,000/$1,500). R9 (2026-06-08): keyed off the
+  CALENDAR-MONTH profit (header PROFIT KPI / team["monthlyProfit"]), NOT the
+  weekly-bucket sum — the Mon→Sun buckets miss the 1st-3rd so the bucket sum
+  could sit below $170k while the header showed >=$170k.
+- Team-1 KAM: monthly profit > $150,000 -> $14,400 MXN / DOF fx (gate still on
+  the weekly-bucket sum — same OPEN question as the wildcard, pending Bruno)
 - Afterhours (Night/Weekend): average of the 4 day-teams' weekly T&T bonus
 """
 
