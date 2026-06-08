@@ -230,7 +230,18 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
 
     total_revenue = sum(float(week.get("revenue", 0) or 0) for week in team["weeks"])
     total_profit = sum(float(week.get("grossProfit", 0) or 0) for week in team["weeks"])
-    profit_brackets = calculate_profit_bracket_bonuses(total_profit)
+    # R9 (Bruno 2026-06-08): the 130/150/170 profit brackets key off the
+    # calendar-month profit (the header PROFIT KPI), NOT the weekly-bucket sum.
+    # The Mon→Sun weekly buckets miss the 1st-3rd of the month, so the bucket
+    # sum can sit below $170k while the header shows ≥$170k (Team 1 live: header
+    # $180,982 ≥ 170k but the 170 bracket silently paid $0). Bruno: the $170k
+    # limit was exceeded, so all three $500 ladders must show. Fixtures without a
+    # monthly figure fall back to the bucket sum (same fallback shape as
+    # monthlyServicePct, R8). Wildcard still uses the bucket sum (R3/R8 locked).
+    bracket_profit_basis = (
+        float(team["monthlyProfit"]) if team.get("monthlyProfit") is not None else total_profit
+    )
+    profit_brackets = calculate_profit_bracket_bonuses(bracket_profit_basis)
     wildcard_index = get_wildcard_bracket_index(normalized_service)
     wildcard_eligible = total_profit > 100000 and wildcard_index >= 0
 

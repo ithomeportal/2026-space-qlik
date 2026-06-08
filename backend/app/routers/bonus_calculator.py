@@ -458,6 +458,11 @@ async def build_bonus_report_data(gold, primary, financial, period: Optional[str
                 # ONE service basis (weekly display, T&T bracket, wildcard gate).
                 # The period (weeks-union) pickup/delivery stay as fallback only.
                 "monthlyServicePct": mtr["monthlyServicePct"],
+                # R9 (Bruno 2026-06-08): the calendar-month profit (header PROFIT
+                # KPI) is now the basis for the 130/150/170 brackets — the engine
+                # keys the ladder off this, not the weekly-bucket sum (which misses
+                # the 1st-3rd → silently underpaid the 170 bracket).
+                "monthlyProfit": mtr["monthlyProfit"],
                 "fxRate": team_fx,
                 "weeks": mtr["weeks"],
                 "employees": roster.get(team_id, []),
