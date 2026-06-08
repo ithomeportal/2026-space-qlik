@@ -95,14 +95,36 @@ def _norm_teams(values: list[str]) -> list[str]:
     return [v.strip().upper() for v in values if v and v.strip().upper() in ALL_ALLOWED_TEAMS]
 
 
+def _variance_sign_clause(variance_sign: Optional[str]) -> Optional[str]:
+    """SQL fragment for Bruno's 'Lanes with change' filter.
+
+      - `positive` → variance >= 0  (savings / break-even)
+      - `negative` → variance < 0   (overpay)
+
+    Returns `None` when no filter is requested. The comparison is a literal
+    (no bound parameter), so it composes safely into any WHERE without
+    touching placeholder numbering. NULL variances satisfy neither side and
+    are dropped from both — a lane with no computed variance has no "change".
+    """
+    if variance_sign == "positive":
+        return "report.variance >= 0"
+    if variance_sign == "negative":
+        return "report.variance < 0"
+    return None
+
+
 def _collect_lane_filters(
-    params: list, origin: Optional[str], dest: Optional[str]
+    params: list,
+    origin: Optional[str],
+    dest: Optional[str],
+    variance_sign: Optional[str] = None,
 ) -> list[str]:
     """Append origin/dest ILIKE values to `params` in place.
 
     Returns the WHERE fragments (without leading AND). Caller joins them.
-    Origin/dest come from the Lanes filter but apply to every endpoint so
-    the whole report (KPIs, teams, trend) respects the user's lane scope.
+    Origin/dest (and the variance-sign filter) come from the Lanes filter
+    strip but apply to every endpoint so the whole report (KPIs, teams,
+    trend) respects the user's lane scope.
     """
     parts: list[str] = []
     if origin:
@@ -111,6 +133,9 @@ def _collect_lane_filters(
     if dest:
         params.append(f"%{dest}%")
         parts.append(f"report.dest_name ILIKE ${len(params)}")
+    sign_clause = _variance_sign_clause(variance_sign)
+    if sign_clause:
+        parts.append(sign_clause)
     return parts
 
 
@@ -288,6 +313,7 @@ async def summary(
     exclude_customer_ids: list[str] = Query(default_factory=list, description="Customers to exclude"),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """4 main KPIs for a given month: loads, savings, overpay, net variance.
@@ -304,7 +330,7 @@ async def summary(
     target_month = await _resolve_month(pool, month)
 
     params: list = [target_month]
-    lane_parts = _collect_lane_filters(params, origin, dest)
+    lane_parts = _collect_lane_filters(params, origin, dest, variance_sign)
     lane_extra = "".join(f" AND {p}" for p in lane_parts)
 
     cte, join_sql, where_extra = _build_scope_clauses(
@@ -356,6 +382,7 @@ async def by_customer(
     exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
     limit: int = Query(50, ge=1, le=500),
 ):
@@ -364,7 +391,7 @@ async def by_customer(
     target_month = await _resolve_month(pool, month)
 
     params: list = [target_month]
-    lane_parts = _collect_lane_filters(params, origin, dest)
+    lane_parts = _collect_lane_filters(params, origin, dest, variance_sign)
     lane_extra = "".join(f" AND {p}" for p in lane_parts)
 
     cte, join_sql, where_extra = _build_scope_clauses(
@@ -422,6 +449,7 @@ async def lanes(
     sort: str = Query("variance_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Detail rows — one row per lane for the selected month, with filters + paging."""
@@ -446,6 +474,9 @@ async def lanes(
     if dest:
         params.append(f"%{dest}%")
         where_parts.append(f"report.dest_name ILIKE ${len(params)}")
+    sign_clause = _variance_sign_clause(variance_sign)
+    if sign_clause:
+        where_parts.append(sign_clause)
 
     cte, join_sql, where_extra = _build_scope_clauses(
         division, team, team_ids, exclude_team_ids,
@@ -512,6 +543,7 @@ async def by_team(
     exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """One row per (division, team_id) for the selected month.
@@ -529,7 +561,7 @@ async def by_team(
     where_parts = ["report.month_date = $1"]
     params: list = [target_month]
 
-    where_parts.extend(_collect_lane_filters(params, origin, dest))
+    where_parts.extend(_collect_lane_filters(params, origin, dest, variance_sign))
 
     # Resolve which team_ids to include — division universe ∩ include list, then
     # subtract exclude list. When nothing is set, default to every allowed team
@@ -633,6 +665,7 @@ async def monthly_totals(
     exclude_customer_ids: list[str] = Query(default_factory=list),
     origin: Optional[str] = Query(None, description="Origin ILIKE substring"),
     dest: Optional[str] = Query(None, description="Destination ILIKE substring"),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     months_window: int = Query(9, ge=1, le=36, alias="window"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
@@ -646,7 +679,7 @@ async def monthly_totals(
     where_parts = ["report.month_date IN (SELECT month_date FROM recent_months)"]
     params: list = []
 
-    where_parts.extend(_collect_lane_filters(params, origin, dest))
+    where_parts.extend(_collect_lane_filters(params, origin, dest, variance_sign))
 
     team_cte, join_sql, where_extra = _build_scope_clauses(
         division, team, team_ids, exclude_team_ids,
@@ -764,6 +797,7 @@ async def lane_rates(
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
     equipment: str = Query("VAN"),
+    variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
     """Return SONAR + 123LB monthly benchmark rates for the same lanes /lanes returns.
@@ -796,6 +830,9 @@ async def lane_rates(
     if dest:
         params.append(f"%{dest}%")
         where_parts.append(f"report.dest_name ILIKE ${len(params)}")
+    sign_clause = _variance_sign_clause(variance_sign)
+    if sign_clause:
+        where_parts.append(sign_clause)
 
     cte, join_sql, where_extra = _build_scope_clauses(
         division, team, team_ids, exclude_team_ids,

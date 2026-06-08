@@ -210,11 +210,17 @@ export type SavingsCorpTeam = "TEAM1" | "TEAM2" | "TEAM3" | "TEAM4" | "TEAM5"
  * The legacy single-value props (`customerId`, `team`) on the hook signatures
  * remain valid; the backend folds them into the include lists.
  */
+// "Lanes with change" filter (Bruno 2026-06-08): positive = variance >= 0,
+// negative = variance < 0. Threaded through every endpoint via the scope
+// object so the whole report (KPIs, teams, customers, trend, lanes) honors it.
+export type SavingsVarianceSign = "positive" | "negative"
+
 export interface SavingsScopeFilters {
   teamIds?: string[]
   excludeTeamIds?: string[]
   customerIds?: string[]
   excludeCustomerIds?: string[]
+  varianceSign?: SavingsVarianceSign
 }
 
 function appendScope(qs: URLSearchParams, scope?: SavingsScopeFilters) {
@@ -223,6 +229,7 @@ function appendScope(qs: URLSearchParams, scope?: SavingsScopeFilters) {
   for (const v of scope.excludeTeamIds ?? []) qs.append("exclude_team_ids", v)
   for (const v of scope.customerIds ?? []) qs.append("customer_ids", v)
   for (const v of scope.excludeCustomerIds ?? []) qs.append("exclude_customer_ids", v)
+  if (scope.varianceSign) qs.set("variance_sign", scope.varianceSign)
 }
 
 function scopeKey(scope?: SavingsScopeFilters) {
@@ -232,6 +239,7 @@ function scopeKey(scope?: SavingsScopeFilters) {
     (scope.excludeTeamIds ?? []).join(","),
     (scope.customerIds ?? []).join(","),
     (scope.excludeCustomerIds ?? []).join(","),
+    scope.varianceSign ?? "",
   ].join("|")
 }
 

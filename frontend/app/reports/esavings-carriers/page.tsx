@@ -24,6 +24,7 @@ import {
   type SavingsDivision,
   type SavingsLaneRate,
   type SavingsScopeFilters,
+  type SavingsVarianceSign,
 } from "@/lib/api"
 import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
@@ -100,6 +101,9 @@ function ESavingsFromCarriersContent() {
   const [teamMode, setTeamMode] = useState<FilterMode>("include")
   const [customerIds, setCustomerIds] = useState<string[]>([])
   const [customerMode, setCustomerMode] = useState<FilterMode>("include")
+  // "Lanes with change" filter (Bruno 2026-06-08): "" = all, positive (variance
+  // >= 0), negative (variance < 0). Applies report-wide via the scope object.
+  const [varianceSign, setVarianceSign] = useState<"" | SavingsVarianceSign>("")
   const [sort, setSort] = useState("variance_desc")
   const [page, setPage] = useState(1)
   const limit = 100
@@ -149,8 +153,9 @@ function ESavingsFromCarriersContent() {
       excludeTeamIds: teamMode === "exclude" ? teamIds : undefined,
       customerIds: customerMode === "include" ? customerIds : undefined,
       excludeCustomerIds: customerMode === "exclude" ? customerIds : undefined,
+      varianceSign: varianceSign || undefined,
     }),
-    [teamIds, teamMode, customerIds, customerMode],
+    [teamIds, teamMode, customerIds, customerMode, varianceSign],
   )
 
   const { data: summaryRes, isLoading: loadingSummary } = useSavingsSummary(
@@ -341,6 +346,23 @@ function ESavingsFromCarriersContent() {
             searchable
             width={260}
           />
+
+          <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Lanes with change
+          </label>
+          <select
+            value={varianceSign}
+            onChange={(e) => {
+              setVarianceSign(e.target.value as "" | SavingsVarianceSign)
+              setPage(1)
+            }}
+            title="Positive: variance ≥ 0 · Negative: variance < 0"
+            className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-sm text-[#111827] shadow-sm focus:border-[#1B3A5C] focus:outline-none"
+          >
+            <option value="">All</option>
+            <option value="positive">Positive (≥ 0)</option>
+            <option value="negative">Negative (&lt; 0)</option>
+          </select>
 
           <span className="h-5 w-px bg-[#E5E7EB]" aria-hidden />
 
