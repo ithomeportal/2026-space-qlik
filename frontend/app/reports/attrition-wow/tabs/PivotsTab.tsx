@@ -235,10 +235,19 @@ function PivotPanel({
       })()
       const total = values.reduce<number>((a, b) => a + (b ?? 0), 0)
       const status = computeStatus(values[0] ?? null, values[1] ?? null, ref)
+      // Bruno (2026-06-08): "Difference" column = latest week − 8-week avg.
+      // (The PDF wording says "subtract latest from avg" but the mock proves
+      // latest − avg: TM1 avg 139, Jun-1 118 → −21.) Null when either side is
+      // missing.
+      const latest = values[0]
+      const diff =
+        latest === null || latest === undefined || ref === null
+          ? null
+          : latest - ref
       // Bruno (2026-05-25 page 5): expose customer/client + lane separately so
       // the customer_lane view can render — and sort — two columns.
       const { cust, lane } = splitDimKey(k)
-      return { dim_key: k, cust, lane, values, revenue, profit, ref, total, status }
+      return { dim_key: k, cust, lane, values, revenue, profit, ref, diff, total, status }
     })
     const strCompare = (av: string, bv: string) => {
       const a = av.toLowerCase()
@@ -259,6 +268,13 @@ function PivotPanel({
       if (sortKey === "ref") {
         const av = a.ref
         const bv = b.ref
+        if (av === null) return 1
+        if (bv === null) return -1
+        return sortDir === "asc" ? av - bv : bv - av
+      }
+      if (sortKey === "diff") {
+        const av = a.diff
+        const bv = b.diff
         if (av === null) return 1
         if (bv === null) return -1
         return sortDir === "asc" ? av - bv : bv - av
@@ -334,10 +350,18 @@ function PivotPanel({
       return refs.reduce((a, b) => a + b, 0)
     })()
 
+    // Bruno (2026-06-08): Totals "Difference" = latest week total − 8-week-avg
+    // total. The Totals Difference cell shades green when >= 0, red below.
+    const totalLatest = perWeek[0]
+    const totalDiff: number | null =
+      totalLatest === null || totalLatest === undefined || totalRef === null
+        ? null
+        : totalLatest - totalRef
+
     return {
       weeksList,
       pivot: pivotEntries,
-      totals: { perWeek, ref: totalRef },
+      totals: { perWeek, ref: totalRef, diff: totalDiff },
     }
   }, [rows, sortKey, sortDir, metric])
 
@@ -415,6 +439,16 @@ function PivotPanel({
               >
                 8-week avg
               </SortTh>
+              {/* Bruno (2026-06-08): Difference = latest week − 8-week avg. */}
+              <SortTh
+                k="diff"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onToggle={toggleSort}
+                className="bg-[#F9FAFB] text-[#1B3A5C]"
+              >
+                Difference
+              </SortTh>
               {weeksList.map((w, i) => (
                 <SortTh
                   key={w}
@@ -485,6 +519,11 @@ function PivotPanel({
                 <td className="bg-white px-3 py-1.5 text-right font-mono font-semibold text-[#1B3A5C]">
                   {row.ref === null ? "—" : fmt(row.ref)}
                 </td>
+                {/* Bruno (2026-06-08): per-row Difference is uncolored; only the
+                    Totals Difference cell is shaded (see mock). */}
+                <td className="bg-white px-3 py-1.5 text-right font-mono text-[#374151]">
+                  {row.diff === null ? "—" : fmt(row.diff)}
+                </td>
                 {row.values.map((v, i) => (
                   <td
                     key={i}
@@ -497,7 +536,7 @@ function PivotPanel({
             ))}
             {pivot.length === 0 && (
               <tr>
-                <td colSpan={weeksList.length + leadingCols} className="py-8 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={weeksList.length + leadingCols + 1} className="py-8 text-center text-xs text-[#9CA3AF]">
                   No data in scope.
                 </td>
               </tr>
@@ -517,6 +556,13 @@ function PivotPanel({
                 {isLane && <td className="bg-[#F9FAFB] px-3 py-2" />}
                 <td className="bg-[#F9FAFB] px-3 py-2 text-right font-mono text-[#1B3A5C]">
                   {totals.ref === null ? "—" : fmt(totals.ref)}
+                </td>
+                {/* Bruno (2026-06-08): Totals Difference shades green when
+                    >= 0, red below (cellShade against a 0 reference). */}
+                <td
+                  className={`bg-[#F9FAFB] px-3 py-2 text-right font-mono ${cellShade(totals.diff, 0)}`}
+                >
+                  {totals.diff === null ? "—" : fmt(totals.diff)}
                 </td>
                 {totals.perWeek.map((v, i) => (
                   <td
