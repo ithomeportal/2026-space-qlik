@@ -52,6 +52,14 @@ function ceoQs(f: CeoFilters) {
   return `?${q.toString()}`
 }
 
+// Same-origin proxy path for the All Orders CSV export (Bruno 2026-06-09).
+// The backend streams every row for the current filter scope; the proxy
+// passes the text/csv body through with its Content-Disposition intact, so
+// an <a href download> saves it via the NextAuth session cookie.
+export function ceoOrdersCsvPath(f: CeoFilters): string {
+  return `custom/ceo-executive/orders.csv${ceoQs(f)}`
+}
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
 import {
+  ceoOrdersCsvPath,
   fmtCount,
   fmtPct,
   fmtUsd,
@@ -15,6 +16,7 @@ import { CeoErrorBanner } from "../ErrorBanner"
 import { marginCellClass } from "../margin-color"
 import { SortableTh, useSortable } from "../sortable"
 import { CustomerLink } from "../customer-cell"
+import { DownloadCsvButton } from "../../admin-cashflow/DownloadCsvButton"
 
 interface Props {
   filters: CeoFilters
@@ -44,6 +46,7 @@ export function Orders({ filters, onCustomerSelect }: Props) {
         pageSize={d?.page_size ?? 100}
         onPageChange={setPage}
         onCustomerSelect={onCustomerSelect}
+        csvHref={`/api/proxy/${ceoOrdersCsvPath(filters)}`}
       />
     </div>
   )
@@ -156,6 +159,7 @@ function AllOrdersPanel({
   pageSize,
   onPageChange,
   onCustomerSelect,
+  csvHref,
 }: {
   rows: CeoAllOrder[]
   loading?: boolean
@@ -164,6 +168,7 @@ function AllOrdersPanel({
   pageSize: number
   onPageChange: (page: number) => void
   onCustomerSelect?: (customer: string) => void
+  csvHref: string
 }) {
   // Sorting acts on the current page only (rows are server-paginated).
   const { sorted, sortKey, sortDir, toggle } = useSortable<CeoAllOrder>(rows, "departure", "desc")
@@ -196,7 +201,14 @@ function AllOrdersPanel({
             · {firstRow.toLocaleString()}–{lastRow.toLocaleString()} of {total.toLocaleString()} · by departure desc · click headers to sort
           </span>
         </div>
-        <PageControls page={page} totalPages={totalPages} disabled={loading} onPageChange={onPageChange} />
+        <div className="flex items-center gap-2">
+          <DownloadCsvButton
+            href={csvHref}
+            label={`CSV (all ${total.toLocaleString()})`}
+            title="Download all orders for the current filters as CSV"
+          />
+          <PageControls page={page} totalPages={totalPages} disabled={loading} onPageChange={onPageChange} />
+        </div>
       </div>
       {loading ? (
         <div className="flex h-40 items-center justify-center">

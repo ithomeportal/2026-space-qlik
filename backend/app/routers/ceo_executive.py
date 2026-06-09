@@ -55,10 +55,12 @@ fires its independent panel reads in parallel via asyncio.gather.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Iterable, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
@@ -1532,3 +1534,108 @@ async def orders(
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# All Orders CSV export (Bruno 2026-06-09, "BRUNO -- CEO Update.pdf" R1).
+# The Orders tab's "All Orders" table is server-paginated (100/page). This
+# endpoint streams the *entire* result set for the current filter scope in
+# one CSV — same scope/date predicate, same columns, same departure-DESC
+# order, but no LIMIT/OFFSET. The proxy passes the text/csv body through
+# untouched and the Content-Disposition makes the browser save it
+# (SPEC-CODE-RULES §31). Mirrors the admin-cashflow CSV pattern.
+# ---------------------------------------------------------------------------
+def _csv_response(filename: str, header: list[str], rows: Iterable[list]) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(header)
+    for r in rows:
+        writer.writerow(r)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/orders.csv")
+async def orders_csv(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    division: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("ceo-executive")),
+):
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    ao_params: list = []
+    ao_where = _scope_where("br4", team, customer, ao_params, division=division)
+    ao_params.extend([s, e])
+    ao_df = (
+        f"br4.origin_actual_departure >= ${len(ao_params)-1}"
+        f" AND br4.origin_actual_departure < (${len(ao_params)}::date + 1)"
+    )
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
+               ELSE TRIM(br4.team_id) END AS team,
+          COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
+          TRIM(br4.id)            AS id,
+          TRIM(br4.customer_name) AS customer,
+          COALESCE(TRIM(mov.payee_name), '') AS carrier,
+          TRIM(br4.origin_name)   AS origin,
+          TRIM(br4.dest_name)     AS destination,
+          br4.origin_actual_departure AS departure,
+          COALESCE(br4.total_charge, 0)::numeric AS revenue,
+          COALESCE(br4.margin_amt, 0)::numeric AS profit,
+          CASE WHEN br4.total_charge > 0
+               THEN br4.margin_amt::numeric / br4.total_charge::numeric
+               ELSE 0 END AS margin_pct,
+          GREATEST(0, br4.total_charge::numeric * 0.15 - br4.margin_amt::numeric) AS diff_15,
+          GREATEST(0, br4.total_charge::numeric * 0.18 - br4.margin_amt::numeric) AS diff_18,
+          GREATEST(0, br4.total_charge::numeric * 0.20 - br4.margin_amt::numeric) AS diff_20
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN LATERAL (
+          SELECT m.payee_name
+          FROM public.mcleod_gld_movement m
+          WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+          ORDER BY m.movement_id ASC
+          LIMIT 1
+        ) mov ON TRUE
+        WHERE {ao_where} AND {ao_df}
+        ORDER BY br4.origin_actual_departure DESC NULLS LAST
+        """,
+        *ao_params,
+    )
+
+    header = [
+        "Team", "Contract Type", "Order", "Departure", "Customer", "Carrier",
+        "Origin", "Destination", "Revenue (USD)", "Profit (USD)", "Margin %",
+        "15% Diff+ (USD)", "18% Diff+ (USD)", "20% Diff+ (USD)",
+    ]
+    body = (
+        [
+            r["team"],
+            r["contract_type"],
+            r["id"],
+            r["departure"].strftime("%Y-%m-%d %H:%M") if r["departure"] else "",
+            r["customer"],
+            r["carrier"],
+            r["origin"],
+            r["destination"],
+            round(float(r["revenue"] or 0), 2),
+            round(float(r["profit"] or 0), 2),
+            round(float(r["margin_pct"] or 0) * 100.0, 2),
+            round(float(r["diff_15"] or 0), 2),
+            round(float(r["diff_18"] or 0), 2),
+            round(float(r["diff_20"] or 0), 2),
+        ]
+        for r in rows
+    )
+    filename = f"ceo-executive_all-orders_{s.isoformat()}_to_{e.isoformat()}.csv"
+    return _csv_response(filename, header, body)
