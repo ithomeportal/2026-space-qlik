@@ -37,6 +37,7 @@ each session to ``America/Chicago`` (`main._set_cst_session`) so plain
 """
 
 import json
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -46,6 +47,59 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 
 PODIUM_TOP_TEAMS = ("TEAM-DFW",)
+
+# Bruno 2026-06-09 ("BRUNO -- DFW Podium Top Updates.pdf" R1): a "Bookers" /
+# "All DFW" toggle, "Bookers" selected by default. The Bookers group is a
+# fixed roster of named people; the leaderboards restrict to loads posted by
+# anyone in it. "All DFW" drops the restriction (every poster on TEAM-DFW).
+BOOKER_NAMES: tuple[str, ...] = (
+    "Anthares Montoya",
+    "Eugenio Miranda",
+    "Juan Reyna",
+    "Ximena Herrera",
+    "Jonathan Rodriguez",
+    "Jonathan Hernandez",
+    "Daniel Salazar",
+    "Antonio Arizpe",
+    "Daniela Vita",
+    "Andres Sanmiguel",
+    "Antonia Bulnes",
+    "Roberto Barcenas",
+    "Maria Gonzalez",
+)
+
+# posted_by_name in McLeod can vary by case, accent, token order
+# ("Montoya, Anthares" vs "Anthares Montoya") and compound surnames written
+# with a space ("San Miguel"). We normalize both sides to lowercase, strip
+# accents, then keep only [a-z], and require BOTH the first- and last-name
+# tokens to appear as substrings. Requiring both tokens makes the
+# "daniel" ⊂ "daniela" style overlap harmless (Daniel Salazar needs
+# "salazar" too). If a roster member never surfaces on the live report it's
+# a spelling/format mismatch we tune once we can see the real posted_by
+# values — this is an iterative Bruno report.
+_ACCENTS_FROM = "áàäâãåÁÀÄÂÃÅéèëêÉÈËÊíìïîÍÌÏÎóòöôõÓÒÖÔÕúùüûÚÙÜÛñÑçÇ"
+_ACCENTS_TO = "a" * 12 + "e" * 8 + "i" * 8 + "o" * 10 + "u" * 8 + "n" * 2 + "c" * 2
+assert len(_ACCENTS_FROM) == len(_ACCENTS_TO)
+
+# SQL expression: posted_by → lowercase, unaccented, letters-only.
+_NORM_POSTED_BY = (
+    f"regexp_replace(lower(translate(posted_by, '{_ACCENTS_FROM}', '{_ACCENTS_TO}')),"
+    " '[^a-z]', '', 'g')"
+)
+
+
+def _booker_token_pairs() -> list[tuple[str, str]]:
+    """(first_token, last_token) lowercase letters-only for each booker."""
+    pairs: list[tuple[str, str]] = []
+    for name in BOOKER_NAMES:
+        parts = [re.sub(r"[^a-z]", "", p.lower()) for p in name.split()]
+        parts = [p for p in parts if p]
+        if len(parts) >= 2:
+            pairs.append((parts[0], parts[-1]))
+    return pairs
+
+
+_BOOKER_TOKEN_PAIRS = _booker_token_pairs()
 
 # Bruno R7 (2026-06-02): per-team report config. ``(TM, role)`` — the role is
 # the *initial* seed role; ``role_report_access`` (admin UI) is the source of
@@ -93,6 +147,7 @@ async def _fetch_podiums(
     request: Request,
     team: Optional[str] = None,
     equipment: str = "",
+    group: str = "bookers",
 ) -> dict:
     """Run the leaderboard query, optionally locked to a single DFW sub-team.
 
@@ -119,6 +174,21 @@ async def _fetch_podiums(
         extra_filter += (
             f"          AND equipment_type ILIKE '%' || ${len(params)} || '%'\n"
         )
+    # Bruno R1 (2026-06-09): restrict to the Bookers roster by default. Each
+    # OR-clause requires both name tokens to appear in the normalized
+    # posted_by. "all" drops the restriction (every DFW poster).
+    if group != "all" and _BOOKER_TOKEN_PAIRS:
+        clauses = []
+        for first, last in _BOOKER_TOKEN_PAIRS:
+            params.append(first)
+            pf = len(params)
+            params.append(last)
+            pl = len(params)
+            clauses.append(
+                f"({_NORM_POSTED_BY} LIKE '%' || ${pf} || '%'"
+                f" AND {_NORM_POSTED_BY} LIKE '%' || ${pl} || '%')"
+            )
+        extra_filter += "          AND (" + " OR ".join(clauses) + ")\n"
 
     sql = f"""
     WITH {_RATE_CONF_CTE},
@@ -195,9 +265,10 @@ router = APIRouter(tags=["dfw-podium-top"], prefix="/custom/dfw-podium-top")
 async def podiums(
     request: Request,
     equipment: str = Query("", max_length=80),
+    group: str = Query("bookers"),
     _user: dict = Depends(require_report_access("dfw-podium-top")),
 ):
-    return await _fetch_podiums(request, team=None, equipment=equipment)
+    return await _fetch_podiums(request, team=None, equipment=equipment, group=group)
 
 
 # --- Per-team reports: DFW Podium Top TM1..TM4 (Bruno R7) -------------------
@@ -216,9 +287,10 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
     async def podiums_team(
         request: Request,
         equipment: str = Query("", max_length=80),
+        group: str = Query("bookers"),
         _user: dict = Depends(gate),
     ):
-        return await _fetch_podiums(request, team=tm, equipment=equipment)
+        return await _fetch_podiums(request, team=tm, equipment=equipment, group=group)
 
     return r
 

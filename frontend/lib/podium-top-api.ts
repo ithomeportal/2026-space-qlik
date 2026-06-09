@@ -67,15 +67,26 @@ export interface PodiumLeaderboards {
 
 const FIFTEEN_MIN = 15 * 60 * 1000
 
+// Bruno R1 (2026-06-09): "Bookers" (fixed roster, default) vs "All DFW".
+export type BookerGroup = "bookers" | "all"
+
 // `apiPrefix` lets the main report and the four server-locked per-team reports
 // (Bruno R7: dfw-podium-top-tm1 … -tm4) share one hook. Defaults to the main
 // all-DFW report. `equipment` (R8) is a server-side contains filter — pass the
-// debounced value so each keystroke doesn't fire a request.
-export function usePodiumTop(apiPrefix = "custom/dfw-podium-top", equipment = "") {
+// debounced value so each keystroke doesn't fire a request. `group` (R1,
+// 2026-06-09) toggles the Bookers roster restriction server-side.
+export function usePodiumTop(
+  apiPrefix = "custom/dfw-podium-top",
+  equipment = "",
+  group: BookerGroup = "bookers",
+) {
   const trimmed = equipment.trim()
-  const qs = trimmed ? `?equipment=${encodeURIComponent(trimmed)}` : ""
+  const params = new URLSearchParams()
+  if (trimmed) params.set("equipment", trimmed)
+  params.set("group", group)
+  const qs = `?${params.toString()}`
   return useQuery({
-    queryKey: [apiPrefix, "podiums", trimmed],
+    queryKey: [apiPrefix, "podiums", trimmed, group],
     queryFn: () => apiFetch<PodiumLeaderboards>(`${apiPrefix}/podiums${qs}`),
     refetchInterval: FIFTEEN_MIN,
     refetchIntervalInBackground: false,

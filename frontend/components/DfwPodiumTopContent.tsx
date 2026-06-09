@@ -5,6 +5,7 @@ import Link from "next/link"
 import { ArrowLeft, Loader2, Search, Trophy, X } from "lucide-react"
 import {
   usePodiumTop,
+  type BookerGroup,
   type PodiumLeaderboards,
 } from "@/lib/podium-top-api"
 import { fmtCurrency, fmtInt, fmtPct } from "@/lib/podium-dfw-api"
@@ -36,7 +37,9 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
   // a request per keystroke.
   const [equipment, setEquipment] = useState("")
   const debouncedEquipment = useDebounce(equipment, 300)
-  const q = usePodiumTop(apiPrefix, debouncedEquipment)
+  // Bruno R1 (2026-06-09): "Bookers" roster (default) vs "All DFW".
+  const [group, setGroup] = useState<BookerGroup>("bookers")
+  const q = usePodiumTop(apiPrefix, debouncedEquipment, group)
   const data = q.data?.data
   const equipmentActive = debouncedEquipment.trim() !== ""
   const lastUpdated = q.dataUpdatedAt ? new Date(q.dataUpdatedAt) : null
@@ -91,9 +94,33 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
           </div>
         ) : null}
 
-        {/* Equipment Type filter (R8) */}
+        {/* Group toggle (R1) + Equipment Type filter (R8) */}
         <section className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5">
           <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                Group
+              </span>
+              <div className="flex rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
+                {[
+                  { k: "bookers" as const, label: "Bookers" },
+                  { k: "all" as const, label: "All DFW" },
+                ].map((opt) => (
+                  <button
+                    key={opt.k}
+                    type="button"
+                    onClick={() => setGroup(opt.k)}
+                    className={`px-3 py-1.5 ${
+                      group === opt.k
+                        ? "rounded-md bg-white font-semibold text-[#1B3A5C] shadow-sm"
+                        : "text-[#6B7280] hover:text-[#111827]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="flex min-w-[180px] flex-col gap-1 md:max-w-[280px]">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
                 Equipment Type
