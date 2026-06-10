@@ -3,10 +3,10 @@
 Companion to ``Podium Set DFW`` (``routers/podium_dfw.py``). Shows the
 leaderboards Bruno asked for — no date filter, no booking-detail table:
 
-  This Week (Mon-Sun, current week) — top 3 only (Bruno R6 "keep unchanged"):
-    - Top 3 Bookers by Profit  (Posted by, Profit, Loads)
-    - Top 3 Bookers by Margin% (Posted by, Margin% = SumProfit/SumRevenue, Loads)
-    - Top 3 Bookers by Loads   (Posted by, Loads)
+  This Week (Mon-Sun, current week):
+    - Best Profit This Week    (Posted by, Profit, Loads) — ALL bookers (R10)
+    - Top 3 Bookers by Margin% (Posted by, Margin% = SumProfit/SumRevenue, Loads) — top 3
+    - Best Loads This Week     (Posted by, Loads) — ALL bookers (R10)
   Today — ALL bookers (Bruno R6 removed the top-3 display limit):
     - Top Bookers by Loads     (Posted by, Loads, Profit)
     - Top Bookers by Profit    (Posted by, Profit, Loads)
@@ -23,6 +23,11 @@ R8 (2026-06-06): optional ``equipment`` query param — case-insensitive
 *contains* match on the load's equipment type (v4 ``equipment_type_descr``
 falling back to the trimmed ``equipment_type_id`` code). All five
 leaderboards recompute over only the matching loads.
+
+R10 (2026-06-10, ``BRUNO -- DFW Podium Top Updates.pdf``): the two This-Week
+cards lose their ``LIMIT 3`` and are renamed — "TOP 3 Bookers by Profit" →
+"Best Profit This Week", "TOP 3 Bookers by Loads" → "Best Loads This Week".
+Margin% stays top-3. Ranks past 3 show a plain number (no medal).
 
 Same data contract as ``podium_dfw.py``: the rate-conf base CTE is identical
 (``mcleod_gld_order_post_hist`` filtered ``posted_type='C'`` /
@@ -218,16 +223,18 @@ async def _fetch_podiums(
 {extra_filter}        GROUP BY posted_by
     )
     SELECT
+        -- Bruno 2026-06-10: "Best Profit This Week" — no LIMIT, every booker.
         (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
            FROM (SELECT posted_by, profit, loads FROM weekly
-                 ORDER BY profit DESC NULLS LAST LIMIT 3) t)        AS week_top_profit,
+                 ORDER BY profit DESC NULLS LAST) t)                AS week_top_profit,
         (SELECT COALESCE(json_agg(t ORDER BY t.margin_pct DESC NULLS LAST), '[]'::json)
            FROM (SELECT posted_by, margin_pct, loads, profit, revenue FROM weekly
                  WHERE revenue > 0
                  ORDER BY margin_pct DESC NULLS LAST LIMIT 3) t)    AS week_top_margin,
+        -- Bruno 2026-06-10: "Best Loads This Week" — no LIMIT, every booker.
         (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
            FROM (SELECT posted_by, loads FROM weekly
-                 ORDER BY loads DESC LIMIT 3) t)                    AS week_top_loads,
+                 ORDER BY loads DESC) t)                            AS week_top_loads,
         -- Bruno R6: no LIMIT — every booker today, ranked.
         (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC, t.profit DESC NULLS LAST), '[]'::json)
            FROM (SELECT posted_by, loads, profit FROM daily) t)     AS today_top_loads,

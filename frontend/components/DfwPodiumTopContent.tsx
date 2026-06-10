@@ -224,7 +224,7 @@ function Podiums({
     <section className="space-y-3">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <PodiumTable
-          title="TOP 3 Bookers by Profit"
+          title="Best Profit This Week"
           subtitle="This Week"
           rows={data.week_top_profit as unknown as Record<string, unknown>[]}
           accent="#C2410C"
@@ -238,7 +238,7 @@ function Podiums({
           columns={[postedByCol, marginCol, loadsCol]}
         />
         <PodiumTable
-          title="TOP 3 Bookers by Loads"
+          title="Best Loads This Week"
           subtitle="This Week"
           rows={data.week_top_loads as unknown as Record<string, unknown>[]}
           accent="#DC2626"
