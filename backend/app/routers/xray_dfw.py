@@ -1270,6 +1270,120 @@ async def summary_table(
 
 
 # ---------------------------------------------------------------------------
+# /weekly-performance — Bruno 2026-06-10: Overview "Last 8 weeks" pop-up.
+# Same KPI set as the Ops Portal Overview Team Weekly modal (which Bruno
+# screenshotted as the reference), trimmed to the production rows ending at
+# Lates DEL and split into the last 8 Mon-Sun ISO weeks (current included).
+# Single grouped query — no savings/attrition rows here, so one round-trip
+# keeps it inside the small datalake pool.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/weekly-performance")
+async def weekly_performance(
+    request: Request,
+    sub_teams: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("xray-dfw-mng")),
+):
+    pool = get_datalake_gold_pool(request)
+    today = cst_today()
+    this_mon = today - timedelta(days=today.weekday())
+    # Oldest → newest so columns read left-to-right like Bruno's mock.
+    week_starts = [this_mon - timedelta(weeks=k) for k in range(7, -1, -1)]
+    weeks_start = week_starts[0]
+    weeks_end = week_starts[-1] + timedelta(days=6)
+
+    sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
+    # Team Ut. capacity matches the on-page trio "TU" column (TU_WEEK per
+    # sub-team), so the pop-up's current-week value reconciles with Overview.
+    team_count = len(sub_team_list) if sub_team_list else len(DFW_SUB_TEAMS)
+    capacity = TU_WEEK * team_count
+
+    def _label(ws: date) -> str:
+        we = ws + timedelta(days=6)
+        return f"{ws.day:02d}/{ws.month:02d} - {we.day:02d}/{we.month:02d}"
+
+    params: list = []
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+    )
+    params.extend([weeks_start, weeks_end])
+    p_s = len(params) - 1
+    p_e = len(params)
+    # §43: never ::date-cast the indexed timestamp in a WHERE bound — use a
+    # half-open range so idx_v4_dep stays sargable.
+    rows = await pool.fetch(
+        f"""
+        WITH otp AS ({_scorecard_cte("otp", sub_team_list)}),
+             otd AS ({_scorecard_cte("otd", sub_team_list)}),
+             prod AS (
+                SELECT DATE_TRUNC('week', br4.origin_actual_departure)::date AS wk,
+                       {_entity_expr("br4", view)} AS entity,
+                       ({_lane_expr("br4")}) AS lane,
+                       br4.id, br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
+                       COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
+                       COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
+                FROM public.mcleod_gld_budget_report_v4 br4
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+                WHERE {where}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+             )
+        SELECT
+          wk,
+          COUNT(DISTINCT NULLIF(entity, '')) AS customers,
+          COUNT(DISTINCT lane) FILTER (WHERE lane <> ' - ') AS lanes,
+          COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS volume,
+          COALESCE(SUM(total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(total_carrier_pay), 0)::numeric AS total_cost,
+          COALESCE(SUM(margin_amt), 0)::numeric AS profit,
+          SUM(otp_cnt) AS otp_late,
+          SUM(otd_cnt) AS otd_late
+        FROM prod
+        GROUP BY wk
+        """,
+        *params,
+    )
+
+    by_wk = {r["wk"]: r for r in rows}
+    weeks_out = []
+    for ws in week_starts:
+        p = by_wk.get(ws)
+        volume = int(p["volume"] or 0) if p else 0
+        revenue = float(p["revenue"] or 0) if p else 0.0
+        profit = float(p["profit"] or 0) if p else 0.0
+        otp_late = int(p["otp_late"] or 0) if p else 0
+        otd_late = int(p["otd_late"] or 0) if p else 0
+        weeks_out.append({
+            "start": ws.isoformat(),
+            "end": (ws + timedelta(days=6)).isoformat(),
+            "label": _label(ws),
+            "customers": int(p["customers"] or 0) if p else 0,
+            "lanes": int(p["lanes"] or 0) if p else 0,
+            "volume": volume,
+            "revenue": revenue,
+            "total_cost": float(p["total_cost"] or 0) if p else 0.0,
+            "profit": profit,
+            "margin_pct": (profit / revenue * 100.0) if revenue else 0.0,
+            "rev_x_l": (revenue / volume) if volume else 0.0,
+            "prof_x_l": (profit / volume) if volume else 0.0,
+            "team_ut": (volume / capacity * 100.0) if capacity else 0.0,
+            "otp_pct": ((1.0 - otp_late / volume) * 100.0) if volume else 0.0,
+            "lates_pu": otp_late,
+            "otd_pct": ((1.0 - otd_late / volume) * 100.0) if volume else 0.0,
+            "lates_del": otd_late,
+        })
+
+    return {"success": True, "data": {"weeks": weeks_out}}
+
+
+# ---------------------------------------------------------------------------
 # Tab 5 — Risk
 # ---------------------------------------------------------------------------
 

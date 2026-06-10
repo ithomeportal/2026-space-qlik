@@ -386,6 +386,28 @@ export interface XrayDfwLaneAnalysisData {
   totals: XrayDfwLaneAnalysisTotals
 }
 
+// Bruno 2026-06-10: Overview "Last 8 weeks" pop-up — production KPI set per
+// Mon-Sun ISO week (mirrors the Ops Portal Overview Team Weekly modal).
+export interface XrayDfwWeekPerf {
+  start: string
+  end: string
+  label: string
+  customers: number
+  lanes: number
+  volume: number
+  revenue: number
+  total_cost: number
+  profit: number
+  margin_pct: number
+  rev_x_l: number
+  prof_x_l: number
+  team_ut: number
+  otp_pct: number
+  lates_pu: number
+  otd_pct: number
+  lates_del: number
+}
+
 // ---------------------------------------------------------------------------
 // Hooks — every URL is built from the prefix in context so the same hooks
 // power the cross-team report (`/reports/xray-dfw-mng`) and the per-team
@@ -439,6 +461,23 @@ export function useXrayDfwProjection(
     queryKey: [prefix, "projection", f],
     queryFn: () =>
       apiFetch<XrayDfwProjection>(`${prefix}/projection${dfwQs({ range: "full", ...f })}`),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useXrayDfwWeeklyPerformance(
+  f: Pick<XrayDfwFilters, "subTeams" | "customers" | "lanes" | "view">,
+  enabled = true,
+) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    ...XRAY_DFW_RETRY,
+    enabled,
+    queryKey: [prefix, "weekly-performance", f],
+    queryFn: () =>
+      apiFetch<{ weeks: XrayDfwWeekPerf[] }>(
+        `${prefix}/weekly-performance${dfwQs({ range: "full", ...f })}`,
+      ),
     staleTime: 5 * 60 * 1000,
   })
 }

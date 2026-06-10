@@ -261,6 +261,19 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
             view=view, _user=_user,
         )
 
+    @r.get("/weekly-performance")
+    async def weekly_performance(
+        request: Request,
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        return await xray_dfw.weekly_performance(
+            request=request, sub_teams=tm, customers=customers, lanes=lanes,
+            view=view, _user=_user,
+        )
+
     @r.get("/risk")
     async def risk(
         request: Request,

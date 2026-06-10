@@ -1,6 +1,7 @@
 "use client"
 
-import { Loader2 } from "lucide-react"
+import { useState } from "react"
+import { CalendarRange, Loader2 } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/xray-dfw-api"
 import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
+import { WeeklyPerformanceModal } from "../WeeklyPerformanceModal"
 
 interface Props {
   filters: XrayDfwFilters
@@ -23,6 +25,7 @@ const PROFIT_GOAL_PER_TEAM = 55000
 const ALL_SUB_TEAMS_COUNT = 4
 
 export function Overview({ filters, entityLabel = "Customer" }: Props) {
+  const [showWeekly, setShowWeekly] = useState(false)
   const { data: kpiRes, isLoading: loadingKpis, error: kpiErr } = useXrayDfwKpis(filters)
   const k = kpiRes?.data
   const trioFilter = {
@@ -43,6 +46,21 @@ export function Overview({ filters, entityLabel = "Customer" }: Props) {
   return (
     <div className="space-y-6">
       <XrayDfwErrorBanner label="Overview" errors={[kpiErr, trioErr, projErr]} />
+
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowWeekly(true)}
+          className="inline-flex items-center gap-2 rounded-lg border border-[#1B3A5C] bg-[#1B3A5C] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#16314d]"
+        >
+          <CalendarRange className="h-4 w-4" />
+          Team Weekly Performance
+        </button>
+      </div>
+
+      {showWeekly && (
+        <WeeklyPerformanceModal filters={filters} onClose={() => setShowWeekly(false)} />
+      )}
+
       <section className="grid grid-cols-2 gap-3 md:grid-cols-6">
         <Kpi label="# Loads" value={fmtCount(k?.loads)} tone="red" loading={loadingKpis} />
         <Kpi label="$ Revenue" value={fmtUsd(k?.revenue)} tone="blue" loading={loadingKpis} />
