@@ -223,11 +223,15 @@ export function useAdminCashflowKpis(f: AdminCashflowFilters) {
 }
 
 export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
-  // Sparklines ignore the Date filter — use a cached, scope-only key
+  // Bruno Aging R1 (2026-06-11): the trend now follows the selected date
+  // range, so the key + query carry range/start/end like every other table.
   return useQuery({
     queryKey: [
       "admin-cashflow",
       "sparklines",
+      f.range,
+      f.range === "custom" ? f.startDate ?? "" : "",
+      f.range === "custom" ? f.endDate ?? "" : "",
       (f.teams ?? []).slice().sort().join(","),
       (f.companies ?? []).slice().sort().join(","),
       f.customer ?? "",
@@ -237,6 +241,9 @@ export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
     ],
     queryFn: () => {
       const q = new URLSearchParams()
+      q.set("range", f.range)
+      if (f.range === "custom" && f.startDate) q.set("start_date", f.startDate)
+      if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
       if (f.teams?.length) q.set("teams", f.teams.join(","))
       if (f.companies?.length) q.set("companies", f.companies.join(","))
       if (f.customers && f.customers.length) {
@@ -251,14 +258,37 @@ export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
         `custom/admin-cashflow/sparklines${s ? `?${s}` : ""}`,
       )
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 60 * 1000,
     ...RETRY,
   })
 }
 
+// Bruno Aging R2 (2026-06-11): the two unbilled tables carry optional
+// free-text Order / Customer column filters. Empty strings are omitted from
+// the query so an untouched table behaves exactly as before.
+export interface UnbilledTableOpts {
+  sort: string
+  page: number
+  limit: number
+  orderQ?: string
+  customerQ?: string
+}
+
+function unbilledExtra(opts: UnbilledTableOpts) {
+  const extra: Record<string, string | number> = {
+    sort: opts.sort,
+    page: opts.page,
+    limit: opts.limit,
+  }
+  if (opts.orderQ && opts.orderQ.trim()) extra.order_q = opts.orderQ.trim()
+  if (opts.customerQ && opts.customerQ.trim())
+    extra.customer_q = opts.customerQ.trim()
+  return extra
+}
+
 export function useDeliveredNotBilled(
   f: AdminCashflowFilters,
-  opts: { sort: string; page: number; limit: number },
+  opts: UnbilledTableOpts,
 ) {
   return useQuery({
     queryKey: [
@@ -268,14 +298,15 @@ export function useDeliveredNotBilled(
       opts.sort,
       opts.page,
       opts.limit,
+      opts.orderQ ?? "",
+      opts.customerQ ?? "",
     ],
     queryFn: () =>
       apiFetch<DeliveredNotBilledRow[]>(
-        `custom/admin-cashflow/delivered-not-billed${buildQs(f, {
-          sort: opts.sort,
-          page: opts.page,
-          limit: opts.limit,
-        })}`,
+        `custom/admin-cashflow/delivered-not-billed${buildQs(
+          f,
+          unbilledExtra(opts),
+        )}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -284,7 +315,7 @@ export function useDeliveredNotBilled(
 
 export function useReadyNotBilled(
   f: AdminCashflowFilters,
-  opts: { sort: string; page: number; limit: number },
+  opts: UnbilledTableOpts,
 ) {
   return useQuery({
     queryKey: [
@@ -294,14 +325,15 @@ export function useReadyNotBilled(
       opts.sort,
       opts.page,
       opts.limit,
+      opts.orderQ ?? "",
+      opts.customerQ ?? "",
     ],
     queryFn: () =>
       apiFetch<ReadyNotBilledRow[]>(
-        `custom/admin-cashflow/ready-not-billed${buildQs(f, {
-          sort: opts.sort,
-          page: opts.page,
-          limit: opts.limit,
-        })}`,
+        `custom/admin-cashflow/ready-not-billed${buildQs(
+          f,
+          unbilledExtra(opts),
+        )}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -367,9 +399,14 @@ export function adminCashflowCsvUrl(
     | "aging/bol-vs-bill"
     | "aging/carrinv-vs-bill",
   f: AdminCashflowFilters,
-  extra?: { sort?: string },
+  extra?: { sort?: string; orderQ?: string; customerQ?: string },
 ): string {
-  const qs = buildQs(f, extra?.sort ? { sort: extra.sort } : undefined)
+  const e: Record<string, string | number> = {}
+  if (extra?.sort) e.sort = extra.sort
+  if (extra?.orderQ && extra.orderQ.trim()) e.order_q = extra.orderQ.trim()
+  if (extra?.customerQ && extra.customerQ.trim())
+    e.customer_q = extra.customerQ.trim()
+  const qs = buildQs(f, Object.keys(e).length ? e : undefined)
   return `/api/proxy/custom/admin-cashflow/${endpoint}.csv${qs}`
 }
 

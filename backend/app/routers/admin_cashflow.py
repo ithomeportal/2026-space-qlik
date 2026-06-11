@@ -219,6 +219,28 @@ def _date_fragment(alias: str, s: date, e: date, params: list) -> str:
     )
 
 
+def _order_customer_filter(
+    alias: str,
+    order_q: Optional[str],
+    customer_q: Optional[str],
+    params: list,
+) -> str:
+    """Bruno Aging R2 (2026-06-11): free-text 'contains' filters for the Order
+    id + Customer name columns of the two unbilled tables. Both are ILIKE
+    '%q%' (non-sargable by nature — a search box), but they run on top of the
+    already date+scope-narrowed set, so the scan is over a small subset. The
+    '%q%' wrap also makes char-padded ``id`` match regardless of trailing pad.
+    Returns a leading-`` AND ``-prefixed fragment (or '' when both blank)."""
+    frag = ""
+    if order_q and order_q.strip():
+        params.append(f"%{order_q.strip()}%")
+        frag += f" AND {alias}.id ILIKE ${len(params)}"
+    if customer_q and customer_q.strip():
+        params.append(f"%{customer_q.strip()}%")
+        frag += f" AND {alias}.customer_name ILIKE ${len(params)}"
+    return frag
+
+
 # ---------------------------------------------------------------------------
 # Facets — distinct customer + contract_type lists for the filter dropdowns
 # ---------------------------------------------------------------------------
@@ -506,6 +528,9 @@ async def kpis(
 @router.get("/sparklines")
 async def sparklines(
     request: Request,
+    range: Optional[str] = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
@@ -514,18 +539,26 @@ async def sparklines(
     contract_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
-    """12 ISO-week trend for the 3 % KPIs.
+    """ISO-week trend for the 3 % KPIs.
 
     Bucket = ISO week of ``origin_actual_arrival``. Includes the current
-    week (partial). Caller can drop the last point if they prefer "completed
-    weeks only" but for a 12-week sparkline the current point is fine.
+    week (partial).
+
+    Bruno Aging R1 (2026-06-11): the trend now follows the selected date
+    range. When a ``range`` is supplied it is resolved exactly like every
+    other table (``_resolve_range``) and the line spans that window; with no
+    range the legacy trailing-12-weeks window is used so the sparkline is
+    never a single degenerate point on a fresh load.
     """
     pool = get_datalake_gold_pool(request)
     today = _today_clamped()
-    # 12 weeks back (Monday of week 11 weeks ago through today)
-    week_start_today = today - timedelta(days=today.weekday())
-    s = week_start_today - timedelta(weeks=11)
-    e = today
+    if range:
+        s, e = _resolve_range(range, start_date, end_date)
+    else:
+        # legacy default: 12 weeks back (Monday of week 11 weeks ago → today)
+        week_start_today = today - timedelta(days=today.weekday())
+        s = week_start_today - timedelta(weeks=11)
+        e = today
     team_list = _parse_teams(teams)
     company_list = _parse_companies(companies)
 
@@ -641,6 +674,8 @@ async def delivered_not_billed(
     customers: Optional[str] = Query(None),
     customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
+    order_q: Optional[str] = Query(None),
+    customer_q: Optional[str] = Query(None),
     sort: str = Query("delivered_asc"),  # oldest unbilled first = most actionable
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
@@ -659,6 +694,7 @@ async def delivered_not_billed(
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
+    oc_frag = _order_customer_filter("c", order_q, customer_q, params)
     params.extend([limit, offset])
     p_lim, p_off = len(params) - 1, len(params)
 
@@ -680,7 +716,7 @@ async def delivered_not_billed(
           ELSE NULL
         END AS days_since_delivery
       FROM public.mcleod_gld_cashflow c
-      WHERE {where} AND {date_frag}
+      WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
     )
     SELECT
@@ -719,7 +755,7 @@ async def delivered_not_billed(
             f"""
             SELECT COALESCE(SUM(total_charge),0) AS s
             FROM   public.mcleod_gld_cashflow c
-            WHERE  {where} AND {date_frag}
+            WHERE  {where} AND {date_frag}{oc_frag}
               AND  c.bill_date < '2000-01-01'::date
             """,
             *params[:-2],  # drop limit/offset
@@ -773,6 +809,8 @@ async def ready_not_billed(
     customers: Optional[str] = Query(None),
     customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
+    order_q: Optional[str] = Query(None),
+    customer_q: Optional[str] = Query(None),
     sort: str = Query("ship_asc"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
@@ -791,6 +829,7 @@ async def ready_not_billed(
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
+    oc_frag = _order_customer_filter("c", order_q, customer_q, params)
     params.extend([limit, offset])
     p_lim, p_off = len(params) - 1, len(params)
 
@@ -815,7 +854,7 @@ async def ready_not_billed(
           ELSE NULL
         END AS days_since_bol_recv
       FROM public.mcleod_gld_cashflow c
-      WHERE {where} AND {date_frag}
+      WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
         AND TRIM(c.ready_to_bill) = 'Y'
     )
@@ -1332,6 +1371,8 @@ async def delivered_not_billed_csv(
     customers: Optional[str] = Query(None),
     customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
+    order_q: Optional[str] = Query(None),
+    customer_q: Optional[str] = Query(None),
     sort: str = Query("delivered_asc"),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
@@ -1347,6 +1388,7 @@ async def delivered_not_billed_csv(
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
+    oc_frag = _order_customer_filter("c", order_q, customer_q, params)
 
     sql = f"""
     SELECT
@@ -1365,7 +1407,7 @@ async def delivered_not_billed_csv(
         ELSE NULL
       END AS days_since_delivery
     FROM public.mcleod_gld_cashflow c
-    WHERE {where} AND {date_frag}
+    WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
     ORDER BY {order_by}
     """
@@ -1404,6 +1446,8 @@ async def ready_not_billed_csv(
     customers: Optional[str] = Query(None),
     customer_mode: str = Query("include"),
     contract_type: Optional[str] = Query(None),
+    order_q: Optional[str] = Query(None),
+    customer_q: Optional[str] = Query(None),
     sort: str = Query("ship_asc"),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
@@ -1419,6 +1463,7 @@ async def ready_not_billed_csv(
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
+    oc_frag = _order_customer_filter("c", order_q, customer_q, params)
 
     # Bruno R3 PDF 2026-05-19: DAYS column now = today - bol_recv_date.
     sql = f"""
@@ -1439,7 +1484,7 @@ async def ready_not_billed_csv(
         ELSE NULL
       END AS days_since_bol_recv
     FROM public.mcleod_gld_cashflow c
-    WHERE {where} AND {date_frag}
+    WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
       AND TRIM(c.ready_to_bill) = 'Y'
     ORDER BY {order_by}
