@@ -134,6 +134,21 @@ export interface AttritionTrends {
   }
 }
 
+// Bruno 2026-06-11 (Overview): weekly Customer Attrition ratio. For each
+// completed week, ratio = distinct customers that week / distinct customers
+// in the prior 8 weeks. ``week_no`` is the ISO week (his "Week 23" labels).
+export interface CustomerAttritionPoint {
+  week_start: string
+  week_no: number
+  numerator: number
+  denominator: number
+  ratio: number | null
+}
+
+export interface CustomerAttrition {
+  weeks: CustomerAttritionPoint[]
+}
+
 export interface PivotRow {
   week_start: string
   dim_key: string
@@ -303,6 +318,18 @@ export function useAttritionTrends(f: AttritionFilters, weeks = 15) {
     queryFn: () =>
       apiFetch<AttritionTrends>(
         `custom/attrition-wow/weekly-trends${buildQs(f, { weeks: String(weeks) })}`,
+      ),
+    staleTime: 5 * 60_000,
+    ...ATTRITION_RETRY,
+  })
+}
+
+export function useAttritionCustomerAttrition(f: AttritionFilters, weeks = 15) {
+  return useQuery({
+    queryKey: ["attrition-wow", "customer-attrition", weeks, ...keyOf(f)],
+    queryFn: () =>
+      apiFetch<CustomerAttrition>(
+        `custom/attrition-wow/customer-attrition${buildQs(f, { weeks: String(weeks) })}`,
       ),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,

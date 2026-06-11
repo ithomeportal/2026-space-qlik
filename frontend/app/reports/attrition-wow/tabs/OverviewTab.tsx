@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react"
 import {
+  useAttritionCustomerAttrition,
   useAttritionSummary,
   useAttritionTrends,
   useAttritionWowVariation,
@@ -10,6 +11,7 @@ import {
   type DiffPair,
   type MetricBlock,
 } from "@/lib/attrition-wow-api"
+import { CustomerAttritionChart } from "./CustomerAttritionChart"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
@@ -42,14 +44,17 @@ export function OverviewTab({ filters, entityLabel }: Props) {
     useAttritionWowVariation(filters)
   const { data: trendsRes, isLoading: loadingTrends, error: trendsErr } =
     useAttritionTrends(filters, 15)
+  const { data: custAttrRes, isLoading: loadingCustAttr, error: custAttrErr } =
+    useAttritionCustomerAttrition(filters, 15)
   const s = summaryRes?.data
   const w = wowRes?.data
   const t = trendsRes?.data
+  const ca = custAttrRes?.data
 
   return (
     <div className="space-y-6">
       <AttritionErrorBanner
-        errors={[summaryErr, wowErr, trendsErr]}
+        errors={[summaryErr, wowErr, trendsErr, custAttrErr]}
         label="Overview"
       />
 
@@ -193,6 +198,17 @@ export function OverviewTab({ filters, entityLabel }: Props) {
           </>
         )}
       </div>
+
+      {/* Bruno 2026-06-11 (Request 1): Customer Attrition line — 15-week
+          weekly ratio, displayed right after the Weekly Loads / Weekly
+          Customers charts. */}
+      {loadingCustAttr && !ca ? (
+        <div className="flex h-48 items-center justify-center rounded-xl border border-[#E5E7EB] bg-white">
+          <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
+        </div>
+      ) : (
+        <CustomerAttritionChart data={ca?.weeks ?? []} />
+      )}
 
       {/* WoW Total $Var headline + by-team line */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

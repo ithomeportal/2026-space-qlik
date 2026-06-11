@@ -649,6 +649,106 @@ async def weekly_trends(
 
 
 # ---------------------------------------------------------------------------
+# /customer-attrition — Bruno 2026-06-11 (Overview): a 15-week line of the
+# weekly "Customer Attrition" ratio. For each completed Mon-Sun week W:
+#
+#   ratio(W) = distinct customers active in W
+#              ----------------------------------------------------
+#              distinct customers active in the 8 weeks before W
+#
+# i.e. numerator window = [week_start, week_start + 7d); denominator window =
+# [week_start - 56d, week_start) — the 8 full weeks immediately preceding W
+# (Bruno's example: Week 23 = Jun 1-7 over Apr 6-May 31). The customer key is
+# the same entity the rest of the report counts (customer_name, or `client`
+# under the RUAN view) so the numerator matches the adjacent "Weekly
+# Customers" bar exactly. Week number is the ISO week (his "Week 23" labels).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/customer-attrition")
+async def customer_attrition(
+    request: Request,
+    response: Response,
+    weeks: int = Query(15, ge=4, le=24),
+    teams: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    contract: Optional[str] = Query(None),
+    lane: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("attrition-wow")),
+):
+    pool = get_datalake_gold_pool(request)
+    response.headers["Cache-Control"] = CACHE_HEADER
+
+    team_list = _parse_csv(teams, ALL_TEAMS)
+
+    params: list = []
+    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
+    params.append(weeks)
+    p_weeks = len(params)
+
+    rows = await pool.fetch(
+        f"""
+        WITH bounds AS (
+          SELECT
+            date_trunc('week', CURRENT_DATE)::date AS this_monday,
+            (date_trunc('week', CURRENT_DATE) - (${p_weeks} * interval '1 week'))::date
+              AS first_week_start,
+            (date_trunc('week', CURRENT_DATE) - (${p_weeks} * interval '1 week')
+              - interval '56 days')::date AS data_start
+        ),
+        weeks AS (
+          SELECT generate_series(
+            b.first_week_start,
+            b.this_monday - interval '1 week',
+            interval '1 week'
+          )::date AS ws
+          FROM bounds b
+        ),
+        base AS (
+          SELECT
+            br4.origin_actual_departure::date AS dep_date,
+            {_entity_expr("br4", view)}       AS cust
+          FROM public.mcleod_gld_budget_report_v4 br4, bounds b
+          WHERE {where}
+            AND br4.origin_actual_departure >= b.data_start
+            AND br4.origin_actual_departure <  b.this_monday
+        ),
+        calc AS (
+          SELECT
+            w.ws,
+            COUNT(DISTINCT base.cust) FILTER (
+              WHERE base.dep_date >= w.ws AND base.dep_date < w.ws + 7
+            ) AS num_cust,
+            COUNT(DISTINCT base.cust) FILTER (
+              WHERE base.dep_date >= w.ws - 56 AND base.dep_date < w.ws
+            ) AS den_cust
+          FROM weeks w
+          JOIN base ON base.dep_date >= (w.ws - 56) AND base.dep_date < (w.ws + 7)
+          GROUP BY w.ws
+        )
+        SELECT ws, num_cust, den_cust FROM calc ORDER BY ws
+        """,
+        *params,
+    )
+
+    out = []
+    for r in rows:
+        ws = r["ws"]
+        num = int(r["num_cust"] or 0)
+        den = int(r["den_cust"] or 0)
+        out.append({
+            "week_start": ws.isoformat(),
+            "week_no":     ws.isocalendar()[1],
+            "numerator":   num,
+            "denominator": den,
+            "ratio":       (num / den) if den else None,
+        })
+
+    return {"success": True, "data": {"weeks": out}}
+
+
+# ---------------------------------------------------------------------------
 # /pivot — last-N-weeks pivot rows, by customer or by team, for a metric.
 # Frontend renders the wide pivot client-side (long form keeps payload small).
 # ---------------------------------------------------------------------------
