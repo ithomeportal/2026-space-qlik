@@ -142,6 +142,12 @@ def _scope_where(
 def _scorecard_cte(kind: str) -> str:
     """Return a CTE that rolls the scorecard table up into per-order OTP / OTD counts.
 
+    Reads `mcleod_gld_scorecard_incidents_portal` (incident grain) since
+    2026-06-15 — the movement-grain mirror collapsed a load's PU+DEL incidents to
+    one row, undercounting fails. Real stop types only (no '' bucket); incident
+    `stop_type`/`edi_standard_code` are stored TRIM'd so the padded IN lists still
+    match. `COUNT(DISTINCT id)` keeps this fan-out-safe. See SPEC-CODE-RULES §43.
+
     `kind` is "otp" or "otd". Codes and stop_types differ between the two.
     Every WHERE predicate uses direct equality (no TRIM) against both padded
     and unpadded literal variants, so the planner can use any existing btree
@@ -150,11 +156,11 @@ def _scorecard_cte(kind: str) -> str:
     """
     if kind == "otp":
         codes = OTP_CODES
-        stops = ("", "PU", "SH")
+        stops = ("PU", "SH")
         out = "scorecard_count_otp"
     else:
         codes = OTD_CODES
-        stops = ("", "CO", "SO")
+        stops = ("CO", "SO")
         out = "scorecard_count_otd"
 
     def _lit(values, *, width: int) -> str:
@@ -175,7 +181,7 @@ def _scorecard_cte(kind: str) -> str:
       TRIM(id)         AS id_key,
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
-    FROM public.mcleod_gld_scorecard_portal
+    FROM public.mcleod_gld_scorecard_incidents_portal
     WHERE team_id    IN ({teams_sql})
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})

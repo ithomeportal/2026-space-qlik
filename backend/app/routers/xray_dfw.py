@@ -211,14 +211,18 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
 
     DFW-specific: predicate on ``team_id IN ('TEAM-DFW')``; if ``sub_teams``
     is non-empty, add ``TRIM(team_dfw) IN (...)``.
+
+    Reads ``mcleod_gld_scorecard_incidents_portal`` (incident grain) since
+    2026-06-15 — real stop types only (no '' bucket); ``COUNT(DISTINCT id)`` keeps
+    it fan-out-safe. See SPEC-CODE-RULES §43.
     """
     if kind == "otp":
         codes = OTP_CODES
-        stops = ("", "PU", "SH")
+        stops = ("PU", "SH")
         out = "scorecard_count_otp"
     else:
         codes = OTD_CODES
-        stops = ("", "CO", "SO")
+        stops = ("CO", "SO")
         out = "scorecard_count_otd"
 
     def _lit(values, *, width: int) -> str:
@@ -242,7 +246,7 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
       TRIM(id)         AS id_key,
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
-    FROM public.mcleod_gld_scorecard_portal
+    FROM public.mcleod_gld_scorecard_incidents_portal
     WHERE team_id    IN ({teams_sql})
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
