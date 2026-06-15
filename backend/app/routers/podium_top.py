@@ -227,9 +227,12 @@ async def _fetch_podiums(
         (SELECT COALESCE(json_agg(t ORDER BY t.profit DESC NULLS LAST), '[]'::json)
            FROM (SELECT posted_by, profit, loads FROM weekly
                  ORDER BY profit DESC NULLS LAST) t)                AS week_top_profit,
+        -- Bruno 2026-06-15: "Top 3 Bookers by Margin" — internal filter, only
+        -- bookers with more than 15 loads this week qualify (drops 1-load high-%
+        -- outliers from the ranking).
         (SELECT COALESCE(json_agg(t ORDER BY t.margin_pct DESC NULLS LAST), '[]'::json)
            FROM (SELECT posted_by, margin_pct, loads, profit, revenue FROM weekly
-                 WHERE revenue > 0
+                 WHERE revenue > 0 AND loads > 15
                  ORDER BY margin_pct DESC NULLS LAST LIMIT 3) t)    AS week_top_margin,
         -- Bruno 2026-06-10: "Best Loads This Week" — no LIMIT, every booker.
         (SELECT COALESCE(json_agg(t ORDER BY t.loads DESC), '[]'::json)
