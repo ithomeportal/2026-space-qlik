@@ -171,6 +171,32 @@ async def panel_summary(
         *params,
     )
 
+    # ---- Budget vs Actual (CORP only) ------------------------------------
+    # daily_production_budget_report is CORP-only and customer/division grain
+    # (no reliable per-team split — budget rows collapse to one CORP team), so
+    # we surface budget ONLY when the panel is scoped to the CORP division and
+    # sum the goals across the panel's date window. DFW / All panels get no
+    # budget (would be apples-to-oranges against non-CORP actuals).
+    budget_applicable = (division or "").upper() == "CORP"
+    budget_payload: dict = {"applicable": budget_applicable}
+    if budget_applicable:
+        b = await pool.fetchrow(
+            """
+            SELECT
+              COALESCE(SUM(budget."Loads Budget"),   0)::numeric AS loads_budget,
+              COALESCE(SUM(budget."Revenue Budget"), 0)::numeric AS revenue_budget,
+              COALESCE(SUM(budget."Profit Budget"),  0)::numeric AS profit_budget
+            FROM public.daily_production_budget_report budget
+            WHERE budget."Date" BETWEEN $1 AND $2
+            """,
+            s, e,
+        )
+        budget_payload.update({
+            "loads": float(b["loads_budget"] or 0),
+            "revenue": float(b["revenue_budget"] or 0),
+            "profit": float(b["profit_budget"] or 0),
+        })
+
     loads = int(row["loads"] or 0)
     load_ids = int(row["load_ids"] or 0) or loads  # fall back if id is null
     revenue = float(row["revenue"] or 0)
@@ -188,6 +214,7 @@ async def panel_summary(
             "margin_pct": margin_pct,
             "avg_r_per_l": avg_r_per_l,
             "avg_p_per_l": avg_p_per_l,
+            "budget": budget_payload,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
             "teams_applied": team_list,
             "sub_teams_applied": sub_team_list,

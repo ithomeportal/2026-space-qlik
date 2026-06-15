@@ -105,6 +105,13 @@ export interface DCFilterOptions {
   year_end: string
 }
 
+export interface DCPanelBudget {
+  applicable: boolean
+  loads?: number
+  revenue?: number
+  profit?: number
+}
+
 export interface DCPanelSummary {
   loads: number
   revenue: number
@@ -112,6 +119,7 @@ export interface DCPanelSummary {
   margin_pct: number | null
   avg_r_per_l: number | null
   avg_p_per_l: number | null
+  budget?: DCPanelBudget
   window: { start: string; end: string }
   teams_applied: string[]
   sub_teams_applied: string[] | null

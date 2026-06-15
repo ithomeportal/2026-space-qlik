@@ -11,6 +11,25 @@ interface KpiValues {
   margin_pct: number | null | undefined
   avg_r_per_l: number | null | undefined
   avg_p_per_l: number | null | undefined
+  budget?: {
+    applicable: boolean
+    loads?: number
+    revenue?: number
+    profit?: number
+  }
+}
+
+// "Bgt $X · NN% attained" sub-line for the actual-vs-budget KPI cards (CORP only).
+function budgetSub(
+  actual: number | null | undefined,
+  goal: number | undefined,
+  formatter: (n: number) => string,
+): { text: string; tone: "up" | "down" | "neutral" } | null {
+  if (goal === undefined || goal === null || goal === 0) return null
+  const a = Number(actual ?? 0)
+  const pct = (a / goal) * 100
+  const tone = pct >= 100 ? "up" : pct >= 80 ? "neutral" : "down"
+  return { text: `Bgt ${formatter(goal)} · ${pct.toFixed(0)}%`, tone }
 }
 
 interface Props {
@@ -61,11 +80,13 @@ export function KpiCards({ variant, values, loading }: Props) {
   const tone = ACCENT_TONES[variant]
   const isDelta = variant === "delta"
 
+  const bdg = !isDelta && values?.budget?.applicable ? values.budget : undefined
   const cards: Array<{
     key: string
     label: string
     value: string
     dot?: "up" | "down" | "neutral"
+    sub?: { text: string; tone: "up" | "down" | "neutral" } | null
   }> = isDelta
     ? [
         {
@@ -109,10 +130,25 @@ export function KpiCards({ variant, values, loading }: Props) {
         },
       ]
     : [
-        { key: "rev", label: "$Revenue", value: fmtUsd(values?.revenue) },
-        { key: "prof", label: "$Profit", value: fmtUsd(values?.profit) },
+        {
+          key: "rev",
+          label: "$Revenue",
+          value: fmtUsd(values?.revenue),
+          sub: budgetSub(values?.revenue, bdg?.revenue, (n) => fmtUsd(n)),
+        },
+        {
+          key: "prof",
+          label: "$Profit",
+          value: fmtUsd(values?.profit),
+          sub: budgetSub(values?.profit, bdg?.profit, (n) => fmtUsd(n)),
+        },
         { key: "mar", label: "% Margin", value: fmtPct(values?.margin_pct) },
-        { key: "loads", label: "# Loads", value: fmtCount(values?.loads) },
+        {
+          key: "loads",
+          label: "# Loads",
+          value: fmtCount(values?.loads),
+          sub: budgetSub(values?.loads, bdg?.loads, (n) => fmtCount(n)),
+        },
         { key: "avgr", label: "Avg $R / #L", value: fmtUsd(values?.avg_r_per_l) },
         { key: "avgp", label: "Avg $P / #L", value: fmtUsd(values?.avg_p_per_l) },
       ]
@@ -138,9 +174,27 @@ export function KpiCards({ variant, values, loading }: Props) {
             <div className="mt-1 text-lg font-semibold tabular-nums text-[#111827]">
               {c.value}
             </div>
+            {c.sub && (
+              <div
+                className={`mt-0.5 text-[10px] font-medium tabular-nums ${
+                  c.sub.tone === "up"
+                    ? "text-[#16A34A]"
+                    : c.sub.tone === "down"
+                      ? "text-[#DC2626]"
+                      : "text-[#92400E]"
+                }`}
+              >
+                {c.sub.text}
+              </div>
+            )}
           </div>
         ))}
       </div>
+      {!isDelta && values?.budget?.applicable && (
+        <div className="mt-2 text-[10px] text-[#9CA3AF]">
+          Bgt = CORP budget goal for this window · % = actual ÷ budget
+        </div>
+      )}
     </div>
   )
 }
