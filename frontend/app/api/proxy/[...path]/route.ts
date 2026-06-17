@@ -25,8 +25,11 @@ async function proxyRequest(
   const pathStr = path.join("/")
   const backendUrl = new URL(`/api/${pathStr}`, BACKEND_URL)
 
+  // Use append (not set) so repeated query params survive. Multi-select
+  // filters serialize as `?customer_ids=A&customer_ids=B`; `.set()` would
+  // collapse them to the last value, breaking include/exclude scope.
   req.nextUrl.searchParams.forEach((value, key) => {
-    backendUrl.searchParams.set(key, value)
+    backendUrl.searchParams.append(key, value)
   })
 
   const headers: Record<string, string> = {
