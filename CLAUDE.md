@@ -26,6 +26,7 @@
 - Validate inputs with Zod (frontend) and Pydantic (backend)
 - Next.js proxy sends user info as JSON in Authorization header (NOT a JWT) — backend parses with `json.loads`
 - Proxy retries GET on 502/503/504 up to 3× (5s, 10s); mutations never retry; returns 503+`Retry-After:30` on total failure
+- Proxy forwards query params with `.append()` (NOT `.set()`) so repeated keys survive — multi-select filters serialize as `?customer_ids=A&customer_ids=B`. See `docs/SPEC-CODE-RULES.md` §45
 - Proxy passes non-JSON bodies (`text/csv`, future PDF/XLSX) through untouched — Content-Disposition is preserved so `<a href download>` works same-origin via the NextAuth session cookie. See `docs/SPEC-CODE-RULES.md` §31
 - See `docs/SPEC-RELIABILITY.md` for the full cold-start + retry strategy
 
