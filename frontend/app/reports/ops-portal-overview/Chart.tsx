@@ -47,10 +47,13 @@ const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
   { k: "service",    label: "Service", fmt: (v) => `${v.toFixed(1)}%` },
 ]
 
+// Bruno 2026-06-17: default the brush to the most recent 8 buckets for Week
+// (last 8 weeks) and Month (last 8 months) — was 13 each, which read as
+// "going back ~2 years" once the brush snapped to the full data range.
 const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
   { k: "day",   label: "Day",   defaultVisible: 30 },
-  { k: "week",  label: "Week",  defaultVisible: 13 },
-  { k: "month", label: "Month", defaultVisible: 13 },
+  { k: "week",  label: "Week",  defaultVisible: 8 },
+  { k: "month", label: "Month", defaultVisible: 8 },
 ]
 
 // Series legend keys — toggled on/off by clicking the legend pills.
