@@ -275,7 +275,9 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
             <ComposedChart data={serviceData} margin={{ top: 16, right: 24, bottom: 0, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
+              {/* Bruno 2026-06-18 #1: zoom the Service y-axis to 90–100% so the
+                  near-flat OTP/OTD lines spread out and trends are readable. */}
+              <YAxis tick={{ fontSize: 10 }} domain={[90, 100]} ticks={[90, 92, 94, 96, 98, 100]} allowDataOverflow tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload || !payload.length) return null
@@ -299,8 +301,14 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   )
                 }}
               />
-              <Line type="monotone" dataKey="otp_pct" name="OTP %" stroke="#16A34A" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-              <Line type="monotone" dataKey="otd_pct" name="OTD %" stroke="#2563EB" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              {/* Bruno 2026-06-18 #2: show the % value at each data point.
+                  OTP labels sit above the dot, OTD below, so they don't collide. */}
+              <Line type="monotone" dataKey="otp_pct" name="OTP %" stroke="#16A34A" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="otp_pct" position="top" fontSize={9} fill="#16A34A" formatter={(v) => `${Number(v).toFixed(1)}%`} />
+              </Line>
+              <Line type="monotone" dataKey="otd_pct" name="OTD %" stroke="#2563EB" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="otd_pct" position="bottom" fontSize={9} fill="#2563EB" formatter={(v) => `${Number(v).toFixed(1)}%`} />
+              </Line>
               <Brush
                 dataKey="label"
                 height={20}
