@@ -134,6 +134,21 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     setBrush({ start, end })
   }, [grain, chartData.length, defaultVisible])
 
+  // Bruno 2026-06-18 #1 (R10): auto-fit the Service y-axis to the values in the
+  // VISIBLE (brushed) window — lowest displayed % → axis min, highest → axis max —
+  // with a 1% pad on each end so the lines aren't flush against the frame.
+  const serviceDomain = useMemo<[number, number]>(() => {
+    const slice = serviceData.slice(brush.start, brush.end + 1)
+    const vals = slice
+      .flatMap((d) => [d.otp_pct, d.otd_pct])
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v))
+    if (!vals.length) return [90, 100]
+    const lo = Math.max(0, Math.floor(Math.min(...vals) - 1))
+    const hi = Math.min(100, Math.ceil(Math.max(...vals) + 1))
+    return hi > lo ? [lo, hi] : [90, 100]
+  }, [serviceData, brush.start, brush.end])
+
   // ------- Per-tab series keys (Bruno round 3) ----------------------------
   // Bars / Budget / Losses each have a per-measure variant so the chart line
   // is in the same unit as the bars (drops the dual-axis pre-r3 hack).
@@ -275,9 +290,10 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
             <ComposedChart data={serviceData} margin={{ top: 16, right: 24, bottom: 0, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              {/* Bruno 2026-06-18 #1: zoom the Service y-axis to 90–100% so the
-                  near-flat OTP/OTD lines spread out and trends are readable. */}
-              <YAxis tick={{ fontSize: 10 }} domain={[90, 100]} ticks={[90, 92, 94, 96, 98, 100]} allowDataOverflow tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
+              {/* Bruno 2026-06-18 #1 (R10): auto-fit the y-axis to the visible
+                  OTP/OTD values (lowest → min, highest → max) with a 1% pad each
+                  end, so the near-flat lines spread out and trends are readable. */}
+              <YAxis tick={{ fontSize: 10 }} domain={serviceDomain} allowDecimals={false} tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload || !payload.length) return null
