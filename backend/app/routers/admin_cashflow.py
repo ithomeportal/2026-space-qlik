@@ -642,6 +642,149 @@ async def sparklines(
 
 
 # ---------------------------------------------------------------------------
+# Monthly timing trend — combo chart behind the KPI "+" pop-up
+# ---------------------------------------------------------------------------
+
+
+@router.get("/timing-monthly")
+async def timing_monthly(
+    request: Request,
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    """Bruno Aging "+" pop-up (PDF 2026-06-22): per-KPI monthly combo chart.
+
+    For each of the 3 discipline KPIs the pop-up shows a bar (total orders in
+    the metric's universe) plus a green line (within threshold) and a red line
+    (over threshold). Bucket = calendar month of ``origin_actual_arrival``.
+
+    Unlike the headline KPIs / sparklines this view is deliberately NOT scoped
+    to the page date range — a monthly trend needs many months, and an MTD
+    range would collapse to a single bar. It spans a fixed trailing 13 months
+    (12 full months + the current partial one) and honours only the scope
+    filters (teams / companies / customer / contract). A continuous month axis
+    is guaranteed via ``generate_series`` so empty months still render.
+
+    Metric denominators + within-threshold predicates are kept identical to the
+    /kpis percentages so the bar totals reconcile with the card values:
+      * del     — bill,arrival,departure set;     within = bill − departure ≤ 2
+      * bol     — bill,bol_recv set;              within = bill − bol_recv ≤ 1
+      * carrinv — bill,invoice_recv set;          within = bill − invoice ≤ 1
+    """
+    pool = get_datalake_gold_pool(request)
+    today = _today_clamped()
+    # 12 full months back through the current month (13 buckets).
+    cur_month = date(today.year, today.month, 1)
+    month12 = cur_month
+    for _ in range(12):
+        prev = month12 - timedelta(days=1)
+        month12 = date(prev.year, prev.month, 1)
+    s, e = month12, today
+    team_list = _parse_teams(teams)
+    company_list = _parse_companies(companies)
+
+    params: list = []
+    where_open = _scope_where(
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    date_frag = _date_fragment("c", s, e, params)
+    # generate_series bounds (month-truncated) — own params, distinct from the
+    # half-open date_frag window above.
+    params.append(month12)
+    p_gs_start = len(params)
+    params.append(cur_month)
+    p_gs_end = len(params)
+
+    sql = f"""
+    WITH base AS (
+      SELECT
+        date_trunc('month', c.origin_actual_arrival)::date AS mon,
+        c.id,
+        c.bill_date,
+        c.bol_recv_date,
+        c.invoice_recv_date,
+        c.dest_actual_arrival,
+        c.dest_actual_departure
+      FROM public.mcleod_gld_cashflow c
+      WHERE {where_open} AND {date_frag}
+    ),
+    agg AS (
+      SELECT
+        mon,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND dest_actual_arrival>'2000-01-01'::date
+            AND dest_actual_departure>'2000-01-01'::date
+        ) AS del_total,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND dest_actual_arrival>'2000-01-01'::date
+            AND dest_actual_departure>'2000-01-01'::date
+            AND (bill_date::date - dest_actual_departure::date) <= 2
+        ) AS del_within,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND bol_recv_date>'2000-01-01'::date
+        ) AS bol_total,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND bol_recv_date>'2000-01-01'::date
+            AND (bill_date::date - bol_recv_date::date) <= 1
+        ) AS bol_within,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND invoice_recv_date>'2000-01-01'::date
+        ) AS inv_total,
+        COUNT(DISTINCT id) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND invoice_recv_date>'2000-01-01'::date
+            AND (bill_date::date - invoice_recv_date::date) <= 1
+        ) AS inv_within
+      FROM base
+      GROUP BY mon
+    ),
+    months AS (
+      SELECT generate_series(${p_gs_start}::date, ${p_gs_end}::date,
+                             INTERVAL '1 month')::date AS mon
+    )
+    SELECT
+      m.mon,
+      COALESCE(a.del_total, 0)  AS del_total,
+      COALESCE(a.del_within, 0) AS del_within,
+      COALESCE(a.bol_total, 0)  AS bol_total,
+      COALESCE(a.bol_within, 0) AS bol_within,
+      COALESCE(a.inv_total, 0)  AS inv_total,
+      COALESCE(a.inv_within, 0) AS inv_within
+    FROM months m
+    LEFT JOIN agg a USING (mon)
+    ORDER BY m.mon
+    """
+    rows = await pool.fetch(sql, *params)
+
+    def series(total_col: str, within_col: str) -> dict:
+        total = [int(r[total_col] or 0) for r in rows]
+        within = [int(r[within_col] or 0) for r in rows]
+        over = [t - w for t, w in zip(total, within)]
+        return {"total": total, "within": within, "over": over}
+
+    return {
+        "success": True,
+        "data": {
+            "months": [r["mon"].isoformat() for r in rows],
+            "del": series("del_total", "del_within"),
+            "bol": series("bol_total", "bol_within"),
+            "carrinv": series("inv_total", "inv_within"),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Delivered but not billed — table + grand total
 # ---------------------------------------------------------------------------
 

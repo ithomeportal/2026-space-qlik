@@ -418,7 +418,7 @@ function AdminCashflowContent() {
         )}
 
         {/* KPI strip with sparklines */}
-        <KpiStrip kpis={k} loading={loadingKpis} sparklines={spark} />
+        <KpiStrip kpis={k} loading={loadingKpis} sparklines={spark} filters={filters} />
 
         {/* Aging buckets + Top delayed customers — side-by-side */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

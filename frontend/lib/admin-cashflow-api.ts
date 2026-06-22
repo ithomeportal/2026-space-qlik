@@ -149,6 +149,22 @@ export interface AdminCashflowSparklines {
   carrinv_bill_le1: (number | null)[]
 }
 
+// Bruno Aging "+" pop-up (PDF 2026-06-22): per-KPI monthly combo chart series.
+export type TimingMetricKey = "del" | "bol" | "carrinv"
+
+export interface TimingMetricSeries {
+  total: number[]
+  within: number[]
+  over: number[]
+}
+
+export interface AdminCashflowTimingMonthly {
+  months: string[]
+  del: TimingMetricSeries
+  bol: TimingMetricSeries
+  carrinv: TimingMetricSeries
+}
+
 export interface DeliveredNotBilledRow {
   id: string | null
   orig_sched_early: string | null
@@ -259,6 +275,47 @@ export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
       )
     },
     staleTime: 60 * 1000,
+    ...RETRY,
+  })
+}
+
+// Bruno Aging "+" pop-up (PDF 2026-06-22): monthly timing combo chart.
+// Scope-only (teams/companies/customer/contract) — the chart deliberately
+// ignores the page date range and always spans a fixed trailing 13 months,
+// so it can't collapse to a single bar under an MTD range. Enabled lazily so
+// nothing is fetched until a KPI "+" pop-up is opened.
+export function useAdminCashflowTimingMonthly(
+  f: AdminCashflowFilters,
+  enabled: boolean,
+) {
+  const scopeKey = [
+    (f.teams ?? []).slice().sort().join(","),
+    (f.companies ?? []).slice().sort().join(","),
+    f.customer ?? "",
+    (f.customers ?? []).slice().sort().join(","),
+    f.customerMode ?? "include",
+    f.contractType ?? "",
+  ]
+  return useQuery({
+    queryKey: ["admin-cashflow", "timing-monthly", ...scopeKey],
+    queryFn: () => {
+      const q = new URLSearchParams()
+      if (f.teams?.length) q.set("teams", f.teams.join(","))
+      if (f.companies?.length) q.set("companies", f.companies.join(","))
+      if (f.customers && f.customers.length) {
+        q.set("customers", f.customers.join(","))
+        q.set("customer_mode", f.customerMode ?? "include")
+      } else if (f.customer) {
+        q.set("customer", f.customer)
+      }
+      if (f.contractType) q.set("contract_type", f.contractType)
+      const s = q.toString()
+      return apiFetch<AdminCashflowTimingMonthly>(
+        `custom/admin-cashflow/timing-monthly${s ? `?${s}` : ""}`,
+      )
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled,
     ...RETRY,
   })
 }

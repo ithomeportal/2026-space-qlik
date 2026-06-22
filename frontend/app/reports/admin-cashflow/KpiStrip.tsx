@@ -1,17 +1,22 @@
 "use client"
 
+import { useState } from "react"
 import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts"
-import { CalendarClock, CheckCircle2, ClipboardList, FileText, PackageCheck, Receipt } from "lucide-react"
+import { CalendarClock, CheckCircle2, ClipboardList, FileText, PackageCheck, Plus, Receipt } from "lucide-react"
 import type {
+  AdminCashflowFilters,
   AdminCashflowKpis,
   AdminCashflowSparklines,
+  TimingMetricKey,
 } from "@/lib/admin-cashflow-api"
 import { fmtCount, fmtPct, fmtUsd, fmtUsdCompact } from "./format"
+import { TimingTrendModal } from "./TimingTrendModal"
 
 interface Props {
   kpis: AdminCashflowKpis | undefined
   loading: boolean
   sparklines: AdminCashflowSparklines | undefined
+  filters: AdminCashflowFilters
 }
 
 function fmtDays(v: number | undefined) {
@@ -80,7 +85,10 @@ function KpiDetail({ rows }: { rows?: DetailRow[] }) {
   )
 }
 
-export function KpiStrip({ kpis, loading, sparklines }: Props) {
+export function KpiStrip({ kpis, loading, sparklines, filters }: Props) {
+  // Bruno Aging "+" pop-up (PDF 2026-06-22): clicking the "+" on a discipline
+  // KPI opens the monthly timing combo chart for that metric.
+  const [openMetric, setOpenMetric] = useState<TimingMetricKey | null>(null)
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-7">
       <PctKpiCard
@@ -92,6 +100,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         spark={sparklines?.del_bill_le2 ?? []}
         weeks={sparklines?.weeks ?? []}
         detail={detailLeTotal(kpis, "≤2d", "del_le2", "del_total")}
+        onExpand={() => setOpenMetric("del")}
       />
       <AvgDaysKpiCard
         icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
@@ -110,6 +119,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         spark={sparklines?.bol_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
         detail={detailLeTotal(kpis, "≤1d", "bol_le1", "bol_total")}
+        onExpand={() => setOpenMetric("bol")}
       />
       <AvgDaysKpiCard
         icon={<CalendarClock className="h-4 w-4 text-[#1B3A5C]" />}
@@ -128,6 +138,7 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
         spark={sparklines?.carrinv_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
         detail={detailLeTotal(kpis, "≤1d", "carrinv_le1", "carrinv_total")}
+        onExpand={() => setOpenMetric("carrinv")}
       />
       <UsdKpiCard
         icon={<PackageCheck className="h-4 w-4 text-[#B45309]" />}
@@ -147,6 +158,14 @@ export function KpiStrip({ kpis, loading, sparklines }: Props) {
           kpis.ready_not_billed_usd > 1_000_000
         }
       />
+
+      {openMetric && (
+        <TimingTrendModal
+          metric={openMetric}
+          filters={filters}
+          onClose={() => setOpenMetric(null)}
+        />
+      )}
     </div>
   )
 }
@@ -200,9 +219,10 @@ interface PctKpiProps {
   spark: (number | null)[]
   weeks: string[]
   detail?: DetailRow[]
+  onExpand?: () => void
 }
 
-function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detail }: PctKpiProps) {
+function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detail, onExpand }: PctKpiProps) {
   // Card highlight: green if at/above threshold, amber if within 5pts, red below.
   let tone = "border-[#E5E7EB] bg-white"
   let valueColor = "text-[#1B3A5C]"
@@ -224,8 +244,19 @@ function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detai
   const hasData = data.some((d) => d.v !== null && d.v !== undefined)
 
   return (
-    <div className={`rounded-xl border p-3 shadow-sm ${tone}`}>
-      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-[#6B7280]">
+    <div className={`relative rounded-xl border p-3 shadow-sm ${tone}`}>
+      {/* Bruno Aging "+" pop-up (PDF 2026-06-22): opens the monthly trend. */}
+      {onExpand && (
+        <button
+          onClick={onExpand}
+          aria-label={`Open monthly trend for ${label}`}
+          title="Monthly trend"
+          className="absolute right-1.5 top-1.5 rounded-md border border-[#E5E7EB] bg-white/80 p-0.5 text-[#6B7280] shadow-sm hover:bg-white hover:text-[#1B3A5C]"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      )}
+      <div className="flex items-center gap-2 pr-6 text-[11px] uppercase tracking-wider text-[#6B7280]">
         {icon}
         {label}
       </div>
