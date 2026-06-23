@@ -28,6 +28,7 @@
 - Proxy retries GET on 502/503/504 up to 3× (5s, 10s); mutations never retry; returns 503+`Retry-After:30` on total failure
 - Proxy forwards query params with `.append()` (NOT `.set()`) so repeated keys survive — multi-select filters serialize as `?customer_ids=A&customer_ids=B`. See `docs/SPEC-CODE-RULES.md` §45
 - Proxy passes non-JSON bodies (`text/csv`, future PDF/XLSX) through untouched — Content-Disposition is preserved so `<a href download>` works same-origin via the NextAuth session cookie. See `docs/SPEC-CODE-RULES.md` §31
+- Proxy `route.ts` must `export` a handler for EVERY verb a report uses (`GET/POST/PUT/PATCH/DELETE`) — a missing verb is a silent Next.js 405 (broke all Bonus Calc + KAM DFW edit-Saves, which use `PUT`). Every mutation needs an `onError` toast (`lib/mutation-error.ts`) so failures aren't silent. See `docs/SPEC-CODE-RULES.md` §46
 - See `docs/SPEC-RELIABILITY.md` for the full cold-start + retry strategy
 
 ### Security (Non-Negotiable)
