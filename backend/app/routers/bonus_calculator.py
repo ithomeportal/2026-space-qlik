@@ -29,6 +29,7 @@ import logging
 from calendar import month_name
 from datetime import date
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -657,7 +658,7 @@ async def create_roster_row(
 @router.put("/roster/{row_id}")
 async def update_roster_row(
     request: Request,
-    row_id: str,
+    row_id: UUID,
     body: RosterRow,
     user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
@@ -683,7 +684,7 @@ async def update_roster_row(
 @router.delete("/roster/{row_id}")
 async def delete_roster_row(
     request: Request,
-    row_id: str,
+    row_id: UUID,
     user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
     primary = get_pool(request)
@@ -702,7 +703,7 @@ class AfterhoursRow(BaseModel):
 @router.put("/afterhours/{row_id}")
 async def update_afterhours_row(
     request: Request,
-    row_id: str,
+    row_id: UUID,
     body: AfterhoursRow,
     user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
