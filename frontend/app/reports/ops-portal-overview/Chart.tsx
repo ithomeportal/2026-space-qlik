@@ -561,6 +561,7 @@ function ProfitTmGauge({ mtd, target }: { mtd: number; target: number }) {
   const max = Math.max(target, mtd, 1) * 1.05
   const pct = Math.min(100, Math.max(0, (mtd / max) * 100))
   const targetPct = target > 0 ? Math.min(100, Math.max(0, (target / max) * 100)) : 0
+  const completionPct = target > 0 ? (mtd / target) * 100 : 0
   const onTrack = target > 0 && mtd >= target * (new Date().getDate() / 30)
   return (
     <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2">
@@ -587,6 +588,11 @@ function ProfitTmGauge({ mtd, target }: { mtd: number; target: number }) {
           />
         )}
       </div>
+      {target > 0 && (
+        <div className="mt-0.5 text-center text-xs font-medium tabular-nums text-[#374151]">
+          {completionPct.toFixed(2)}%
+        </div>
+      )}
     </div>
   )
 }
