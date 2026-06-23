@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { mutationErrorToast } from "@/lib/mutation-error"
 
 interface ApiResponse<T> {
   success: boolean
@@ -24,7 +25,16 @@ async function apiSend<T>(method: string, path: string, body?: unknown): Promise
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    let msg = `API error: ${res.status}`
+    try {
+      const b = await res.json()
+      if (b?.error || b?.detail) msg = b.error || b.detail
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(msg)
+  }
   return res.json()
 }
 
@@ -266,32 +276,39 @@ export function useBonusMutations() {
     mutationFn: (b: { team_id: string; name: string; role: string; salary_mxn: number }) =>
       apiSend("POST", "/roster", b),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Add employee"),
   })
   const updateRoster = useMutation({
     mutationFn: ({ id, ...b }: { id: string; team_id: string; name: string; role: string; salary_mxn: number }) =>
       apiSend("PUT", `/roster/${id}`, b),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Save employee"),
   })
   const deleteRoster = useMutation({
     mutationFn: (id: string) => apiSend("DELETE", `/roster/${id}`),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Delete employee"),
   })
   const updateAfterhours = useMutation({
     mutationFn: ({ id, ...b }: { id: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
       apiSend("PUT", `/afterhours/${id}`, b),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Save afterhours"),
   })
   const saveFx = useMutation({
     mutationFn: (b: { period_key: string; team_fx: number; night_fx: number }) => apiSend("PUT", "/settings", b),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Save FX"),
   })
   const lock = useMutation({
     mutationFn: (period_key: string) => apiSend("POST", "/lock", { period_key }),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Lock period"),
   })
   const unlock = useMutation({
     mutationFn: (period_key: string) => apiSend("DELETE", `/lock/${period_key}`),
     onSuccess: invalidate,
+    onError: mutationErrorToast("Unlock period"),
   })
 
   return { createRoster, updateRoster, deleteRoster, updateAfterhours, saveFx, lock, unlock }

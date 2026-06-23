@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { mutationErrorToast } from "@/lib/mutation-error"
 
 interface ApiResponse<T> {
   success: boolean
@@ -125,6 +126,7 @@ export function useCreateScorecard() {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "scorecards"] }),
+    onError: mutationErrorToast("Add scorecard"),
   })
 }
 
@@ -138,6 +140,7 @@ export function useDeleteScorecard() {
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "scorecards"] }),
+    onError: mutationErrorToast("Delete scorecard"),
   })
 }
 
@@ -172,6 +175,7 @@ export function useUpsertTopLanesNote() {
       qc.invalidateQueries({
         queryKey: ["kam-performance-dfw", "top-lanes-note"],
       }),
+    onError: mutationErrorToast("Save note"),
   })
 }
 
@@ -216,6 +220,7 @@ export function useCreateCustomerDev() {
       qc.invalidateQueries({
         queryKey: ["kam-performance-dfw", "customer-dev"],
       }),
+    onError: mutationErrorToast("Add customer dev row"),
   })
 }
 
@@ -244,6 +249,7 @@ export function useUpdateCustomerDev() {
       qc.invalidateQueries({
         queryKey: ["kam-performance-dfw", "customer-dev"],
       }),
+    onError: mutationErrorToast("Save customer dev row"),
   })
 }
 
@@ -259,6 +265,7 @@ export function useDeleteCustomerDev() {
       qc.invalidateQueries({
         queryKey: ["kam-performance-dfw", "customer-dev"],
       }),
+    onError: mutationErrorToast("Delete customer dev row"),
   })
 }
 
@@ -301,6 +308,7 @@ export function useCreateTeamDev() {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "team-dev"] }),
+    onError: mutationErrorToast("Add team dev row"),
   })
 }
 
@@ -323,6 +331,7 @@ export function useUpdateTeamDev() {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "team-dev"] }),
+    onError: mutationErrorToast("Save team dev row"),
   })
 }
 
@@ -336,6 +345,7 @@ export function useDeleteTeamDev() {
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "team-dev"] }),
+    onError: mutationErrorToast("Delete team dev row"),
   })
 }
 
@@ -524,6 +534,7 @@ export function useUpsertWorstLaneNote() {
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "worst-lanes"] }),
+    onError: mutationErrorToast("Save lane note"),
   })
 }
 
@@ -563,5 +574,6 @@ export function useUpsertCarrierComment() {
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "carrier-sales"] }),
+    onError: mutationErrorToast("Save carrier comment"),
   })
 }
