@@ -19,3 +19,15 @@ export function mutationErrorToast(action: string) {
     })
   }
 }
+
+/**
+ * Fires a green success toast — pair with `onSuccess` so a persisted write gives
+ * positive confirmation, not just a button that quietly disables. Returns the
+ * callback so it can run alongside cache invalidation:
+ *   onSuccess: () => { invalidate(); mutationSuccessToast("Saved")() }
+ */
+export function mutationSuccessToast(message: string) {
+  return () => {
+    toast.success(message)
+  }
+}

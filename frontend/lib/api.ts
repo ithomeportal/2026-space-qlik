@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { mutationErrorToast } from "@/lib/mutation-error"
 
 interface ApiResponse<T> {
   success: boolean
@@ -142,6 +143,7 @@ export function useUpdatePreferences() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["preferences"] })
     },
+    onError: mutationErrorToast("Save preferences"),
   })
 }
 
@@ -690,5 +692,6 @@ export function useToggleFavorite() {
       queryClient.invalidateQueries({ queryKey: ["preferences"] })
       queryClient.invalidateQueries({ queryKey: ["reports"] })
     },
+    onError: mutationErrorToast("Update favorite"),
   })
 }
