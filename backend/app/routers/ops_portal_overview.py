@@ -2561,8 +2561,12 @@ async def margin_distribution(
         }
         for r in rows
     ]
-    total_orders = sum(d["orders"] for d in data)
-    total_revenue = _safe_float(sum(d["revenue"] for d in data))
+    # Header totals cover only the orders with a definable margin% (the six
+    # rendered buckets). The 'no_revenue' bucket (total_charge = 0 → undefined
+    # margin%) is excluded so the header reconciles with the visible buckets;
+    # it stays in `data` for completeness but the frontend renders the six.
+    total_orders = sum(d["orders"] for d in data if d["bucket"] != "no_revenue")
+    total_revenue = _safe_float(sum(d["revenue"] for d in data if d["bucket"] != "no_revenue"))
     return {
         "success": True,
         "data": data,
