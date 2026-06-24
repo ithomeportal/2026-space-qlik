@@ -79,6 +79,8 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
   const [subTeams, setSubTeams] = useState<string[]>([])
   const [customers, setCustomers] = useState<string[]>([])
   const [lanes, setLanes] = useState<string[]>([])
+  const [contractTypes, setContractTypes] = useState<string[]>([])
+  const [equipment, setEquipment] = useState<string[]>([])
   // Bruno (2026-05-28): the RUAN pseudo-team. view="ruan" scopes to RUAN
   // customers under TEAM-DFW and swaps the entity from customer_name → client.
   const [view, setView] = useState<XrayDfwView | undefined>(undefined)
@@ -109,9 +111,11 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
       subTeams: effectiveSubTeams,
       customers: customers.length ? customers : undefined,
       lanes: lanes.length ? lanes : undefined,
+      contractTypes: contractTypes.length ? contractTypes : undefined,
+      equipment: equipment.length ? equipment : undefined,
       view,
     }),
-    [range, appliedDates, effectiveSubTeams, customers, lanes, view],
+    [range, appliedDates, effectiveSubTeams, customers, lanes, contractTypes, equipment, view],
   )
 
   // Toggling any normal team selection exits the RUAN view and clears the
@@ -186,6 +190,8 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
           {" · "}
           {entityLabel}: {entitySummary}
           {lanes.length > 0 && ` · Lanes: ${lanes.length}`}
+          {contractTypes.length > 0 && ` · Contract/Spot: ${contractTypes.length}`}
+          {equipment.length > 0 && ` · Equipment: ${equipment.length}`}
         </div>
       </div>
 
@@ -302,6 +308,24 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
             onChange={setLanes}
             placeholder={loadingFilters ? "Loading…" : "All lanes"}
             width={260}
+          />
+
+          <MultiSelectChips
+            label="Contract/Spot"
+            options={filterOptions?.contract_types ?? []}
+            selected={contractTypes}
+            onChange={setContractTypes}
+            placeholder={loadingFilters ? "Loading…" : "All types"}
+            width={200}
+          />
+
+          <MultiSelectChips
+            label="Equipment"
+            options={filterOptions?.equipment_groups ?? []}
+            selected={equipment}
+            onChange={setEquipment}
+            placeholder={loadingFilters ? "Loading…" : "All equipment"}
+            width={220}
           />
 
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}

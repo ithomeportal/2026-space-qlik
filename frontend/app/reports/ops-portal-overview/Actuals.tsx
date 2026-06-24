@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { ArrowDown, ArrowUp, Loader2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { ArrowDown, ArrowUp, Loader2, Maximize2, X } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -15,6 +15,9 @@ import {
 
 interface Props {
   filters: OppFilters
+  // R9: when provided, customer-name / lane cells become clickable drill links.
+  onPickCustomer?: (customer: string) => void
+  onPickLane?: (lane: string) => void
 }
 
 // Bruno round 3 (2026-05-19): per-cell display mode toggle —
@@ -58,11 +61,23 @@ const COLUMNS: {
   { k: "proj_eom_prof", label: "Proj. EOM Profit", align: "center", numeric: true, accessor: (r) => r.proj_eom_prof },
 ]
 
-export function Actuals({ filters }: Props) {
+export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
   // Bruno R6 (2026-06-02): default the Actuals table to the "All" filter view.
   const [mode, setMode] = useState<Mode>("all")
   const [sortKey, setSortKey] = useState<ColumnKey>("rev")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
+  // Bruno R11 (2026-06-24): expand the table into an uncapped modal.
+  const [expanded, setExpanded] = useState(false)
+
+  // Esc closes the expand modal.
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [expanded])
 
   // Fetch with a stable backend sort; we re-sort client-side for column clicks.
   const { data, isLoading, error } = useOppActuals(filters, { sort: "revenue_desc", limit: 200 })
@@ -94,9 +109,30 @@ export function Actuals({ filters }: Props) {
     }
   }
 
+  const table = (
+    <ActualsTable
+      rows={rows}
+      totals={totals}
+      mode={mode}
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={onSort}
+      onPickCustomer={onPickCustomer}
+      onPickLane={onPickLane}
+    />
+  )
+
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          title="Expand table"
+          className="text-[#6B7280] hover:text-[#1B3A5C]"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
         <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
           Actuals
         </span>
@@ -110,80 +146,141 @@ export function Actuals({ filters }: Props) {
       {error ? (
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load Actuals</div>
       ) : (
-        <div className="max-h-[420px] overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-              <tr className="border-b border-[#E5E7EB]">
-                {COLUMNS.map((c) => (
-                  <SortableTh
-                    key={c.k}
-                    align={c.align}
-                    active={sortKey === c.k}
-                    dir={sortDir}
-                    onClick={() => onSort(c.k)}
-                  >
-                    {c.label}
-                  </SortableTh>
-                ))}
-              </tr>
-              {totals && (
-                <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
-                  <td className="px-2 py-1.5">TOTAL</td>
-                  <ModeCell mode={mode} kind="count"
-                    production={totals.vol} budget={totals.vol_budget} variance={totals.vol_var} />
-                  <ModeCell mode={mode} kind="usd"
-                    production={totals.rev} budget={totals.rev_budget} variance={totals.rev_var} />
-                  <ModeCell mode={mode} kind="usd"
-                    production={totals.prof} budget={totals.prof_budget} variance={totals.prof_var} />
-                  <ModeCell mode={mode} kind="pct"
-                    production={totals.margin_pct} budget={totals.margin_budget_pct} variance={totals.margin_var_pct} />
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otp_pct)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otd_pct)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev_x_l)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof_x_l)}</td>
-                  <td className="px-2 py-1.5" colSpan={4} />
-                </tr>
-              )}
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-[#9CA3AF]">
-                    No customers in scope
-                  </td>
-                </tr>
-              ) : rows.map((r) => (
-                <tr key={r.customer_name} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
-                  <td className="px-2 py-1.5 font-semibold text-[#1B3A5C]">{r.customer_name}</td>
-                  <ModeCell mode={mode} kind="count"
-                    production={r.vol} budget={r.vol_budget} variance={r.vol_var} />
-                  <ModeCell mode={mode} kind="usd"
-                    production={r.rev} budget={r.rev_budget} variance={r.rev_var} />
-                  <ModeCell mode={mode} kind="usd"
-                    production={r.prof} budget={r.prof_budget} variance={r.prof_var} />
-                  <ModeCell mode={mode} kind="pct"
-                    production={r.margin_pct} budget={r.margin_budget_pct} variance={r.margin_var_pct} />
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otp_pct)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otd_pct)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.rev_x_l)}</td>
-                  <td className={`px-2 py-1.5 text-right tabular-nums ${r.prof_x_l < 0 ? "text-[#DC2626]" : ""}`}>
-                    {fmtUsd(r.prof_x_l)}
-                  </td>
-                  <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(r.vol_x_day)}</td>
-                  <td className={`px-2 py-1.5 text-center tabular-nums ${r.prof_x_day < 0 ? "text-[#DC2626]" : ""}`}>
-                    {fmtUsd(r.prof_x_day)}
-                  </td>
-                  <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(r.proj_eom_vol)}</td>
-                  <td className={`px-2 py-1.5 text-center tabular-nums ${r.proj_eom_prof < 0 ? "text-[#DC2626]" : ""}`}>
-                    {fmtUsd(r.proj_eom_prof)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="max-h-[420px] overflow-auto">{table}</div>
+      )}
+
+      {expanded && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setExpanded(false)}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+              <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
+                Actuals
+              </span>
+              <ModePills mode={mode} setMode={setMode} />
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                title="Close"
+                className="ml-auto text-[#6B7280] hover:text-[#1B3A5C]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="overflow-auto">{table}</div>
+          </div>
         </div>
       )}
     </section>
+  )
+}
+
+function ActualsTable({
+  rows,
+  totals,
+  mode,
+  sortKey,
+  sortDir,
+  onSort,
+  onPickCustomer,
+}: {
+  rows: OppActualsRow[]
+  totals: OppActualsTotals | undefined
+  mode: Mode
+  sortKey: ColumnKey
+  sortDir: "asc" | "desc"
+  onSort: (k: ColumnKey) => void
+  onPickCustomer?: (customer: string) => void
+  onPickLane?: (lane: string) => void
+}) {
+  return (
+    <table className="w-full text-xs">
+      <thead className="sticky top-0 z-10 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
+        <tr className="border-b border-[#E5E7EB]">
+          {COLUMNS.map((c) => (
+            <SortableTh
+              key={c.k}
+              align={c.align}
+              active={sortKey === c.k}
+              dir={sortDir}
+              onClick={() => onSort(c.k)}
+            >
+              {c.label}
+            </SortableTh>
+          ))}
+        </tr>
+        {totals && (
+          <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
+            <td className="px-2 py-1.5">TOTAL</td>
+            <ModeCell mode={mode} kind="count"
+              production={totals.vol} budget={totals.vol_budget} variance={totals.vol_var} />
+            <ModeCell mode={mode} kind="usd"
+              production={totals.rev} budget={totals.rev_budget} variance={totals.rev_var} />
+            <ModeCell mode={mode} kind="usd"
+              production={totals.prof} budget={totals.prof_budget} variance={totals.prof_var} />
+            <ModeCell mode={mode} kind="pct"
+              production={totals.margin_pct} budget={totals.margin_budget_pct} variance={totals.margin_var_pct} />
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otp_pct)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otd_pct)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev_x_l)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof_x_l)}</td>
+            <td className="px-2 py-1.5" colSpan={4} />
+          </tr>
+        )}
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-[#9CA3AF]">
+              No customers in scope
+            </td>
+          </tr>
+        ) : rows.map((r) => (
+          <tr key={r.customer_name} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
+            <td className="px-2 py-1.5 font-semibold text-[#1B3A5C]">
+              {onPickCustomer ? (
+                <button
+                  type="button"
+                  onClick={() => onPickCustomer(r.customer_name)}
+                  className="text-left text-[#2563EB] hover:underline"
+                >
+                  {r.customer_name}
+                </button>
+              ) : (
+                r.customer_name
+              )}
+            </td>
+            <ModeCell mode={mode} kind="count"
+              production={r.vol} budget={r.vol_budget} variance={r.vol_var} />
+            <ModeCell mode={mode} kind="usd"
+              production={r.rev} budget={r.rev_budget} variance={r.rev_var} />
+            <ModeCell mode={mode} kind="usd"
+              production={r.prof} budget={r.prof_budget} variance={r.prof_var} />
+            <ModeCell mode={mode} kind="pct"
+              production={r.margin_pct} budget={r.margin_budget_pct} variance={r.margin_var_pct} />
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otp_pct)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otd_pct)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.rev_x_l)}</td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${r.prof_x_l < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(r.prof_x_l)}
+            </td>
+            <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(r.vol_x_day)}</td>
+            <td className={`px-2 py-1.5 text-center tabular-nums ${r.prof_x_day < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(r.prof_x_day)}
+            </td>
+            <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(r.proj_eom_vol)}</td>
+            <td className={`px-2 py-1.5 text-center tabular-nums ${r.proj_eom_prof < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(r.proj_eom_prof)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -280,7 +377,8 @@ function ModeCell({
       <td className="px-2 py-1.5 text-center tabular-nums">
         <div className="flex items-center justify-center gap-1.5">
           <div className="min-w-[64px]">
-            <div className={`font-semibold text-[#1B3A5C] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
+            {/* R15 (2026-06-24, All tab only): big Actual value now blue. */}
+            <div className={`font-semibold text-[#2563EB] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
               {fmt(production)}
             </div>
             <div className="flex items-center justify-between gap-2 text-[10px]">
@@ -290,8 +388,9 @@ function ModeCell({
               </span>
             </div>
           </div>
+          {/* R15: Production / Budget % concentration value now black. */}
           {pct !== null && (
-            <span className="text-[10px] font-semibold text-[#2563EB]">{Math.round(pct)}%</span>
+            <span className="text-[10px] font-semibold text-[#111827]">{Math.round(pct)}%</span>
           )}
         </div>
       </td>

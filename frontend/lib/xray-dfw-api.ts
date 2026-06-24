@@ -65,6 +65,8 @@ export interface XrayDfwFilters {
   subTeams?: string[] // empty / undefined = all 4
   customers?: string[] // multi-select customer (or RUAN client) filter
   lanes?: string[] // multi-select lane filter
+  contractTypes?: string[] // multi-select contract-type filter
+  equipment?: string[] // multi-select equipment-group filter
   view?: XrayDfwView // "ruan" swaps customer_name → client
 }
 
@@ -76,6 +78,9 @@ function dfwQs(f: XrayDfwFilters) {
   if (f.subTeams && f.subTeams.length) q.set("sub_teams", f.subTeams.join(","))
   if (f.customers && f.customers.length) q.set("customers", f.customers.join(","))
   if (f.lanes && f.lanes.length) q.set("lanes", f.lanes.join(","))
+  if (f.contractTypes && f.contractTypes.length)
+    q.set("contract_type", f.contractTypes.join(","))
+  if (f.equipment && f.equipment.length) q.set("equipment", f.equipment.join(","))
   if (f.view) q.set("view", f.view)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -89,6 +94,8 @@ export interface XrayDfwFilterOptions {
   sub_teams: string[]
   customers: string[]
   lanes: string[]
+  contract_types?: string[]
+  equipment_groups?: string[]
   year_start: string
   year_end: string
   locked_team?: string
@@ -327,9 +334,8 @@ export interface XrayDfwAllOrder {
   revenue: number
   profit: number
   margin_pct: number
-  diff_15: number
-  diff_18: number
-  diff_20: number
+  contract_type: string
+  equipment_group: string
 }
 
 export interface XrayDfwLaneAnalysisRow {
@@ -355,9 +361,6 @@ export interface XrayDfwAllOrdersTotals {
   revenue: number
   profit: number
   margin_pct: number
-  diff_15: number
-  diff_18: number
-  diff_20: number
 }
 
 export interface XrayDfwAllOrdersPage {

@@ -331,6 +331,33 @@ export interface OppWeekPerf {
   lane_attr_pct: number
 }
 
+// Per-team breakdown of Team Performance (one row per team_id + a Total).
+export interface OppTeamPerfByTeam {
+  total: OppTeamPerformance
+  teams: (OppTeamPerformance & { team_id: string })[]
+}
+
+// Per-customer service-fail breakdown ("On time P&D" incident table).
+export interface OppServiceIncidentRow {
+  customer_name: string
+  orders: number
+  fail: number
+  pct_on_time: number
+}
+
+export interface OppServiceIncidentTotals {
+  orders: number
+  fail: number
+  pct_on_time: number
+}
+
+// Margin-bucket distribution (orders + revenue per margin band).
+export interface OppMarginBucket {
+  bucket: string
+  orders: number
+  revenue: number
+}
+
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
@@ -501,6 +528,40 @@ export function useOppTeamWeekly(
     queryKey: ["opp-team-weekly", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${BASE}/team-weekly-performance${qs(filters)}`),
     enabled,
+    ...RETRY,
+  })
+}
+
+// Per-team breakdown of the Team Performance table (Total + one row per team).
+export function useOppTeamPerformanceByTeam(f: OppFilters) {
+  return useQuery({
+    queryKey: ["opp-team-performance-by-team", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppTeamPerfByTeam>(`${BASE}/team-performance-by-team${qs(f)}`),
+    ...RETRY,
+  })
+}
+
+// Per-customer service-fail breakdown by stop type (Pickup or Delivery).
+export function useOppServiceIncident(f: OppFilters, stopType: "pu" | "del") {
+  return useQuery({
+    queryKey: [
+      "opp-service-incident",
+      stopType,
+      f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f),
+    ],
+    queryFn: () =>
+      apiFetch<OppServiceIncidentRow[]>(
+        `${BASE}/service-incident-by-customer${qs(f, { stop_type: stopType })}`,
+      ),
+    ...RETRY,
+  })
+}
+
+// Margin-band distribution (orders + revenue per bucket).
+export function useOppMarginDistribution(f: OppFilters) {
+  return useQuery({
+    queryKey: ["opp-margin-distribution", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppMarginBucket[]>(`${BASE}/margin-distribution${qs(f)}`),
     ...RETRY,
   })
 }

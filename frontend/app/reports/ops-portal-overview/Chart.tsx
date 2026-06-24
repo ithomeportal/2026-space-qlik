@@ -58,8 +58,8 @@ const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
 
 // Series legend keys — toggled on/off by clicking the legend pills.
 // Bruno R5 (2026-06-01) #3: "variance" (Actual − Budget) legend/tooltip entry
-// between Budget and Losses.
-type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
+// after Budget. (Bruno R16: Losses series removed.)
+type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected"
 
 // Compact data-point labels on the bars (Bruno R4 "show the data points").
 // Full USD on every bar overlaps; compact ($210K) keeps the chart readable.
@@ -150,19 +150,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   }, [serviceData, brush.start, brush.end])
 
   // ------- Per-tab series keys (Bruno round 3) ----------------------------
-  // Bars / Budget / Losses each have a per-measure variant so the chart line
+  // Bars / Budget each have a per-measure variant so the chart line
   // is in the same unit as the bars (drops the dual-axis pre-r3 hack).
   const budgetKey: string = (
     measure === "revenue"    ? "budget_revenue"
     : measure === "profit"   ? "budget_profit"
     : measure === "volume"   ? "budget_loads"
     : "budget_margin_pct"
-  )
-  const lossesKey: string = (
-    measure === "revenue"    ? "losses_rev"
-    : measure === "profit"   ? "losses_prof"
-    : measure === "volume"   ? "losses_vol"
-    : "losses_margin_pct"
   )
 
   const measureMeta = MEASURES.find((m) => m.k === measure)!
@@ -242,7 +236,7 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 active={!isHidden("budget")}
                 onClick={() => toggle("budget")}
               />
-              {/* Bruno R5 #3: Variance = Actual − Budget, between Budget and Losses. */}
+              {/* Bruno R5 #3: Variance = Actual − Budget, after Budget. */}
               <LegendChip
                 label="Variance"
                 color="#F59E0B"
@@ -262,12 +256,6 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 dashed
                 active={!isHidden("projected")}
                 onClick={() => toggle("projected")}
-              />
-              <LegendChip
-                label="losses x M"
-                color="#DC2626"
-                active={!isHidden("losses")}
-                onClick={() => toggle("losses")}
               />
             </>
           )}
@@ -350,15 +338,14 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 content={({ active, payload }) => {
                   if (!active || !payload || !payload.length) return null
                   const row = payload[0].payload as Record<string, number> & { label?: string }
-                  // Bruno R4: fixed order — Actual · Budget · Losses · Avg · Projected.
-                  // Bruno R5 #3: + Variance (Actual − Budget) between Budget and Losses.
+                  // Bruno R16: fixed order — Actual · Budget · Variance · Avg · Projected.
+                  // (Losses series removed.)
                   const actualVal = Number(row[measure] ?? 0)
                   const budgetVal = Number(row[budgetKey] ?? 0)
                   const items = [
                     { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: actualVal },
                     { key: "budget" as SeriesKey,    label: "Budget",    color: "#16A34A", value: budgetVal },
                     { key: "variance" as SeriesKey,  label: "Variance",  color: "#F59E0B", value: actualVal - budgetVal },
-                    { key: "losses" as SeriesKey,    label: "Losses",    color: "#DC2626", value: Number(row[lossesKey] ?? 0) },
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
                   ].filter((i) => !isHidden(i.key))
@@ -399,16 +386,6 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   dataKey={budgetKey}
                   name="Budget"
                   stroke="#16A34A"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                />
-              )}
-              {!isHidden("losses") && (
-                <Line
-                  type="monotone"
-                  dataKey={lossesKey}
-                  name="Losses x M"
-                  stroke="#DC2626"
                   strokeWidth={2}
                   dot={{ r: 3 }}
                 />

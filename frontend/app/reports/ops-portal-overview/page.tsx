@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, LayoutGrid, Loader2 } from "lucide-react"
+import { ArrowLeft, LayoutGrid, Loader2, RefreshCw } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { ReportGuard } from "@/components/ReportGuard"
 import { MultiSelectChips, type FilterMode } from "@/components/MultiSelectChips"
 import {
@@ -14,7 +15,8 @@ import {
 } from "@/lib/ops-portal-overview-api"
 import { ComboChart } from "./Chart"
 import { SidePanels } from "./SidePanels"
-import { TeamLastMonthPerformance, TeamVariancePerformance } from "./TeamMonthDelta"
+import { ServiceIncidentTables } from "./ServiceIncidentTables"
+import { MarginDistribution } from "./MarginDistribution"
 import { Actuals } from "./Actuals"
 import { ActualsByLane } from "./ActualsByLane"
 import { ByOrder } from "./ByOrder"
@@ -62,6 +64,7 @@ export default function OpsPortalOverviewPage() {
 }
 
 function OpsPortalOverviewContent() {
+  const qc = useQueryClient()
   // Default = current month (Bruno: "Date: dafault value (this month)")
   const [range, setRange] = useState<OppRange>("mtd")
   const [startDate, setStartDate] = useState<string>(monthStartIso())
@@ -103,6 +106,12 @@ function OpsPortalOverviewContent() {
     [range, appliedDates, team, customer, loadType, lossesOnly, laneIds, laneMode],
   )
 
+  // R10: clicking a lane in the By-Lane table sets it as the single included lane.
+  function pickLane(lane: string) {
+    setLaneIds([lane])
+    setLaneMode("include")
+  }
+
   const customerSuggestions = useMemo(() => {
     const q = customerInput.trim().toLowerCase()
     if (!q || !filterOptions?.customers) return []
@@ -130,23 +139,33 @@ function OpsPortalOverviewContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <LayoutGrid className="h-4 w-4 text-[#2563EB]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">Ops Portal - Overview</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">OPS Managers Portal</h1>
           <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">CORP</span>
         </div>
-        <div className="ml-auto flex flex-col items-end text-xs text-[#6B7280]">
-          <div>
-            {appliedDates.startDate} → {appliedDates.endDate}
-            {" · "}
-            Team: {team || "All"}
-            {" · "}
-            Customer: {customer || "All"}
-            {laneIds.length > 0 &&
-              ` · Lanes: ${laneMode === "exclude" ? "excl " : ""}${laneIds.length}`}
-            {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
+        <div className="ml-auto flex items-center gap-3 text-xs text-[#6B7280]">
+          <div className="flex flex-col items-end">
+            <div>
+              {appliedDates.startDate} → {appliedDates.endDate}
+              {" · "}
+              Team: {team || "All"}
+              {" · "}
+              Customer: {customer || "All"}
+              {laneIds.length > 0 &&
+                ` · Lanes: ${laneMode === "exclude" ? "excl " : ""}${laneIds.length}`}
+              {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
+            </div>
+            <div className="text-[11px] text-[#9CA3AF]">
+              Last auto-refreshed: <span className="font-medium text-[#6B7280]">{refreshedLabel}</span>
+            </div>
           </div>
-          <div className="text-[11px] text-[#9CA3AF]">
-            Last auto-refreshed: <span className="font-medium text-[#6B7280]">{refreshedLabel}</span>
-          </div>
+          <button
+            onClick={() => qc.invalidateQueries()}
+            title="Force refresh all data"
+            className="flex items-center gap-1 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -303,18 +322,20 @@ function OpsPortalOverviewContent() {
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
           <div className="space-y-4">
             <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <TeamLastMonthPerformance filters={filters} />
-              <TeamVariancePerformance filters={filters} />
-            </div>
+            {/* Bruno 2026-06-15: PU/DEL service-incident split replaces the two
+                Team month-delta tables (TeamMonthDelta removed). */}
+            <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} />
           </div>
-          <SidePanels filters={filters} />
+          <SidePanels filters={filters} onPickCustomer={setCustomer} />
         </div>
 
+        {/* R17: Margin distribution spans full width below the side panels. */}
+        <MarginDistribution filters={filters} />
+
         {/* Bruno R6 (2026-06-02): Production by Customer table removed. */}
-        <Actuals filters={filters} />
-        <ActualsByLane filters={filters} />
-        <ByOrder filters={filters} />
+        <Actuals filters={filters} onPickCustomer={setCustomer} />
+        <ActualsByLane filters={filters} onPickLane={pickLane} />
+        <ByOrder filters={filters} onPickCustomer={setCustomer} />
       </div>
     </div>
   )

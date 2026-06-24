@@ -188,9 +188,8 @@ export function ContractSpot({
                   <SortableTh label="$ Revenue" columnKey="revenue" state={orderSort} align="right" />
                   <SortableTh label="$ Profit" columnKey="profit" state={orderSort} align="right" />
                   <SortableTh label="Margin %" columnKey="margin_pct" state={orderSort} align="right" />
-                  <SortableTh label="Diff 15%" columnKey="diff_15" state={orderSort} align="right" />
-                  <SortableTh label="Diff 18%" columnKey="diff_18" state={orderSort} align="right" />
-                  <SortableTh label="Diff 20%" columnKey="diff_20" state={orderSort} align="right" />
+                  <SortableTh label="Contract / Spot" columnKey="contract_type" state={orderSort} />
+                  <SortableTh label="Equip" columnKey="equipment_group" state={orderSort} />
                 </tr>
               </thead>
               <tbody>
@@ -208,9 +207,8 @@ export function ContractSpot({
                     <td className={`px-3 py-1.5 text-right ${ordersTotals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
                       {fmtPct(ordersTotals.margin_pct)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_15)}</td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_18)}</td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.diff_20)}</td>
+                    <td className="px-3 py-1.5" />
+                    <td className="px-3 py-1.5" />
                   </tr>
                 )}
                 {orderSort.sorted.map((r) => (
@@ -237,9 +235,8 @@ export function ContractSpot({
                     <td className={`px-3 py-1.5 text-right ${r.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
                       {fmtPct(r.margin_pct)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(r.diff_15)}</td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(r.diff_18)}</td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(r.diff_20)}</td>
+                    <td className="px-3 py-1.5">{r.contract_type}</td>
+                    <td className="px-3 py-1.5">{r.equipment_group}</td>
                   </tr>
                 ))}
               </tbody>

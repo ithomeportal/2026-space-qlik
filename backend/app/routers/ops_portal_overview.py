@@ -2056,3 +2056,519 @@ async def team_weekly_performance(
         })
 
     return {"success": True, "data": {"weeks": weeks}}
+
+
+# ---------------------------------------------------------------------------
+# /team-performance-by-team — §5 split per CORP team (TEAM1..TEAM5) + Total
+# ---------------------------------------------------------------------------
+
+
+def _team_perf_obj(
+    *,
+    customers: int,
+    lanes: int,
+    volume: int,
+    revenue: float,
+    total_cost: float,
+    profit: float,
+    loss_loads: int,
+    profit_loss: float,
+    otp_late: int,
+    otd_late: int,
+    team_count: int,
+    savings: float,
+    over_pay: float,
+    net_savings: float,
+    cust_total: int,
+    cust_attr: int,
+    lane_total: int,
+    lane_attr: int,
+) -> dict:
+    """Build one §5 row from raw aggregates — shared by every team + Total so
+    every TeamPerf object carries the exact same field set as /team-performance.
+    """
+    capacity = 500 * (team_count or 0)
+    return {
+        "customers":  customers,
+        "lanes":      lanes,
+        "volume":     volume,
+        "revenue":    _safe_float(revenue),
+        "total_cost": _safe_float(total_cost),
+        "profit":     _safe_float(profit),
+        "margin_pct": _safe_float((profit / revenue * 100.0) if revenue else 0.0),
+        "rev_x_l":    _safe_float((revenue / volume) if volume else 0.0),
+        "prof_x_l":   _safe_float((profit / volume) if volume else 0.0),
+        "team_ut":    _safe_float((volume / capacity * 100.0) if capacity else 0.0),
+        "otp_pct":    _safe_float((1.0 - otp_late / volume) * 100.0 if volume else 0.0),
+        "lates_pu":   otp_late,
+        "otd_pct":    _safe_float((1.0 - otd_late / volume) * 100.0 if volume else 0.0),
+        "lates_del":  otd_late,
+        "savings":    _safe_float(savings),
+        "over_pay":   _safe_float(over_pay),
+        "net_savings": _safe_float(net_savings),
+        "loss_loads":  loss_loads,
+        "profit_loss": _safe_float(profit_loss),
+        "cust_attr_pct": _safe_float((cust_attr / cust_total * 100.0) if cust_total else 0.0),
+        "lane_attr_pct": _safe_float((lane_attr / lane_total * 100.0) if lane_total else 0.0),
+    }
+
+
+@router.get("/team-performance-by-team")
+async def team_performance_by_team(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """§5 Team Monthly Performance split per CORP team (TEAM1..TEAM5) + a Total.
+
+    Same field set as /team-performance, computed once per team_id in a single
+    grouped scan (production grouped by team_id, savings grouped by canonical
+    team_id, attrition grouped by team_id) plus a window-wide Total. The single
+    ``team`` filter is intentionally ignored — this panel always returns all
+    CORP teams; ``customer`` / date / lane filters still apply.
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    # ---- Production grouped by team_id (team filter intentionally dropped) --
+    prod_params: list = []
+    where = _v4_scope_where("br4", None, customer, load_type, prod_params, lanes, exclude_lanes)
+    prod_params.extend([s, e])
+    p_s = len(prod_params) - 1
+    p_e = len(prod_params)
+    prod_sql = f"""
+        WITH otp AS ({_scorecard_cte("otp")}),
+             otd AS ({_scorecard_cte("otd")}),
+             prod AS (
+                SELECT TRIM(br4.team_id) AS team_id,
+                       br4.id, br4.customer_name,
+                       TRIM(br4.origin_name) AS origin,
+                       TRIM(br4.dest_name)   AS dest,
+                       br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
+                       COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
+                       COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
+                FROM public.mcleod_gld_budget_report_v4 br4
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+                WHERE {where}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+             )
+        SELECT
+          team_id,
+          COUNT(DISTINCT customer_name) AS customers,
+          COUNT(DISTINCT (origin || ' - ' || dest))
+            FILTER (WHERE origin <> '' AND dest <> '') AS lanes,
+          COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS volume,
+          COALESCE(SUM(total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(total_carrier_pay), 0)::numeric AS total_cost,
+          COALESCE(SUM(margin_amt),  0)::numeric AS profit,
+          COUNT(*) FILTER (WHERE margin_amt < 0
+                             AND total_charge IS NOT NULL
+                             AND total_charge <> 0) AS loss_loads,
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS profit_loss,
+          SUM(otp_cnt) AS otp_late,
+          SUM(otd_cnt) AS otd_late
+        FROM prod
+        GROUP BY team_id
+    """
+
+    # ---- Savings grouped by canonical team_id ---------------------------
+    sav_params: list = [s, e]
+    sav_extra = " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
+    if customer:
+        sav_params.append(customer)
+        sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
+    sav_sql = f"""
+        WITH {CUSTOMER_TEAM_CTE}
+        SELECT
+          ct.team_id AS team_id,
+          COALESCE(SUM(CASE WHEN cs.variance > 0 THEN cs.variance ELSE 0 END), 0)::numeric AS savings,
+          COALESCE(SUM(CASE WHEN cs.variance < 0 THEN cs.variance ELSE 0 END), 0)::numeric AS over_pay,
+          COALESCE(SUM(cs.variance), 0)::numeric AS net_savings
+        FROM public.carriers_savings_results_report cs
+        JOIN customer_team ct ON TRIM(cs.customer_name) = ct.customer_name
+        WHERE cs.month_date BETWEEN $1 AND $2
+        {sav_extra}
+        GROUP BY ct.team_id
+    """
+
+    # ---- Attrition grouped by team_id (and rolled up for Total) ----------
+    attr_params: list = []
+    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes)
+    attr_params.append(YEAR_START)
+    p_ys = len(attr_params)
+    attr_sql = f"""
+        WITH lane_last AS (
+            SELECT TRIM(br4.team_id) AS team_id,
+                   br4.customer_name,
+                   TRIM(br4.origin_name) AS origin,
+                   TRIM(br4.dest_name)   AS dest,
+                   MAX(br4.origin_actual_departure)::date AS last_load
+            FROM public.mcleod_gld_budget_report_v4 br4
+            WHERE {where_attr}
+              AND br4.origin_actual_departure >= ${p_ys}
+              AND br4.customer_name IS NOT NULL
+              AND TRIM(br4.origin_name) <> ''
+              AND TRIM(br4.dest_name)   <> ''
+            GROUP BY TRIM(br4.team_id), br4.customer_name,
+                     TRIM(br4.origin_name), TRIM(br4.dest_name)
+        ),
+        cust_last AS (
+            SELECT team_id, customer_name, MAX(last_load) AS last_load
+            FROM lane_last GROUP BY team_id, customer_name
+        )
+        SELECT
+          c.team_id,
+          (SELECT COUNT(*) FROM cust_last x WHERE x.team_id = c.team_id)                                          AS cust_total,
+          (SELECT COUNT(*) FROM cust_last x WHERE x.team_id = c.team_id AND (CURRENT_DATE - x.last_load) > 30)    AS cust_attr,
+          (SELECT COUNT(*) FROM lane_last l WHERE l.team_id = c.team_id)                                          AS lane_total,
+          (SELECT COUNT(*) FROM lane_last l WHERE l.team_id = c.team_id AND (CURRENT_DATE - l.last_load) > 30)    AS lane_attr
+        FROM (SELECT DISTINCT team_id FROM cust_last) c
+    """
+
+    prod_rows, sav_rows, attr_rows = await asyncio.gather(
+        pool.fetch(prod_sql, *prod_params),
+        pool.fetch(sav_sql, *sav_params),
+        pool.fetch(attr_sql, *attr_params),
+    )
+
+    prod_map = {r["team_id"]: r for r in prod_rows}
+    sav_map = {r["team_id"]: r for r in sav_rows}
+    attr_map = {r["team_id"]: r for r in attr_rows}
+
+    teams_out = []
+    tot = {
+        "customers": set(), "lanes": set(), "volume": 0, "revenue": 0.0,
+        "total_cost": 0.0, "profit": 0.0, "loss_loads": 0, "profit_loss": 0.0,
+        "otp_late": 0, "otd_late": 0, "teams": set(), "savings": 0.0,
+        "over_pay": 0.0, "net_savings": 0.0, "cust_total": 0, "cust_attr": 0,
+        "lane_total": 0, "lane_attr": 0,
+    }
+    for tid in CORP_TEAMS:
+        p = prod_map.get(tid)
+        sv = sav_map.get(tid)
+        at = attr_map.get(tid)
+        volume = int(p["volume"] or 0) if p else 0
+        obj = _team_perf_obj(
+            customers=int(p["customers"] or 0) if p else 0,
+            lanes=int(p["lanes"] or 0) if p else 0,
+            volume=volume,
+            revenue=_safe_float(p["revenue"]) if p else 0.0,
+            total_cost=_safe_float(p["total_cost"]) if p else 0.0,
+            profit=_safe_float(p["profit"]) if p else 0.0,
+            loss_loads=int(p["loss_loads"] or 0) if p else 0,
+            profit_loss=_safe_float(p["profit_loss"]) if p else 0.0,
+            otp_late=int(p["otp_late"] or 0) if p else 0,
+            otd_late=int(p["otd_late"] or 0) if p else 0,
+            team_count=1 if volume else 0,
+            savings=_safe_float(sv["savings"]) if sv else 0.0,
+            over_pay=_safe_float(sv["over_pay"]) if sv else 0.0,
+            net_savings=_safe_float(sv["net_savings"]) if sv else 0.0,
+            cust_total=int(at["cust_total"] or 0) if at else 0,
+            cust_attr=int(at["cust_attr"] or 0) if at else 0,
+            lane_total=int(at["lane_total"] or 0) if at else 0,
+            lane_attr=int(at["lane_attr"] or 0) if at else 0,
+        )
+        teams_out.append({"team_id": tid, **obj})
+        # Accumulate the Total over the full universe (server-side, not a
+        # client reduce over a LIMIT slice — there is no limit here).
+        if volume:
+            tot["teams"].add(tid)
+        tot["volume"] += volume
+        tot["revenue"] += _safe_float(p["revenue"]) if p else 0.0
+        tot["total_cost"] += _safe_float(p["total_cost"]) if p else 0.0
+        tot["profit"] += _safe_float(p["profit"]) if p else 0.0
+        tot["loss_loads"] += int(p["loss_loads"] or 0) if p else 0
+        tot["profit_loss"] += _safe_float(p["profit_loss"]) if p else 0.0
+        tot["otp_late"] += int(p["otp_late"] or 0) if p else 0
+        tot["otd_late"] += int(p["otd_late"] or 0) if p else 0
+        tot["savings"] += _safe_float(sv["savings"]) if sv else 0.0
+        tot["over_pay"] += _safe_float(sv["over_pay"]) if sv else 0.0
+        tot["net_savings"] += _safe_float(sv["net_savings"]) if sv else 0.0
+        tot["cust_total"] += int(at["cust_total"] or 0) if at else 0
+        tot["cust_attr"] += int(at["cust_attr"] or 0) if at else 0
+        tot["lane_total"] += int(at["lane_total"] or 0) if at else 0
+        tot["lane_attr"] += int(at["lane_attr"] or 0) if at else 0
+
+    # Total: distinct customers / lanes can't be summed across teams (a customer
+    # may ship on two teams), so re-read the universe-wide distinct counts.
+    uni_params: list = []
+    uni_where = _v4_scope_where("br4", None, customer, load_type, uni_params, lanes, exclude_lanes)
+    uni_params.extend([s, e])
+    u_s = len(uni_params) - 1
+    u_e = len(uni_params)
+    uni_row = await pool.fetchrow(
+        f"""
+        SELECT
+          COUNT(DISTINCT br4.customer_name) AS customers,
+          COUNT(DISTINCT (TRIM(br4.origin_name) || ' - ' || TRIM(br4.dest_name)))
+            FILTER (WHERE TRIM(br4.origin_name) <> '' AND TRIM(br4.dest_name) <> '') AS lanes
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {uni_where}
+          AND br4.origin_actual_departure >= ${u_s}
+          AND br4.origin_actual_departure < (${u_e}::date + INTERVAL '1 day')
+        """,
+        *uni_params,
+    )
+
+    total_obj = _team_perf_obj(
+        customers=int(uni_row["customers"] or 0) if uni_row else 0,
+        lanes=int(uni_row["lanes"] or 0) if uni_row else 0,
+        volume=tot["volume"],
+        revenue=tot["revenue"],
+        total_cost=tot["total_cost"],
+        profit=tot["profit"],
+        loss_loads=tot["loss_loads"],
+        profit_loss=tot["profit_loss"],
+        otp_late=tot["otp_late"],
+        otd_late=tot["otd_late"],
+        team_count=len(tot["teams"]) or len(CORP_TEAMS),
+        savings=tot["savings"],
+        over_pay=tot["over_pay"],
+        net_savings=tot["net_savings"],
+        cust_total=tot["cust_total"],
+        cust_attr=tot["cust_attr"],
+        lane_total=tot["lane_total"],
+        lane_attr=tot["lane_attr"],
+    )
+
+    return {
+        "success": True,
+        "data": {"total": total_obj, "teams": teams_out},
+        "meta": {"window": {"start": s.isoformat(), "end": e.isoformat()}},
+    }
+
+
+# ---------------------------------------------------------------------------
+# /service-incident-by-customer — incident-grain PU/DEL fails per customer
+# ---------------------------------------------------------------------------
+
+# PU = on-time-pickup fail codes (mirrors OTP_CODES / xray_corp); stops PU/SH.
+# DEL = on-time-delivery fail codes (mirrors OTD_CODES); stops CO/SO. Same
+# padded-variant EDI approach the file already uses for OTP/OTD (_scorecard_cte).
+_PU_STOP_LIT = ",".join(f"'{v}'" for v in _pad_variants(("PU", "SH"), width=2))
+_DEL_STOP_LIT = ",".join(f"'{v}'" for v in _pad_variants(("CO", "SO"), width=2))
+_PU_CODE_LIT = ",".join(f"'{v}'" for v in _pad_variants(OTP_CODES, width=40))
+_DEL_CODE_LIT = ",".join(f"'{v}'" for v in _pad_variants(OTD_CODES, width=40))
+
+
+@router.get("/service-incident-by-customer")
+async def service_incident_by_customer(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    stop_type: str = Query("pu", description="'pu' | 'del'"),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """PU or DEL service fails per customer over the incident-grain source
+    ``mcleod_gld_scorecard_incidents_portal`` (same OTP/OTD code lists +
+    padded-variant approach as ``_scorecard_cte``).
+
+    ``orders`` = distinct charged loads, ``fail`` = distinct loads with a PU/DEL
+    service fail, ``pct_on_time`` = 100 − 100*fail/orders. Top 100 by fail desc;
+    ``meta.totals`` is the full-universe server-side aggregate.
+
+    The incident table has no lane / city-pair grain (it is not in v4) and no
+    contract_type column, so the ``lanes`` / ``exclude_lanes`` / ``load_type``
+    filters are ignored here (same precedent the file already documents for the
+    budget-only panels). Team / customer / date filters are honored.
+    """
+    pool = get_datalake_gold_pool(request)
+    side = "del" if (stop_type or "").lower() == "del" else "pu"
+    date_col = "orig_actual_departure" if side == "pu" else "dest_actual_departure"
+    stops_lit = _PU_STOP_LIT if side == "pu" else _DEL_STOP_LIT
+    codes_lit = _PU_CODE_LIT if side == "pu" else _DEL_CODE_LIT
+
+    s, e = _resolve_range(range, start_date, end_date)
+
+    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    companies_param = _pad_variants(CORP_COMPANIES, width=4)
+    statuses_param = _pad_variants(OPEN_STATUSES, width=1)
+    params: list = [teams_param, companies_param, statuses_param, s, e]
+    parts = [
+        "sc.team_id    = ANY($1)",
+        "sc.company_id = ANY($2)",
+        "sc.status     = ANY($3)",
+        "UPPER(COALESCE(sc.customer_name,'')) NOT LIKE '%OILTEX%'",
+        f"sc.{date_col} >= $4",
+        f"sc.{date_col} < ($5::date + INTERVAL '1 day')",
+    ]
+    if team:
+        params.append(_pad_variants([team], width=8))
+        parts.append(f"sc.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"sc.customer_name = ${len(params)}")
+    # ``load_type`` is accepted for API symmetry with /actuals but ignored here:
+    # the incident table has no contract_type / load-type grain.
+    where = " AND ".join(parts)
+    fail_pred = (
+        f"(sc.stop_type IN ({stops_lit}) "
+        f"AND sc.edi_standard_code IN ({codes_lit}))"
+    )
+
+    by_customer_sql = f"""
+        SELECT
+          TRIM(sc.customer_name) AS customer_name,
+          COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge IS NOT NULL AND sc.total_charge <> 0) AS orders,
+          COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+        FROM public.mcleod_gld_scorecard_incidents_portal sc
+        WHERE {where}
+          AND sc.customer_name IS NOT NULL
+          AND TRIM(sc.customer_name) <> ''
+        GROUP BY TRIM(sc.customer_name)
+        HAVING COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge IS NOT NULL AND sc.total_charge <> 0) > 0
+        ORDER BY fail DESC NULLS LAST, orders DESC
+        LIMIT 100
+    """
+    totals_sql = f"""
+        SELECT
+          COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge IS NOT NULL AND sc.total_charge <> 0) AS orders,
+          COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
+        FROM public.mcleod_gld_scorecard_incidents_portal sc
+        WHERE {where}
+    """
+
+    rows, tot_row = await asyncio.gather(
+        pool.fetch(by_customer_sql, *params),
+        pool.fetchrow(totals_sql, *params),
+    )
+
+    def _on_time(orders: int, fail: int) -> float:
+        return (1.0 - (fail / orders)) * 100.0 if orders else 0.0
+
+    data = [
+        {
+            "customer_name": r["customer_name"],
+            "orders": int(r["orders"] or 0),
+            "fail": int(r["fail"] or 0),
+            "pct_on_time": _safe_float(_on_time(int(r["orders"] or 0), int(r["fail"] or 0))),
+        }
+        for r in rows
+    ]
+    t_orders = int(tot_row["orders"] or 0) if tot_row else 0
+    t_fail = int(tot_row["fail"] or 0) if tot_row else 0
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "stop_type": side,
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "totals": {
+                "orders": t_orders,
+                "fail": t_fail,
+                "pct_on_time": _safe_float(_on_time(t_orders, t_fail)),
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# /margin-distribution — ORDERS per per-order margin% bucket (Bruno R18)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/margin-distribution")
+async def margin_distribution(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """ORDER count + revenue per per-order margin% bucket over v4 production.
+
+    Buckets on each order's ``margin_amt / total_charge``:
+      lt_0 (<0%) / 0_5 / 5_10 / 10_15 / 15_20 / gte_20.
+    Orders with ``total_charge = 0`` have an undefined margin% so they land in a
+    ``no_revenue`` bucket (same handling as ops-margins /distribution) — the v4
+    profit rule (SUM(margin_amt) over ALL rows) is not violated because we never
+    filter those rows out of the totals; only the per-order margin% needs a
+    non-zero charge to be defined.
+
+    Unlike OPs Margins' /distribution (which counts CUSTOMERS), this counts
+    ORDERS — the intended difference per Bruno R18.
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    params: list = []
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    params.extend([s, e])
+    p_s = len(params) - 1
+    p_e = len(params)
+
+    rows = await pool.fetch(
+        f"""
+        WITH labeled AS (
+          SELECT
+            CASE
+              WHEN br4.total_charge IS NULL OR br4.total_charge = 0 THEN 'no_revenue'
+              WHEN br4.margin_amt / br4.total_charge < 0     THEN 'lt_0'
+              WHEN br4.margin_amt / br4.total_charge < 0.05  THEN '0_5'
+              WHEN br4.margin_amt / br4.total_charge < 0.10  THEN '5_10'
+              WHEN br4.margin_amt / br4.total_charge < 0.15  THEN '10_15'
+              WHEN br4.margin_amt / br4.total_charge < 0.20  THEN '15_20'
+              ELSE                                                'gte_20'
+            END AS bucket,
+            br4.total_charge
+          FROM public.mcleod_gld_budget_report_v4 br4
+          WHERE {where}
+            AND br4.origin_actual_departure >= ${p_s}
+            AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+        )
+        SELECT
+          bucket,
+          COUNT(*)::int                          AS orders,
+          COALESCE(SUM(total_charge), 0)::numeric AS revenue
+        FROM labeled
+        GROUP BY bucket
+        ORDER BY CASE bucket
+          WHEN 'lt_0'   THEN 0
+          WHEN '0_5'    THEN 1
+          WHEN '5_10'   THEN 2
+          WHEN '10_15'  THEN 3
+          WHEN '15_20'  THEN 4
+          WHEN 'gte_20' THEN 5
+          ELSE 6 END
+        """,
+        *params,
+    )
+
+    data = [
+        {
+            "bucket": r["bucket"],
+            "orders": int(r["orders"] or 0),
+            "revenue": _safe_float(r["revenue"]),
+        }
+        for r in rows
+    ]
+    total_orders = sum(d["orders"] for d in data)
+    total_revenue = _safe_float(sum(d["revenue"] for d in data))
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "total_orders": total_orders,
+            "total_revenue": total_revenue,
+        },
+    }

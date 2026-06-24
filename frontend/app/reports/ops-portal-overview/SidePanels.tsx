@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { ArrowDown, ArrowUp, Loader2, Plus } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { ArrowDown, ArrowUp, Loader2, Maximize2, X } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -17,18 +17,24 @@ import {
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
 import { TeamWeeklyModal } from "./TeamWeeklyModal"
+import { TeamMonthlyModal } from "./TeamMonthlyModal"
 
 interface Props {
   filters: OppFilters
+  /**
+   * R9 (Bruno): when present, customer-name cells in the Customer Variance /
+   * Losses panels become clickable links that drill to that customer.
+   */
+  onPickCustomer?: (customer: string) => void
 }
 
-export function SidePanels({ filters }: Props) {
+export function SidePanels({ filters, onPickCustomer }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <div className="space-y-4">
         <TeamBudgetVariance filters={filters} />
-        <CustomerVariance filters={filters} />
-        <CustomerLosses filters={filters} />
+        <CustomerVariance filters={filters} onPickCustomer={onPickCustomer} />
+        <CustomerLosses filters={filters} onPickCustomer={onPickCustomer} />
       </div>
       <div className="space-y-4">
         <TeamPerformance filters={filters} />
@@ -66,9 +72,10 @@ function TeamBudgetVariance({ filters }: { filters: OppFilters }) {
 // §3 — Customer Monthly Variance
 // ---------------------------------------------------------------------------
 
-function CustomerVariance({ filters }: { filters: OppFilters }) {
+function CustomerVariance({ filters, onPickCustomer }: { filters: OppFilters; onPickCustomer?: (c: string) => void }) {
   const { data, isLoading, error } = useOppCustomerVariance(filters)
   const raw = useMemo(() => data?.data ?? [], [data])
+  const [expanded, setExpanded] = useState(false)
   // Bruno R5 (#14): sortable on every column. Default = profit variance asc
   // (most-negative first), matching the prior fixed order.
   const { rows, sortKey, sortDir, onSort } = useMiniSort<OppCustomerVariance, "name" | "vol" | "profit">(raw, {
@@ -76,41 +83,53 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
     vol: (r) => r.volume_var,
     profit: (r) => r.profit_var,
   }, "profit", "asc")
+  const renderTable = () => (
+    <table className="w-full table-fixed text-xs">
+      <colgroup>
+        <col className="w-[60%]" />
+        <col className="w-[18%]" />
+        <col className="w-[22%]" />
+      </colgroup>
+      <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
+        <tr>
+          <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
+          <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
+          <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No data</td></tr>
+        ) : rows.map((r) => (
+          <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
+            <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
+              <CustomerNameCell name={r.customer_name} onPick={onPickCustomer} />
+            </td>
+            <td className={`px-2 py-1 text-right tabular-nums ${r.volume_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+              {fmtCount(r.volume_var)}
+            </td>
+            <td className={`px-2 py-1 text-right tabular-nums ${r.profit_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+              {fmtUsdSigned(r.profit_var)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
   return (
-    <PanelCard title="Customer Monthly Variance" icon="" loading={isLoading} error={error}>
-      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
-        <table className="w-full table-fixed text-xs">
-          <colgroup>
-            <col className="w-[60%]" />
-            <col className="w-[18%]" />
-            <col className="w-[22%]" />
-          </colgroup>
-          <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-            <tr>
-              <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
-              <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
-              <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No data</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
-                <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
-                  {r.customer_name}
-                </td>
-                <td className={`px-2 py-1 text-right tabular-nums ${r.volume_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
-                  {fmtCount(r.volume_var)}
-                </td>
-                <td className={`px-2 py-1 text-right tabular-nums ${r.profit_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
-                  {fmtUsdSigned(r.profit_var)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <PanelCard
+      title="Customer Monthly Variance"
+      icon=""
+      loading={isLoading}
+      error={error}
+      leadingAction={<ExpandButton label="Customer Monthly Variance" onClick={() => setExpanded(true)} />}
+    >
+      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
+      {expanded && (
+        <ExpandModal title="Customer Monthly Variance" onClose={() => setExpanded(false)}>
+          {renderTable()}
+        </ExpandModal>
+      )}
     </PanelCard>
   )
 }
@@ -119,9 +138,10 @@ function CustomerVariance({ filters }: { filters: OppFilters }) {
 // §4 — Customer Monthly Losses
 // ---------------------------------------------------------------------------
 
-function CustomerLosses({ filters }: { filters: OppFilters }) {
+function CustomerLosses({ filters, onPickCustomer }: { filters: OppFilters; onPickCustomer?: (c: string) => void }) {
   const { data, isLoading, error } = useOppCustomerLosses(filters)
   const raw = useMemo(() => data?.data ?? [], [data])
+  const [expanded, setExpanded] = useState(false)
   // Bruno R5 (#15): sortable on every column. Default = loss profit asc
   // (biggest loss first), matching the prior fixed order.
   const { rows, sortKey, sortDir, onSort } = useMiniSort<OppCustomerLoss, "name" | "vol" | "profit">(raw, {
@@ -129,37 +149,49 @@ function CustomerLosses({ filters }: { filters: OppFilters }) {
     vol: (r) => r.loss_loads,
     profit: (r) => r.loss_profit,
   }, "profit", "asc")
+  const renderTable = () => (
+    <table className="w-full table-fixed text-xs">
+      <colgroup>
+        <col className="w-[60%]" />
+        <col className="w-[18%]" />
+        <col className="w-[22%]" />
+      </colgroup>
+      <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
+        <tr>
+          <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
+          <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
+          <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No losses</td></tr>
+        ) : rows.map((r) => (
+          <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
+            <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
+              <CustomerNameCell name={r.customer_name} onPick={onPickCustomer} />
+            </td>
+            <td className="px-2 py-1 text-right tabular-nums text-[#374151]">{fmtCount(r.loss_loads)}</td>
+            <td className="px-2 py-1 text-right tabular-nums text-[#DC2626]">{fmtUsdSigned(r.loss_profit)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
   return (
-    <PanelCard title="Customer Monthly Losses" icon="" loading={isLoading} error={error}>
-      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">
-        <table className="w-full table-fixed text-xs">
-          <colgroup>
-            <col className="w-[60%]" />
-            <col className="w-[18%]" />
-            <col className="w-[22%]" />
-          </colgroup>
-          <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-            <tr>
-              <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer Name</MiniTh>
-              <MiniTh k="vol" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Vol</MiniTh>
-              <MiniTh k="profit" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Profit</MiniTh>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No losses</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
-                <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
-                  {r.customer_name}
-                </td>
-                <td className="px-2 py-1 text-right tabular-nums text-[#374151]">{fmtCount(r.loss_loads)}</td>
-                <td className="px-2 py-1 text-right tabular-nums text-[#DC2626]">{fmtUsdSigned(r.loss_profit)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <PanelCard
+      title="Customer Monthly Losses"
+      icon=""
+      loading={isLoading}
+      error={error}
+      leadingAction={<ExpandButton label="Customer Monthly Losses" onClick={() => setExpanded(true)} />}
+    >
+      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
+      {expanded && (
+        <ExpandModal title="Customer Monthly Losses" onClose={() => setExpanded(false)}>
+          {renderTable()}
+        </ExpandModal>
+      )}
     </PanelCard>
   )
 }
@@ -172,8 +204,12 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppTeamPerformance(filters)
   const v = data?.data
   const [weeklyOpen, setWeeklyOpen] = useState(false)
+  const [monthlyOpen, setMonthlyOpen] = useState(false)
   // Bruno round-2 (2026-05-13): OTP/OTD coloured bands + highlight Volume/Profit/Margin.
   // Bruno R4 (2026-05-27): "+" opens the Team Weekly Performance modal.
+  // Bruno R6/R7: "+" relabelled "Week"; new "Team" button opens the monthly modal.
+  // R12: Cost x Load = total_cost / volume (guard div-by-zero).
+  const costXLoad = v && v.volume ? v.total_cost / v.volume : 0
   return (
     <PanelCard
       title="Team Monthly Performance"
@@ -181,15 +217,26 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
       loading={isLoading}
       error={error}
       action={
-        <button
-          type="button"
-          onClick={() => setWeeklyOpen(true)}
-          title="Team Weekly Performance — last 5 weeks"
-          className="flex h-5 w-5 items-center justify-center rounded border border-[#BFDBFE] bg-white text-[#2563EB] hover:bg-[#EFF6FF]"
-          aria-label="Open Team Weekly Performance"
-        >
-          <Plus className="h-3 w-3" />
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setWeeklyOpen(true)}
+            title="Team Weekly Performance — last 5 weeks"
+            className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
+            aria-label="Open Team Weekly Performance"
+          >
+            Week
+          </button>
+          <button
+            type="button"
+            onClick={() => setMonthlyOpen(true)}
+            title="Team Monthly Performance — by team"
+            className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
+            aria-label="Open Team Monthly Performance"
+          >
+            Team
+          </button>
+        </span>
       }
     >
       <table className="w-full text-xs">
@@ -203,6 +250,7 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
           <Row label="Margin P %"  value={v ? fmtPct(v.margin_pct)    : "—"} signed numeric={v?.margin_pct ?? 0} highlight />
           <Row label="Rev. x L."   value={v ? fmtUsd(v.rev_x_l)       : "—"} />
           <Row label="Prf. X L."   value={v ? fmtUsd(v.prof_x_l)      : "—"} signed numeric={v?.prof_x_l ?? 0} />
+          <Row label="Cost x Load" value={v ? fmtUsd(costXLoad)       : "—"} />
           <Row label="Team Ut."    value={v ? fmtPct(v.team_ut)       : "—"} />
           <Row label="OTP."        value={v ? fmtPct(v.otp_pct)       : "—"} bandPct={v?.otp_pct} />
           <Row label="Lates PU"    value={v ? fmtCount(v.lates_pu)    : "—"} />
@@ -218,6 +266,7 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
         </tbody>
       </table>
       {weeklyOpen && <TeamWeeklyModal filters={filters} onClose={() => setWeeklyOpen(false)} />}
+      {monthlyOpen && <TeamMonthlyModal filters={filters} onClose={() => setMonthlyOpen(false)} />}
     </PanelCard>
   )
 }
@@ -263,6 +312,7 @@ export function PanelCard({
   loading,
   error,
   action,
+  leadingAction,
   children,
 }: {
   title: string
@@ -270,11 +320,14 @@ export function PanelCard({
   loading?: boolean
   error?: unknown
   action?: React.ReactNode
+  /** Bruno R11 — small control rendered at the top-left of the header (e.g. expand). */
+  leadingAction?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="flex items-center gap-2 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-sm font-semibold text-[#3B82F6]">
+        {leadingAction}
         {icon && <span aria-hidden>{icon}</span>}
         <span>{title}</span>
         {action && <span className="ml-1">{action}</span>}
@@ -337,6 +390,87 @@ export function Row({
         )}
       </td>
     </tr>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// R9 — clickable customer-name cell. Looks like a link only when a drill
+// handler is provided; otherwise renders plain text (preserves the old look).
+// ---------------------------------------------------------------------------
+
+function CustomerNameCell({ name, onPick }: { name: string; onPick?: (c: string) => void }) {
+  if (!onPick) return <>{name}</>
+  return (
+    <button
+      type="button"
+      onClick={() => onPick(name)}
+      className="truncate text-left text-[#2563EB] hover:underline"
+      title={`Drill to ${name}`}
+    >
+      {name}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// R11 (Bruno) — top-left expand button + modal rendering the uncapped table.
+// ---------------------------------------------------------------------------
+
+function ExpandButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Expand ${label}`}
+      aria-label={`Expand ${label}`}
+      className="flex h-5 w-5 items-center justify-center rounded border border-[#BFDBFE] bg-white text-[#2563EB] hover:bg-[#EFF6FF]"
+    >
+      <Maximize2 className="h-3.5 w-3.5" />
+    </button>
+  )
+}
+
+function ExpandModal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2 text-sm font-semibold text-[#1B3A5C]">
+          <span>{title}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-6 w-6 items-center justify-center rounded text-[#6B7280] hover:bg-[#E5E7EB]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="overflow-auto px-4 py-3">{children}</div>
+      </div>
+    </div>
   )
 }
 

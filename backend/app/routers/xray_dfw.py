@@ -142,6 +142,8 @@ def _scope_where(
     exclude_customers: Optional[list[str]] = None,
     view: Optional[str] = None,
     lanes: Optional[list[str]] = None,
+    contract_types: Optional[list[str]] = None,
+    equipment: Optional[list[str]] = None,
 ) -> str:
     """Common DFW-scope WHERE clauses for the budget_report_v4 load-level table.
 
@@ -155,6 +157,10 @@ def _scope_where(
     view, else ``customer_name`` (Bruno 2026-05-28). ``lanes`` filters on the
     ``origin - dest`` concat. ``view == RUAN_VIEW`` additionally forces RUAN
     customer rows with a non-empty ``client``.
+
+    ``contract_types`` (Contractual/Spot) filters on ``contract_type_descr``
+    and ``equipment`` filters on ``equipment_group_descr`` — both global
+    multi-selects matched case-insensitively against the lowercased list.
 
     ``exclude_customers`` drops the named customers (case-insensitive
     substring, like the OILTEX/UNILINK guards). Default ``None`` = no extra
@@ -191,6 +197,16 @@ def _scope_where(
     if lanes:
         params.append(lanes)
         parts.append(f"({_lane_expr(alias)}) = ANY(${len(params)})")
+    if contract_types:
+        params.append([c.lower() for c in contract_types])
+        parts.append(
+            f"LOWER(TRIM(COALESCE({alias}.contract_type_descr,''))) = ANY(${len(params)})"
+        )
+    if equipment:
+        params.append([eq.lower() for eq in equipment])
+        parts.append(
+            f"LOWER(TRIM(COALESCE({alias}.equipment_group_descr,''))) = ANY(${len(params)})"
+        )
     for name in exclude_customers or []:
         params.append(f"%{name.upper()}%")
         parts.append(
@@ -350,13 +366,55 @@ async def filters(
         YEAR_START,
     )
 
-    cust_rows, lane_rows = await asyncio.gather(customers_task, lanes_task)
+    contract_types_task = pool.fetch(
+        f"""
+        SELECT DISTINCT TRIM(contract_type_descr) AS opt
+        FROM public.mcleod_gld_budget_report_v4
+        WHERE TRIM(team_id)    = ANY($1)
+          AND TRIM(company_id) = ANY($2)
+          AND TRIM(status)     = ANY($3)
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
+          AND origin_actual_departure >= $4{ruan_filter}
+          AND TRIM(COALESCE(contract_type_descr,'')) <> ''
+        ORDER BY opt
+        """,
+        list(DFW_TEAMS),
+        list(DFW_COMPANIES),
+        list(OPEN_STATUSES),
+        YEAR_START,
+    )
+
+    equipment_task = pool.fetch(
+        f"""
+        SELECT DISTINCT TRIM(equipment_group_descr) AS opt
+        FROM public.mcleod_gld_budget_report_v4
+        WHERE TRIM(team_id)    = ANY($1)
+          AND TRIM(company_id) = ANY($2)
+          AND TRIM(status)     = ANY($3)
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
+          AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
+          AND origin_actual_departure >= $4{ruan_filter}
+          AND TRIM(COALESCE(equipment_group_descr,'')) <> ''
+        ORDER BY opt
+        """,
+        list(DFW_TEAMS),
+        list(DFW_COMPANIES),
+        list(OPEN_STATUSES),
+        YEAR_START,
+    )
+
+    cust_rows, lane_rows, ct_rows, eq_rows = await asyncio.gather(
+        customers_task, lanes_task, contract_types_task, equipment_task,
+    )
     return {
         "success": True,
         "data": {
             "sub_teams": list(DFW_SUB_TEAMS),
             "customers": [r["entity"] for r in cust_rows],
             "lanes": [r["lane"] for r in lane_rows],
+            "contract_types": [r["opt"] for r in ct_rows],
+            "equipment_groups": [r["opt"] for r in eq_rows],
             "year_start": YEAR_START.isoformat(),
             "year_end": YEAR_END.isoformat(),
         },
@@ -377,6 +435,8 @@ async def kpis(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -388,6 +448,8 @@ async def kpis(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     exclude_list = _parse_exclude(exclude_customers)
     ruan = view == RUAN_VIEW
 
@@ -396,6 +458,7 @@ async def kpis(
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, exclude_list,
         view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e])
     date_fragment = (
@@ -447,6 +510,7 @@ async def kpis(
     tm_params: list = []
     tm_where = _scope_where(
         "br4", sub_team_list, customers_list, tm_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     tm_params.extend([m_start, m_end])
     tm_date = (
@@ -542,6 +606,8 @@ async def trio_tables(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -554,6 +620,8 @@ async def trio_tables(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     # Capacity uses the count of sub-teams in scope (default 4 for DFW).
     total_team_count = len(sub_team_list) if sub_team_list else len(DFW_SUB_TEAMS)
@@ -562,6 +630,7 @@ async def trio_tables(
         params: list = []
         where = _scope_where(
             "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+            contract_types=contract_type_list, equipment=equipment_list,
         )
         params.extend([d_from, d_to])
         date_frag = (
@@ -649,6 +718,8 @@ async def projection(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -658,6 +729,8 @@ async def projection(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     bdays, d = [], today - timedelta(days=1)
     while len(bdays) < 14:
@@ -674,6 +747,7 @@ async def projection(
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     p14s = len(params) + 1; params.append(prev_14_start)
     p14e = len(params) + 1; params.append(prev_14_end)
@@ -767,6 +841,8 @@ async def by_customer(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -776,9 +852,12 @@ async def by_customer(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
@@ -829,6 +908,8 @@ async def by_lane(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
@@ -839,11 +920,14 @@ async def by_lane(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     exclude_list = _parse_exclude(exclude_customers)
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, exclude_list,
         view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e, limit])
     date_frag = f"br4.origin_actual_departure::date BETWEEN ${len(params)-2} AND ${len(params)-1}"
@@ -892,6 +976,8 @@ async def attrition(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -900,9 +986,12 @@ async def attrition(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.append(limit)
 
@@ -969,6 +1058,8 @@ async def teams_breakdown(
     request: Request,
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -979,6 +1070,8 @@ async def teams_breakdown(
     w_mon, _, _, _ = _week_bounds(today)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     weeks = []
     for i in range(5):
@@ -994,6 +1087,7 @@ async def teams_breakdown(
     # No sub-team filter on this endpoint — Bruno's Teams tab always shows all 4.
     where = _scope_where(
         "br4", [], customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     min_start = min(r[1] for r in ranges)
     max_end = max(r[2] for r in ranges)
@@ -1081,6 +1175,8 @@ async def trends(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -1089,6 +1185,8 @@ async def trends(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     day_start = today - timedelta(days=14)
     week_start = (today - timedelta(days=today.weekday())) - timedelta(days=7 * 11)
     month_start = date(today.year, today.month, 1)
@@ -1103,6 +1201,7 @@ async def trends(
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.append(min(day_start, week_start, month_start))
 
@@ -1200,6 +1299,8 @@ async def summary_table(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -1209,10 +1310,13 @@ async def summary_table(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.append(start)
 
@@ -1289,6 +1393,8 @@ async def weekly_performance(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -1303,6 +1409,8 @@ async def weekly_performance(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     # Team Ut. capacity matches the on-page trio "TU" column (TU_WEEK per
     # sub-team), so the pop-up's current-week value reconciles with Overview.
     team_count = len(sub_team_list) if sub_team_list else len(DFW_SUB_TEAMS)
@@ -1315,6 +1423,7 @@ async def weekly_performance(
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([weeks_start, weeks_end])
     p_s = len(params) - 1
@@ -1401,6 +1510,8 @@ async def risk(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -1410,11 +1521,14 @@ async def risk(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
     ent = _entity_expr("br4", view)
 
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e, limit])
     # Half-open, no ::date cast on the indexed timestamp (SPEC-CODE-RULES §43).
@@ -1462,6 +1576,7 @@ async def risk(
     wl_tot_params: list = []
     _scope_where(
         "br4", sub_team_list, customers_list, wl_tot_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     wl_tot_params.extend([s, e])
     worst_lanes_tot_task = pool.fetchrow(
@@ -1481,6 +1596,7 @@ async def risk(
     neg_tot_params: list = []
     neg_tot_where = _scope_where(
         "br4", sub_team_list, customers_list, neg_tot_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     neg_tot_params.extend([s, e])
     neg_tot_date = (
@@ -1579,6 +1695,7 @@ async def risk(
     loss_params: list = []
     loss_where = _scope_where(
         "br4", sub_team_list, customers_list, loss_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     loss_params.append(losses_start)
     losses_task = pool.fetch(
@@ -1658,6 +1775,8 @@ async def contract_spot(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
@@ -1667,10 +1786,13 @@ async def contract_spot(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.append(start)
 
@@ -1720,6 +1842,8 @@ async def all_orders(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     page: int = Query(1, ge=1),
@@ -1739,10 +1863,13 @@ async def all_orders(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e, limit, (page - 1) * limit])
     date_frag = (
@@ -1763,9 +1890,8 @@ async def all_orders(
           br4.total_charge AS revenue,
           br4.margin_amt   AS profit,
           CASE WHEN br4.total_charge > 0 THEN br4.margin_amt/br4.total_charge*100 ELSE 0 END AS margin_pct,
-          GREATEST(0, br4.total_charge * 0.15 - br4.margin_amt)::numeric AS diff_15,
-          GREATEST(0, br4.total_charge * 0.18 - br4.margin_amt)::numeric AS diff_18,
-          GREATEST(0, br4.total_charge * 0.20 - br4.margin_amt)::numeric AS diff_20
+          COALESCE(TRIM(br4.contract_type_descr), '')   AS contract_type,
+          COALESCE(TRIM(br4.equipment_group_descr), '') AS equipment_group
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
             SELECT m.payee_name
@@ -1786,6 +1912,7 @@ async def all_orders(
     tot_params: list = []
     tot_where = _scope_where(
         "br4", sub_team_list, customers_list, tot_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     tot_params.extend([s, e])
     tot_date = (
@@ -1797,10 +1924,7 @@ async def all_orders(
         SELECT
           COUNT(*) AS total,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
-          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.15 - br4.margin_amt)), 0)::numeric AS diff_15,
-          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.18 - br4.margin_amt)), 0)::numeric AS diff_18,
-          COALESCE(SUM(GREATEST(0, br4.total_charge * 0.20 - br4.margin_amt)), 0)::numeric AS diff_20
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {tot_where} AND {tot_date}
           AND br4.total_charge <> 0
@@ -1831,9 +1955,6 @@ async def all_orders(
                 "revenue": tot_revenue,
                 "profit": tot_profit,
                 "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
-                "diff_15": float(tot["diff_15"] or 0),
-                "diff_18": float(tot["diff_18"] or 0),
-                "diff_20": float(tot["diff_20"] or 0),
             },
         },
     }
@@ -1848,6 +1969,8 @@ async def lane_analysis(
     sub_teams: Optional[str] = Query(None),
     customers: Optional[str] = Query(None),
     lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     limit: int = Query(300, ge=1, le=1000),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
@@ -1857,10 +1980,13 @@ async def lane_analysis(
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
     lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
 
     params: list = []
     where = _scope_where(
         "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     params.extend([s, e, limit])
     # Half-open, no ::date cast (SPEC-CODE-RULES §43).
@@ -1913,6 +2039,7 @@ async def lane_analysis(
     tot_params: list = []
     _scope_where(
         "br4", sub_team_list, customers_list, tot_params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
     )
     tot_params.extend([s, e])
     tot_task = pool.fetchrow(
