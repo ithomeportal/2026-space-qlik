@@ -27,6 +27,12 @@ DEFAULT_ROLES = [
     ("IT", "IT, VoIP, and managed services reports"),
     ("DFW", "DFW division reports"),
     ("CORP", "CORP division reports"),
+    # Per-team CORP OPS KAM TagRoles (Bruno 2026-06-26) — gate each team's
+    # private "CORP T# OPS Kam Portal" copy. Assigned to members manually.
+    ("CORP-T1", "CORP Team 1 — OPS KAM (private team portal)"),
+    ("CORP-T2", "CORP Team 2 — OPS KAM (private team portal)"),
+    ("CORP-T3", "CORP Team 3 — OPS KAM (private team portal)"),
+    ("CORP-T4", "CORP Team 4 — OPS KAM (private team portal)"),
 ]
 
 # Code-made reports (not Qlik-embedded). Access granted via `roles` just like Qlik reports.
@@ -375,6 +381,49 @@ CUSTOM_REPORTS = [
         ],
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "Operations"],
+    },
+    # Per-team private copies of Ops Portal Overview (Bruno 2026-06-26, PDF
+    # Request 1). Same engine as ops-portal-overview but server-locked to one
+    # CORP team so a team's KAMs can't see other teams' work or customers.
+    {
+        "key": "corp-t1-ops-kam-portal",  # -> /reports/corp-t1-ops-kam-portal
+        "title": "CORP T1 OPS Kam Portal",
+        "description": "Ops Portal Overview locked to TEAM1 — KPI combo, variances, losses, performance, projection, actuals, by-lane and by-order for TEAM1 only",
+        "note": "Scope: team_id=TEAM1 (server-locked) · same engine as Ops Portal - Overview · access strictly CORP-T1 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["ops", "overview", "corp", "team1", "t1", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T1", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t2-ops-kam-portal",  # -> /reports/corp-t2-ops-kam-portal
+        "title": "CORP T2 OPS Kam Portal",
+        "description": "Ops Portal Overview locked to TEAM2 — KPI combo, variances, losses, performance, projection, actuals, by-lane and by-order for TEAM2 only",
+        "note": "Scope: team_id=TEAM2 (server-locked) · same engine as Ops Portal - Overview · access strictly CORP-T2 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["ops", "overview", "corp", "team2", "t2", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T2", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t3-ops-kam-portal",  # -> /reports/corp-t3-ops-kam-portal
+        "title": "CORP T3 OPS Kam Portal",
+        "description": "Ops Portal Overview locked to TEAM3 — KPI combo, variances, losses, performance, projection, actuals, by-lane and by-order for TEAM3 only",
+        "note": "Scope: team_id=TEAM3 (server-locked) · same engine as Ops Portal - Overview · access strictly CORP-T3 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["ops", "overview", "corp", "team3", "t3", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T3", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t4-ops-kam-portal",  # -> /reports/corp-t4-ops-kam-portal
+        "title": "CORP T4 OPS Kam Portal",
+        "description": "Ops Portal Overview locked to TEAM4 — KPI combo, variances, losses, performance, projection, actuals, by-lane and by-order for TEAM4 only",
+        "note": "Scope: team_id=TEAM4 (server-locked) · same engine as Ops Portal - Overview · access strictly CORP-T4 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["ops", "overview", "corp", "team4", "t4", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T4", "CEO", "Executive"],
     },
     {
         "key": "kam-performance-dfw",  # -> /reports/kam-performance-dfw

@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
@@ -29,6 +30,34 @@ const RETRY = {
   // This both removes the visible flash and lets a slow/cold backend catch up
   // without the user perceiving a failure.
   placeholderData: keepPreviousData,
+}
+
+// ---------------------------------------------------------------------------
+// API prefix context — default points at the cross-team
+// `/custom/ops-portal-overview` router. Per-team pages
+// (e.g. /reports/corp-t1-ops-kam-portal) wrap their content in
+// <OppApiProvider prefix="custom/ops-portal-overview-t1"> so every hook below
+// transparently hits the team-locked endpoints. The prefix is also baked into
+// every queryKey so the 4 team copies cache independently of each other and of
+// the cross-team report.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PREFIX = "custom/ops-portal-overview"
+
+const ApiPrefixContext = createContext<string>(DEFAULT_PREFIX)
+
+export function OppApiProvider({
+  prefix,
+  children,
+}: {
+  prefix: string
+  children: ReactNode
+}) {
+  return createElement(ApiPrefixContext.Provider, { value: prefix }, children)
+}
+
+function useApiPrefix() {
+  return useContext(ApiPrefixContext)
 }
 
 // ---------------------------------------------------------------------------
@@ -362,21 +391,21 @@ export interface OppMarginBucket {
 // Hooks
 // ---------------------------------------------------------------------------
 
-const BASE = "custom/ops-portal-overview"
-
 export function useOppFilters() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-filters"],
-    queryFn: () => apiFetch<OppFilterOptions>(`${BASE}/filters`),
+    queryKey: [prefix, "opp-filters"],
+    queryFn: () => apiFetch<OppFilterOptions>(`${prefix}/filters`),
     staleTime: 60 * 60 * 1000,
     ...RETRY,
   })
 }
 
 export function useOppWorkdays() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-workdays"],
-    queryFn: () => apiFetch<OppWorkdays>(`${BASE}/workdays`),
+    queryKey: [prefix, "opp-workdays"],
+    queryFn: () => apiFetch<OppWorkdays>(`${prefix}/workdays`),
     staleTime: 30 * 60 * 1000,
     ...RETRY,
   })
@@ -386,77 +415,85 @@ export function useOppCombo(
   f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   grain: OppGrain = "month",
 ) {
+  const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-combo", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<OppCombo>(`${BASE}/combo${qs(filters, { grain })}`),
+    queryKey: [prefix, "opp-combo", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<OppCombo>(`${prefix}/combo${qs(filters, { grain })}`),
     ...RETRY,
   })
 }
 
 export function useOppTeamVariance(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-team-variance", f.range, f.startDate, f.endDate, f.team, f.customer],
-    queryFn: () => apiFetch<OppTeamVariance>(`${BASE}/team-variance${qs(f)}`),
+    queryKey: [prefix, "opp-team-variance", f.range, f.startDate, f.endDate, f.team, f.customer],
+    queryFn: () => apiFetch<OppTeamVariance>(`${prefix}/team-variance${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOppCustomerVariance(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-customer-variance", f.range, f.startDate, f.endDate, f.team, f.customer],
-    queryFn: () => apiFetch<OppCustomerVariance[]>(`${BASE}/customer-variance${qs(f)}`),
+    queryKey: [prefix, "opp-customer-variance", f.range, f.startDate, f.endDate, f.team, f.customer],
+    queryFn: () => apiFetch<OppCustomerVariance[]>(`${prefix}/customer-variance${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOppCustomerLosses(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-customer-losses", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppCustomerLoss[]>(`${BASE}/customer-losses${qs(f)}`),
+    queryKey: [prefix, "opp-customer-losses", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppCustomerLoss[]>(`${prefix}/customer-losses${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOppTeamPerformance(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-team-performance", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppTeamPerformance>(`${BASE}/team-performance${qs(f)}`),
+    queryKey: [prefix, "opp-team-performance", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppTeamPerformance>(`${prefix}/team-performance${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
+  const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-team-projection", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<OppTeamProjection>(`${BASE}/team-projection${qs(filters)}`),
+    queryKey: [prefix, "opp-team-projection", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<OppTeamProjection>(`${prefix}/team-projection${qs(filters)}`),
     ...RETRY,
   })
 }
 
 export function useOppProfitTmGauge(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
+  const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-profit-tm-gauge", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<OppProfitTmGauge>(`${BASE}/profit-tm-gauge${qs(filters)}`),
+    queryKey: [prefix, "opp-profit-tm-gauge", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<OppProfitTmGauge>(`${prefix}/profit-tm-gauge${qs(filters)}`),
     ...RETRY,
   })
 }
 
 export function useOppActuals(f: OppFilters, opts?: { sort?: string; limit?: number }) {
+  const prefix = useApiPrefix()
   const sort = opts?.sort ?? "revenue_desc"
   const limit = opts?.limit ?? 100
   return useQuery({
     queryKey: [
-      "opp-actuals",
+      prefix, "opp-actuals",
       f.range, f.startDate, f.endDate,
       f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
       apiFetch<OppActualsRow[]>(
-        `${BASE}/actuals${qs(f, { sort, limit: String(limit) })}`,
+        `${prefix}/actuals${qs(f, { sort, limit: String(limit) })}`,
       ),
     ...RETRY,
   })
@@ -466,18 +503,19 @@ export function useOppActualsByLane(
   f: OppFilters,
   opts?: { sort?: string; limit?: number },
 ) {
+  const prefix = useApiPrefix()
   const sort = opts?.sort ?? "revenue_desc"
   const limit = opts?.limit ?? 100
   return useQuery({
     queryKey: [
-      "opp-actuals-by-lane",
+      prefix, "opp-actuals-by-lane",
       f.range, f.startDate, f.endDate,
       f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
       apiFetch<OppLaneRow[]>(
-        `${BASE}/actuals-by-lane${qs(f, { sort, limit: String(limit) })}`,
+        `${prefix}/actuals-by-lane${qs(f, { sort, limit: String(limit) })}`,
       ),
     ...RETRY,
   })
@@ -488,10 +526,11 @@ export function useOppService(
   f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   grain: OppGrain = "month",
 ) {
+  const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-service", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<OppService>(`${BASE}/service${qs(filters, { grain })}`),
+    queryKey: [prefix, "opp-service", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<OppService>(`${prefix}/service${qs(filters, { grain })}`),
     ...RETRY,
   })
 }
@@ -501,18 +540,19 @@ export function useOppByOrder(
   f: OppFilters,
   opts?: { sort?: string; limit?: number },
 ) {
+  const prefix = useApiPrefix()
   const sort = opts?.sort ?? "revenue_desc"
   const limit = opts?.limit ?? 500
   return useQuery({
     queryKey: [
-      "opp-by-order",
+      prefix, "opp-by-order",
       f.range, f.startDate, f.endDate,
       f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
       apiFetch<OppOrderRow[]>(
-        `${BASE}/by-order${qs(f, { sort, limit: String(limit) })}`,
+        `${prefix}/by-order${qs(f, { sort, limit: String(limit) })}`,
       ),
     ...RETRY,
   })
@@ -523,10 +563,11 @@ export function useOppTeamWeekly(
   f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
   enabled: boolean,
 ) {
+  const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: ["opp-team-weekly", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${BASE}/team-weekly-performance${qs(filters)}`),
+    queryKey: [prefix, "opp-team-weekly", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${prefix}/team-weekly-performance${qs(filters)}`),
     enabled,
     ...RETRY,
   })
@@ -534,24 +575,26 @@ export function useOppTeamWeekly(
 
 // Per-team breakdown of the Team Performance table (Total + one row per team).
 export function useOppTeamPerformanceByTeam(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-team-performance-by-team", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppTeamPerfByTeam>(`${BASE}/team-performance-by-team${qs(f)}`),
+    queryKey: [prefix, "opp-team-performance-by-team", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppTeamPerfByTeam>(`${prefix}/team-performance-by-team${qs(f)}`),
     ...RETRY,
   })
 }
 
 // Per-customer service-fail breakdown by stop type (Pickup or Delivery).
 export function useOppServiceIncident(f: OppFilters, stopType: "pu" | "del") {
+  const prefix = useApiPrefix()
   return useQuery({
     queryKey: [
-      "opp-service-incident",
+      prefix, "opp-service-incident",
       stopType,
       f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f),
     ],
     queryFn: () =>
       apiFetch<OppServiceIncidentRow[]>(
-        `${BASE}/service-incident-by-customer${qs(f, { stop_type: stopType })}`,
+        `${prefix}/service-incident-by-customer${qs(f, { stop_type: stopType })}`,
       ),
     ...RETRY,
   })
@@ -559,9 +602,10 @@ export function useOppServiceIncident(f: OppFilters, stopType: "pu" | "del") {
 
 // Margin-band distribution (orders + revenue per bucket).
 export function useOppMarginDistribution(f: OppFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["opp-margin-distribution", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppMarginBucket[]>(`${BASE}/margin-distribution${qs(f)}`),
+    queryKey: [prefix, "opp-margin-distribution", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppMarginBucket[]>(`${prefix}/margin-distribution${qs(f)}`),
     ...RETRY,
   })
 }
