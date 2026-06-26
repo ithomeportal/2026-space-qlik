@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
@@ -33,6 +34,34 @@ const RETRY = {
     return failureCount < 2
   },
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+}
+
+// ---------------------------------------------------------------------------
+// API prefix context — default points at the cross-team
+// `/custom/ops-direct-compare` router. Per-team pages
+// (e.g. /reports/corp-t1-direct-compare) wrap their content in
+// <DcApiProvider prefix="custom/ops-direct-compare-t1"> so every hook below
+// transparently hits the team-locked endpoints. The prefix is also baked into
+// every queryKey so the 4 team copies cache independently of each other and of
+// the cross-team report.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PREFIX = "custom/ops-direct-compare"
+
+const ApiPrefixContext = createContext<string>(DEFAULT_PREFIX)
+
+export function DcApiProvider({
+  prefix,
+  children,
+}: {
+  prefix: string
+  children: ReactNode
+}) {
+  return createElement(ApiPrefixContext.Provider, { value: prefix }, children)
+}
+
+function useApiPrefix() {
+  return useContext(ApiPrefixContext)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,39 +225,43 @@ export interface DCFreshness {
 // ---------------------------------------------------------------------------
 
 export function useDCFilters() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "filters"],
-    queryFn: () => apiFetch<DCFilterOptions>("custom/ops-direct-compare/filters"),
+    queryKey: [prefix, "dc", "filters"],
+    queryFn: () => apiFetch<DCFilterOptions>(`${prefix}/filters`),
     staleTime: 60_000,
     ...RETRY,
   })
 }
 
 export function useDCFreshness() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "freshness"],
-    queryFn: () => apiFetch<DCFreshness>("custom/ops-direct-compare/freshness"),
+    queryKey: [prefix, "dc", "freshness"],
+    queryFn: () => apiFetch<DCFreshness>(`${prefix}/freshness`),
     staleTime: 60_000,
     ...RETRY,
   })
 }
 
 export function useDCPanelSummary(panel: "p1" | "p2", f: DCPanelFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "panel-summary", panel, ...panelKey(f)],
+    queryKey: [prefix, "dc", "panel-summary", panel, ...panelKey(f)],
     queryFn: () =>
-      apiFetch<DCPanelSummary>(`custom/ops-direct-compare/panel-summary${singleQs(f)}`),
+      apiFetch<DCPanelSummary>(`${prefix}/panel-summary${singleQs(f)}`),
     staleTime: 30_000,
     ...RETRY,
   })
 }
 
 export function useDCConcentration(panel: "p1" | "p2", f: DCPanelFilters, top = 5) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "concentration", panel, top, ...panelKey(f)],
+    queryKey: [prefix, "dc", "concentration", panel, top, ...panelKey(f)],
     queryFn: () =>
       apiFetch<DCConcentrationSlice[]>(
-        `custom/ops-direct-compare/concentration${singleQs(f, { top: String(top) })}`,
+        `${prefix}/concentration${singleQs(f, { top: String(top) })}`,
       ),
     staleTime: 30_000,
     ...RETRY,
@@ -240,14 +273,15 @@ export function useDCByCustomer(
   f: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
+  const prefix = useApiPrefix()
   const sort = opts.sort ?? "profit_desc"
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
-    queryKey: ["dc", "by-customer", panel, sort, page, limit, ...panelKey(f)],
+    queryKey: [prefix, "dc", "by-customer", panel, sort, page, limit, ...panelKey(f)],
     queryFn: () =>
       apiFetch<DCCustomerRow[]>(
-        `custom/ops-direct-compare/by-customer${singleQs(f, {
+        `${prefix}/by-customer${singleQs(f, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -263,11 +297,13 @@ export function useDCByCustomerDiff(
   p2: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
+  const prefix = useApiPrefix()
   const sort = opts.sort ?? "p2_profit_desc"
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
     queryKey: [
+      prefix,
       "dc",
       "by-customer-diff",
       sort,
@@ -279,7 +315,7 @@ export function useDCByCustomerDiff(
     ],
     queryFn: () =>
       apiFetch<DCCustomerRow[]>(
-        `custom/ops-direct-compare/by-customer-diff${diffQs(p1, p2, {
+        `${prefix}/by-customer-diff${diffQs(p1, p2, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -295,14 +331,15 @@ export function useDCByLane(
   f: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
+  const prefix = useApiPrefix()
   const sort = opts.sort ?? "profit_desc"
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
-    queryKey: ["dc", "by-lane", panel, sort, page, limit, ...panelKey(f)],
+    queryKey: [prefix, "dc", "by-lane", panel, sort, page, limit, ...panelKey(f)],
     queryFn: () =>
       apiFetch<DCLaneRow[]>(
-        `custom/ops-direct-compare/by-lane${singleQs(f, {
+        `${prefix}/by-lane${singleQs(f, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -318,11 +355,13 @@ export function useDCByLaneDiff(
   p2: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
+  const prefix = useApiPrefix()
   const sort = opts.sort ?? "p2_profit_desc"
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
     queryKey: [
+      prefix,
       "dc",
       "by-lane-diff",
       sort,
@@ -334,7 +373,7 @@ export function useDCByLaneDiff(
     ],
     queryFn: () =>
       apiFetch<DCLaneRow[]>(
-        `custom/ops-direct-compare/by-lane-diff${diffQs(p1, p2, {
+        `${prefix}/by-lane-diff${diffQs(p1, p2, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -346,21 +385,23 @@ export function useDCByLaneDiff(
 }
 
 export function useDCTrend12m() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "trend-12m"],
+    queryKey: [prefix, "dc", "trend-12m"],
     queryFn: () =>
-      apiFetch<DCTrendPoint[]>("custom/ops-direct-compare/trend-12m"),
+      apiFetch<DCTrendPoint[]>(`${prefix}/trend-12m`),
     staleTime: 5 * 60_000, // matches backend TTL roughly
     ...RETRY,
   })
 }
 
 export function useDCCustomerRevMargin(f: DCPanelFilters, top = 20) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["dc", "cust-rev-margin", top, ...panelKey(f)],
+    queryKey: [prefix, "dc", "cust-rev-margin", top, ...panelKey(f)],
     queryFn: () =>
       apiFetch<DCCustRevMargin[]>(
-        `custom/ops-direct-compare/customer-revenue-margin${singleQs(f, {
+        `${prefix}/customer-revenue-margin${singleQs(f, {
           top: String(top),
         })}`,
       ),
@@ -373,6 +414,7 @@ export function useDCOrdersWindow(
   f: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
+  const prefix = useApiPrefix()
   const sort = opts.sort ?? "date_desc"
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
@@ -393,10 +435,10 @@ export function useDCOrdersWindow(
   slim.set("page", String(page))
   slim.set("limit", String(limit))
   return useQuery({
-    queryKey: ["dc", "orders-window", sort, page, limit, ...teamKey],
+    queryKey: [prefix, "dc", "orders-window", sort, page, limit, ...teamKey],
     queryFn: () =>
       apiFetch<DCOrderRow[]>(
-        `custom/ops-direct-compare/orders-window?${slim.toString()}`,
+        `${prefix}/orders-window?${slim.toString()}`,
       ),
     staleTime: 60_000,
     ...RETRY,

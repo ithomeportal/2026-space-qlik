@@ -24,6 +24,9 @@ interface Props {
   onToggleTeam: (t: string) => void
   onToggleSubTeam: (st: string) => void
   accent: "blue" | "violet"
+  /** When set, the Division + Team-pill UI is hidden and replaced with a
+   *  static locked badge (CORP · this team). Per-CORP-team report variants. */
+  lockedTeam?: string
 }
 
 export function PanelFilters({
@@ -43,6 +46,7 @@ export function PanelFilters({
   onToggleTeam,
   onToggleSubTeam,
   accent,
+  lockedTeam,
 }: Props) {
   const teamChipList: readonly string[] =
     division === "CORP" ? CORP_TEAMS : division === "DFW" ? DFW_TEAMS : ALL_TEAMS
@@ -117,45 +121,57 @@ export function PanelFilters({
           </div>
         )}
 
-        {/* Division */}
-        <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB]">
-          {(["All", "CORP", "DFW"] as const).map((d) => (
-            <button
-              key={d}
-              onClick={() => onDivision(d)}
-              className={`px-2.5 py-1 ${
-                division === d
-                  ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
-                  : "text-[#6B7280] hover:text-[#111827]"
-              }`}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
+        {lockedTeam ? (
+          /* Locked per-CORP-team variant: static badge, no Division/Team UI. */
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-[#1B3A5C] bg-[#1B3A5C] px-2.5 py-0.5 text-[11px] text-white">
+              CORP · {lockedTeam}
+            </span>
+            <span className="text-[10px] text-[#6B7280]">(locked)</span>
+          </div>
+        ) : (
+          <>
+            {/* Division */}
+            <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB]">
+              {(["All", "CORP", "DFW"] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => onDivision(d)}
+                  className={`px-2.5 py-1 ${
+                    division === d
+                      ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
+                      : "text-[#6B7280] hover:text-[#111827]"
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
 
-        {/* Teams */}
-        <div className="flex flex-wrap items-center gap-1">
-          {teamChipList.map((t) => {
-            const on = teams.includes(t)
-            return (
-              <button
-                key={t}
-                onClick={() => onToggleTeam(t)}
-                className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                  on
-                    ? accentClasses.chipOn
-                    : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
-                }`}
-              >
-                {t}
-              </button>
-            )
-          })}
-        </div>
+            {/* Teams */}
+            <div className="flex flex-wrap items-center gap-1">
+              {teamChipList.map((t) => {
+                const on = teams.includes(t)
+                return (
+                  <button
+                    key={t}
+                    onClick={() => onToggleTeam(t)}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                      on
+                        ? accentClasses.chipOn
+                        : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
 
         {/* DFW sub-teams */}
-        {division === "DFW" && (
+        {!lockedTeam && division === "DFW" && (
           <div className="flex items-center gap-1 border-l border-[#E5E7EB] pl-3">
             <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">
               sub

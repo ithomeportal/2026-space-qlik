@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
@@ -24,6 +25,34 @@ const RETRY = {
     return failureCount < 2
   },
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
+}
+
+// ---------------------------------------------------------------------------
+// API prefix context — default points at the cross-team
+// `/custom/ops-customer-score` router. Per-team pages
+// (e.g. /reports/corp-t1-customer-score) wrap their content in
+// <OcsApiProvider prefix="custom/ops-customer-score-t1"> so every hook below
+// transparently hits the team-locked endpoints. The prefix is also baked into
+// every queryKey so the 4 team copies cache independently of each other and of
+// the cross-team report.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PREFIX = "custom/ops-customer-score"
+
+const ApiPrefixContext = createContext<string>(DEFAULT_PREFIX)
+
+export function OcsApiProvider({
+  prefix,
+  children,
+}: {
+  prefix: string
+  children: ReactNode
+}) {
+  return createElement(ApiPrefixContext.Provider, { value: prefix }, children)
+}
+
+function useApiPrefix() {
+  return useContext(ApiPrefixContext)
 }
 
 // ---------------------------------------------------------------------------
@@ -223,11 +252,13 @@ export interface OcsFreshness {
 // ---------------------------------------------------------------------------
 
 export function useOcsFilters(f: Partial<OcsFilters>) {
+  const prefix = useApiPrefix()
   const q = new URLSearchParams()
   applyScopeQs(q, f)
   const queryString = q.toString()
   return useQuery({
     queryKey: [
+      prefix,
       "ops-customer-score",
       "filters",
       f.division ?? "All",
@@ -239,7 +270,7 @@ export function useOcsFilters(f: Partial<OcsFilters>) {
     ],
     queryFn: () =>
       apiFetch<OcsFilterOptions>(
-        `custom/ops-customer-score/filters${queryString ? "?" + queryString : ""}`,
+        `${prefix}/filters${queryString ? "?" + queryString : ""}`,
       ),
     staleTime: 5 * 60_000,
     ...RETRY,
@@ -247,51 +278,57 @@ export function useOcsFilters(f: Partial<OcsFilters>) {
 }
 
 export function useOcsPuPinned(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "pu-pinned", ...pinnedKey(f)],
-    queryFn: () => apiFetch<OcsPinned>(`custom/ops-customer-score/pu/pinned${pinnedQs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "pu-pinned", ...pinnedKey(f)],
+    queryFn: () => apiFetch<OcsPinned>(`${prefix}/pu/pinned${pinnedQs(f)}`),
     staleTime: 10 * 60_000,
     ...RETRY,
   })
 }
 
 export function useOcsDelPinned(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "del-pinned", ...pinnedKey(f)],
-    queryFn: () => apiFetch<OcsPinned>(`custom/ops-customer-score/del/pinned${pinnedQs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "del-pinned", ...pinnedKey(f)],
+    queryFn: () => apiFetch<OcsPinned>(`${prefix}/del/pinned${pinnedQs(f)}`),
     staleTime: 10 * 60_000,
     ...RETRY,
   })
 }
 
 export function useOcsPuOverview(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "pu-overview", ...key(f)],
-    queryFn: () => apiFetch<OcsOverview>(`custom/ops-customer-score/pu/overview${qs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "pu-overview", ...key(f)],
+    queryFn: () => apiFetch<OcsOverview>(`${prefix}/pu/overview${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOcsDelOverview(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "del-overview", ...key(f)],
-    queryFn: () => apiFetch<OcsOverview>(`custom/ops-customer-score/del/overview${qs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "del-overview", ...key(f)],
+    queryFn: () => apiFetch<OcsOverview>(`${prefix}/del/overview${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOcsPuDetail(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "pu-detail", ...key(f)],
-    queryFn: () => apiFetch<OcsDetail>(`custom/ops-customer-score/pu/detail${qs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "pu-detail", ...key(f)],
+    queryFn: () => apiFetch<OcsDetail>(`${prefix}/pu/detail${qs(f)}`),
     ...RETRY,
   })
 }
 
 export function useOcsDelDetail(f: OcsFilters) {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "del-detail", ...key(f)],
-    queryFn: () => apiFetch<OcsDetail>(`custom/ops-customer-score/del/detail${qs(f)}`),
+    queryKey: [prefix, "ops-customer-score", "del-detail", ...key(f)],
+    queryFn: () => apiFetch<OcsDetail>(`${prefix}/del/detail${qs(f)}`),
     ...RETRY,
   })
 }
@@ -303,6 +340,7 @@ export function useOcsFaultRows(
   page: number,
   limit: number,
 ) {
+  const prefix = useApiPrefix()
   const path =
     side === "pu"
       ? fault === "our"
@@ -312,10 +350,10 @@ export function useOcsFaultRows(
         ? "del/our-fault"
         : "del/not-our-fault"
   return useQuery({
-    queryKey: ["ops-customer-score", "fault", side, fault, page, limit, ...key(f)],
+    queryKey: [prefix, "ops-customer-score", "fault", side, fault, page, limit, ...key(f)],
     queryFn: () =>
       apiFetch<OcsFaultRow[]>(
-        `custom/ops-customer-score/${path}${qs(f, {
+        `${prefix}/${path}${qs(f, {
           page: String(page),
           limit: String(limit),
         })}`,
@@ -325,9 +363,10 @@ export function useOcsFaultRows(
 }
 
 export function useOcsFreshness() {
+  const prefix = useApiPrefix()
   return useQuery({
-    queryKey: ["ops-customer-score", "freshness"],
-    queryFn: () => apiFetch<OcsFreshness>("custom/ops-customer-score/freshness"),
+    queryKey: [prefix, "ops-customer-score", "freshness"],
+    queryFn: () => apiFetch<OcsFreshness>(`${prefix}/freshness`),
     staleTime: 60_000,
     ...RETRY,
   })

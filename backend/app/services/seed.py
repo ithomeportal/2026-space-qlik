@@ -259,6 +259,49 @@ CUSTOM_REPORTS = [
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
+    # Per-team private copies of OPs Direct Compare (Bruno 2026-06-26). Same
+    # engine, server-locked to division=CORP + one team. Reuse the CORP-T#
+    # TagRoles (one role unlocks a team's whole private suite); assigned manually.
+    {
+        "key": "corp-t1-direct-compare",  # -> /reports/corp-t1-direct-compare
+        "title": "CORP T1 Direct Compare",
+        "description": "OPs Direct Compare locked to TEAM1 — period-vs-period KPIs, customer & lane diff tables, 12-month trend, orders for TEAM1 only",
+        "note": "Scope: division=CORP + team_id=TEAM1 (server-locked) · same engine as OPs Direct Compare · access strictly CORP-T1 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["compare", "ops", "corp", "team1", "t1", "diff", "period"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T1", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t2-direct-compare",  # -> /reports/corp-t2-direct-compare
+        "title": "CORP T2 Direct Compare",
+        "description": "OPs Direct Compare locked to TEAM2 — period-vs-period KPIs, customer & lane diff tables, 12-month trend, orders for TEAM2 only",
+        "note": "Scope: division=CORP + team_id=TEAM2 (server-locked) · same engine as OPs Direct Compare · access strictly CORP-T2 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["compare", "ops", "corp", "team2", "t2", "diff", "period"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T2", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t3-direct-compare",  # -> /reports/corp-t3-direct-compare
+        "title": "CORP T3 Direct Compare",
+        "description": "OPs Direct Compare locked to TEAM3 — period-vs-period KPIs, customer & lane diff tables, 12-month trend, orders for TEAM3 only",
+        "note": "Scope: division=CORP + team_id=TEAM3 (server-locked) · same engine as OPs Direct Compare · access strictly CORP-T3 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["compare", "ops", "corp", "team3", "t3", "diff", "period"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T3", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t4-direct-compare",  # -> /reports/corp-t4-direct-compare
+        "title": "CORP T4 Direct Compare",
+        "description": "OPs Direct Compare locked to TEAM4 — period-vs-period KPIs, customer & lane diff tables, 12-month trend, orders for TEAM4 only",
+        "note": "Scope: division=CORP + team_id=TEAM4 (server-locked) · same engine as OPs Direct Compare · access strictly CORP-T4 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["compare", "ops", "corp", "team4", "t4", "diff", "period"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T4", "CEO", "Executive"],
+    },
     {
         "key": "ops-customer-score",  # -> /reports/ops-customer-score
         "title": "OPs Customer Score",
@@ -268,6 +311,49 @@ CUSTOM_REPORTS = [
         "tags": ["scorecard", "ops", "service-fail", "on-time", "customer", "carrier", "pickup", "delivery"],
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
+    # Per-team private copies of OPs Customer Score (Bruno 2026-06-26). Same
+    # engine, server-locked to division=CORP + one team. Reuse the CORP-T#
+    # TagRoles; assigned manually.
+    {
+        "key": "corp-t1-customer-score",  # -> /reports/corp-t1-customer-score
+        "title": "CORP T1 Customer Scorecard",
+        "description": "OPs Customer Score locked to TEAM1 — PU/DEL on-time by customer/delay code, rolling trends, Our-Fault vs Not-Our-Fault detail for TEAM1 only",
+        "note": "Scope: division=CORP + team_id=TEAM1 (server-locked) · same engine as OPs Customer Score · access strictly CORP-T1 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["scorecard", "ops", "corp", "team1", "t1", "service-fail", "on-time"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T1", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t2-customer-score",  # -> /reports/corp-t2-customer-score
+        "title": "CORP T2 Customer Scorecard",
+        "description": "OPs Customer Score locked to TEAM2 — PU/DEL on-time by customer/delay code, rolling trends, Our-Fault vs Not-Our-Fault detail for TEAM2 only",
+        "note": "Scope: division=CORP + team_id=TEAM2 (server-locked) · same engine as OPs Customer Score · access strictly CORP-T2 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["scorecard", "ops", "corp", "team2", "t2", "service-fail", "on-time"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T2", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t3-customer-score",  # -> /reports/corp-t3-customer-score
+        "title": "CORP T3 Customer Scorecard",
+        "description": "OPs Customer Score locked to TEAM3 — PU/DEL on-time by customer/delay code, rolling trends, Our-Fault vs Not-Our-Fault detail for TEAM3 only",
+        "note": "Scope: division=CORP + team_id=TEAM3 (server-locked) · same engine as OPs Customer Score · access strictly CORP-T3 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["scorecard", "ops", "corp", "team3", "t3", "service-fail", "on-time"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T3", "CEO", "Executive"],
+    },
+    {
+        "key": "corp-t4-customer-score",  # -> /reports/corp-t4-customer-score
+        "title": "CORP T4 Customer Scorecard",
+        "description": "OPs Customer Score locked to TEAM4 — PU/DEL on-time by customer/delay code, rolling trends, Our-Fault vs Not-Our-Fault detail for TEAM4 only",
+        "note": "Scope: division=CORP + team_id=TEAM4 (server-locked) · same engine as OPs Customer Score · access strictly CORP-T4 + leadership · Bruno 2026-06-26",
+        "category": "Operations",
+        "tags": ["scorecard", "ops", "corp", "team4", "t4", "service-fail", "on-time"],
+        "owner_name": "Diego",
+        "roles": ["CORP-T4", "CEO", "Executive"],
     },
     {
         "key": "sales-attrition-to-ops",  # -> /reports/sales-attrition-to-ops

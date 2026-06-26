@@ -33,7 +33,9 @@ from app.routers import (
     kam_performance_dfw,
     losses_lanes,
     ops_customer_score,
+    ops_customer_score_team,
     ops_direct_compare,
+    ops_direct_compare_team,
     ops_margins,
     ops_portal_overview,
     ops_portal_overview_team,
@@ -829,7 +831,11 @@ app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
+for _odc_team_router in ops_direct_compare_team.team_routers:
+    app.include_router(_odc_team_router, prefix="/api")
 app.include_router(ops_customer_score.router, prefix="/api")
+for _ocs_team_router in ops_customer_score_team.team_routers:
+    app.include_router(_ocs_team_router, prefix="/api")
 app.include_router(ops_portal_overview.router, prefix="/api")
 for _opo_team_router in ops_portal_overview_team.team_routers:
     app.include_router(_opo_team_router, prefix="/api")
