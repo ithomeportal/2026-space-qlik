@@ -372,7 +372,7 @@ function Body({
             <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
             <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} />
           </div>
-          <SidePanels filters={filters} onPickCustomer={setCustomer} />
+          <SidePanels filters={filters} onPickCustomer={setCustomer} lockedTeam={lockedTeam} />
         </div>
 
         <MarginDistribution filters={filters} />

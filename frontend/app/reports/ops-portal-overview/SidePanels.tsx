@@ -26,9 +26,14 @@ interface Props {
    * Losses panels become clickable links that drill to that customer.
    */
   onPickCustomer?: (customer: string) => void
+  /**
+   * Bruno (2026-06-26): per-team CORP copies (T1–T4) lock to one team, so the
+   * cross-team "Team" breakdown button in Team Monthly Performance is hidden.
+   */
+  lockedTeam?: string
 }
 
-export function SidePanels({ filters, onPickCustomer }: Props) {
+export function SidePanels({ filters, onPickCustomer, lockedTeam }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <div className="space-y-4">
@@ -37,7 +42,7 @@ export function SidePanels({ filters, onPickCustomer }: Props) {
         <CustomerLosses filters={filters} onPickCustomer={onPickCustomer} />
       </div>
       <div className="space-y-4">
-        <TeamPerformance filters={filters} />
+        <TeamPerformance filters={filters} lockedTeam={lockedTeam} />
         <TeamProjection filters={filters} />
       </div>
     </div>
@@ -200,7 +205,7 @@ function CustomerLosses({ filters, onPickCustomer }: { filters: OppFilters; onPi
 // §5 — Team Monthly Performance
 // ---------------------------------------------------------------------------
 
-function TeamPerformance({ filters }: { filters: OppFilters }) {
+function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
   const { data, isLoading, error } = useOppTeamPerformance(filters)
   const v = data?.data
   const [weeklyOpen, setWeeklyOpen] = useState(false)
@@ -227,15 +232,19 @@ function TeamPerformance({ filters }: { filters: OppFilters }) {
           >
             Week
           </button>
-          <button
-            type="button"
-            onClick={() => setMonthlyOpen(true)}
-            title="Team Monthly Performance — by team"
-            className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
-            aria-label="Open Team Monthly Performance"
-          >
-            Team
-          </button>
+          {/* Bruno (2026-06-26): cross-team breakdown is meaningless on the
+              single-team CORP copies (T1–T4) — hide the button when locked. */}
+          {!lockedTeam && (
+            <button
+              type="button"
+              onClick={() => setMonthlyOpen(true)}
+              title="Team Monthly Performance — by team"
+              className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
+              aria-label="Open Team Monthly Performance"
+            >
+              Team
+            </button>
+          )}
         </span>
       }
     >
