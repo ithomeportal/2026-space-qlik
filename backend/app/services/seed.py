@@ -85,7 +85,7 @@ CUSTOM_REPORTS = [
         "category": "Executive",
         "tags": ["dfw", "tm1", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM1", "CEO", "Executive"],
+        "roles": ["DFW-TM1", "Executive"],
     },
     {
         "key": "xray-dfw-tm2",  # -> /reports/xray-dfw-tm2
@@ -95,7 +95,7 @@ CUSTOM_REPORTS = [
         "category": "Executive",
         "tags": ["dfw", "tm2", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM2", "CEO", "Executive"],
+        "roles": ["DFW-TM2", "Executive"],
     },
     {
         "key": "xray-dfw-tm3",  # -> /reports/xray-dfw-tm3
@@ -105,7 +105,7 @@ CUSTOM_REPORTS = [
         "category": "Executive",
         "tags": ["dfw", "tm3", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM3", "CEO", "Executive"],
+        "roles": ["DFW-TM3", "Executive"],
     },
     {
         "key": "xray-dfw-tm4",  # -> /reports/xray-dfw-tm4
@@ -115,7 +115,7 @@ CUSTOM_REPORTS = [
         "category": "Executive",
         "tags": ["dfw", "tm4", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM4", "CEO", "Executive"],
+        "roles": ["DFW-TM4", "Executive"],
     },
     {
         "key": "ceo-executive",  # -> /reports/ceo-executive
@@ -197,7 +197,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["dfw", "tm1", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM1", "CEO", "Executive"],
+        "roles": ["DFW-TM1", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm2",  # -> /reports/dfw-podium-top-tm2
@@ -207,7 +207,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["dfw", "tm2", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM2", "CEO", "Executive"],
+        "roles": ["DFW-TM2", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm3",  # -> /reports/dfw-podium-top-tm3
@@ -217,7 +217,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["dfw", "tm3", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM3", "CEO", "Executive"],
+        "roles": ["DFW-TM3", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm4",  # -> /reports/dfw-podium-top-tm4
@@ -227,7 +227,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["dfw", "tm4", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM4", "CEO", "Executive"],
+        "roles": ["DFW-TM4", "Executive"],
     },
     {
         "key": "losses-lanes",  # -> /reports/losses-lanes
@@ -270,7 +270,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["compare", "ops", "corp", "team1", "t1", "diff", "period"],
         "owner_name": "Diego",
-        "roles": ["CORP-T1", "CEO", "Executive"],
+        "roles": ["CORP-T1", "Executive"],
     },
     {
         "key": "corp-t2-direct-compare",  # -> /reports/corp-t2-direct-compare
@@ -280,7 +280,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["compare", "ops", "corp", "team2", "t2", "diff", "period"],
         "owner_name": "Diego",
-        "roles": ["CORP-T2", "CEO", "Executive"],
+        "roles": ["CORP-T2", "Executive"],
     },
     {
         "key": "corp-t3-direct-compare",  # -> /reports/corp-t3-direct-compare
@@ -290,7 +290,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["compare", "ops", "corp", "team3", "t3", "diff", "period"],
         "owner_name": "Diego",
-        "roles": ["CORP-T3", "CEO", "Executive"],
+        "roles": ["CORP-T3", "Executive"],
     },
     {
         "key": "corp-t4-direct-compare",  # -> /reports/corp-t4-direct-compare
@@ -300,7 +300,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["compare", "ops", "corp", "team4", "t4", "diff", "period"],
         "owner_name": "Diego",
-        "roles": ["CORP-T4", "CEO", "Executive"],
+        "roles": ["CORP-T4", "Executive"],
     },
     {
         "key": "ops-customer-score",  # -> /reports/ops-customer-score
@@ -323,7 +323,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["scorecard", "ops", "corp", "team1", "t1", "service-fail", "on-time"],
         "owner_name": "Diego",
-        "roles": ["CORP-T1", "CEO", "Executive"],
+        "roles": ["CORP-T1", "Executive"],
     },
     {
         "key": "corp-t2-customer-score",  # -> /reports/corp-t2-customer-score
@@ -333,7 +333,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["scorecard", "ops", "corp", "team2", "t2", "service-fail", "on-time"],
         "owner_name": "Diego",
-        "roles": ["CORP-T2", "CEO", "Executive"],
+        "roles": ["CORP-T2", "Executive"],
     },
     {
         "key": "corp-t3-customer-score",  # -> /reports/corp-t3-customer-score
@@ -343,7 +343,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["scorecard", "ops", "corp", "team3", "t3", "service-fail", "on-time"],
         "owner_name": "Diego",
-        "roles": ["CORP-T3", "CEO", "Executive"],
+        "roles": ["CORP-T3", "Executive"],
     },
     {
         "key": "corp-t4-customer-score",  # -> /reports/corp-t4-customer-score
@@ -353,7 +353,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["scorecard", "ops", "corp", "team4", "t4", "service-fail", "on-time"],
         "owner_name": "Diego",
-        "roles": ["CORP-T4", "CEO", "Executive"],
+        "roles": ["CORP-T4", "Executive"],
     },
     {
         "key": "sales-attrition-to-ops",  # -> /reports/sales-attrition-to-ops
@@ -479,7 +479,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["ops", "overview", "corp", "team1", "t1", "kam", "kpi"],
         "owner_name": "Diego",
-        "roles": ["CORP-T1", "CEO", "Executive"],
+        "roles": ["CORP-T1", "Executive"],
     },
     {
         "key": "corp-t2-ops-kam-portal",  # -> /reports/corp-t2-ops-kam-portal
@@ -489,7 +489,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["ops", "overview", "corp", "team2", "t2", "kam", "kpi"],
         "owner_name": "Diego",
-        "roles": ["CORP-T2", "CEO", "Executive"],
+        "roles": ["CORP-T2", "Executive"],
     },
     {
         "key": "corp-t3-ops-kam-portal",  # -> /reports/corp-t3-ops-kam-portal
@@ -499,7 +499,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["ops", "overview", "corp", "team3", "t3", "kam", "kpi"],
         "owner_name": "Diego",
-        "roles": ["CORP-T3", "CEO", "Executive"],
+        "roles": ["CORP-T3", "Executive"],
     },
     {
         "key": "corp-t4-ops-kam-portal",  # -> /reports/corp-t4-ops-kam-portal
@@ -509,7 +509,7 @@ CUSTOM_REPORTS = [
         "category": "Operations",
         "tags": ["ops", "overview", "corp", "team4", "t4", "kam", "kpi"],
         "owner_name": "Diego",
-        "roles": ["CORP-T4", "CEO", "Executive"],
+        "roles": ["CORP-T4", "Executive"],
     },
     {
         "key": "kam-performance-dfw",  # -> /reports/kam-performance-dfw
@@ -691,10 +691,16 @@ async def seed_custom_reports(pool) -> int:
 
     The INSERT uses ``ON CONFLICT (custom_path) DO UPDATE`` so this is
     safe to call on every boot — existing rows get title/description/
-    tags/category refreshed, missing rows get created. Role mappings are
-    inserted with ``ON CONFLICT DO NOTHING``, which preserves any
-    admin-assigned overrides while ensuring at least the seed-declared
-    roles can see the report.
+    tags/category refreshed, missing rows get created.
+
+    Role mappings are seeded **only the first time a report is created**
+    (detected via ``xmax = 0`` on the RETURNING row). Once a report exists,
+    the admin UI (/admin/reports) is the single source of truth for its
+    TagRole access — seed never re-adds a role on subsequent deploys. This
+    is what stops manually-removed grants (e.g. a report taken out of the
+    "CEO" TagRole) from silently reappearing on the next deploy. A brand-new
+    report still ships with its seed-declared roles on the boot that creates
+    it; remove a role from the seed list to keep it out from day one.
 
     Returns the number of CUSTOM_REPORTS entries processed (for logs).
     """
@@ -737,7 +743,7 @@ async def seed_custom_reports(pool) -> int:
               tags = EXCLUDED.tags,
               owner_name = EXCLUDED.owner_name,
               report_type = 'custom'
-            RETURNING id
+            RETURNING id, (xmax = 0) AS inserted
             """,
             custom["title"],
             custom.get("description"),
@@ -747,7 +753,10 @@ async def seed_custom_reports(pool) -> int:
             custom.get("owner_name"),
             custom_path,
         )
-        if row:
+        # Seed roles ONLY on the boot that first creates the report. For an
+        # already-existing report, the admin UI owns TagRole access — never
+        # re-add a seed role (that would revert manual removals every deploy).
+        if row and row["inserted"]:
             for role_name in custom.get("roles", []):
                 role_id = role_ids_ci.get(role_name.lower())
                 if role_id:
