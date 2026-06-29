@@ -83,6 +83,7 @@
 
 ### Data, Seeding & TagRoles (full detail — `docs/SPEC-DATA.md` + `docs/SPEC-ADMIN.md`)
 - Seed idempotent (`ON CONFLICT … DO UPDATE`); never `dict.pop()` module constants (use `.get()`); auto-seed when `role_report_access` empty; `seed_custom_reports(pool)` runs every startup so a new `CUSTOM_REPORTS` entry ships itself. Router order: search BEFORE reports
+- **Seed role grants apply ONLY on first report creation** (`xmax = 0` check in `seed_custom_reports`, 2026-06-29). Every deploy used to re-add seed-declared roles (`ON CONFLICT DO NOTHING`), silently reverting any access removed in `/admin/reports` on the next deploy — the admin UI is now the sole authority for TagRole access on existing reports (editing `CUSTOM_REPORTS.roles` only affects brand-new reports). Fixed Bruno's "reports keep reappearing under the CEO TagRole" (commit `e0540c1`). See SPEC-CODE-RULES §15
 - Use bracket access `emp["name"]` for asyncpg Records, NOT `.get()`
 - TagRoles **Title-Case** divisions; `admin`/`super_admin` lowercase; case-insensitive seed lookup; daily user sync 2 AM CST; NOT auto-assigned (manual per user). `POST /api/admin/dedupe-roles` merges case dupes
 
