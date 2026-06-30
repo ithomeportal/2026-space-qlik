@@ -355,6 +355,10 @@ function AttritionContent() {
               onCustomerClick={setCustomer}
               onLaneClick={setLane}
               entityLabel={entityLabel}
+              // Bruno 2026-06-30: Performance Trends defaults to the Difference
+              // column ascending (lowest → highest) across all metrics + views.
+              defaultSortKey="diff"
+              defaultSortDir="asc"
             />
             <TrendsTab filters={filters} />
           </div>
