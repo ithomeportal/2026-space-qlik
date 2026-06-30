@@ -16,6 +16,7 @@ import { Weekly } from "./tabs/Weekly"
 import { ReportGuard } from "@/components/ReportGuard"
 import { Risk } from "./tabs/Risk"
 import { Orders } from "./tabs/Orders"
+import { Attrition } from "./tabs/Attrition"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -30,13 +31,14 @@ const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
 
 // Overview now bundles Overview + Trends + Customers content, stacked in that
 // order, so those two no longer get their own tabs.
-type TabKey = "overview" | "weekly" | "risk" | "orders"
+type TabKey = "overview" | "weekly" | "risk" | "orders" | "attrition"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "weekly", label: "Weekly" },
   { key: "risk", label: "Risk" },
   { key: "orders", label: "Orders" },
+  { key: "attrition", label: "Attrition" },
 ]
 
 function todayIso() {
@@ -47,6 +49,41 @@ function todayIso() {
 function monthStartIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+}
+
+function isoOf(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
+// Monday of the current (browser-local) week — matches the rest of this page's
+// local-time date math (todayIso/monthStartIso).
+function weekStartDate() {
+  const d = new Date()
+  const dow = (d.getDay() + 6) % 7 // 0 = Monday … 6 = Sunday
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - dow)
+  return d
+}
+
+const WEEKDAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+] as const
+
+// Bruno 2026-06-30 Request 2: the seven days of the current week, each labelled
+// "<Weekday> <day-of-month>" (e.g. "Monday 29").
+function currentWeekDays(): { iso: string; label: string }[] {
+  const monday = weekStartDate()
+  return WEEKDAY_NAMES.map((name, i) => {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    return { iso: isoOf(d), label: `${name} ${d.getDate()}` }
+  })
 }
 
 function clampToYear(iso: string) {
@@ -75,6 +112,9 @@ function CeoExecutiveContent() {
   const [range, setRange] = useState<CeoRange>("mtd")
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(clampToYear(todayIso()))
+  // Which day-of-week button is active (range === "day"). ISO date.
+  const [selectedDay, setSelectedDay] = useState<string>(clampToYear(todayIso()))
+  const weekDays = useMemo(() => currentWeekDays(), [])
   const [division, setDivision] = useState<CeoDivision | "">("") // "" = all
   const [team, setTeam] = useState<string>("") // "" = all
   const [customerInput, setCustomerInput] = useState<string>("")
@@ -112,8 +152,25 @@ function CeoExecutiveContent() {
       return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
     if (range === "mtd")
       return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+    // Bruno 2026-06-30 Request 1: "Today" = today only; "Week" = Mon→Sun of the
+    // current week.
+    if (range === "today") {
+      const t = clampToYear(todayIso())
+      return { startDate: t, endDate: t }
+    }
+    if (range === "week") {
+      const monday = weekStartDate()
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return { startDate: clampToYear(isoOf(monday)), endDate: clampToYear(isoOf(sunday)) }
+    }
+    // Request 2: a day button = Monday-of-week → that day (week-to-date).
+    if (range === "day") {
+      const monday = weekStartDate()
+      return { startDate: clampToYear(isoOf(monday)), endDate: clampToYear(selectedDay) }
+    }
     return { startDate: clampCustom(startDate), endDate: clampCustom(endDate) }
-  }, [range, startDate, endDate])
+  }, [range, startDate, endDate, selectedDay])
 
   const filters: CeoFilters = useMemo(
     () => ({
@@ -166,6 +223,8 @@ function CeoExecutiveContent() {
                 { k: "mtd" as const, label: "MTD" },
                 { k: "ytd" as const, label: "YTD" },
                 { k: "full" as const, label: "Full 2026" },
+                { k: "week" as const, label: "Week" },
+                { k: "today" as const, label: "Today" },
                 { k: "custom" as const, label: "Custom" },
               ].map((opt) => (
                 <button
@@ -296,6 +355,33 @@ function CeoExecutiveContent() {
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
         </div>
 
+        {/* Bruno 2026-06-30 Request 2: per-day buttons for the current week.
+            Each applies Monday-of-week → that day (week-to-date). */}
+        <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-1 px-6 pb-3">
+          <label className="mr-1 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Day
+          </label>
+          {weekDays.map((d) => {
+            const active = range === "day" && selectedDay === d.iso
+            return (
+              <button
+                key={d.iso}
+                onClick={() => {
+                  setRange("day")
+                  setSelectedDay(d.iso)
+                }}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  active
+                    ? "border-[#D97706] bg-[#D97706] text-white"
+                    : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+                }`}
+              >
+                {d.label}
+              </button>
+            )
+          })}
+        </div>
+
         <div className="mx-auto flex w-full max-w-[1920px] gap-1 overflow-x-auto border-t border-[#E5E7EB] px-6">
           {TABS.map((tab) => (
             <button
@@ -324,6 +410,7 @@ function CeoExecutiveContent() {
         {activeTab === "weekly" && <Weekly filters={filters} />}
         {activeTab === "risk" && <Risk filters={filters} onCustomerSelect={setCustomer} />}
         {activeTab === "orders" && <Orders filters={filters} onCustomerSelect={setCustomer} />}
+        {activeTab === "attrition" && <Attrition filters={filters} />}
       </div>
     </div>
   )

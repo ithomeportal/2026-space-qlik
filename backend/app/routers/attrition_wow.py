@@ -122,6 +122,7 @@ def _scope_where(
     lane: Optional[str],
     params: list,
     view: Optional[str] = None,
+    sub_team: Optional[str] = None,
 ) -> str:
     """Common WHERE for v4. Appends positional params.
 
@@ -129,6 +130,10 @@ def _scope_where(
     RUAN customer rows with a non-empty ``client`` are kept, and the
     ``customer`` filter matches against ``client`` (the sub-shipper) instead
     of ``customer_name``.
+
+    ``sub_team`` (e.g. TM1..TM4) further narrows DFW rows to a single sub-team
+    via the ``team`` column. Used by the CEO Executive Attrition tab when a
+    DFW sub-team pill is selected; ignored under the RUAN view.
     """
     ruan = view == RUAN_VIEW
     team_scope = [RUAN_TEAM] if ruan else teams
@@ -161,6 +166,9 @@ def _scope_where(
     if lane:
         params.append(lane)
         parts.append(f"({_lane_expr(alias)}) = ${len(params)}")
+    if sub_team and not ruan:
+        params.append(sub_team)
+        parts.append(f"TRIM({alias}.team) = TRIM(${len(params)})")
     return " AND ".join(parts)
 
 
@@ -378,7 +386,10 @@ async def summary(
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("attrition-wow")),
+    sub_team: Optional[str] = Query(None),
+    # Reused by the CEO Executive "Attrition" tab (Bruno 2026-06-30) — accept
+    # either report's access so a CEO-only viewer isn't 403'd.
+    _user: dict = Depends(require_report_access("attrition-wow", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
@@ -389,7 +400,9 @@ async def summary(
     l2w_start, l2w_end = _l2w_window()
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
+    where = _scope_where(
+        "br4", team_list, customer, contract, lane, params, view, sub_team
+    )
     # Date-window params (windows are inclusive-inclusive)
     params.extend([l8w_start, l8w_end])
     p_l8s, p_l8e = len(params) - 1, len(params)
@@ -766,14 +779,18 @@ async def pivot(
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("attrition-wow")),
+    sub_team: Optional[str] = Query(None),
+    # Reused by the CEO Executive "Attrition" tab (Bruno 2026-06-30).
+    _user: dict = Depends(require_report_access("attrition-wow", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER
 
     team_list = _parse_csv(teams, ALL_TEAMS)
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
+    where = _scope_where(
+        "br4", team_list, customer, contract, lane, params, view, sub_team
+    )
     params.append(weeks)
     p_weeks = len(params)
 

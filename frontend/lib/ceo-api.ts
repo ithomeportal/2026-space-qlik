@@ -29,7 +29,10 @@ const CEO_RETRY = {
 // Filter contract
 // ---------------------------------------------------------------------------
 
-export type CeoRange = "mtd" | "ytd" | "full" | "custom"
+// Bruno 2026-06-30: "week" / "today" / "day" are client-resolved windows. The
+// page computes their explicit start/end and they ride to the backend as a
+// "custom" range (see ceoQs), so the backend contract stays mtd|ytd|full|custom.
+export type CeoRange = "mtd" | "ytd" | "full" | "custom" | "week" | "today" | "day"
 export type CeoDivision = "CORP" | "DFW"
 
 export interface CeoFilters {
@@ -43,9 +46,16 @@ export interface CeoFilters {
 
 function ceoQs(f: CeoFilters) {
   const q = new URLSearchParams()
-  q.set("range", f.range)
-  if (f.range === "custom" && f.startDate) q.set("start_date", f.startDate)
-  if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
+  // Presets (mtd/ytd/full) are resolved server-side; everything else — custom
+  // plus the client-resolved week/today/day windows — sends explicit bounds as
+  // a "custom" range.
+  const preset = f.range === "mtd" || f.range === "ytd" || f.range === "full"
+  const backendRange = preset ? f.range : "custom"
+  q.set("range", backendRange)
+  if (backendRange === "custom") {
+    if (f.startDate) q.set("start_date", f.startDate)
+    if (f.endDate) q.set("end_date", f.endDate)
+  }
   if (f.division) q.set("division", f.division)
   if (f.team) q.set("team", f.team)
   if (f.customer) q.set("customer", f.customer)

@@ -39,6 +39,10 @@ export interface AttritionFilters {
   // backend scopes to RUAN customers under TEAM-DFW and groups/labels by the
   // `client` sub-shipper instead of customer_name.
   view?: "ruan"
+  // Bruno 2026-06-30: the CEO Executive Attrition tab passes a DFW sub-team
+  // (TM1..TM4) to narrow TEAM-DFW rows to a single team. Only summary/pivot
+  // honor it; the native Attrition-WoW report never sets it.
+  sub_team?: string
 }
 
 function buildQs(f: AttritionFilters, extra?: Record<string, string>) {
@@ -48,6 +52,7 @@ function buildQs(f: AttritionFilters, extra?: Record<string, string>) {
   if (f.contract) q.set("contract", f.contract)
   if (f.lane) q.set("lane", f.lane)
   if (f.view) q.set("view", f.view)
+  if (f.sub_team) q.set("sub_team", f.sub_team)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -60,6 +65,7 @@ function keyOf(f: AttritionFilters) {
     f.contract ?? "",
     f.lane ?? "",
     f.view ?? "",
+    f.sub_team ?? "",
   ]
 }
 

@@ -44,6 +44,11 @@ interface Props {
   onLaneClick?: (lane: string) => void
   // "Client" under the RUAN view (page 6), "Customer" otherwise.
   entityLabel: string
+  // Bruno 2026-06-30: the CEO Executive Attrition tab embeds this table with the
+  // Difference column pre-sorted ascending. Defaults preserve the native
+  // Attrition-WoW behaviour (Total, descending).
+  defaultSortKey?: string
+  defaultSortDir?: "asc" | "desc"
 }
 
 type Metric = "loads" | "revenue" | "profit" | "margin"
@@ -69,6 +74,8 @@ export function PivotsTab({
   onCustomerClick,
   onLaneClick,
   entityLabel,
+  defaultSortKey,
+  defaultSortDir,
 }: Props) {
   const [metric, setMetric] = useState<Metric>("loads")
   const [dim, setDim] = useState<Dim>("team")
@@ -139,6 +146,8 @@ export function PivotsTab({
         onCustomerClick={onCustomerClick}
         onLaneClick={onLaneClick}
         entityLabel={entityLabel}
+        defaultSortKey={defaultSortKey}
+        defaultSortDir={defaultSortDir}
       />
     </div>
   )
@@ -162,6 +171,8 @@ function PivotPanel({
   onCustomerClick,
   onLaneClick,
   entityLabel,
+  defaultSortKey,
+  defaultSortDir,
 }: {
   filters: AttritionFilters
   dim: Dim
@@ -170,6 +181,8 @@ function PivotPanel({
   onCustomerClick?: (customer: string) => void
   onLaneClick?: (lane: string) => void
   entityLabel: string
+  defaultSortKey?: string
+  defaultSortDir?: "asc" | "desc"
 }) {
   const isLane = dim === "customer_lane"
   const { data: res, isLoading, error } = useAttritionPivot(
@@ -184,8 +197,8 @@ function PivotPanel({
   // Bruno round-4 (2026-05-12): every column sortable. Sort state is column
   // key = "status" | "dim_key" | "ref" | `wk_${idx}` and a direction.
   type SortDir = "asc" | "desc"
-  const [sortKey, setSortKey] = useState<string>("total")
-  const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const [sortKey, setSortKey] = useState<string>(defaultSortKey ?? "total")
+  const [sortDir, setSortDir] = useState<SortDir>(defaultSortDir ?? "desc")
   const toggleSort = (k: string) => {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     else {

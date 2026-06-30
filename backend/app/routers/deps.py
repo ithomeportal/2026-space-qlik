@@ -135,13 +135,21 @@ async def get_allowed_roles_for_report(pool, report_key: str) -> frozenset[str]:
     return allowed
 
 
-def require_report_access(report_key: str):
+def require_report_access(*report_keys: str):
     """Factory: gate a custom-report endpoint by its DB role assignments.
 
     Admin always bypasses. Allowed roles come from ``role_report_access`` for the
     matching ``reports.custom_path`` row, refreshed on a 60s TTL (or sooner via
     ``invalidate_report_access_cache``).
+
+    Pass more than one report key to grant access when the user holds a role on
+    ANY of them. This lets a shared endpoint back two reports — e.g. the
+    Attrition-WoW summary/pivot endpoints are reused by the CEO Executive
+    "Attrition" tab, so they accept either ``attrition-wow`` or
+    ``ceo-executive`` access.
     """
+    if not report_keys:
+        raise ValueError("require_report_access needs at least one report key")
 
     async def _check(
         request: Request,
@@ -151,9 +159,10 @@ def require_report_access(report_key: str):
         if "admin" in roles:
             return user
         pool = get_pool(request)
-        allowed = await get_allowed_roles_for_report(pool, report_key)
-        if roles & allowed:
-            return user
+        for key in report_keys:
+            allowed = await get_allowed_roles_for_report(pool, key)
+            if roles & allowed:
+                return user
         raise HTTPException(
             status_code=403,
             detail="You do not have access to this report",
