@@ -424,10 +424,22 @@ async def summary(
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.origin_actual_departure::date BETWEEN ${p_l8s} AND ${p_lwe}
+        ),
+        -- Lane Attrition L8W (Bruno R12, 2026-06-30): the per-week AVERAGE of
+        -- distinct active lanes across the 8 weeks in the L8W window — NOT the
+        -- union-distinct over the whole span. SUM(weekly distinct)/8 (Python)
+        -- so an empty week still divides by a fixed 8 (window = exactly 8 ISO
+        -- weeks). Lane Attrition = 1 - (LW / this avg).
+        l8w_weekly_lanes AS (
+          SELECT date_trunc('week', dep_date)::date AS wk,
+                 COUNT(DISTINCT lane) AS n_lanes
+          FROM base
+          WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}
+          GROUP BY 1
         )
         SELECT
           -- L8W (avg per week over 8 weeks)
-          COUNT(DISTINCT lane)          FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}) AS l8w_lanes,
+          (SELECT COALESCE(SUM(n_lanes), 0) FROM l8w_weekly_lanes) AS l8w_lanes_sum,
           COUNT(DISTINCT customer_name) FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}) AS l8w_customers,
           COUNT(*) FILTER (WHERE total_charge <> 0 AND dep_date BETWEEN ${p_l8s} AND ${p_l8e}) AS l8w_loads,
           COALESCE(SUM(total_charge) FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}), 0) AS l8w_rev,
@@ -452,8 +464,9 @@ async def summary(
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
-    # Counts (raw, not averages) for active lanes/customers
-    l8w_lanes = int(row["l8w_lanes"] or 0)
+    # active_lanes L8W is the per-week AVERAGE over the 8-week window (Bruno R12,
+    # 2026-06-30); active_customers stays a union-distinct count.
+    l8w_lanes = _f(row["l8w_lanes_sum"]) / 8.0
     lw_lanes = int(row["lw_lanes"] or 0)
     l8w_customers = int(row["l8w_customers"] or 0)
     lw_customers = int(row["lw_customers"] or 0)
