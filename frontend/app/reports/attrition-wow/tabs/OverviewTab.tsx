@@ -18,6 +18,7 @@ import {
   fmtPct,
   fmtSignedCount,
   fmtSignedPct,
+  fmtSignedPctInverted,
   fmtSignedUsd,
   fmtUsd,
   fmtWeekRange,
@@ -285,7 +286,10 @@ function ActiveCard({
   const diff = block?.diff ?? null
   const pct = block?.pct ?? null
   const sd = fmtSignedCount(diff)
-  const sp = fmtSignedPct(pct)
+  // Bruno R13 (2026-07-01): % Δ = (L8W − LW)/L8W with inverted colours
+  // (positive attrition = red). The backend already flips the numerator; the
+  // Δ (LW − L8W) count column keeps standard up=green colouring.
+  const sp = fmtSignedPctInverted(pct)
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">

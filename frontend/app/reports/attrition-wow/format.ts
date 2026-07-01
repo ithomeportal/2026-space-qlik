@@ -85,6 +85,26 @@ export function fmtSignedPct(v: number | null | undefined): {
   return { text: "0.00%", className: "text-[#B45309]" }
 }
 
+// Attrition-coloured signed pct (Bruno R13, 2026-07-01). Same text as
+// fmtSignedPct but INVERTED colours: a positive % Δ = (L8W − LW)/L8W means
+// attrition increased (LW below the 8-week base) → red; negative → green.
+export function fmtSignedPctInverted(v: number | null | undefined): {
+  text: string
+  className: string
+} {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) {
+    return { text: "—", className: "text-[#6B7280]" }
+  }
+  const n = Number(v)
+  if (n > 0) {
+    return { text: `+${PCT2.format(n * 100)}%`, className: "text-[#DC2626]" }
+  }
+  if (n < 0) {
+    return { text: `${PCT2.format(n * 100)}%`, className: "text-[#15803D]" }
+  }
+  return { text: "0.00%", className: "text-[#B45309]" }
+}
+
 export function fmtSignedUsd(v: number | null | undefined): {
   text: string
   className: string

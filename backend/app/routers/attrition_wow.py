@@ -497,6 +497,19 @@ async def summary(
         pct = (d / base) if base not in (0, 0.0) else None
         return {"diff": d, "pct": pct}
 
+    # Attrition cards (Bruno R13, 2026-07-01): the % Δ on the Lane / Customer
+    # Attrition cards is (L8W − LW) / L8W — the REVERSE numerator of the
+    # metric-table % (which is LW − L8W over L8W). A positive value means LW <
+    # L8W (fewer active lanes/customers) and is coloured red on the frontend;
+    # negative → green (fmtSignedPctInverted). The Δ (LW − L8W) count column
+    # keeps the LW − L8W sign.
+    def _attr_diff(lw: Optional[float], l8w: Optional[float]) -> dict:
+        if lw is None or l8w is None:
+            return {"diff": None, "pct": None}
+        diff = lw - l8w
+        pct = ((l8w - lw) / l8w) if l8w not in (0, 0.0) else None
+        return {"diff": diff, "pct": pct}
+
     return {
         "success": True,
         "data": {
@@ -508,12 +521,12 @@ async def summary(
             "active_lanes": {
                 "l8w": l8w_lanes,
                 "lw":  lw_lanes,
-                **_diff(lw_lanes, l8w_lanes),
+                **_attr_diff(lw_lanes, l8w_lanes),
             },
             "active_customers": {
                 "l8w": l8w_customers,
                 "lw":  lw_customers,
-                **_diff(lw_customers, l8w_customers),
+                **_attr_diff(lw_customers, l8w_customers),
             },
             "loads": {
                 "l8w_avg": avg_l8w_loads,

@@ -16,11 +16,12 @@ import type { CustomerAttritionPoint } from "@/lib/attrition-wow-api"
 import { fmtPct } from "../format"
 
 // Bruno 2026-06-11 (Overview): a 15-week line of the weekly "Customer
-// Attrition" measure. R1 (PDF round 2): the plotted value is the ratio
-// MINUS 1 — i.e. (distinct customers this week / distinct customers in the
-// prior 8 weeks) − 1 — so the line reads as a true attrition delta (always
-// negative: this week is a fraction of the larger 8-week pool). R2: data
-// labels are always visible on each point, not just on hover.
+// Attrition" measure. Bruno R13 (2026-07-01): the plotted value is now
+// % Δ = (L8W − LW) / L8W = 1 − ratio, where LW = distinct customers this
+// week (numerator) and L8W = distinct customers in the prior 8 weeks
+// (denominator) — matching the Customer Attrition card's % Δ. This flips the
+// earlier "ratio − 1" so a smaller current week reads as a positive delta.
+// Data labels are always visible on each point, not just on hover.
 // X-axis = ISO week number; Y-axis = %.
 // Recharts v3 types formatters loosely — keep callbacks unannotated and
 // coerce with Number() so `next build` stays green (SPEC note: v3 strict
@@ -35,8 +36,9 @@ export function CustomerAttritionChart({
       data.map((d) => ({
         ...d,
         label: `W${d.week_no}`,
-        // Bruno R1: plot ratio − 1 (the attrition delta), not the raw ratio.
-        pct: d.ratio === null || d.ratio === undefined ? null : d.ratio - 1,
+        // Bruno R13: % Δ = (L8W − LW) / L8W = 1 − ratio (the raw ratio is
+        // this-week ÷ prior-8-week distinct customers).
+        pct: d.ratio === null || d.ratio === undefined ? null : 1 - d.ratio,
       })),
     [data],
   )
@@ -47,8 +49,8 @@ export function CustomerAttritionChart({
         Customer Attrition
       </div>
       <div className="mb-3 text-[11px] text-[#6B7280]">
-        (Distinct customers each week ÷ distinct customers in the prior 8 weeks)
-        − 1 (last 15 weeks)
+        % Δ = (distinct customers in the prior 8 weeks − distinct customers this
+        week) ÷ prior 8 weeks (last 15 weeks)
       </div>
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={rows} margin={{ top: 22, right: 16, left: 0, bottom: 4 }}>
