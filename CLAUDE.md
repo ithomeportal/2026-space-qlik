@@ -88,7 +88,7 @@
 - TagRoles **Title-Case** divisions; `admin`/`super_admin` lowercase; case-insensitive seed lookup; daily user sync 2 AM CST; NOT auto-assigned (manual per user). `POST /api/admin/dedupe-roles` merges case dupes
 
 ### Scheduled Jobs & Reliability (full detail — `docs/SPEC-RELIABILITY.md`)
-- `daily_losses_alert` 07:00 CST (Resend); `daily_rfp_digest` 17:30 CST Mon-Fri (MS Graph, `admin-ms-api` app); `daily_scorecard_mirror_check` 06:15 CST (Resend → Diego, alerts if the n8n scorecard-mirror refresh stalls). Reuse `FONT_STACK`/`MONO_STACK` for HTML email (Outlook reset)
+- `daily_losses_alert` 07:00 CST (Resend); `daily_rfp_digest` 17:30 CST Mon-Fri (MS Graph, `admin-ms-api` app); `daily_scorecard_mirror_check` 06:15 CST (Resend → Diego, alerts if the n8n scorecard-mirror refresh stalls); `ops_team_digest` 06:00 & 18:00 CST (MS Graph → janaya, Ops Portal "Team" panel via in-process ASGITransport, Bruno R9 2026-07-01). Reuse `FONT_STACK`/`MONO_STACK` for HTML email (Outlook reset)
 - Render free tier cold-starts 30–60s; **always-on n8n workflow `aF3wH6ZpvDFEPXA5` pings `/api/health` every 5 min** (primary keep-warm; GitHub Actions `keepalive.yml` is a best-effort backstop — the Vercel cron was removed 2026-06-01); proxy retries GET 5xx 3×, React Query 5×, skip 401/403; favicon backfill is a background task (never blocks lifespan)
 - App favicons: tries `/icon.svg`→`/favicon.svg`→`/favicon.ico`→HTML `<link>`; stored as base64 data URIs in `icon_data`
 
@@ -180,6 +180,7 @@ backend/
       sync_users.py              # Daily user sync
       losses_alerts.py           # 07:00 CST Resend digest
       rfp_daily_digest.py        # 17:30 CST MS-Graph digest
+      ops_team_digest.py         # 06:00 & 18:00 CST MS-Graph Ops Portal "Team" digest → janaya
       msgraph_mailer.py          # Hand-rolled MS Graph send-mail (no msal)
 ```
 
