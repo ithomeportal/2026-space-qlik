@@ -195,20 +195,22 @@ function Top5Panel({
       </div>
       <div className="grid grid-cols-1 gap-0 md:grid-cols-2">
         {loading ? (
-          <div className="col-span-2 flex h-72 items-center justify-center">
+          <div className="col-span-2 flex h-80 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
           </div>
         ) : (
           <>
+            {/* Bruno 2026-07-01 Requests 5 & 6: taller container + a smaller
+                donut (with chart margins) so the outside % labels never clip. */}
             <div className="p-3">
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
+              <ResponsiveContainer width="100%" height={360}>
+                <PieChart margin={{ top: 20, right: 24, bottom: 20, left: 24 }}>
                   <Pie
                     data={chartData}
                     dataKey="value"
                     nameKey="name"
-                    innerRadius={70}
-                    outerRadius={110}
+                    innerRadius={54}
+                    outerRadius={86}
                     label={(entry: unknown) => {
                       const pct = (entry as { pct?: number } | null)?.pct
                       return pct !== undefined ? `${pct.toFixed(1)}%` : ""
@@ -223,7 +225,7 @@ function Top5Panel({
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="max-h-[340px] overflow-auto border-l border-[#F3F4F6]">
+            <div className="max-h-[400px] overflow-auto border-l border-[#F3F4F6]">
               <table className="w-full text-[12px] tabular-nums">
                 <thead className="sticky top-0 bg-[#FEF3C7] text-[#92400E]">
                   <tr>

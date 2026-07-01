@@ -70,6 +70,7 @@ export function Trends({ filters }: TrendsProps) {
     division: filters.division,
     team: filters.team,
     customer: filters.customer,
+    contractType: filters.contractType,
   })
   const d = data?.data
 
@@ -78,6 +79,13 @@ export function Trends({ filters }: TrendsProps) {
     label: fmtMonth(r.bucket),
   }))
   const dailyPoints = toDailyPoints(d?.daily ?? [])
+
+  // Bruno 2026-07-01 Request 7: cap the "Profit / Loads by Month" Profit axis
+  // at (max observed monthly Profit + 50K) so the tallest bar sits just under
+  // the ceiling. Fall back to Recharts auto-scaling when there's no data.
+  const maxMonthlyProfit = monthly.reduce((m, r) => Math.max(m, r.profit ?? 0), 0)
+  const monthlyProfitAxisMax =
+    maxMonthlyProfit > 0 ? maxMonthlyProfit + 50_000 : ("auto" as const)
 
   return (
     <div className="space-y-6">
@@ -128,7 +136,13 @@ export function Trends({ filters }: TrendsProps) {
             <ComposedChart data={monthly} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="left" tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11 }} />
+              <YAxis
+                yAxisId="left"
+                domain={[0, monthlyProfitAxisMax]}
+                allowDataOverflow
+                tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                tick={{ fontSize: 11 }}
+              />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v, name) =>
                 name === "Profit" ? fmtUsd(Number(v)) : String(v)

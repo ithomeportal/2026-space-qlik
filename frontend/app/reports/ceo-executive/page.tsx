@@ -7,6 +7,7 @@ import {
   useCeoFilters,
   type CeoDivision,
   type CeoFilters,
+  type CeoLoadType,
   type CeoRange,
 } from "@/lib/ceo-api"
 import { Overview } from "./tabs/Overview"
@@ -49,6 +50,17 @@ function todayIso() {
 function monthStartIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+}
+
+// Bruno 2026-07-01 Request 1: "Last Month" = first→last day of the previous
+// calendar month (browser-local, like the other date helpers here).
+function lastMonthBounds(): { start: string; end: string } {
+  const d = new Date()
+  const firstThisMonth = new Date(d.getFullYear(), d.getMonth(), 1)
+  const lastPrev = new Date(firstThisMonth)
+  lastPrev.setDate(0) // day 0 of this month = last day of previous month
+  const firstPrev = new Date(lastPrev.getFullYear(), lastPrev.getMonth(), 1)
+  return { start: isoOf(firstPrev), end: isoOf(lastPrev) }
 }
 
 function isoOf(d: Date) {
@@ -119,6 +131,8 @@ function CeoExecutiveContent() {
   const [team, setTeam] = useState<string>("") // "" = all
   const [customerInput, setCustomerInput] = useState<string>("")
   const [customer, setCustomer] = useState<string>("")
+  // Bruno 2026-07-01 Request 3: global Contract/Spot filter ("" = all).
+  const [contractType, setContractType] = useState<CeoLoadType | "">("")
 
   const { data: filterRes, isLoading: loadingFilters } = useCeoFilters()
   const filterOptions = filterRes?.data
@@ -152,6 +166,11 @@ function CeoExecutiveContent() {
       return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
     if (range === "mtd")
       return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+    // Bruno 2026-07-01 Request 1: previous calendar month (rides as custom).
+    if (range === "lastMonth") {
+      const { start, end } = lastMonthBounds()
+      return { startDate: clampToYear(start), endDate: clampToYear(end) }
+    }
     // Bruno 2026-06-30 Request 1: "Today" = today only; "Week" = Mon→Sun of the
     // current week.
     if (range === "today") {
@@ -180,8 +199,9 @@ function CeoExecutiveContent() {
       division: division || undefined,
       team: team || undefined,
       customer: customer || undefined,
+      contractType: contractType || undefined,
     }),
-    [range, appliedDates, division, team, customer],
+    [range, appliedDates, division, team, customer, contractType],
   )
 
   const customerSuggestions = useMemo(() => {
@@ -211,6 +231,8 @@ function CeoExecutiveContent() {
           Team: {team || "All"}
           {" · "}
           Customer: {customer || "All"}
+          {" · "}
+          Contract: {contractType ? (contractType === "spot" ? "Spot" : "Contract") : "All"}
         </div>
       </div>
 
@@ -221,8 +243,8 @@ function CeoExecutiveContent() {
             <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
               {[
                 { k: "mtd" as const, label: "MTD" },
+                { k: "lastMonth" as const, label: "Last Month" },
                 { k: "ytd" as const, label: "YTD" },
-                { k: "full" as const, label: "Full 2026" },
                 { k: "week" as const, label: "Week" },
                 { k: "today" as const, label: "Today" },
                 { k: "custom" as const, label: "Custom" },
@@ -276,6 +298,29 @@ function CeoExecutiveContent() {
                   onClick={() => selectDivision(opt.k)}
                   className={`rounded-full border px-3 py-1 text-xs transition-colors ${
                     division === opt.k
+                      ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
+                      : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Contract</label>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { k: "" as const, label: "All" },
+                { k: "contract" as const, label: "Contract" },
+                { k: "spot" as const, label: "Spot" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => setContractType(opt.k)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    contractType === opt.k
                       ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
                       : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
                   }`}

@@ -49,6 +49,9 @@ interface Props {
   // Attrition-WoW behaviour (Total, descending).
   defaultSortKey?: string
   defaultSortDir?: "asc" | "desc"
+  // Bruno 2026-07-01 (CEO Attrition Request 1): open the Performance Trends
+  // table on a specific view. Defaults to "team" (native Attrition-WoW).
+  defaultDim?: Dim
 }
 
 type Metric = "loads" | "revenue" | "profit" | "margin"
@@ -76,9 +79,10 @@ export function PivotsTab({
   entityLabel,
   defaultSortKey,
   defaultSortDir,
+  defaultDim,
 }: Props) {
   const [metric, setMetric] = useState<Metric>("loads")
-  const [dim, setDim] = useState<Dim>("team")
+  const [dim, setDim] = useState<Dim>(defaultDim ?? "team")
   const [weeks] = useState<number>(12)
 
   return (

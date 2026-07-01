@@ -17,15 +17,16 @@ interface Props {
   filters: CeoFilters
 }
 
-const PROFIT_GOAL_PER_TEAM = 55000
-
 export function Overview({ filters }: Props) {
   const { data, isLoading, error, dataUpdatedAt } = useCeoOverview(filters)
   const d = data?.data
 
-  const goalTeams = filters.team ? 1 : 6
-  const goalTotal = PROFIT_GOAL_PER_TEAM * goalTeams
-  const goalPct = d && goalTotal ? (d.profit_tm / goalTotal) * 100 : 0
+  // Bruno 2026-07-01 (Overview Request 4): the PROFIT gauge now reflects the
+  // selected date filter — date-scoped profit (kpis.profit) vs the real
+  // date-scoped budget target (profit_budget). Mirrors the ops-portal-overview
+  // Profit-TM gauge layout.
+  const profitValue = d?.kpis.profit ?? 0
+  const profitTarget = d?.profit_budget ?? 0
 
   // Bruno R7 (2026-05-26): surface when the report data last refreshed.
   const refreshedLabel =
@@ -63,27 +64,62 @@ export function Overview({ filters }: Props) {
         <AllTeamsPerformance rows={d?.all_teams_performance ?? []} loading={isLoading} />
       </section>
 
-      {/* Profit-TM gauge — moved to end per Bruno feedback (2026-05-07) */}
-      <section className="rounded-lg border border-[#E5E7EB] bg-white p-4 shadow-sm">
-        <div className="flex items-baseline justify-between">
-          <div className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-            Profit — This Month (TM)
-          </div>
-          <div className="text-xs text-[#6B7280]">Goal: {fmtUsd(goalTotal)}</div>
-        </div>
-        <div className="mt-1 text-3xl font-semibold text-[#D97706]">{fmtUsd(d?.profit_tm)}</div>
-        <div className="mt-2 h-3 w-full rounded-full bg-[#F3F4F6]">
-          <div
-            className="h-3 rounded-full bg-[#D97706] transition-all"
-            style={{ width: `${Math.max(0, Math.min(100, goalPct))}%` }}
-          />
-        </div>
-        <div className="mt-1 text-xs text-[#6B7280]">
-          {fmtPct(goalPct)} of goal
-          {filters.team ? ` · Team: ${filters.team}` : " · All teams"}
-        </div>
-      </section>
+      {/* PROFIT gauge — Bruno 2026-07-01 Request 4: ops-portal-overview layout,
+          date-scoped profit vs date-scoped budget target. */}
+      <ProfitGauge value={profitValue} target={profitTarget} loading={isLoading} />
     </div>
+  )
+}
+
+// Mirrors the ops-portal-overview Profit-TM gauge (label · "$value / Target $X"
+// · fill bar with a target marker · centered completion %). Green once the
+// scoped profit reaches the budget, red when negative, amber in between.
+function ProfitGauge({
+  value,
+  target,
+  loading,
+}: {
+  value: number
+  target: number
+  loading?: boolean
+}) {
+  const max = Math.max(target, value, 1) * 1.05
+  const pct = Math.min(100, Math.max(0, (value / max) * 100))
+  const targetPct = target > 0 ? Math.min(100, Math.max(0, (target / max) * 100)) : 0
+  const completionPct = target > 0 ? (value / target) * 100 : 0
+  const onTrack = target > 0 && value >= target
+  return (
+    <section className="rounded-lg border border-[#E5E7EB] bg-white px-4 py-3 shadow-sm">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+          PROFIT
+        </span>
+        <span className="text-sm font-semibold text-[#1B3A5C]">
+          {loading ? "…" : fmtUsd(value)}{" "}
+          <span className="text-[#9CA3AF]">/ Target {loading ? "…" : fmtUsd(target)}</span>
+        </span>
+      </div>
+      <div className="relative h-3 w-full overflow-hidden rounded-full bg-[#F3F4F6]">
+        <div
+          className="absolute inset-y-0 left-0 transition-all"
+          style={{
+            width: `${pct}%`,
+            background: onTrack ? "#16A34A" : value < 0 ? "#DC2626" : "#F59E0B",
+          }}
+        />
+        {targetPct > 0 && (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-[#1B3A5C]"
+            style={{ left: `${targetPct}%` }}
+          />
+        )}
+      </div>
+      {target > 0 && (
+        <div className="mt-1 text-center text-xs font-medium tabular-nums text-[#374151]">
+          {completionPct.toFixed(2)}%
+        </div>
+      )}
+    </section>
   )
 }
 

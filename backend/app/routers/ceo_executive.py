@@ -35,6 +35,9 @@ Filter contract:
 - division : "CORP" | "DFW" | "" (all)
 - team     : one of CORP_TEAMS ∪ DFW_SUB_TEAMS | "" (all)
 - customer : single customer name | "" (all)
+- load_type: "contract" | "spot" | "" (all)  — Bruno 2026-07-01, global
+             Contract/Spot filter on contract_type_descr (v4 only; the
+             budget-report target ignores it — no contract grain there).
 
 Per Bruno R5 (2026-05-21) panels fall into three groups:
 - FULLY SCOPED: respect range + division + team + customer (KPIs, Summary by
@@ -45,8 +48,10 @@ Per Bruno R5 (2026-05-21) panels fall into three groups:
   fixed (Yd/Wk/Mo for All Teams Performance; 15 months / 80 days for
   Trends; 10 weeks / 12 weeks for Weekly; full year for Top-5
   Concentration by Revenue / Profit).
-- SEMI-SCOPED: Profit-TM gauge respects team + customer but always uses the
-  current calendar month.
+- The PROFIT gauge (Overview) is FULLY SCOPED as of Bruno 2026-07-01: it
+  shows the date-scoped profit (kpis.profit) against a date-scoped budget
+  target (profit_budget, from daily_production_budget_report). profit_tm
+  (current-calendar-month profit) is still returned for back-compat.
 
 Endpoints are organised one-per-tab so the UI can lazy-load. Each endpoint
 fires its independent panel reads in parallel via asyncio.gather.
@@ -146,6 +151,7 @@ def _scope_where(
     params: list,
     include_unilink_filter: bool = True,
     division: Optional[str] = None,
+    load_type: Optional[str] = None,
 ) -> str:
     """Sargable WHERE fragment shared by every scoped query.
 
@@ -192,6 +198,14 @@ def _scope_where(
     if customer:
         params.append(customer)
         parts.append(f"{alias}.customer_name = ${len(params)}")
+    # Bruno 2026-07-01 (Overview Request 3): global Contract/Spot filter.
+    # contract_type_descr holds "Contract"/"Spot" (compared lowercased); an
+    # unset/unknown value is a no-op. Same predicate ops-portal-overview uses.
+    if load_type and load_type.lower() in ("contract", "spot"):
+        params.append(load_type.lower())
+        parts.append(
+            f"LOWER(TRIM(COALESCE({alias}.contract_type_descr,''))) = ${len(params)}"
+        )
     return " AND ".join(parts)
 
 
@@ -405,6 +419,7 @@ async def overview(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -432,7 +447,7 @@ async def overview(
     # UNION DFW v4) produced different roll-ups vs what the customer table
     # showed; users called this out as inconsistent on 2026-05-07.
     kpi_params: list = []
-    kpi_where = _scope_where("br4", team, customer, kpi_params, division=division)
+    kpi_where = _scope_where("br4", team, customer, kpi_params, division=division, load_type=load_type)
     kpi_params.extend([s, e])
     kpi_df = (
         f"br4.origin_actual_departure >= ${len(kpi_params)-1}"
@@ -466,7 +481,7 @@ async def overview(
     # (team_id for CORP, TRIM(team) sub-team for DFW). LEFT JOIN unnest
     # so empty teams still appear with zeros.
     sbt_params: list = []
-    sbt_where = _scope_where("br4", team, customer, sbt_params, division=division)
+    sbt_where = _scope_where("br4", team, customer, sbt_params, division=division, load_type=load_type)
     sbt_params.extend([s, e])
     sbt_df = (
         f"br4.origin_actual_departure >= ${len(sbt_params)-1}"
@@ -504,7 +519,7 @@ async def overview(
     # ---- Profit-TM (semi-scoped: current month, division+team+customer apply) ---
     # Same v4-direct read for consistency with the KPIs above.
     tm_params: list = []
-    tm_where = _scope_where("br4", team, customer, tm_params, division=division)
+    tm_where = _scope_where("br4", team, customer, tm_params, division=division, load_type=load_type)
     tm_params.extend([m_start, m_end])
     tm_df = (
         f"br4.origin_actual_departure >= ${len(tm_params)-1}"
@@ -517,6 +532,37 @@ async def overview(
         WHERE {tm_where} AND {tm_df}
         """,
         *tm_params,
+    )
+
+    # ---- Profit budget target (scoped to the selected date window) ------
+    # Bruno 2026-07-01 (Overview Request 4): the PROFIT gauge now shows the
+    # date-scoped profit against a real budget target, mirroring the
+    # ops-portal-overview Profit-TM gauge. Budget comes from
+    # daily_production_budget_report."Profit Budget" for the window [s, e],
+    # scoped by division/team (via the customer_team map) and customer.
+    # That table is CORP-only, so DFW-only selections yield ~0 target — same
+    # limitation ops-portal carries. The Contract/Spot filter does NOT apply
+    # here: the budget table has no contract_type grain (customer×day plan).
+    budget_params: list = [_pad_variants(_division_team_ids(division), width=8)]
+    budget_params.extend([s, e])
+    budget_params.append(team_list_for_unnest)
+    budget_scope_pos = len(budget_params)
+    budget_customer_frag = ""
+    if customer:
+        budget_params.append(customer)
+        budget_customer_frag = f' AND TRIM(budget."Customer Name") = ${len(budget_params)}'
+    budget_task = pool.fetchval(
+        f"""
+        WITH {_customer_team_cte(1)}
+        SELECT COALESCE(SUM(budget."Profit Budget"), 0)::numeric
+        FROM public.daily_production_budget_report budget
+        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        WHERE budget."Date" BETWEEN $2 AND $3
+          AND ct.division_team = ANY(${budget_scope_pos})
+          {_BUDGET_EXCLUDE_FRAG}
+          {budget_customer_frag}
+        """,
+        *budget_params,
     )
 
     # ---- All Teams Performance (Yd / Week / Month — fixed windows) ------
@@ -608,8 +654,8 @@ async def overview(
         customer or "",
     )
 
-    kpi, sbt, profit_tm, atp = await asyncio.gather(
-        kpi_task, sbt_task, profit_tm_task, atp_task
+    kpi, sbt, profit_tm, profit_budget, atp = await asyncio.gather(
+        kpi_task, sbt_task, profit_tm_task, budget_task, atp_task
     )
 
     return {
@@ -624,6 +670,7 @@ async def overview(
                 "avg_p_per_l": float(kpi["avg_p_per_l"] or 0),
             },
             "profit_tm": float(profit_tm or 0),
+            "profit_budget": float(profit_budget or 0),
             "window": {"start": s.isoformat(), "end": e.isoformat()},
             "summary_by_team": [
                 {
@@ -683,6 +730,7 @@ async def trends(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -694,7 +742,7 @@ async def trends(
     # Customer too. Date windows stay fixed at 15 months / 80 days. Separate
     # param lists per task — different placeholder counts per gather call.
     monthly_params: list = []
-    monthly_scope = _scope_where("br4", team, customer, monthly_params, division=division)
+    monthly_scope = _scope_where("br4", team, customer, monthly_params, division=division, load_type=load_type)
     monthly_params.extend([fifteen_months_start, today])
     m_s, m_e = len(monthly_params) - 1, len(monthly_params)
 
@@ -720,7 +768,7 @@ async def trends(
     )
 
     daily_params: list = []
-    daily_scope = _scope_where("br4", team, customer, daily_params, division=division)
+    daily_scope = _scope_where("br4", team, customer, daily_params, division=division, load_type=load_type)
     daily_params.extend([eighty_days_start, today])
     d_s, d_e = len(daily_params) - 1, len(daily_params)
 
@@ -800,6 +848,7 @@ async def customers(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -807,7 +856,7 @@ async def customers(
 
     # ---- Profit by Customer (scoped) ------------------------------------
     pc_params: list = []
-    pc_where = _scope_where("br4", team, customer, pc_params, division=division)
+    pc_where = _scope_where("br4", team, customer, pc_params, division=division, load_type=load_type)
     pc_params.extend([s, e])
     pc_df = (
         f"br4.origin_actual_departure >= ${len(pc_params)-1}"
@@ -844,7 +893,7 @@ async def customers(
 
     # ---- Worst Profit by Customer (scoped, reverse sort) ---------------
     wp_params: list = []
-    wp_where = _scope_where("br4", team, customer, wp_params, division=division)
+    wp_where = _scope_where("br4", team, customer, wp_params, division=division, load_type=load_type)
     wp_params.extend([s, e])
     wp_df = (
         f"br4.origin_actual_departure >= ${len(wp_params)-1}"
@@ -885,7 +934,7 @@ async def customers(
     # slice into the full remaining-customer list. Date window stays full-year
     # and date-immutable.
     t5r_params: list = []
-    t5r_scope = _scope_where("br4", team, customer, t5r_params, division=division)
+    t5r_scope = _scope_where("br4", team, customer, t5r_params, division=division, load_type=load_type)
     t5r_params.extend([YEAR_START, YEAR_END])
     t5r_df = (
         f"br4.origin_actual_departure >= ${len(t5r_params)-1}"
@@ -914,7 +963,7 @@ async def customers(
     )
 
     t5p_params: list = []
-    t5p_scope = _scope_where("br4", team, customer, t5p_params, division=division)
+    t5p_scope = _scope_where("br4", team, customer, t5p_params, division=division, load_type=load_type)
     t5p_params.extend([YEAR_START, YEAR_END])
     t5p_df = (
         f"br4.origin_actual_departure >= ${len(t5p_params)-1}"
@@ -1023,6 +1072,7 @@ async def weekly(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -1036,7 +1086,7 @@ async def weekly(
     # Bruno R4 (2026-05-12): Weekly honors Team. R5 (2026-05-21): Customer
     # too. R7 (2026-05-26): windows widened to 20 weeks. Still date-immutable.
     weekly_params: list = []
-    weekly_scope = _scope_where("br4", team, customer, weekly_params, division=division)
+    weekly_scope = _scope_where("br4", team, customer, weekly_params, division=division, load_type=load_type)
     weekly_params.extend([twenty_weeks_start, today])
     w_s, w_e = len(weekly_params) - 1, len(weekly_params)
 
@@ -1063,7 +1113,7 @@ async def weekly(
     )
 
     summary_params: list = []
-    summary_scope = _scope_where("br4", team, customer, summary_params, division=division)
+    summary_scope = _scope_where("br4", team, customer, summary_params, division=division, load_type=load_type)
     summary_params.extend([summary_start, today])
     s_s, s_e = len(summary_params) - 1, len(summary_params)
 
@@ -1137,6 +1187,7 @@ async def risk(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -1149,7 +1200,7 @@ async def risk(
     # totals' source — YTD already has 4k+ negative loads, so client-side
     # sums over capped rows would never reconcile.
     tt_params: list = []
-    tt_where = _scope_where("br4", team, customer, tt_params, division=division)
+    tt_where = _scope_where("br4", team, customer, tt_params, division=division, load_type=load_type)
     tt_params.extend([s, e])
     tt_df = (
         f"br4.origin_actual_departure >= ${len(tt_params)-1}"
@@ -1181,7 +1232,7 @@ async def risk(
     # Loads are plain COUNT(*) (zero-charge accessorial rows count too, same
     # as the by-Order listing) and LIMITs are generous caps, not page sizes.
     wm_params: list = []
-    wm_where = _scope_where("br4", team, customer, wm_params, division=division)
+    wm_where = _scope_where("br4", team, customer, wm_params, division=division, load_type=load_type)
     wm_params.extend([s, e])
     wm_df = (
         f"br4.origin_actual_departure >= ${len(wm_params)-1}"
@@ -1219,7 +1270,7 @@ async def risk(
     # index seek per matching v4 row using idx_movement_order_company_mv,
     # cutting the query to ~150ms even when all filters are open.
     no_params: list = []
-    no_where = _scope_where("br4", team, customer, no_params, division=division)
+    no_where = _scope_where("br4", team, customer, no_params, division=division, load_type=load_type)
     no_params.extend([s, e])
     no_df = (
         f"br4.origin_actual_departure >= ${len(no_params)-1}"
@@ -1269,7 +1320,7 @@ async def risk(
 
     # ---- Negative Loads by Customer ------------------------------------
     nc_params: list = []
-    nc_where = _scope_where("br4", team, customer, nc_params, division=division)
+    nc_where = _scope_where("br4", team, customer, nc_params, division=division, load_type=load_type)
     nc_params.extend([s, e])
     nc_df = (
         f"br4.origin_actual_departure >= ${len(nc_params)-1}"
@@ -1378,6 +1429,7 @@ async def orders(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
     _user: dict = Depends(require_report_access("ceo-executive")),
@@ -1387,7 +1439,7 @@ async def orders(
 
     # ---- Lane Production Analysis --------------------------------------
     lpa_params: list = []
-    lpa_where = _scope_where("br4", team, customer, lpa_params, division=division)
+    lpa_where = _scope_where("br4", team, customer, lpa_params, division=division, load_type=load_type)
     lpa_params.extend([s, e])
     lpa_df = (
         f"br4.origin_actual_departure >= ${len(lpa_params)-1}"
@@ -1434,7 +1486,7 @@ async def orders(
     # same scope/date predicate so "Page X of Y" reflects the full result set,
     # not just the fetched page. Departure-DESC keeps the stable page order.
     ao_params: list = []
-    ao_where = _scope_where("br4", team, customer, ao_params, division=division)
+    ao_where = _scope_where("br4", team, customer, ao_params, division=division, load_type=load_type)
     ao_params.extend([s, e])
     ao_df = (
         f"br4.origin_actual_departure >= ${len(ao_params)-1}"
@@ -1567,13 +1619,14 @@ async def orders_csv(
     division: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
 
     ao_params: list = []
-    ao_where = _scope_where("br4", team, customer, ao_params, division=division)
+    ao_where = _scope_where("br4", team, customer, ao_params, division=division, load_type=load_type)
     ao_params.extend([s, e])
     ao_df = (
         f"br4.origin_actual_departure >= ${len(ao_params)-1}"

@@ -62,6 +62,7 @@ export function Weekly({ filters }: WeeklyProps) {
     division: filters.division,
     team: filters.team,
     customer: filters.customer,
+    contractType: filters.contractType,
   })
   const d = data?.data
 

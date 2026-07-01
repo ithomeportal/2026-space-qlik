@@ -32,8 +32,22 @@ const CEO_RETRY = {
 // Bruno 2026-06-30: "week" / "today" / "day" are client-resolved windows. The
 // page computes their explicit start/end and they ride to the backend as a
 // "custom" range (see ceoQs), so the backend contract stays mtd|ytd|full|custom.
-export type CeoRange = "mtd" | "ytd" | "full" | "custom" | "week" | "today" | "day"
+// "lastMonth" (Bruno 2026-07-01) is a client-resolved window like week/today/
+// day — the page computes its explicit start/end and it rides to the backend
+// as "custom" (see ceoQs). "full" stays in the type (default range logic still
+// references it) even though its pill was removed from the UI.
+export type CeoRange =
+  | "mtd"
+  | "ytd"
+  | "full"
+  | "custom"
+  | "week"
+  | "today"
+  | "day"
+  | "lastMonth"
 export type CeoDivision = "CORP" | "DFW"
+// Bruno 2026-07-01 (Overview Request 3): global Contract/Spot filter.
+export type CeoLoadType = "contract" | "spot"
 
 export interface CeoFilters {
   range: CeoRange
@@ -42,6 +56,7 @@ export interface CeoFilters {
   division?: CeoDivision
   team?: string
   customer?: string
+  contractType?: CeoLoadType
 }
 
 function ceoQs(f: CeoFilters) {
@@ -59,6 +74,7 @@ function ceoQs(f: CeoFilters) {
   if (f.division) q.set("division", f.division)
   if (f.team) q.set("team", f.team)
   if (f.customer) q.set("customer", f.customer)
+  if (f.contractType) q.set("load_type", f.contractType)
   return `?${q.toString()}`
 }
 
@@ -120,6 +136,9 @@ export interface CeoAtpRow {
 export interface CeoOverview {
   kpis: CeoKpis
   profit_tm: number
+  // Bruno 2026-07-01 (Overview Request 4): date-scoped profit budget target
+  // for the PROFIT gauge (from daily_production_budget_report."Profit Budget").
+  profit_budget: number
   window: { start: string; end: string }
   summary_by_team: CeoTeamRow[]
   all_teams_performance: CeoAtpRow[]
@@ -306,13 +325,14 @@ export function useCeoOverview(f: CeoFilters, enabled = true) {
 
 // Bruno R4 (2026-05-12): Trends/Weekly honor Division + Team.
 // R5 (2026-05-21): Customer too. Date windows stay fixed.
-type CeoScopeFilters = Pick<CeoFilters, "division" | "team" | "customer">
+type CeoScopeFilters = Pick<CeoFilters, "division" | "team" | "customer" | "contractType">
 
 function ceoScopeQs(f: CeoScopeFilters) {
   const q = new URLSearchParams()
   if (f.division) q.set("division", f.division)
   if (f.team) q.set("team", f.team)
   if (f.customer) q.set("customer", f.customer)
+  if (f.contractType) q.set("load_type", f.contractType)
   const s = q.toString()
   return s ? `?${s}` : ""
 }
@@ -321,7 +341,7 @@ export function useCeoTrends(f: CeoScopeFilters, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "trends", f.division ?? "", f.team ?? "", f.customer ?? ""],
+    queryKey: ["ceo", "trends", f.division ?? "", f.team ?? "", f.customer ?? "", f.contractType ?? ""],
     queryFn: () => apiFetch<CeoTrends>(`custom/ceo-executive/trends${ceoScopeQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
@@ -340,7 +360,7 @@ export function useCeoWeekly(f: CeoScopeFilters, enabled = true) {
   return useQuery({
     ...CEO_RETRY,
     enabled,
-    queryKey: ["ceo", "weekly", f.division ?? "", f.team ?? "", f.customer ?? ""],
+    queryKey: ["ceo", "weekly", f.division ?? "", f.team ?? "", f.customer ?? "", f.contractType ?? ""],
     queryFn: () => apiFetch<CeoWeekly>(`custom/ceo-executive/weekly${ceoScopeQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })

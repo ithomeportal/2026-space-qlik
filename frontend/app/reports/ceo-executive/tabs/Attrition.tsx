@@ -39,14 +39,16 @@ const ALL_ATTR_TEAMS = [...CORP_ATTR_TEAMS, "TEAM-DFW"]
 // intentionally does not apply here — only Division/Team/Customer do.
 function ceoToAttrition(f: CeoFilters): AttritionFilters {
   const customer = f.customer || undefined
+  // Bruno 2026-07-01 Request 3: the global Contract/Spot filter applies here too.
+  const contract = f.contractType || undefined
   const t = f.team
   if (t) {
-    if (t.startsWith("TM")) return { teams: ["TEAM-DFW"], sub_team: t, customer }
-    return { teams: [t], customer }
+    if (t.startsWith("TM")) return { teams: ["TEAM-DFW"], sub_team: t, customer, contract }
+    return { teams: [t], customer, contract }
   }
-  if (f.division === "CORP") return { teams: CORP_ATTR_TEAMS, customer }
-  if (f.division === "DFW") return { teams: ["TEAM-DFW"], customer }
-  return { teams: ALL_ATTR_TEAMS, customer }
+  if (f.division === "CORP") return { teams: CORP_ATTR_TEAMS, customer, contract }
+  if (f.division === "DFW") return { teams: ["TEAM-DFW"], customer, contract }
+  return { teams: ALL_ATTR_TEAMS, customer, contract }
 }
 
 export function Attrition({ filters }: { filters: CeoFilters }) {
@@ -137,6 +139,7 @@ export function Attrition({ filters }: { filters: CeoFilters }) {
         <PivotsTab
           filters={af}
           entityLabel={entityLabel}
+          defaultDim="customer"
           defaultSortKey="diff"
           defaultSortDir="asc"
         />
@@ -175,7 +178,8 @@ function ActiveCard({
         <CountCell label="L8W" value={loading ? "—" : fmtCount(block?.l8w)} accent={accent} />
         <CountCell label="LW" value={loading ? "—" : fmtCount(block?.lw)} accent={accent} />
         <CountCell label="Δ (LW − L8W)" value={loading ? "—" : sd.text} accent={sd.className} />
-        <CountCell label="% Δ" value={loading ? "—" : sp.text} accent={sp.className} />
+        {/* Bruno 2026-07-01 Attrition Request 2: "% Δ" → "% Attrition" (this report only). */}
+        <CountCell label="% Attrition" value={loading ? "—" : sp.text} accent={sp.className} />
       </div>
     </div>
   )
