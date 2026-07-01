@@ -184,6 +184,17 @@ export interface OppCustomerLoss {
   loss_profit: number
 }
 
+// Bruno 2026-07-01 R14: per-customer "Not Billed" (bill_date < sentinel).
+export interface OppCustomerNotBilledRow {
+  customer_name: string
+  loads: number
+  revenue: number
+}
+export interface OppCustomerNotBilledTotals {
+  loads: number
+  revenue: number
+}
+
 export interface OppTeamPerformance {
   customers: number
   lanes: number
@@ -204,6 +215,10 @@ export interface OppTeamPerformance {
   net_savings: number
   loss_loads: number
   profit_loss: number
+  /** Bruno 2026-07-01 R12 — below Profit Loss. */
+  avg_days_billed: number
+  avg_days_not_billed: number
+  pct_del_bill: number
   cust_attr_pct: number
   lane_attr_pct: number
   window: { start: string; end: string }
@@ -263,6 +278,8 @@ export interface OppLaneRow {
   origin: string
   dest: string
   vol: number
+  /** Bruno 2026-07-01 R3: distinct carriers on the lane (COUNT DISTINCT payee_name). */
+  carriers: number
   rev: number
   prof: number
   margin_pct: number
@@ -284,7 +301,7 @@ export interface OppActualsTotals {
 }
 
 export interface OppLaneTotals {
-  vol: number; rev: number; prof: number; margin_pct: number
+  vol: number; carriers: number; rev: number; prof: number; margin_pct: number
   loss_loads: number; loss_profit: number
   otp_pct: number; otd_pct: number; rev_x_l: number; prof_x_l: number
 }
@@ -316,6 +333,8 @@ export interface OppOrderRow {
   status: string
   departure: string
   customer_name: string
+  /** Bruno 2026-07-01 R2: carrier (movement.payee_name), '' if unmatched. */
+  carrier: string
   lane: string
   revenue: number
   profit: number
@@ -330,6 +349,10 @@ export interface OppOrderRow {
   transit_seconds: number | null
   /** Open 'P' load that departed but has not arrived — UI ticks a live clock. */
   in_progress: boolean
+  /** Bruno 2026-07-01 R11: bill_date > sentinel → billed (checkmark). */
+  billed: boolean
+  /** Bruno 2026-07-01 R11: bill_date − dest departure (or NOW − departure). */
+  days_to_bill: number | null
 }
 
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
@@ -456,6 +479,17 @@ export function useOppTeamPerformance(f: OppFilters) {
   return useQuery({
     queryKey: [prefix, "opp-team-performance", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
     queryFn: () => apiFetch<OppTeamPerformance>(`${prefix}/team-performance${qs(f)}`),
+    ...RETRY,
+  })
+}
+
+// Bruno 2026-07-01 R14: per-customer "Not Billed" table (meta.totals carries
+// the full-universe Loads/Revenue totals).
+export function useOppCustomerNotBilled(f: OppFilters) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [prefix, "opp-customer-not-billed", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppCustomerNotBilledRow[]>(`${prefix}/customer-not-billed${qs(f)}`),
     ...RETRY,
   })
 }

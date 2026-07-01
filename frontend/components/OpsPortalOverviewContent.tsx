@@ -361,6 +361,28 @@ function Body({
             Losses
           </button>
 
+          {/* Bruno R1: quick-nav pills to sibling CORP reports. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-[#9CA3AF]">Go to</span>
+            {[
+              { label: "Bonus Calculator", href: "/reports/bonus-calculator" },
+              { label: "Ops Customer Score", href: "/reports/ops-customer-score" },
+              { label: "Ops Margins", href: "/reports/ops-margins" },
+              { label: "eSavings from Carriers", href: "/reports/esavings-carriers" },
+              { label: "2026 Official Budget Follow Up", href: "/reports/budget-followup-2026" },
+              { label: "Ops Direct Compare", href: "/reports/ops-direct-compare" },
+              { label: "XRay CORP Mng", href: "/reports/xray-corp-mng" },
+            ].map(({ label, href }) => (
+              <Link
+                key={href}
+                href={href}
+                className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs font-medium text-[#374151] hover:bg-[#F3F4F6] transition-colors whitespace-nowrap"
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
+
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
         </div>
       </div>

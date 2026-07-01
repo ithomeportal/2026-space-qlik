@@ -124,6 +124,24 @@ async def _scheduled_rfp_digest():
         logger.error(f"Scheduled RFP digest failed: {e}")
 
 
+async def _scheduled_ops_team_digest():
+    """Background job: email the Ops Portal "Team" (Team Monthly Performance)
+    panel to janaya@ twice daily at 06:00 and 18:00 CST (Bruno R9, 2026-07-01).
+
+    Data is read in-process from the exact /team-performance-by-team endpoint,
+    so the email always matches the report. Log-and-swallow."""
+    try:
+        from app.services.ops_team_digest import send_team_digest
+
+        result = await send_team_digest(
+            app,
+            to=["janaya@unilinktransportation.com"],
+        )
+        logger.info(f"Scheduled ops team digest complete: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled ops team digest failed: {e}")
+
+
 async def _scheduled_lane_rates_prewarm():
     """Background job: pre-warm SONAR + 123LB monthly rates for lanes in the
     current and previous month so the eSavings report never blocks on a cold
@@ -756,6 +774,29 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "RFP digest NOT scheduled — missing env vars: %s", ", ".join(missing)
         )
+
+    # Schedule Ops Portal "Team" digest twice daily 06:00 + 18:00 CST (Bruno R9).
+    # Reads the datalake in-process via ASGITransport; needs MS Graph creds (the
+    # SAVINGS pool is loaded for the endpoint it calls) and the datalake pool.
+    if (
+        settings.SAVINGS_DATABASE_URL
+        and settings.MS_TENANT_ID
+        and settings.MS_CLIENT_ID
+        and settings.MS_CLIENT_SECRET
+    ):
+        scheduler.add_job(
+            _scheduled_ops_team_digest,
+            CronTrigger(hour="6,18", minute=0, timezone="America/Chicago"),
+            id="ops_team_digest",
+            name="Send Ops Portal Team Monthly Performance digest (06:00 & 18:00 CST)",
+            replace_existing=True,
+        )
+        logger.info(
+            "Scheduled Ops Portal Team digest at 06:00 & 18:00 CST from %s",
+            settings.MS_SEND_FROM,
+        )
+    else:
+        logger.warning("Ops Portal Team digest NOT scheduled — missing env vars")
 
     if scheduler.get_jobs():
         scheduler.start()

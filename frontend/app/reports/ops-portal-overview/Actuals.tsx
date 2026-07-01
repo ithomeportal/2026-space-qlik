@@ -378,7 +378,7 @@ function ModeCell({
         <div className="flex items-center justify-center gap-1.5">
           <div className="min-w-[64px]">
             {/* R15 (2026-06-24, All tab only): big Actual value now blue. */}
-            <div className={`font-semibold text-[#2563EB] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
+            <div className={`font-semibold text-sm text-[#2563EB] ${kind !== "count" && production < 0 ? "!text-[#DC2626]" : ""}`}>
               {fmt(production)}
             </div>
             <div className="flex items-center justify-between gap-2 text-[10px]">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
 import {
   Bar,
@@ -58,8 +58,9 @@ const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
 
 // Series legend keys — toggled on/off by clicking the legend pills.
 // Bruno R5 (2026-06-01) #3: "variance" (Actual − Budget) legend/tooltip entry
-// after Budget. (Bruno R16: Losses series removed.)
-type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected"
+// after Budget. Bruno 2026-07-01 R10: "losses" (Losses x M) re-added — visible
+// in the Vol./Prof./Marg.% views but NOT in Rev.
+type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
 
 // Compact data-point labels on the bars (Bruno R4 "show the data points").
 // Full USD on every bar overlaps; compact ($210K) keeps the chart readable.
@@ -79,7 +80,8 @@ function labelFmt(measure: Measure, v: number): string {
 export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const cf = { team: filters.team, customer: filters.customer, loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const [grain, setGrain] = useState<OppGrain>("month")
-  const [measure, setMeasure] = useState<Measure>("revenue")
+  // Bruno 2026-07-01 R5: KPI Management defaults to the "Prof." view on open.
+  const [measure, setMeasure] = useState<Measure>("profit")
   const [hidden, setHidden] = useState<Set<SeriesKey>>(new Set())
   const toggle = (k: SeriesKey) => {
     setHidden((prev) => {
@@ -125,20 +127,57 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     start: 0,
     end: 0,
   })
+  // Bruno 2026-07-01 R6: the Month (and Week) view must ALWAYS reset to the most
+  // recent N buckets — it should only expand to older data when the user
+  // manually drags the brush. Previously the reset fired on every data-length
+  // change AND stale indices from the prior grain leaked through, so switching
+  // Week/Day→Month showed the whole history. Fix: track a "user scrolled" flag
+  // that clears on any grain switch, and always clamp indices to the current
+  // data length (see bStart/bEnd at render).
+  const userScrolledRef = useRef(false)
 
-  // Reset brush whenever grain or data length changes.
+  // A grain switch always returns to the default last-N window.
+  useEffect(() => {
+    userScrolledRef.current = false
+  }, [grain])
+
+  // Position the brush: default to the last-N window unless the user has
+  // manually scrolled within the current grain (then just clamp their window
+  // to the — possibly shorter — new data length).
   useEffect(() => {
     if (!chartData.length) return
-    const end = chartData.length - 1
-    const start = Math.max(0, end - defaultVisible + 1)
-    setBrush({ start, end })
+    const maxIdx = chartData.length - 1
+    if (userScrolledRef.current) {
+      setBrush((b) => ({ start: Math.min(b.start, maxIdx), end: Math.min(b.end, maxIdx) }))
+    } else {
+      const end = maxIdx
+      const start = Math.max(0, end - defaultVisible + 1)
+      setBrush({ start, end })
+    }
   }, [grain, chartData.length, defaultVisible])
+
+  // Clamp brush indices to the datasets before Recharts sees them — a stale
+  // index from a previous grain would otherwise make the Brush render the whole
+  // range instead of the last-N window.
+  const comboMaxIdx = Math.max(0, chartData.length - 1)
+  const comboBrush = {
+    start: Math.min(brush.start, comboMaxIdx),
+    end: Math.min(Math.max(brush.end, 0), comboMaxIdx),
+  }
+  const svcMaxIdx = Math.max(0, serviceData.length - 1)
+  const svcBrush = {
+    start: Math.min(brush.start, svcMaxIdx),
+    end: Math.min(Math.max(brush.end, 0), svcMaxIdx),
+  }
 
   // Bruno 2026-06-18 #1 (R10): auto-fit the Service y-axis to the values in the
   // VISIBLE (brushed) window — lowest displayed % → axis min, highest → axis max —
   // with a 1% pad on each end so the lines aren't flush against the frame.
   const serviceDomain = useMemo<[number, number]>(() => {
-    const slice = serviceData.slice(brush.start, brush.end + 1)
+    const maxIdx = Math.max(0, serviceData.length - 1)
+    const s = Math.min(brush.start, maxIdx)
+    const e = Math.min(Math.max(brush.end, 0), maxIdx)
+    const slice = serviceData.slice(s, e + 1)
     const vals = slice
       .flatMap((d) => [d.otp_pct, d.otd_pct])
       .map((v) => Number(v))
@@ -158,6 +197,15 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     : measure === "volume"   ? "budget_loads"
     : "budget_margin_pct"
   )
+
+  // Bruno 2026-07-01 R10: Losses x M per-tab key (mirrors budgetKey). No
+  // revenue variant — the Losses series is hidden in the Rev. view.
+  const lossesKey: string = (
+    measure === "profit"     ? "losses_prof"
+    : measure === "volume"   ? "losses_vol"
+    : "losses_margin_pct"
+  )
+  const showLosses = measure !== "revenue" && !isService
 
   const measureMeta = MEASURES.find((m) => m.k === measure)!
   const fmt = measureMeta.fmt
@@ -257,6 +305,15 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 active={!isHidden("projected")}
                 onClick={() => toggle("projected")}
               />
+              {/* Bruno 2026-07-01 R10: Losses x M — hidden in the Rev. view. */}
+              {showLosses && (
+                <LegendChip
+                  label="Losses x M"
+                  color="#DC2626"
+                  active={!isHidden("losses")}
+                  onClick={() => toggle("losses")}
+                />
+              )}
             </>
           )}
         </div>
@@ -318,10 +375,11 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 height={20}
                 stroke="#94A3B8"
                 travellerWidth={8}
-                startIndex={brush.start}
-                endIndex={brush.end}
+                startIndex={svcBrush.start}
+                endIndex={svcBrush.end}
                 onChange={(r) => {
                   if (r && typeof r.startIndex === "number" && typeof r.endIndex === "number") {
+                    userScrolledRef.current = true
                     setBrush({ start: r.startIndex, end: r.endIndex })
                   }
                 }}
@@ -348,6 +406,10 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                     { key: "variance" as SeriesKey,  label: "Variance",  color: "#F59E0B", value: actualVal - budgetVal },
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
+                    // Bruno 2026-07-01 R10: Losses x M row (hidden in Rev. view).
+                    ...(showLosses
+                      ? [{ key: "losses" as SeriesKey, label: "Losses x M", color: "#DC2626", value: Number(row[lossesKey] ?? 0) }]
+                      : []),
                   ].filter((i) => !isHidden(i.key))
                   return (
                     <div className="rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-md">
@@ -406,15 +468,30 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   label={{ value: `Projected TM ${fmt(projected)}`, fontSize: 10, fill: "#2563EB", position: "right" }}
                 />
               )}
+              {/* Bruno 2026-07-01 R10: Losses x M overlay line — per-tab key so it
+                  shares the bars' Y-axis unit; only in Vol./Prof./Marg.% views. */}
+              {showLosses && !isHidden("losses") && (
+                <Line
+                  type="monotone"
+                  dataKey={lossesKey}
+                  name="Losses x M"
+                  stroke="#DC2626"
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
+                  dot={{ r: 2 }}
+                  connectNulls
+                />
+              )}
               <Brush
                 dataKey="label"
                 height={20}
                 stroke="#94A3B8"
                 travellerWidth={8}
-                startIndex={brush.start}
-                endIndex={brush.end}
+                startIndex={comboBrush.start}
+                endIndex={comboBrush.end}
                 onChange={(r) => {
                   if (r && typeof r.startIndex === "number" && typeof r.endIndex === "number") {
+                    userScrolledRef.current = true
                     setBrush({ start: r.startIndex, end: r.endIndex })
                   }
                 }}

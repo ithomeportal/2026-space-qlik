@@ -20,7 +20,7 @@ interface Props {
 // Bruno round 3 (2026-05-19): second table below Actuals — Production-only,
 // grouped by lane (city-pair).
 type ColumnKey =
-  | "lane" | "vol" | "rev" | "prof" | "margin"
+  | "lane" | "vol" | "carriers" | "rev" | "prof" | "margin"
   | "loss_loads" | "loss_profit"
   | "otp" | "otd" | "rev_x_l" | "prof_x_l"
 
@@ -33,6 +33,7 @@ const COLUMNS: {
 }[] = [
   { k: "lane",        label: "Lane",         align: "left",   numeric: false, accessor: (r) => (r.lane || "").toUpperCase() },
   { k: "vol",         label: "Volume",       align: "right",  numeric: true,  accessor: (r) => r.vol },
+  { k: "carriers",    label: "Carriers",     align: "right",  numeric: true,  accessor: (r) => r.carriers },
   { k: "rev",         label: "Revenue",      align: "right",  numeric: true,  accessor: (r) => r.rev },
   { k: "prof",        label: "Profit",       align: "right",  numeric: true,  accessor: (r) => r.prof },
   { k: "margin",      label: "Margin %",     align: "right",  numeric: true,  accessor: (r) => r.margin_pct },
@@ -201,6 +202,7 @@ function LaneTable({
           <tr className="border-b border-[#E5E7EB] bg-[#ECFEFF] font-semibold text-[#1B3A5C]">
             <td className="px-2 py-1.5">TOTAL</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(totals.vol)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(totals.carriers)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.margin_pct)}</td>
@@ -236,6 +238,7 @@ function LaneTable({
               )}
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(r.vol)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(r.carriers)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.rev)}</td>
             <td className={`px-2 py-1.5 text-right tabular-nums ${r.prof < 0 ? "text-[#DC2626]" : ""}`}>
               {fmtUsd(r.prof)}

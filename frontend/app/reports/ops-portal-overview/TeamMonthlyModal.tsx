@@ -17,7 +17,7 @@ interface Props {
   onClose: () => void
 }
 
-type Kind = "count" | "usd" | "usdSigned" | "pct"
+type Kind = "count" | "usd" | "usdSigned" | "pct" | "num1"
 
 // Mirrors the §5 Team Monthly Performance row set, broken out by team (one column per team).
 // `conc` marks count/volume rows where a per-team concentration % (team / total) is meaningful.
@@ -53,6 +53,9 @@ const ROWS: {
   { label: "Net Savings",      field: "net_savings", kind: "usdSigned", signed: true },
   { label: "Loads w/ Loss.",   field: "loss_loads", kind: "count", conc: true },
   { label: "Profit Loss",      field: "profit_loss", kind: "usdSigned", signed: true },
+  { label: "AVG Days (Billed)", field: "avg_days_billed", kind: "num1" },
+  { label: "AVG Days (Not Billed)", field: "avg_days_not_billed", kind: "num1" },
+  { label: "% Del vs Bill",    field: "pct_del_bill", kind: "pct" },
   { label: "Cust. Attrition %", field: "cust_attr_pct", kind: "pct" },
   { label: "Lane Attrition %", field: "lane_attr_pct", kind: "pct" },
 ]
@@ -70,6 +73,7 @@ function fmtVal(kind: Kind, v: number): string {
   if (kind === "count") return fmtCount(v)
   if (kind === "usd") return fmtUsd(v)
   if (kind === "usdSigned") return fmtUsdSigned(v)
+  if (kind === "num1") return Number(v).toFixed(1)
   return fmtPct(v)
 }
 
@@ -188,7 +192,7 @@ export function TeamMonthlyModal({ filters, onClose }: Props) {
                                   {fmtVal(row.kind, v)}
                                 </span>
                                 {conc !== null && (
-                                  <span className="text-[#2563EB] text-[10px]">{conc.toFixed(2)}%</span>
+                                  <span className="text-[#9CA3AF] text-[10px]">{conc.toFixed(2)}%</span>
                                 )}
                               </span>
                             )}

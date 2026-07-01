@@ -8,11 +8,14 @@ import {
   fmtUsd,
   fmtUsdSigned,
   useOppCustomerLosses,
+  useOppCustomerNotBilled,
   useOppCustomerVariance,
   useOppTeamPerformance,
   useOppTeamProjection,
   useOppTeamVariance,
   type OppCustomerLoss,
+  type OppCustomerNotBilledRow,
+  type OppCustomerNotBilledTotals,
   type OppCustomerVariance,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
@@ -40,6 +43,7 @@ export function SidePanels({ filters, onPickCustomer, lockedTeam }: Props) {
         <TeamBudgetVariance filters={filters} />
         <CustomerVariance filters={filters} onPickCustomer={onPickCustomer} />
         <CustomerLosses filters={filters} onPickCustomer={onPickCustomer} />
+        <CustomerNotBilled filters={filters} />
       </div>
       <div className="space-y-4">
         <TeamPerformance filters={filters} lockedTeam={lockedTeam} />
@@ -191,12 +195,68 @@ function CustomerLosses({ filters, onPickCustomer }: { filters: OppFilters; onPi
       error={error}
       leadingAction={<ExpandButton label="Customer Monthly Losses" onClick={() => setExpanded(true)} />}
     >
-      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
+      <div className="max-h-[180px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
       {expanded && (
         <ExpandModal title="Customer Monthly Losses" onClose={() => setExpanded(false)}>
           {renderTable()}
         </ExpandModal>
       )}
+    </PanelCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// §4b — Not Billed (Bruno R14) — customers with delivered-but-not-billed loads.
+// ---------------------------------------------------------------------------
+
+function CustomerNotBilled({ filters }: { filters: OppFilters }) {
+  const q = useOppCustomerNotBilled(filters)
+  const totals = q.data?.meta?.totals as OppCustomerNotBilledTotals | undefined
+  const raw = useMemo(() => q.data?.data ?? [], [q.data])
+  // Default = revenue desc (biggest un-billed revenue first).
+  const { rows: sorted, sortKey, sortDir, onSort } = useMiniSort<OppCustomerNotBilledRow, "name" | "loads" | "revenue">(raw, {
+    name: (r) => (r.customer_name || "").toUpperCase(),
+    loads: (r) => r.loads,
+    revenue: (r) => r.revenue,
+  }, "revenue", "desc")
+  return (
+    <PanelCard title="Not Billed" icon="🧾" loading={q.isLoading} error={q.error}>
+      <div className="max-h-[180px] overflow-x-hidden overflow-y-auto">
+        <table className="w-full table-fixed text-xs">
+          <colgroup>
+            <col className="w-[60%]" />
+            <col className="w-[18%]" />
+            <col className="w-[22%]" />
+          </colgroup>
+          <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
+            <tr>
+              <MiniTh k="name" align="left" sortKey={sortKey} dir={sortDir} onSort={onSort}>Customer</MiniTh>
+              <MiniTh k="loads" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Loads</MiniTh>
+              <MiniTh k="revenue" align="right" sortKey={sortKey} dir={sortDir} onSort={onSort}>Revenue</MiniTh>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 ? (
+              <tr><td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">No data</td></tr>
+            ) : sorted.map((r) => (
+              <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
+                <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>{r.customer_name}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-[#374151]">{fmtCount(r.loads)}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-[#374151]">{fmtUsd(r.revenue)}</td>
+              </tr>
+            ))}
+          </tbody>
+          {totals && (
+            <tfoot className="sticky bottom-0 bg-[#F9FAFB]">
+              <tr className="border-t border-[#E5E7EB] font-semibold text-[#1B3A5C]">
+                <td className="px-2 py-1">Total</td>
+                <td className="px-2 py-1 text-right tabular-nums">{fmtCount(totals.loads)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </PanelCard>
   )
 }
@@ -270,6 +330,9 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
           <Row label="Net Savings" value={v ? fmtUsdSigned(v.net_savings) : "—"} signed numeric={v?.net_savings ?? 0} />
           <Row label="Loads w/ Loss." value={v ? fmtCount(v.loss_loads) : "—"} />
           <Row label="Profit Loss" value={v ? fmtUsdSigned(v.profit_loss) : "—"} signed numeric={v?.profit_loss ?? 0} />
+          <Row label="AVG Days (Billed)" value={v ? v.avg_days_billed.toFixed(1) : "—"} />
+          <Row label="AVG Days (Not Billed)" value={v ? v.avg_days_not_billed.toFixed(1) : "—"} />
+          <Row label="% Del vs Bill" value={v ? fmtPct(v.pct_del_bill) : "—"} />
           <Row label="Cust. Attrition %" value={v ? fmtPct(v.cust_attr_pct) : "—"} />
           <Row label="Lane Attrition %" value={v ? fmtPct(v.lane_attr_pct) : "—"} />
         </tbody>

@@ -339,6 +339,63 @@ def _safe_float(v) -> float:
     return f
 
 
+def _bill_metrics_sql(where: str, p_s: int, p_e: int, *, group_by_team: bool) -> str:
+    """Per-order billing metrics — Bruno round (2026-07-01) R12.
+
+      avg_days_billed     = AVG(bill_date − dest_actual_departure) over billed orders
+      avg_days_not_billed = AVG(CURRENT_DATE − dest_actual_departure) over unbilled orders
+      del_bill_le2/denom  = Delivery-vs-Bill <=2D ratio (mirrors admin-cashflow)
+
+    ``bill_date`` is on v4; ``dest_actual_departure``/``dest_actual_arrival`` come
+    from ``mcleod_gld_customer_windows`` (same sentinel-guarded LATERAL as By
+    Order R11, so the panel reconciles with the Days-to-Bill column). When
+    ``group_by_team`` the result carries one row per ``team_id``.
+    """
+    team_sel = "TRIM(br4.team_id) AS team_id," if group_by_team else ""
+    team_out = "team_id," if group_by_team else ""
+    group_clause = "GROUP BY team_id" if group_by_team else ""
+    return f"""
+        WITH ord AS (
+            SELECT
+              {team_sel}
+              br4.bill_date AS bill_date,
+              win.dest_dep, win.dest_arr
+            FROM public.mcleod_gld_budget_report_v4 br4
+            LEFT JOIN LATERAL (
+                SELECT MAX(CASE WHEN cw.dest_actual_departure > '2000-01-01' THEN cw.dest_actual_departure END) AS dest_dep,
+                       MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS dest_arr
+                FROM public.mcleod_gld_customer_windows cw
+                WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
+            ) win ON TRUE
+            WHERE {where}
+              AND br4.origin_actual_departure >= ${p_s}
+              AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+        )
+        SELECT
+          {team_out}
+          AVG(bill_date::date - dest_dep::date)
+            FILTER (WHERE bill_date > '2000-01-01' AND dest_dep IS NOT NULL) AS avg_days_billed,
+          AVG(CURRENT_DATE - dest_dep::date)
+            FILTER (WHERE bill_date < '2000-01-01' AND dest_dep IS NOT NULL) AS avg_days_not_billed,
+          COUNT(*) FILTER (WHERE bill_date > '2000-01-01' AND dest_dep IS NOT NULL AND dest_arr IS NOT NULL) AS del_bill_denom,
+          COUNT(*) FILTER (WHERE bill_date > '2000-01-01' AND dest_dep IS NOT NULL AND dest_arr IS NOT NULL
+                             AND (bill_date::date - dest_dep::date) <= 2) AS del_bill_le2
+        FROM ord
+        {group_clause}
+    """
+
+
+def _bill_fields(row) -> dict:
+    """Map a billing-metrics row → the 3 R12 wire fields (0-safe)."""
+    denom = int(row["del_bill_denom"] or 0) if row else 0
+    le2 = int(row["del_bill_le2"] or 0) if row else 0
+    return {
+        "avg_days_billed":     _safe_float(row["avg_days_billed"]) if row else 0.0,
+        "avg_days_not_billed": _safe_float(row["avg_days_not_billed"]) if row else 0.0,
+        "pct_del_bill":        (le2 / denom * 100.0) if denom else 0.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # /filters — teams + customers
 # ---------------------------------------------------------------------------
@@ -883,6 +940,90 @@ async def customer_losses(
 
 
 # ---------------------------------------------------------------------------
+# /customer-not-billed — Bruno round (2026-07-01) R14: per-customer "Not Billed"
+# ---------------------------------------------------------------------------
+
+
+@router.get("/customer-not-billed")
+async def customer_not_billed(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Bruno R14 — orders never billed (``bill_date < '2000-01-01'`` sentinel),
+    grouped per customer.
+
+      Loads   = COUNT(orders where bill_date < '2000-01-01')
+      Revenue = SUM(total_charge where bill_date < '2000-01-01')
+
+    Same CORP scope + page date range (origin_actual_departure) as the sibling
+    Customer Monthly Losses table. Totals in ``meta`` are the full-universe
+    window aggregate (never a client reduce over the LIMIT slice — §44)."""
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    params: list = []
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    params.extend([s, e, limit])
+    p_s = len(params) - 2
+    p_e = len(params) - 1
+    p_lim = len(params)
+
+    rows = await pool.fetch(
+        f"""
+        WITH g AS (
+            SELECT
+              br4.customer_name AS customer_name,
+              COUNT(*)                                     AS loads,
+              COALESCE(SUM(br4.total_charge), 0)::numeric  AS revenue
+            FROM public.mcleod_gld_budget_report_v4 br4
+            WHERE {where}
+              AND br4.origin_actual_departure >= ${p_s}
+              AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+              AND br4.bill_date < '2000-01-01'::date
+            GROUP BY br4.customer_name
+        )
+        SELECT
+          customer_name, loads, revenue,
+          SUM(loads)   OVER () AS loads_total,
+          SUM(revenue) OVER () AS revenue_total,
+          COUNT(*)     OVER () AS cust_total
+        FROM g
+        ORDER BY revenue DESC NULLS LAST
+        LIMIT ${p_lim}
+        """,
+        *params,
+    )
+    totals = {
+        "loads":   int(rows[0]["loads_total"] or 0) if rows else 0,
+        "revenue": _safe_float(rows[0]["revenue_total"]) if rows else 0.0,
+    }
+    return {
+        "success": True,
+        "data": [
+            {
+                "customer_name": r["customer_name"],
+                "loads":   int(r["loads"] or 0),
+                "revenue": _safe_float(r["revenue"]),
+            }
+            for r in rows
+        ],
+        "meta": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "total": int(rows[0]["cust_total"] or 0) if rows else 0,
+            "totals": totals,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # /team-performance — §5 single-row team Production+Savings KPIs
 # ---------------------------------------------------------------------------
 
@@ -1009,10 +1150,21 @@ async def team_performance(
           (SELECT COUNT(*) FROM lane_last WHERE (CURRENT_DATE - last_load) > 30)    AS lane_attr
     """
 
-    prod_row, sav_row, attr_row = await asyncio.gather(
+    # ---- Billing (Bruno round 2026-07-01 R12) — bill_date on v4 + dest_actual_
+    # departure/arrival from customer_windows (same sources as By Order R11, so
+    # the panel reconciles with the Days-to-Bill column). See _bill_sql().
+    bill_params: list = []
+    where_bill = _v4_scope_where("br4", team, customer, load_type, bill_params, lanes, exclude_lanes)
+    bill_params.extend([s, e])
+    b_s = len(bill_params) - 1
+    b_e = len(bill_params)
+    bill_sql = _bill_metrics_sql(where_bill, b_s, b_e, group_by_team=False)
+
+    prod_row, sav_row, attr_row, bill_row = await asyncio.gather(
         pool.fetchrow(prod_sql, *prod_params),
         pool.fetchrow(sav_sql, *sav_params),
         pool.fetchrow(attr_sql, *attr_params),
+        pool.fetchrow(bill_sql, *bill_params),
     )
 
     revenue = _safe_float(prod_row["revenue"])
@@ -1047,6 +1199,8 @@ async def team_performance(
             "net_savings": _safe_float(sav_row["net_savings"]),
             "loss_loads":  int(prod_row["loss_loads"] or 0),
             "profit_loss": _safe_float(prod_row["profit_loss"]),
+            # Bruno round (2026-07-01) R12 — below Profit Loss.
+            **_bill_fields(bill_row),
             "cust_attr_pct": (int(attr_row["cust_attr"] or 0) / cust_total * 100.0) if cust_total else 0.0,
             "lane_attr_pct": (int(attr_row["lane_attr"] or 0) / lane_total * 100.0) if lane_total else 0.0,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
@@ -1482,23 +1636,35 @@ async def actuals_by_lane(
                     TRIM(br4.dest_name)   AS dest,
                     br4.id, br4.company_id,
                     br4.total_charge, br4.margin_amt,
+                    -- Bruno round (2026-07-01) R3: carrier per order (first movement).
+                    NULLIF(TRIM(mov.payee_name), '') AS carrier,
                     COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                     COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
                 FROM public.mcleod_gld_budget_report_v4 br4
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+                LEFT JOIN LATERAL (
+                    SELECT m.payee_name
+                    FROM public.mcleod_gld_movement m
+                    WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+                    ORDER BY m.movement_id ASC
+                    LIMIT 1
+                ) mov ON TRUE
                 WHERE {where}
                   AND br4.origin_actual_departure >= ${p_s}
                   AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
                   AND TRIM(br4.origin_name) <> ''
                   AND TRIM(br4.dest_name)   <> ''
                   {losses_clause}
-             )
+             ),
+             uni AS (SELECT COUNT(DISTINCT carrier) AS n_carriers_total FROM prod)
         SELECT
           origin || ' - ' || dest AS lane,
           origin,
           dest,
           COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS vol,
+          COUNT(DISTINCT carrier) AS n_carriers,
+          MAX(uni.n_carriers_total) AS n_carriers_total,
           COALESCE(SUM(total_charge), 0)::numeric AS rev,
           COALESCE(SUM(margin_amt),  0)::numeric  AS prof,
           COUNT(*) FILTER (WHERE margin_amt < 0
@@ -1507,7 +1673,7 @@ async def actuals_by_lane(
           COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS loss_profit,
           SUM(otp_cnt) AS otp_late,
           SUM(otd_cnt) AS otd_late
-        FROM prod
+        FROM prod CROSS JOIN uni
         GROUP BY origin, dest
     """
 
@@ -1531,6 +1697,7 @@ async def actuals_by_lane(
             "origin":     r["origin"],
             "dest":       r["dest"],
             "vol":        vol,
+            "carriers":   int(r["n_carriers"] or 0),
             "rev":        rev,
             "prof":       prof,
             "margin_pct": (prof / rev * 100.0) if rev else 0.0,
@@ -1555,8 +1722,11 @@ async def actuals_by_lane(
     out = out[:limit]
 
     t_vol, t_rev, t_prof = tot["vol"], tot["rev"], tot["prof"]
+    # Universe-wide distinct carrier count (same scalar on every row via uni CTE).
+    carriers_total = int(rows[0]["n_carriers_total"] or 0) if rows else 0
     totals = {
         "vol": t_vol,
+        "carriers": carriers_total,
         "rev": _safe_float(t_rev),
         "prof": _safe_float(t_prof),
         "margin_pct": _safe_float((t_prof / t_rev * 100.0) if t_rev else 0.0),
@@ -1680,6 +1850,9 @@ _BY_ORDER_SORTS = {
     "customer_desc": "customer_name DESC, order_id ASC",
     "lane_asc":      "lane ASC, order_id ASC",
     "lane_desc":     "lane DESC, order_id ASC",
+    # Bruno round (2026-07-01) R2: Carrier column (movement.payee_name).
+    "carrier_asc":   "carrier ASC, order_id ASC",
+    "carrier_desc":  "carrier DESC, order_id ASC",
     "revenue_asc":   "revenue ASC NULLS LAST",
     "revenue_desc":  "revenue DESC NULLS LAST",
     "profit_asc":    "profit ASC NULLS LAST",
@@ -1767,6 +1940,7 @@ async def by_order(
           TRIM(br4.status)    AS status,
           to_char(br4.origin_actual_departure, 'YYYY-MM-DD') AS departure,
           br4.customer_name   AS customer_name,
+          COALESCE(TRIM(mov.payee_name), '') AS carrier,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric AS revenue,
           COALESCE(br4.margin_amt, 0)::numeric   AS profit,
@@ -1777,16 +1951,32 @@ async def by_order(
           to_char(win.dep_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS departed_at,
           to_char(win.arr_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS arrived_at,
           CASE WHEN win.dep_ts IS NOT NULL AND win.arr_ts IS NOT NULL AND win.arr_ts > win.dep_ts
-               THEN EXTRACT(EPOCH FROM (win.arr_ts - win.dep_ts)) END AS transit_seconds
+               THEN EXTRACT(EPOCH FROM (win.arr_ts - win.dep_ts)) END AS transit_seconds,
+          -- Bruno round (2026-07-01) R11: Bill checkmark + Days to Bill.
+          (br4.bill_date > '2000-01-01'::date) AS billed,
+          CASE
+            WHEN win.dest_dep_ts IS NULL THEN NULL
+            WHEN br4.bill_date > '2000-01-01'::date
+                 THEN (br4.bill_date::date - win.dest_dep_ts::date)
+            ELSE (CURRENT_DATE - win.dest_dep_ts::date)
+          END AS days_to_bill
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
         LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
         LEFT JOIN LATERAL (
             SELECT MAX(CASE WHEN cw.orig_actual_departure > '2000-01-01' THEN cw.orig_actual_departure END) AS dep_ts,
-                   MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS arr_ts
+                   MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS arr_ts,
+                   MAX(CASE WHEN cw.dest_actual_departure > '2000-01-01' THEN cw.dest_actual_departure END) AS dest_dep_ts
             FROM public.mcleod_gld_customer_windows cw
             WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
         ) win ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
         WHERE {where_rows}
           AND br4.origin_actual_departure >= ${p_s}
           AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
@@ -1825,12 +2015,14 @@ async def by_order(
         # In transit = open 'P' load that departed but hasn't arrived yet.
         in_progress = status == "P" and not arrived_at and bool(departed_at)
         ts = r["transit_seconds"]
+        dtb = r["days_to_bill"]
         out.append({
             "order_id":      r["order_id"],
             "team_id":       r["team_id"],
             "status":        status,
             "departure":     r["departure"] or "",
             "customer_name": r["customer_name"] or "",
+            "carrier":       r["carrier"] or "",
             "lane":          r["lane"] or "",
             "revenue":       _safe_float(r["revenue"]),
             "profit":        _safe_float(r["profit"]),
@@ -1841,6 +2033,8 @@ async def by_order(
             "arrived_at":    arrived_at,
             "transit_seconds": _safe_float(ts) if ts is not None else None,
             "in_progress":   in_progress,
+            "billed":        bool(r["billed"]),
+            "days_to_bill":  int(dtb) if dtb is not None else None,
         })
 
     t_rev = _safe_float(tot_row["rev"]) if tot_row else 0.0
@@ -2083,6 +2277,9 @@ def _team_perf_obj(
     cust_attr: int,
     lane_total: int,
     lane_attr: int,
+    avg_days_billed: float = 0.0,
+    avg_days_not_billed: float = 0.0,
+    pct_del_bill: float = 0.0,
 ) -> dict:
     """Build one §5 row from raw aggregates — shared by every team + Total so
     every TeamPerf object carries the exact same field set as /team-performance.
@@ -2108,6 +2305,10 @@ def _team_perf_obj(
         "net_savings": _safe_float(net_savings),
         "loss_loads":  loss_loads,
         "profit_loss": _safe_float(profit_loss),
+        # Bruno round (2026-07-01) R12 — below Profit Loss.
+        "avg_days_billed":     _safe_float(avg_days_billed),
+        "avg_days_not_billed": _safe_float(avg_days_not_billed),
+        "pct_del_bill":        _safe_float(pct_del_bill),
         "cust_attr_pct": _safe_float((cust_attr / cust_total * 100.0) if cust_total else 0.0),
         "lane_attr_pct": _safe_float((lane_attr / lane_total * 100.0) if lane_total else 0.0),
     }
@@ -2234,15 +2435,25 @@ async def team_performance_by_team(
         FROM (SELECT DISTINCT team_id FROM cust_last) c
     """
 
-    prod_rows, sav_rows, attr_rows = await asyncio.gather(
+    # ---- Billing grouped by team_id (Bruno round 2026-07-01 R12) ---------
+    bill_params: list = []
+    where_bill = _v4_scope_where("br4", None, customer, load_type, bill_params, lanes, exclude_lanes)
+    bill_params.extend([s, e])
+    bt_s = len(bill_params) - 1
+    bt_e = len(bill_params)
+    bill_sql = _bill_metrics_sql(where_bill, bt_s, bt_e, group_by_team=True)
+
+    prod_rows, sav_rows, attr_rows, bill_rows = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
         pool.fetch(sav_sql, *sav_params),
         pool.fetch(attr_sql, *attr_params),
+        pool.fetch(bill_sql, *bill_params),
     )
 
     prod_map = {r["team_id"]: r for r in prod_rows}
     sav_map = {r["team_id"]: r for r in sav_rows}
     attr_map = {r["team_id"]: r for r in attr_rows}
+    bill_map = {r["team_id"]: r for r in bill_rows}
 
     teams_out = []
     tot = {
@@ -2256,6 +2467,7 @@ async def team_performance_by_team(
         p = prod_map.get(tid)
         sv = sav_map.get(tid)
         at = attr_map.get(tid)
+        bl = bill_map.get(tid)
         volume = int(p["volume"] or 0) if p else 0
         obj = _team_perf_obj(
             customers=int(p["customers"] or 0) if p else 0,
@@ -2276,6 +2488,7 @@ async def team_performance_by_team(
             cust_attr=int(at["cust_attr"] or 0) if at else 0,
             lane_total=int(at["lane_total"] or 0) if at else 0,
             lane_attr=int(at["lane_attr"] or 0) if at else 0,
+            **_bill_fields(bl),
         )
         teams_out.append({"team_id": tid, **obj})
         # Accumulate the Total over the full universe (server-side, not a
@@ -2305,18 +2518,31 @@ async def team_performance_by_team(
     uni_params.extend([s, e])
     u_s = len(uni_params) - 1
     u_e = len(uni_params)
-    uni_row = await pool.fetchrow(
-        f"""
-        SELECT
-          COUNT(DISTINCT br4.customer_name) AS customers,
-          COUNT(DISTINCT (TRIM(br4.origin_name) || ' - ' || TRIM(br4.dest_name)))
-            FILTER (WHERE TRIM(br4.origin_name) <> '' AND TRIM(br4.dest_name) <> '') AS lanes
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {uni_where}
-          AND br4.origin_actual_departure >= ${u_s}
-          AND br4.origin_actual_departure < (${u_e}::date + INTERVAL '1 day')
-        """,
-        *uni_params,
+    # Universe-wide billing for the Total column — AVGs / ratios can't be summed
+    # across teams, so re-read them over the whole scope (same treatment as the
+    # distinct customer/lane counts above).
+    ubill_params: list = []
+    ubill_where = _v4_scope_where("br4", None, customer, load_type, ubill_params, lanes, exclude_lanes)
+    ubill_params.extend([s, e])
+    ub_s = len(ubill_params) - 1
+    ub_e = len(ubill_params)
+    ubill_sql = _bill_metrics_sql(ubill_where, ub_s, ub_e, group_by_team=False)
+
+    uni_row, ubill_row = await asyncio.gather(
+        pool.fetchrow(
+            f"""
+            SELECT
+              COUNT(DISTINCT br4.customer_name) AS customers,
+              COUNT(DISTINCT (TRIM(br4.origin_name) || ' - ' || TRIM(br4.dest_name)))
+                FILTER (WHERE TRIM(br4.origin_name) <> '' AND TRIM(br4.dest_name) <> '') AS lanes
+            FROM public.mcleod_gld_budget_report_v4 br4
+            WHERE {uni_where}
+              AND br4.origin_actual_departure >= ${u_s}
+              AND br4.origin_actual_departure < (${u_e}::date + INTERVAL '1 day')
+            """,
+            *uni_params,
+        ),
+        pool.fetchrow(ubill_sql, *ubill_params),
     )
 
     total_obj = _team_perf_obj(
@@ -2338,6 +2564,7 @@ async def team_performance_by_team(
         cust_attr=tot["cust_attr"],
         lane_total=tot["lane_total"],
         lane_attr=tot["lane_attr"],
+        **_bill_fields(ubill_row),
     )
 
     return {

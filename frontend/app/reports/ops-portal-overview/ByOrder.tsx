@@ -35,57 +35,72 @@ interface Props {
 // R19 (2026-06-24): + Status column (between Lane and Revenue).
 // R14/R13/R9 (2026-06-24): client-side column filters, client-side pagination,
 // clickable Customer/Lane drill cells, and an expand-to-modal view.
+// Bruno 2026-07-01: R2 Carrier (between Customer and Lane); R11 Bill + Days to
+// Bill (appended at the end).
 type ColumnKey =
-  | "order" | "team" | "departure" | "customer" | "lane" | "status"
+  | "order" | "team" | "departure" | "customer" | "carrier" | "lane" | "status"
   | "revenue" | "profit" | "margin" | "otp" | "otd" | "transit"
+  | "bill" | "daystobill"
 
 const COLUMNS: {
   k: ColumnKey
   label: string
   align: "left" | "right"
 }[] = [
-  { k: "order",     label: "Order",        align: "left" },
-  { k: "team",      label: "Team",         align: "left" },
-  { k: "departure", label: "Departure",    align: "left" },
-  { k: "customer",  label: "Customer",     align: "left" },
-  { k: "lane",      label: "Lane",         align: "left" },
-  { k: "status",    label: "Status",       align: "left" },
-  { k: "revenue",   label: "Revenue",      align: "right" },
-  { k: "profit",    label: "Profit",       align: "right" },
-  { k: "margin",    label: "Margin",       align: "right" },
-  { k: "otp",       label: "OTP %",        align: "right" },
-  { k: "otd",       label: "OTD %",        align: "right" },
-  { k: "transit",   label: "Transit Time", align: "right" },
+  { k: "order",      label: "Order",        align: "left" },
+  { k: "team",       label: "Team",         align: "left" },
+  { k: "departure",  label: "Departure",    align: "left" },
+  { k: "customer",   label: "Customer",     align: "left" },
+  { k: "carrier",    label: "Carrier",      align: "left" },
+  { k: "lane",       label: "Lane",         align: "left" },
+  { k: "status",     label: "Status",       align: "left" },
+  { k: "revenue",    label: "Revenue",      align: "right" },
+  { k: "profit",     label: "Profit",       align: "right" },
+  { k: "margin",     label: "Margin",       align: "right" },
+  { k: "otp",        label: "OTP %",        align: "right" },
+  { k: "otd",        label: "OTD %",        align: "right" },
+  { k: "transit",    label: "Transit Time", align: "right" },
+  { k: "bill",       label: "Bill",         align: "right" },
+  { k: "daystobill", label: "Days to Bill", align: "right" },
 ]
 
 const NUMERIC_DESC_FIRST = new Set<ColumnKey>([
-  "revenue", "profit", "margin", "otp", "otd", "transit",
+  "revenue", "profit", "margin", "otp", "otd", "transit", "daystobill",
 ])
 
 const LIMIT = 500
 const PAGE_SIZE = 50
 
 // R14: client-side substring filters (case-insensitive) over fetched rows.
+// Bruno 2026-07-01: R4 Carrier filter, R15 Status filter.
 interface ColFilters {
   order: string
   team: string
   customer: string
+  carrier: string
   lane: string
+  status: string
 }
 
-const EMPTY_FILTERS: ColFilters = { order: "", team: "", customer: "", lane: "" }
+const EMPTY_FILTERS: ColFilters = {
+  order: "", team: "", customer: "", carrier: "", lane: "", status: "",
+}
 
 function applyColFilters(rows: OppOrderRow[], f: ColFilters): OppOrderRow[] {
   const order = f.order.trim().toLowerCase()
   const team = f.team.trim().toLowerCase()
   const customer = f.customer.trim().toLowerCase()
+  const carrier = f.carrier.trim().toLowerCase()
   const lane = f.lane.trim().toLowerCase()
-  if (!order && !team && !customer && !lane) return rows
+  const status = f.status.trim().toLowerCase()
+  if (!order && !team && !customer && !carrier && !lane && !status) return rows
   return rows.filter((r) => {
     if (order && !String(r.order_id).toLowerCase().includes(order)) return false
     if (team && !(r.team_id ?? "").toLowerCase().includes(team)) return false
     if (customer && !(r.customer_name ?? "").toLowerCase().includes(customer)) return false
+    if (carrier && !(r.carrier ?? "").toLowerCase().includes(carrier)) return false
     if (lane && !(r.lane ?? "").toLowerCase().includes(lane)) return false
+    if (status && !(r.status ?? "").toLowerCase().includes(status)) return false
     return true
   })
 }
@@ -93,9 +108,11 @@ function applyColFilters(rows: OppOrderRow[], f: ColFilters): OppOrderRow[] {
 export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   const [sortKey, setSortKey] = useState<ColumnKey>("revenue")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
-  // status sorts as text; never sent for server sort (column not server-sortable
-  // by that grain), so fall back to revenue_desc for the wire if status is active.
-  const wireKey: ColumnKey = sortKey === "status" ? "revenue" : sortKey
+  // status/bill/daystobill are not server-sortable (no wire sort key), so fall
+  // back to revenue for the wire when one of them is the active sort. carrier IS
+  // server-sortable (carrier_asc/desc). See _BY_ORDER_SORTS in the backend.
+  const NON_WIRE_SORTS = new Set<ColumnKey>(["status", "bill", "daystobill"])
+  const wireKey: ColumnKey = NON_WIRE_SORTS.has(sortKey) ? "revenue" : sortKey
   const sort = `${wireKey}_${sortDir}`
 
   const [colFilters, setColFilters] = useState<ColFilters>(EMPTY_FILTERS)
@@ -154,9 +171,11 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
     }
   }
 
-  const table = (
+  // R16: the inline card paginates (pageRows); the Expand modal shows ALL
+  // filtered rows on a single scrollable page (no pagination).
+  const renderTable = (tableRows: OppOrderRow[]) => (
     <OrderTable
-      rows={pageRows}
+      rows={tableRows}
       totals={totals}
       total={total}
       sortKey={sortKey}
@@ -207,7 +226,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
       {error ? (
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load orders</div>
       ) : (
-        <div className="max-h-[480px] overflow-auto">{table}</div>
+        <div className="max-h-[480px] overflow-auto">{renderTable(pageRows)}</div>
       )}
 
       {expanded && (
@@ -223,13 +242,11 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
                 By Order
               </span>
+              {/* R16: expand shows every filtered order on one page (no pager). */}
+              <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">
+                {filtered.length.toLocaleString()} orders · all on one page
+              </span>
               <div className="ml-auto flex items-center gap-3 text-[10px] text-[#6B7280]">
-                <Pager
-                  page={safePage}
-                  pageCount={pageCount}
-                  onPrev={() => setPage((p) => Math.max(0, p - 1))}
-                  onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                />
                 <button
                   type="button"
                   onClick={() => setExpanded(false)}
@@ -240,7 +257,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
                 </button>
               </div>
             </div>
-            <div className="overflow-auto">{table}</div>
+            <div className="overflow-auto">{renderTable(filtered)}</div>
           </div>
         </div>
       )}
@@ -327,18 +344,20 @@ function OrderTable({
             </SortableTh>
           ))}
         </tr>
-        {/* R14: per-column substring filter row */}
+        {/* R14: per-column substring filter row. R4 Carrier, R15 Status. */}
         <tr className="border-b border-[#E5E7EB] bg-white">
           <FilterTd value={colFilters.order} onChange={(v) => onColFilter({ order: v })} placeholder="Order" />
           <FilterTd value={colFilters.team} onChange={(v) => onColFilter({ team: v })} placeholder="Team" />
           <td />
           <FilterTd value={colFilters.customer} onChange={(v) => onColFilter({ customer: v })} placeholder="Customer" />
+          <FilterTd value={colFilters.carrier} onChange={(v) => onColFilter({ carrier: v })} placeholder="Carrier" />
           <FilterTd value={colFilters.lane} onChange={(v) => onColFilter({ lane: v })} placeholder="Lane" />
-          <td colSpan={7} />
+          <FilterTd value={colFilters.status} onChange={(v) => onColFilter({ status: v })} placeholder="Status" />
+          <td colSpan={8} />
         </tr>
         {totals && (
           <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
-            <td className="px-2 py-1.5" colSpan={6}>
+            <td className="px-2 py-1.5" colSpan={7}>
               TOTAL · {total.toLocaleString()} orders
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
@@ -348,7 +367,7 @@ function OrderTable({
             <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
               {fmtPct(totals.margin_pct)}
             </td>
-            <td className="px-2 py-1.5" colSpan={3} />
+            <td className="px-2 py-1.5" colSpan={5} />
           </tr>
         )}
       </thead>
@@ -377,6 +396,7 @@ function OrderTable({
                 r.customer_name
               )}
             </td>
+            <td className="px-2 py-1.5 text-[#374151]">{r.carrier || <span className="text-[#9CA3AF]">—</span>}</td>
             <td className="px-2 py-1.5 text-[#374151]">
               {onPickLane && r.lane ? (
                 <button
@@ -402,6 +422,14 @@ function OrderTable({
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otd_pct)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">
               <TransitCell row={r} now={now} />
+            </td>
+            {/* R11: Bill checkmark when billed, else blank. */}
+            <td className="px-2 py-1.5 text-right">
+              {r.billed ? <span className="font-semibold text-[#16A34A]">✓</span> : ""}
+            </td>
+            {/* R11: Days to Bill (bill_date − dest departure, or NOW − departure). */}
+            <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
+              {r.days_to_bill == null ? <span className="text-[#9CA3AF]">—</span> : r.days_to_bill}
             </td>
           </tr>
         ))}
