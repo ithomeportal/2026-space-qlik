@@ -378,12 +378,12 @@ function PodiumDfwContent() {
                     <SortableTh label="Customer"      columnKey="customer"      state={sort} className={TH_CLASS} />
                     <SortableTh label="Origin"        columnKey="origin"        state={sort} className={TH_CLASS} />
                     <SortableTh label="Destination"   columnKey="destination"   state={sort} className={TH_CLASS} />
-                    <SortableTh label="Carrier"       columnKey="carrier"       state={sort} className={TH_CLASS} />
                     <SortableTh label="Profit"        columnKey="profit"        state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Revenue"       columnKey="revenue"       state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Margin %"      columnKey="margin_pct"    state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Contract Type" columnKey="contract_type" state={sort} className={TH_CLASS} />
                     <SortableTh label="Equipment Type" columnKey="equipment_type" state={sort} className={TH_CLASS} />
+                    <SortableTh label="Carrier"       columnKey="carrier"       state={sort} className={TH_CLASS} />
                   </tr>
                 </thead>
                 <tbody>
@@ -408,7 +408,6 @@ function PodiumDfwContent() {
                         <Td>{r.customer ?? "—"}</Td>
                         <Td>{r.origin ?? "—"}</Td>
                         <Td>{r.destination ?? "—"}</Td>
-                        <Td>{r.carrier ?? "—"}</Td>
                         <Td className="text-right tabular-nums">
                           {fmtCurrency(r.profit)}
                         </Td>
@@ -419,7 +418,12 @@ function PodiumDfwContent() {
                           {fmtPct(r.margin_pct)}
                         </Td>
                         <Td>{r.contract_type ?? "—"}</Td>
-                        <Td>{r.equipment_type ?? "—"}</Td>
+                        <Td>
+                          <span title={r.equipment_type ?? undefined}>
+                            {r.equipment_type ? r.equipment_type.slice(0, 10) : "—"}
+                          </span>
+                        </Td>
+                        <Td>{r.carrier ?? "—"}</Td>
                       </tr>
                     )
                   })}
