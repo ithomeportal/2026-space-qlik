@@ -78,7 +78,11 @@ rate_conf AS MATERIALIZED (
         )                           AS equipment_type,
         br.company_id               AS company_id,
         br.margin_amt::float        AS profit,
-        br.total_charge::float      AS revenue
+        br.total_charge::float      AS revenue,
+        -- Carrier (first movement's payee_name). Canonical LEFT JOIN LATERAL
+        -- first-match pattern (SPEC-CODE-RULES §5) also used by ops-portal /
+        -- ceo-executive By-Order rows.
+        NULLIF(TRIM(mov.payee_name), '') AS carrier
     FROM (
         SELECT id, posted_date, posted_by_name,
                ROW_NUMBER() OVER (PARTITION BY id ORDER BY posted_date DESC) AS rn
@@ -89,6 +93,13 @@ rate_conf AS MATERIALIZED (
     ) rp
     LEFT JOIN public.mcleod_gld_budget_report_v4 br
            ON TRIM(rp.id) = TRIM(br.id)
+    LEFT JOIN LATERAL (
+        SELECT m.payee_name
+        FROM public.mcleod_gld_movement m
+        WHERE m.order_id = br.id AND m.company_id = br.company_id
+        ORDER BY m.movement_id ASC
+        LIMIT 1
+    ) mov ON TRUE
     WHERE rp.rn = 1
       AND br.team_id = ANY($1::text[])
 )
@@ -144,7 +155,7 @@ async def overview(
     WITH {_RATE_CONF_CTE}
     SELECT
         team, order_id, posted_by, posted_date,
-        customer, origin, destination,
+        customer, origin, destination, carrier,
         profit, revenue,
         CASE WHEN COALESCE(revenue, 0) > 0
              THEN profit / NULLIF(revenue, 0)
@@ -173,6 +184,7 @@ async def overview(
             "customer":      r["customer"],
             "origin":        r["origin"],
             "destination":   r["destination"],
+            "carrier":       r["carrier"],
             "profit":        r["profit"],
             "revenue":       r["revenue"],
             "margin_pct":    r["margin_pct"],

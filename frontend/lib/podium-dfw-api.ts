@@ -42,6 +42,7 @@ export interface PodiumRow {
   customer: string | null
   origin: string | null
   destination: string | null
+  carrier: string | null
   profit: number | null
   revenue: number | null
   margin_pct: number | null

@@ -42,6 +42,7 @@ type TextFilters = {
   order: string
   origin: string
   destination: string
+  carrier: string
   postedBy: string
   contractType: string
   equipmentType: string
@@ -52,6 +53,7 @@ const EMPTY_FILTERS: TextFilters = {
   order: "",
   origin: "",
   destination: "",
+  carrier: "",
   postedBy: "",
   contractType: "",
   equipmentType: "",
@@ -62,6 +64,7 @@ const FILTER_FIELDS: { key: keyof TextFilters; label: string; placeholder: strin
   { key: "order",        label: "Order",         placeholder: "Search #order…" },
   { key: "origin",       label: "Origin",        placeholder: "Search origin…" },
   { key: "destination",  label: "Destination",   placeholder: "Search destination…" },
+  { key: "carrier",      label: "Carrier",       placeholder: "Search carrier…" },
   { key: "postedBy",     label: "Posted by",     placeholder: "Search posted by…" },
   { key: "contractType", label: "Contract Type", placeholder: "Search contract type…" },
   { key: "equipmentType", label: "Equipment Type", placeholder: "Search equipment…" },
@@ -104,6 +107,7 @@ function PodiumDfwContent() {
     const order = filters.order.trim().toLowerCase()
     const origin = filters.origin.trim().toLowerCase()
     const destination = filters.destination.trim().toLowerCase()
+    const carrier = filters.carrier.trim().toLowerCase()
     const postedBy = filters.postedBy.trim().toLowerCase()
     const contractType = filters.contractType.trim().toLowerCase()
     const equipmentType = filters.equipmentType.trim().toLowerCase()
@@ -113,6 +117,7 @@ function PodiumDfwContent() {
         containsCi(r.order_id, order) &&
         containsCi(r.origin, origin) &&
         containsCi(r.destination, destination) &&
+        containsCi(r.carrier, carrier) &&
         containsCi(r.posted_by, postedBy) &&
         containsCi(r.contract_type, contractType) &&
         containsCi(r.equipment_type, equipmentType),
@@ -373,6 +378,7 @@ function PodiumDfwContent() {
                     <SortableTh label="Customer"      columnKey="customer"      state={sort} className={TH_CLASS} />
                     <SortableTh label="Origin"        columnKey="origin"        state={sort} className={TH_CLASS} />
                     <SortableTh label="Destination"   columnKey="destination"   state={sort} className={TH_CLASS} />
+                    <SortableTh label="Carrier"       columnKey="carrier"       state={sort} className={TH_CLASS} />
                     <SortableTh label="Profit"        columnKey="profit"        state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Revenue"       columnKey="revenue"       state={sort} className={TH_CLASS} align="right" />
                     <SortableTh label="Margin %"      columnKey="margin_pct"    state={sort} className={TH_CLASS} align="right" />
@@ -402,6 +408,7 @@ function PodiumDfwContent() {
                         <Td>{r.customer ?? "—"}</Td>
                         <Td>{r.origin ?? "—"}</Td>
                         <Td>{r.destination ?? "—"}</Td>
+                        <Td>{r.carrier ?? "—"}</Td>
                         <Td className="text-right tabular-nums">
                           {fmtCurrency(r.profit)}
                         </Td>
