@@ -25,7 +25,7 @@ const PODIUM_RETRY = {
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
 }
 
-export type PodiumRange = "today" | "wtd" | "mtd"
+export type PodiumRange = "today" | "wtd" | "mtd" | "custom"
 
 export interface PodiumKpis {
   loads: number
@@ -61,10 +61,20 @@ export interface PodiumOverview {
 // focus refetch triggers immediately on tab return.
 const FIFTEEN_MIN = 15 * 60 * 1000
 
-export function usePodiumOverview(range: PodiumRange) {
+export function usePodiumOverview(
+  range: PodiumRange,
+  start?: string,
+  end?: string,
+) {
+  const isCustom = range === "custom" && !!start && !!end
+  const qs = isCustom
+    ? `range=custom&start=${encodeURIComponent(start!)}&end=${encodeURIComponent(end!)}`
+    : `range=${range}`
   return useQuery({
-    queryKey: ["podium-dfw", "overview", range],
-    queryFn: () => apiFetch<PodiumOverview>(`custom/podium-dfw/overview?range=${range}`),
+    queryKey: ["podium-dfw", "overview", range, start ?? null, end ?? null],
+    queryFn: () => apiFetch<PodiumOverview>(`custom/podium-dfw/overview?${qs}`),
+    // Don't fire a half-built custom request (one date picked, other empty).
+    enabled: range !== "custom" || isCustom,
     refetchInterval: FIFTEEN_MIN,
     refetchIntervalInBackground: false,
     staleTime: 5 * 60 * 1000,

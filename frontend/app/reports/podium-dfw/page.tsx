@@ -83,11 +83,44 @@ export default function PodiumDfwPage() {
   )
 }
 
+// Local YYYY-MM-DD for today (native <input type="date"> value + max bound).
+function todayLocalISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`
+}
+
 function PodiumDfwContent() {
   const [range, setRange] = useState<PodiumRange>("today")
+  const [customStart, setCustomStart] = useState("")
+  const [customEnd, setCustomEnd] = useState("")
   const [teamFilter, setTeamFilter] = useState<TeamFilter>("all")
   const [filters, setFilters] = useState<TextFilters>(EMPTY_FILTERS)
-  const q = usePodiumOverview(range)
+
+  // Custom range is active only once BOTH dates are chosen; until then the
+  // selected preset pill still drives the query.
+  const isCustom = customStart !== "" && customEnd !== ""
+  const effRange: PodiumRange = isCustom ? "custom" : range
+  const todayISO = todayLocalISO()
+
+  const q = usePodiumOverview(
+    effRange,
+    isCustom ? customStart : undefined,
+    isCustom ? customEnd : undefined,
+  )
+
+  // Clicking a preset pill clears any custom dates (and vice-versa in the
+  // date inputs), so the two modes never fight.
+  const selectPreset = (key: PodiumRange) => {
+    setRange(key)
+    setCustomStart("")
+    setCustomEnd("")
+  }
+  const clearCustom = () => {
+    setCustomStart("")
+    setCustomEnd("")
+  }
 
   const rawRows = q.data?.data?.rows ?? []
 
@@ -218,9 +251,9 @@ function PodiumDfwContent() {
               {RANGE_OPTIONS.map((o) => (
                 <button
                   key={o.key}
-                  onClick={() => setRange(o.key)}
+                  onClick={() => selectPreset(o.key)}
                   className={
-                    range === o.key
+                    !isCustom && range === o.key
                       ? "rounded px-3 py-1 text-xs font-semibold bg-[#1B3A5C] text-white"
                       : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
                   }
@@ -228,6 +261,44 @@ function PodiumDfwContent() {
                   {o.label}
                 </button>
               ))}
+            </div>
+
+            {/* Custom date range — active once both dates are set. Start is
+                filtered from 00:00 and End through 23:59 (backend). */}
+            <div
+              className={
+                "flex items-center gap-1.5 rounded-md border px-2 py-0.5 " +
+                (isCustom ? "border-[#1B3A5C] bg-[#F0F5FA]" : "border-[#E5E7EB] bg-white")
+              }
+            >
+              <input
+                type="date"
+                value={customStart}
+                max={customEnd || todayISO}
+                onChange={(e) => setCustomStart(e.target.value)}
+                aria-label="From date"
+                className="rounded border-none bg-transparent px-1 py-1 text-xs text-[#111827] focus:outline-none"
+              />
+              <span className="text-xs text-[#6B7280]">to</span>
+              <input
+                type="date"
+                value={customEnd}
+                min={customStart || undefined}
+                max={todayISO}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                aria-label="To date"
+                className="rounded border-none bg-transparent px-1 py-1 text-xs text-[#111827] focus:outline-none"
+              />
+              {(customStart || customEnd) && (
+                <button
+                  onClick={clearCustom}
+                  className="rounded p-0.5 text-[#9CA3AF] hover:bg-white hover:text-[#374151]"
+                  aria-label="Clear custom date range"
+                  title="Clear custom date range"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -328,7 +399,7 @@ function PodiumDfwContent() {
         <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white">
           <div className="flex items-center justify-between border-b border-[#E5E7EB] px-3 py-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#374151]">
-              Bookings {rangeLabel(range)}
+              Bookings {isCustom ? `${customStart} → ${customEnd}` : rangeLabel(range)}
             </h2>
             <span className="text-xs text-[#9CA3AF]">
               {rows.length} row{rows.length === 1 ? "" : "s"}
@@ -358,7 +429,9 @@ function PodiumDfwContent() {
               ) : (
                 <>
                   <p className="text-sm text-[#374151]">
-                    No loads posted yet {rangeLabel(range).toLowerCase()}.
+                    {isCustom
+                      ? `No loads posted between ${customStart} and ${customEnd}.`
+                      : `No loads posted yet ${rangeLabel(range).toLowerCase()}.`}
                   </p>
                   <p className="text-xs text-[#9CA3AF]">
                     Rate Confirmations will appear here as soon as they hit McLeod.

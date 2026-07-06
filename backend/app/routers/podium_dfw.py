@@ -43,7 +43,7 @@ today's rows may come back with ``profit=NULL`` / ``revenue=NULL``. We pass
 them through (frontend renders an em-dash) -- matches the Qlik app behavior.
 """
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
@@ -89,7 +89,13 @@ rate_conf AS MATERIALIZED (
         FROM public.mcleod_gld_order_post_hist
         WHERE TRIM(posted_type) = 'C'
           AND TRIM(comments)    = 'Rate Conf Received'
-          AND posted_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '7 days'
+          -- Scan floor: default month_start-7d for the presets, but drop lower
+          -- when a custom start ($2) reaches further back. LEAST() ignores a
+          -- NULL $2, so the presets keep their original tight window.
+          AND posted_date >= LEAST(
+              date_trunc('month', CURRENT_DATE) - INTERVAL '7 days',
+              $2::timestamp
+          )
     ) rp
     LEFT JOIN public.mcleod_gld_budget_report_v4 br
            ON TRIM(rp.id) = TRIM(br.id)
@@ -114,6 +120,15 @@ _RANGE_FILTERS = {
     "mtd":   "posted_date::date >= date_trunc('month', CURRENT_DATE)::date",
 }
 
+# Custom range: half-inclusive-both-ends on posted_date. ``$2`` = start at
+# 00:00:00 (also the CTE scan floor), ``$3`` = end at 23:59:59.999999.
+_CUSTOM_FILTER = "posted_date >= $2::timestamp AND posted_date <= $3::timestamp"
+
+# YYYY-MM-DD (bare date only — the UI sends <input type="date"> values).
+import re as _re  # noqa: E402
+
+_DATE_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 router = APIRouter(tags=["podium-dfw"], prefix="/custom/podium-dfw")
 
@@ -124,19 +139,40 @@ router = APIRouter(tags=["podium-dfw"], prefix="/custom/podium-dfw")
 @router.get("/overview")
 async def overview(
     request: Request,
-    range: str = Query("today", pattern="^(today|wtd|mtd)$"),
+    range: str = Query("today", pattern="^(today|wtd|mtd|custom)$"),
+    start: str | None = Query(None, description="Custom range start date YYYY-MM-DD (inclusive, 00:00)"),
+    end: str | None = Query(None, description="Custom range end date YYYY-MM-DD (inclusive, 23:59)"),
     _user: dict = Depends(require_report_access("podium-dfw")),
 ):
     """KPIs + row-level table for the Podium Set DFW report.
 
     Response shape:
       ``{ success, data: { range, kpis: {...}, rows: [...] } }``
+
+    ``range=custom`` filters ``posted_date`` between ``start`` 00:00:00 and
+    ``end`` 23:59:59.999999 (both inclusive). The presets pass ``$2=NULL`` so
+    the CTE keeps its default month_start-7d scan floor.
     """
     pool = get_datalake_gold_pool(request)
-    where = _RANGE_FILTERS[range]
 
     # v4.team_id is varchar(8); 'TEAM-DFW' fits without padding.
     params = [_pad_variants(list(PODIUM_TEAMS), width=8)]
+
+    if range == "custom":
+        if not (start and end and _DATE_RE.match(start) and _DATE_RE.match(end)):
+            raise HTTPException(
+                status_code=400,
+                detail="range=custom requires start and end dates as YYYY-MM-DD.",
+            )
+        # Be forgiving if the user inverts the two fields.
+        if start > end:
+            start, end = end, start
+        where = _CUSTOM_FILTER
+        params.append(f"{start} 00:00:00")              # $2 -> CTE floor + lower bound
+        params.append(f"{end} 23:59:59.999999")         # $3 -> upper bound
+    else:
+        where = _RANGE_FILTERS[range]
+        params.append(None)                             # $2 -> NULL, presets keep default floor
 
     kpi_sql = f"""
     WITH {_RATE_CONF_CTE}
