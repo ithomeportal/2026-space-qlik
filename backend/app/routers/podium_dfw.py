@@ -126,6 +126,7 @@ _CUSTOM_FILTER = "posted_date >= $2::timestamp AND posted_date <= $3::timestamp"
 
 # YYYY-MM-DD (bare date only — the UI sends <input type="date"> values).
 import re as _re  # noqa: E402
+from datetime import datetime  # noqa: E402
 
 _DATE_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -164,12 +165,25 @@ async def overview(
                 status_code=400,
                 detail="range=custom requires start and end dates as YYYY-MM-DD.",
             )
+        # The SQL binds $2/$3 to ::timestamp params; asyncpg requires real
+        # datetime objects (a raw str raises DataError -> 500). The regex above
+        # only checks shape, so parse here to reject impossible dates (e.g.
+        # 2026-13-40) with a 400 instead of a second 500 class.
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")  # 00:00:00
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="range=custom requires valid calendar dates as YYYY-MM-DD.",
+            )
         # Be forgiving if the user inverts the two fields.
-        if start > end:
-            start, end = end, start
+        if start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
         where = _CUSTOM_FILTER
-        params.append(f"{start} 00:00:00")              # $2 -> CTE floor + lower bound
-        params.append(f"{end} 23:59:59.999999")         # $3 -> upper bound
+        params.append(start_dt)                                     # $2 -> CTE floor + lower bound (00:00:00)
+        params.append(end_dt.replace(hour=23, minute=59,
+                                     second=59, microsecond=999999))  # $3 -> upper bound (inclusive end-of-day)
     else:
         where = _RANGE_FILTERS[range]
         params.append(None)                             # $2 -> NULL, presets keep default floor
