@@ -33,6 +33,11 @@ DEFAULT_ROLES = [
     ("CORP-T2", "CORP Team 2 — OPS KAM (private team portal)"),
     ("CORP-T3", "CORP Team 3 — OPS KAM (private team portal)"),
     ("CORP-T4", "CORP Team 4 — OPS KAM (private team portal)"),
+    # Individual manager TagRoles (Bruno 2026-07-06) — gate Bonus Calculator to
+    # specific people, NOT whole divisions (HR=4 / Operations=52 too broad).
+    # Assigned manually: HR Manager→Daniela Nava, OPs Manager→Jaime Anaya.
+    ("HR Manager", "HR Manager — Bonus Calculator + HR reports (individual role, assigned manually)"),
+    ("OPs Manager", "Operations Manager — Bonus Calculator (individual role, assigned manually)"),
 ]
 
 # Code-made reports (not Qlik-embedded). Access granted via `roles` just like Qlik reports.
@@ -528,11 +533,13 @@ CUSTOM_REPORTS = [
         "key": "bonus-calculator",  # -> /reports/bonus-calculator
         "title": "Bonus Calculator",
         "description": "Corporate operations bonus payouts by team & employee — KAM/Freight-Match/Tracking&Tracing brackets, wildcard, monthly profit add-ons, Team-1 KAM and Afterhours averaging",
-        "note": "CEO + HR only · 6th->6th period · live datalake (mcleod_gld_budget_report_v4 + scorecard, same as xray-corp-mng) · HR board-pinned FX (team + night) · HR-editable roster/afterhours · month-lock approval · scope TEAM1–TEAM4 · port of Bruno's HR-Headquarters bonus module (2026-05-24)",
+        "note": "CEO + HR Manager + OPs Manager only (Bruno 2026-07-06: individual roles, NOT whole HR/Operations divisions) · 6th->6th period · live datalake (mcleod_gld_budget_report_v4 + scorecard, same as xray-corp-mng) · HR board-pinned FX (team + night) · HR-editable roster/afterhours · month-lock approval · scope TEAM1–TEAM4 · port of Bruno's HR-Headquarters bonus module (2026-05-24)",
         "category": "Executive",
         "tags": ["bonus", "hr", "payroll", "kam", "freight-match", "tracking-tracing", "wildcard", "corporate"],
         "owner_name": "Diego",
-        "roles": ["CEO", "HR"],
+        # Seed roles apply only on FIRST creation (xmax=0); live access is managed
+        # in /admin/reports. Kept in sync w/ 2026-07-06 grant: CEO + the 2 manager roles.
+        "roles": ["CEO", "HR Manager", "OPs Manager"],
     },
     {
         "key": "admin-cashflow",  # -> /reports/admin-cashflow
