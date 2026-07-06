@@ -11,6 +11,7 @@ export default function CorpT3OpsKamPortalPage() {
         title="CORP T3 OPS Kam Portal"
         lockedTeam="TEAM3"
         badge="CORP · T3"
+        hideBonusNav
       />
     </ReportGuard>
   )

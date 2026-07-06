@@ -67,6 +67,10 @@ interface Props {
   lockedTeam?: string
   /** Header badge text (defaults to "CORP" / the locked team). */
   badge?: string
+  /** Hides the "Bonus Calculator" quick-nav pill in the Go-to row. Set on the
+   *  per-team CORP KAM portals so their KAMs don't reach the calculator from
+   *  here (access is managed separately). */
+  hideBonusNav?: boolean
 }
 
 /**
@@ -81,10 +85,11 @@ export function OpsPortalOverviewContent({
   title = "OPS Managers Portal",
   lockedTeam,
   badge,
+  hideBonusNav = false,
 }: Props) {
   return (
     <OppApiProvider prefix={apiPrefix}>
-      <Body title={title} lockedTeam={lockedTeam} badge={badge} />
+      <Body title={title} lockedTeam={lockedTeam} badge={badge} hideBonusNav={hideBonusNav} />
     </OppApiProvider>
   )
 }
@@ -93,10 +98,12 @@ function Body({
   title,
   lockedTeam,
   badge,
+  hideBonusNav,
 }: {
   title: string
   lockedTeam?: string
   badge?: string
+  hideBonusNav?: boolean
 }) {
   const qc = useQueryClient()
   // Default = current month (Bruno: "Date: dafault value (this month)")
@@ -372,7 +379,11 @@ function Body({
               { label: "2026 Official Budget Follow Up", href: "/reports/budget-followup-2026" },
               { label: "Ops Direct Compare", href: "/reports/ops-direct-compare" },
               { label: "XRay CORP Mng", href: "/reports/xray-corp-mng" },
-            ].map(({ label, href }) => (
+            ]
+              // Per-team KAM portals hide the Bonus Calculator pill (access
+              // managed separately); the main Ops Portal keeps it.
+              .filter(({ href }) => !(hideBonusNav && href === "/reports/bonus-calculator"))
+              .map(({ label, href }) => (
               <Link
                 key={href}
                 href={href}
