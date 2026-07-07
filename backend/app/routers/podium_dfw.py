@@ -108,6 +108,11 @@ rate_conf AS MATERIALIZED (
     ) mov ON TRUE
     WHERE rp.rn = 1
       AND br.team_id = ANY($1::text[])
+      -- Exclude VOID (status 'V') loads for all users (Bruno 2026-07-07).
+      -- status is an unpadded 1-char code (D/V/A/P) so no pad_variants /
+      -- TRIM needed; the team_id predicate above already makes the v4 join
+      -- effectively inner, so br.status is never NULL here.
+      AND br.status <> 'V'
 )
 """
 
