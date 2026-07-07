@@ -26,7 +26,25 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export default function BonusCalculatorPage() {
   return (
-    <ReportGuard reportKey="bonus-calculator">
+    <ReportGuard
+      reportKey="bonus-calculator"
+      // Sensitive payroll report — override the default banner (which reveals
+      // the required TagRoles) with a neutral message that discloses nothing
+      // and points the user to their manager. Bruno 2026-07-07.
+      fallback={
+        <div className="flex min-h-[calc(100vh-64px)] flex-col items-center justify-center bg-[#F9FAFB] p-8">
+          <div className="max-w-md rounded-xl border border-[#E5E7EB] bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#F9FAFB] ring-1 ring-[#E5E7EB]">
+              <Lock className="h-5 w-5 text-[#1B3A5C]" />
+            </div>
+            <h2 className="text-xl font-semibold text-[#1B3A5C]">Access restricted</h2>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              You don&apos;t have access to this report. Please review with your Manager.
+            </p>
+          </div>
+        </div>
+      }
+    >
       <BonusCalculatorContent />
     </ReportGuard>
   )

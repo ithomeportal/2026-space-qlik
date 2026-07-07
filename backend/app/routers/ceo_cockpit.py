@@ -30,7 +30,11 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_now, cst_today
-from app.routers.deps import require_report_access
+from app.routers.deps import (
+    get_allowed_roles_for_report,
+    get_pool,
+    require_report_access,
+)
 
 router = APIRouter(tags=["ceo-cockpit"], prefix="/custom/ceo-cockpit")
 
@@ -634,11 +638,31 @@ async def summary(
     ) as client:
         tiles = await asyncio.gather(*[_fetch_tile(client, auth, t) for t in TILES])
 
+    # Link-tiles are "open to explore" cards with a live deep-link but no KPI
+    # query, so — unlike the self-gating KPI TILES (which render a locked tile on
+    # a 403 from their endpoint) — they were previously emitted to every cockpit
+    # user regardless of report access. That advertised sensitive reports (e.g.
+    # Bonus Calculator: CEO + HR Manager + OPs Manager only) and a working
+    # deep-link to unauthorized cockpit users. Gate each link-tile by the
+    # caller's actual access: admin bypasses; everyone else must share a granting
+    # TagRole (same rule as require_report_access). The cache is keyed by role
+    # set, so per-role filtering is cache-safe.
+    if "admin" in roles:
+        visible_links = list(LINK_TILES)
+    else:
+        pool = get_pool(request)
+        link_allowed = await asyncio.gather(
+            *[get_allowed_roles_for_report(pool, t["key"]) for t in LINK_TILES]
+        )
+        visible_links = [
+            t for t, allowed in zip(LINK_TILES, link_allowed) if roles & allowed
+        ]
+
     payload = {
         "generated_at": cst_now().isoformat(),
         "category_order": _CATEGORY_ORDER,
         "tiles": list(tiles),
-        "link_tiles": [_link_tile(t) for t in LINK_TILES],
+        "link_tiles": [_link_tile(t) for t in visible_links],
     }
     _CACHE[roles] = (now + _CACHE_TTL, payload)
     return {"success": True, "data": payload, "meta": {"cached": False}}
