@@ -144,6 +144,12 @@ rate_conf AS MATERIALIZED (
            ON TRIM(rp.id) = TRIM(br.id)
     WHERE rp.rn = 1
       AND br.team_id = ANY($1::text[])
+      -- Exclude VOID (status 'V') loads for all users (Bruno 2026-07-07),
+      -- matching podium_dfw.py. status is an unpadded 1-char v4 code
+      -- (D/V/A/P); the team_id predicate above makes the v4 join effectively
+      -- inner so br.status is never NULL. Filtering here means all five
+      -- leaderboards (weekly + daily) exclude voids.
+      AND br.status <> 'V'
 )
 """
 
