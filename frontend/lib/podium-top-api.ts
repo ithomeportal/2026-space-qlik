@@ -75,18 +75,37 @@ export type BookerGroup = "bookers" | "all"
 // all-DFW report. `equipment` (R8) is a server-side contains filter — pass the
 // debounced value so each keystroke doesn't fire a request. `group` (R1,
 // 2026-06-09) toggles the Bookers roster restriction server-side.
+//
+// `start` / `end` (2026-07-08) are the common Range filter. When both are set
+// (ISO YYYY-MM-DD) every leaderboard collapses onto one shared window; when
+// both are undefined the report keeps its This-Week / Today split. Passed to
+// the queryKey so switching ranges refetches.
 export function usePodiumTop(
   apiPrefix = "custom/dfw-podium-top",
   equipment = "",
   group: BookerGroup = "bookers",
+  start?: string,
+  end?: string,
 ) {
   const trimmed = equipment.trim()
+  const rangeActive = Boolean(start && end)
   const params = new URLSearchParams()
   if (trimmed) params.set("equipment", trimmed)
   params.set("group", group)
+  if (rangeActive) {
+    params.set("start", start as string)
+    params.set("end", end as string)
+  }
   const qs = `?${params.toString()}`
   return useQuery({
-    queryKey: [apiPrefix, "podiums", trimmed, group],
+    queryKey: [
+      apiPrefix,
+      "podiums",
+      trimmed,
+      group,
+      rangeActive ? start : "",
+      rangeActive ? end : "",
+    ],
     queryFn: () => apiFetch<PodiumLeaderboards>(`${apiPrefix}/podiums${qs}`),
     refetchInterval: FIFTEEN_MIN,
     refetchIntervalInBackground: false,

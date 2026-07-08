@@ -43,6 +43,7 @@ each session to ``America/Chicago`` (`main._set_cst_session`) so plain
 
 import json
 import re
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -117,7 +118,20 @@ TEAM_CONFIGS: tuple[tuple[str, str], ...] = (
 )
 
 
-_RATE_CONF_CTE = """
+def _rate_conf_cte(base_lower: str) -> str:
+    """Rate-conf base CTE, parametrized on its ``posted_date`` lower bound.
+
+    ``base_lower`` is a SQL boolean expression (already interpolated with the
+    right ``$n`` placeholder or literal) that bounds how far back the
+    ``mcleod_gld_order_post_hist`` scan reaches. In the default (no explicit
+    range) it is ``date_trunc('month', CURRENT_DATE) - INTERVAL '7 days'`` — the
+    original ~1-month window that covers This-Week + Today. When a Range filter
+    is active (MTD/YTD/Full 2026/Custom, 2026-07-08) it widens to the range
+    start so YTD / Full-2026 pull enough history. Never ``::date``-cast
+    ``posted_date`` itself here — compare the raw timestamp to a date bound so
+    the scan stays index-friendly (SPEC-CODE-RULES §43).
+    """
+    return f"""
 rate_conf AS MATERIALIZED (
     SELECT
         TRIM(rp.id)                 AS order_id,
@@ -138,7 +152,7 @@ rate_conf AS MATERIALIZED (
         FROM public.mcleod_gld_order_post_hist
         WHERE TRIM(posted_type) = 'C'
           AND TRIM(comments)    = 'Rate Conf Received'
-          AND posted_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '7 days'
+          AND {base_lower}
     ) rp
     LEFT JOIN public.mcleod_gld_budget_report_v4 br
            ON TRIM(rp.id) = TRIM(br.id)
@@ -159,6 +173,8 @@ async def _fetch_podiums(
     team: Optional[str] = None,
     equipment: str = "",
     group: str = "bookers",
+    start: Optional[date] = None,
+    end: Optional[date] = None,
 ) -> dict:
     """Run the leaderboard query, optionally locked to a single DFW sub-team.
 
@@ -170,9 +186,45 @@ async def _fetch_podiums(
     ``rate_conf.equipment_type`` — every leaderboard recomputes over only the
     matching loads. Empty string = no filter. NULL-equipment loads never match
     a non-empty search (ILIKE on NULL is NULL).
+
+    ``start`` / ``end`` (2026-07-08) drive the common Range filter. When BOTH
+    are given and ``start <= end`` the two default windows collapse into ONE
+    ``[start, end]`` calendar window shared by every leaderboard (the three
+    "This Week" cards and the two "Today" cards all aggregate over the same
+    range), and the base CTE scan widens back to ``start`` so YTD / Full-2026
+    reach the whole year. When absent (or invalid) the report keeps its
+    original split: This-Week (Mon-Sun) for the weekly cards, Today for the
+    daily cards.
     """
     pool = get_datalake_gold_pool(request)
     params: list = [_pad_variants(list(PODIUM_TOP_TEAMS), width=8)]
+
+    # Common Range window (2026-07-08). Both bounds required and ordered; else
+    # fall back to the original This-Week / Today split. Bind real ``date``
+    # objects (never str) to the ``$n`` bounds (SPEC-CODE-RULES §4). start/end
+    # params are appended right after the team array so their numbers are
+    # stable before the optional team/equipment/booker predicates extend the
+    # list further.
+    range_active = start is not None and end is not None and start <= end
+    if range_active:
+        params.append(start)
+        p_start = len(params)
+        params.append(end)
+        p_end = len(params)
+        base_lower = f"posted_date >= ${p_start}"
+        week_where = (
+            f"posted_date::date >= ${p_start} AND posted_date::date <= ${p_end}"
+        )
+        daily_where = week_where  # one common window across all five cards
+    else:
+        base_lower = (
+            "posted_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '7 days'"
+        )
+        week_where = (
+            "posted_date::date >= date_trunc('week', CURRENT_DATE)::date"
+            " AND posted_date::date <  date_trunc('week', CURRENT_DATE)::date + 7"
+        )
+        daily_where = "posted_date::date = CURRENT_DATE"
 
     # Optional filters — predicates are added in lockstep with their params so
     # the $n placeholders always line up (asyncpg numbering rule).
@@ -202,7 +254,7 @@ async def _fetch_podiums(
         extra_filter += "          AND (" + " OR ".join(clauses) + ")\n"
 
     sql = f"""
-    WITH {_RATE_CONF_CTE},
+    WITH {_rate_conf_cte(base_lower)},
     weekly AS (
         SELECT posted_by,
                COUNT(*)::int                            AS loads,
@@ -212,19 +264,19 @@ async def _fetch_podiums(
                     THEN SUM(profit)::float / SUM(revenue)::float
                     ELSE NULL END                       AS margin_pct
         FROM rate_conf
-        WHERE posted_date::date >= date_trunc('week', CURRENT_DATE)::date
-          AND posted_date::date <  date_trunc('week', CURRENT_DATE)::date + 7
+        WHERE {week_where}
           AND posted_by IS NOT NULL AND posted_by <> ''
 {extra_filter}        GROUP BY posted_by
     ),
-    -- Today aggregation: both loads + profit on every row so each leaderboard
-    -- shows both numbers regardless of which metric was the primary sort.
+    -- Today (or the common Range window) aggregation: both loads + profit on
+    -- every row so each leaderboard shows both numbers regardless of which
+    -- metric was the primary sort.
     daily AS (
         SELECT posted_by,
                COUNT(*)::int                            AS loads,
                COALESCE(SUM(profit), 0)::float          AS profit
         FROM rate_conf
-        WHERE posted_date::date = CURRENT_DATE
+        WHERE {daily_where}
           AND posted_by IS NOT NULL AND posted_by <> ''
 {extra_filter}        GROUP BY posted_by
     )
@@ -282,9 +334,13 @@ async def podiums(
     request: Request,
     equipment: str = Query("", max_length=80),
     group: str = Query("bookers"),
+    start: Optional[date] = Query(None),
+    end: Optional[date] = Query(None),
     _user: dict = Depends(require_report_access("dfw-podium-top")),
 ):
-    return await _fetch_podiums(request, team=None, equipment=equipment, group=group)
+    return await _fetch_podiums(
+        request, team=None, equipment=equipment, group=group, start=start, end=end
+    )
 
 
 # --- Per-team reports: DFW Podium Top TM1..TM4 (Bruno R7) -------------------
@@ -304,9 +360,13 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         request: Request,
         equipment: str = Query("", max_length=80),
         group: str = Query("bookers"),
+        start: Optional[date] = Query(None),
+        end: Optional[date] = Query(None),
         _user: dict = Depends(gate),
     ):
-        return await _fetch_podiums(request, team=tm, equipment=equipment, group=group)
+        return await _fetch_podiums(
+            request, team=tm, equipment=equipment, group=group, start=start, end=end
+        )
 
     return r
 

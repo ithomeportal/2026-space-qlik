@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Loader2, Search, Trophy, X } from "lucide-react"
 import {
@@ -11,6 +11,58 @@ import {
 import { fmtCurrency, fmtInt, fmtPct } from "@/lib/podium-dfw-api"
 import { useDebounce } from "@/lib/use-debounce"
 import { ReportGuard } from "@/components/ReportGuard"
+
+// --- Common Range filter (2026-07-08) --------------------------------------
+// Mirrors the CEO Executive range bar. "Default" keeps the original per-box
+// split (This Week / Today); the other presets collapse every leaderboard onto
+// one shared window and relabel every card's corner to match. Presets stay
+// pinned to 2026; Custom may reach back to 2024 (matching CEO Executive).
+const YEAR_START = "2026-01-01"
+const YEAR_END = "2026-12-31"
+const CUSTOM_MIN = "2024-01-01"
+
+type PodiumRange = "default" | "mtd" | "ytd" | "full" | "custom"
+
+const RANGE_OPTIONS: { k: PodiumRange; label: string }[] = [
+  { k: "default", label: "Default" },
+  { k: "mtd", label: "MTD" },
+  { k: "ytd", label: "YTD" },
+  { k: "full", label: "Full 2026" },
+  { k: "custom", label: "Custom" },
+]
+
+// Corner-label shown in every card when the matching range is active.
+const RANGE_CORNER: Record<Exclude<PodiumRange, "default">, string> = {
+  mtd: "MTD",
+  ytd: "YTD",
+  full: "Full 2026",
+  custom: "Custom",
+}
+
+function todayIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`
+}
+
+function monthStartIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
+}
+
+function clampToYear(iso: string) {
+  if (iso < YEAR_START) return YEAR_START
+  if (iso > YEAR_END) return YEAR_END
+  return iso
+}
+
+// Custom range gets a wider floor (back to 2024) than the presets.
+function clampCustom(iso: string) {
+  if (iso < CUSTOM_MIN) return CUSTOM_MIN
+  if (iso > YEAR_END) return YEAR_END
+  return iso
+}
 
 // Shared body for "DFW Podium Top" and its four server-locked per-team
 // variants (Bruno R7, 2026-06-02). The main report passes no team; each
@@ -39,10 +91,44 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
   const debouncedEquipment = useDebounce(equipment, 300)
   // Bruno R1 (2026-06-09): "Bookers" roster (default) vs "All DFW".
   const [group, setGroup] = useState<BookerGroup>("bookers")
-  const q = usePodiumTop(apiPrefix, debouncedEquipment, group)
+  // Common Range filter (2026-07-08). "default" keeps the This Week / Today
+  // split; any other preset re-windows all five boxes onto one range.
+  const [range, setRange] = useState<PodiumRange>("default")
+  const [customStart, setCustomStart] = useState<string>(monthStartIso())
+  const [customEnd, setCustomEnd] = useState<string>(clampToYear(todayIso()))
+
+  // Resolve the range to explicit ISO bounds (undefined = default split).
+  const appliedRange = useMemo<{ start?: string; end?: string }>(() => {
+    switch (range) {
+      case "mtd":
+        return { start: monthStartIso(), end: clampToYear(todayIso()) }
+      case "ytd":
+        return { start: YEAR_START, end: clampToYear(todayIso()) }
+      case "full":
+        return { start: YEAR_START, end: YEAR_END }
+      case "custom":
+        return { start: clampCustom(customStart), end: clampCustom(customEnd) }
+      default:
+        return {}
+    }
+  }, [range, customStart, customEnd])
+
+  const q = usePodiumTop(
+    apiPrefix,
+    debouncedEquipment,
+    group,
+    appliedRange.start,
+    appliedRange.end,
+  )
   const data = q.data?.data
   const equipmentActive = debouncedEquipment.trim() !== ""
   const lastUpdated = q.dataUpdatedAt ? new Date(q.dataUpdatedAt) : null
+
+  // When a range is active every card's corner shows the range label; in
+  // Default the weekly cards keep "This Week" and the daily cards keep "Today".
+  const rangeCorner = range === "default" ? null : RANGE_CORNER[range]
+  const weekSubtitle = rangeCorner ?? "This Week"
+  const todaySubtitle = rangeCorner ?? "Today"
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
@@ -94,9 +180,53 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
           </div>
         ) : null}
 
-        {/* Group toggle (R1) + Equipment Type filter (R8) */}
+        {/* Range filter (2026-07-08) + Group toggle (R1) + Equipment (R8) */}
         <section className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5">
           <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+                Range
+              </span>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
+                  {RANGE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.k}
+                      type="button"
+                      onClick={() => setRange(opt.k)}
+                      className={`px-3 py-1.5 ${
+                        range === opt.k
+                          ? "rounded-md bg-white font-semibold text-[#1B3A5C] shadow-sm"
+                          : "text-[#6B7280] hover:text-[#111827]"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {range === "custom" && (
+                  <div className="flex items-center gap-1 text-xs">
+                    <input
+                      type="date"
+                      min={CUSTOM_MIN}
+                      max={YEAR_END}
+                      value={customStart}
+                      onChange={(e) => setCustomStart(e.target.value)}
+                      className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-[#111827]"
+                    />
+                    <span className="text-[#6B7280]">→</span>
+                    <input
+                      type="date"
+                      min={CUSTOM_MIN}
+                      max={YEAR_END}
+                      value={customEnd}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-[#111827]"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
                 Group
@@ -151,10 +281,24 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
                 &ldquo;{debouncedEquipment.trim()}&rdquo;.
               </p>
             )}
+            {rangeCorner && (
+              <p className="pb-1.5 text-[11px] text-[#6B7280]">
+                All boxes use one common window
+                {appliedRange.start && appliedRange.end
+                  ? ` (${appliedRange.start} → ${appliedRange.end})`
+                  : ""}
+                .
+              </p>
+            )}
           </div>
         </section>
 
-        <Podiums data={data} loading={q.isLoading} />
+        <Podiums
+          data={data}
+          loading={q.isLoading}
+          weekSubtitle={weekSubtitle}
+          todaySubtitle={todaySubtitle}
+        />
       </div>
     </div>
   )
@@ -178,9 +322,13 @@ type PodiumColumn = {
 function Podiums({
   data,
   loading,
+  weekSubtitle,
+  todaySubtitle,
 }: {
   data: PodiumLeaderboards | undefined
   loading: boolean
+  weekSubtitle: string
+  todaySubtitle: string
 }) {
   if (loading || !data) {
     return (
@@ -225,21 +373,21 @@ function Podiums({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <PodiumTable
           title="Best Profit This Week"
-          subtitle="This Week"
+          subtitle={weekSubtitle}
           rows={data.week_top_profit as unknown as Record<string, unknown>[]}
           accent="#C2410C"
           columns={[postedByCol, profitCol, loadsCol]}
         />
         <PodiumTable
           title="TOP 3 Bookers by Margin"
-          subtitle="This Week"
+          subtitle={weekSubtitle}
           rows={data.week_top_margin as unknown as Record<string, unknown>[]}
           accent="#1B3A5C"
           columns={[postedByCol, marginCol, loadsCol]}
         />
         <PodiumTable
           title="Best Loads This Week"
-          subtitle="This Week"
+          subtitle={weekSubtitle}
           rows={data.week_top_loads as unknown as Record<string, unknown>[]}
           accent="#DC2626"
           columns={[postedByCol, loadsCol]}
@@ -248,14 +396,14 @@ function Podiums({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <PodiumTable
           title="TOP Bookers by Loads"
-          subtitle="Today"
+          subtitle={todaySubtitle}
           rows={data.today_top_loads as unknown as Record<string, unknown>[]}
           accent="#DC2626"
           columns={[postedByCol, loadsCol, profitCol]}
         />
         <PodiumTable
           title="TOP Bookers by Profit"
-          subtitle="Today"
+          subtitle={todaySubtitle}
           rows={data.today_top_profit as unknown as Record<string, unknown>[]}
           accent="#C2410C"
           columns={[postedByCol, profitCol, loadsCol]}
