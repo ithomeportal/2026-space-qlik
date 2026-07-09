@@ -183,10 +183,13 @@ function CeoExecutiveContent() {
       sunday.setDate(monday.getDate() + 6)
       return { startDate: clampToYear(isoOf(monday)), endDate: clampToYear(isoOf(sunday)) }
     }
-    // Request 2: a day button = Monday-of-week → that day (week-to-date).
+    // Bruno 2026-07-09: a day button = month-start → that day (month-to-date),
+    // e.g. clicking "Monday 6" shows Jul 1 → Jul 6 cumulatively. Month is taken
+    // from selectedDay itself so a week straddling a month boundary resolves to
+    // the correct month-start (string slice, no Date/TZ math).
     if (range === "day") {
-      const monday = weekStartDate()
-      return { startDate: clampToYear(isoOf(monday)), endDate: clampToYear(selectedDay) }
+      const monthStart = `${selectedDay.slice(0, 7)}-01`
+      return { startDate: clampToYear(monthStart), endDate: clampToYear(selectedDay) }
     }
     return { startDate: clampCustom(startDate), endDate: clampCustom(endDate) }
   }, [range, startDate, endDate, selectedDay])
@@ -401,7 +404,7 @@ function CeoExecutiveContent() {
         </div>
 
         {/* Bruno 2026-06-30 Request 2: per-day buttons for the current week.
-            Each applies Monday-of-week → that day (week-to-date). */}
+            Each applies month-start → that day (month-to-date, Bruno 2026-07-09). */}
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-1 px-6 pb-3">
           <label className="mr-1 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
             Day
