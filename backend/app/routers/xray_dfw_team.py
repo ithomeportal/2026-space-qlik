@@ -385,6 +385,27 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
             _user=_user,
         )
 
+    @r.get("/contract-spot-kpis")
+    async def contract_spot_kpis(
+        request: Request,
+        range: Optional[str] = Query("ytd"),
+        start_date: Optional[date] = Query(None),
+        end_date: Optional[date] = Query(None),
+        customers: Optional[str] = Query(None),
+        lanes: Optional[str] = Query(None),
+        view: Optional[str] = Query(None),
+        contract_type: Optional[str] = Query(None),
+        equipment: Optional[str] = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        # §40: forward EVERY param explicitly — a direct Python call never
+        # applies Query() defaults, so an omitted arg would arrive as FieldInfo.
+        return await xray_dfw.contract_spot_kpis(
+            request=request, range=range, start_date=start_date, end_date=end_date,
+            sub_teams=tm, customers=customers, lanes=lanes, view=view,
+            contract_type=contract_type, equipment=equipment, _user=_user,
+        )
+
     @r.get("/all-orders")
     async def all_orders(
         request: Request,

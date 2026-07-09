@@ -323,6 +323,17 @@ export interface XrayDfwContractSpot {
   spot: XrayDfwContractSpotPoint[]
 }
 
+export interface XrayDfwContractSpotKpiBlock {
+  profit: number
+  losses: number
+  total: number
+}
+
+export interface XrayDfwContractSpotKpis {
+  contract: XrayDfwContractSpotKpiBlock
+  spot: XrayDfwContractSpotKpiBlock
+}
+
 export interface XrayDfwAllOrder {
   team: string
   id: string
@@ -590,6 +601,21 @@ export function useXrayDfwContractSpot(
       apiFetch<XrayDfwContractSpot>(
         `${prefix}/contract-spot${dfwQs({ range: "full", ...f })}`,
       ),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// Contract vs Spot summary KPIs (Bruno 2026-07-09). Honors the global Range
+// bar + all scope filters (parity with the All Orders / Lane Analysis tables),
+// so it takes the full `filters` — unlike the 9-week charts above.
+export function useXrayDfwContractSpotKpis(f: XrayDfwFilters, enabled = true) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    ...XRAY_DFW_RETRY,
+    enabled,
+    queryKey: [prefix, "contract-spot-kpis", f],
+    queryFn: () =>
+      apiFetch<XrayDfwContractSpotKpis>(`${prefix}/contract-spot-kpis${dfwQs(f)}`),
     staleTime: 5 * 60 * 1000,
   })
 }

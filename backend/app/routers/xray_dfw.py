@@ -1833,6 +1833,80 @@ async def contract_spot(
     return {"success": True, "data": {"contract": contract, "spot": spot}}
 
 
+@router.get("/contract-spot-kpis")
+async def contract_spot_kpis(
+    request: Request,
+    range: Optional[str] = Query("ytd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    sub_teams: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    lanes: Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("xray-dfw-mng")),
+):
+    """Contract vs Spot summary KPIs (Bruno 2026-07-09).
+
+    Six tiles at the top of the tab — Profit / Losses / Total Amount for
+    CONTRACT and SPOT:
+      * profit = SUM(margin_amt)
+      * losses = SUM(margin_amt) FILTER (WHERE margin_amt < 0)   (<= 0)
+      * total  = profit - losses                                 (gross profit
+                 of the winning loads, since losses are non-positive)
+
+    Honors the global Range bar + every scope filter, so the KPIs reconcile
+    with the All Orders / Lane Analysis tables below (NOT the fixed 9-week
+    chart window). Sargable half-open date bounds keep idx_v4_dep alive — no
+    ::date cast on the indexed origin_actual_departure (SPEC-CODE-RULES §43).
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
+    customers_list = _parse_list(customers)
+    lanes_list = _parse_list(lanes)
+    contract_type_list = _parse_list(contract_type)
+    equipment_list = _parse_list(equipment)
+
+    params: list = []
+    where = _scope_where(
+        "br4", sub_team_list, customers_list, params, view=view, lanes=lanes_list,
+        contract_types=contract_type_list, equipment=equipment_list,
+    )
+    params.extend([s, e])
+    date_frag = (
+        f"br4.origin_actual_departure >= ${len(params)-1}"
+        f" AND br4.origin_actual_departure < (${len(params)}::date + 1)"
+    )
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          LOWER(TRIM(COALESCE(br4.contract_type_descr, ''))) AS kind,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit,
+          COALESCE(SUM(br4.margin_amt) FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+          AND {date_frag}
+          AND LOWER(TRIM(COALESCE(br4.contract_type_descr,''))) IN ('contract','spot')
+        GROUP BY kind
+        """,
+        *params,
+    )
+
+    def _block(kind: str) -> dict:
+        r = next((x for x in rows if x["kind"] == kind), None)
+        profit = float(r["profit"] or 0) if r else 0.0
+        losses = float(r["losses"] or 0) if r else 0.0
+        return {"profit": profit, "losses": losses, "total": profit - losses}
+
+    return {
+        "success": True,
+        "data": {"contract": _block("contract"), "spot": _block("spot")},
+    }
+
+
 @router.get("/all-orders")
 async def all_orders(
     request: Request,

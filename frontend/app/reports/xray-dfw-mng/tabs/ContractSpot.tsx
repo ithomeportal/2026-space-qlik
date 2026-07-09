@@ -19,6 +19,7 @@ import {
   fmtUsd,
   useXrayDfwAllOrders,
   useXrayDfwContractSpot,
+  useXrayDfwContractSpotKpis,
   useXrayDfwLaneAnalysis,
   type XrayDfwFilters,
 } from "@/lib/xray-dfw-api"
@@ -59,9 +60,11 @@ export function ContractSpot({
   }, [filterKey])
 
   const { data: csRes, isLoading: loadingCs, error: csErr } = useXrayDfwContractSpot(trioFilter)
+  const { data: kpiRes, isLoading: loadingKpi, error: kpiErr } = useXrayDfwContractSpotKpis(filters)
   const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayDfwAllOrders(filters, page)
   const { data: laRes, isLoading: loadingLa, error: laErr } = useXrayDfwLaneAnalysis(filters)
   const cs = csRes?.data
+  const kpi = kpiRes?.data
   const ordersPage = ordersRes?.data
   const orders = ordersPage?.rows ?? []
   const ordersTotals = ordersPage?.totals
@@ -77,7 +80,24 @@ export function ContractSpot({
 
   return (
     <div className="space-y-6">
-      <XrayDfwErrorBanner label="Contract vs Spot" errors={[csErr, ordErr, laErr]} />
+      <XrayDfwErrorBanner label="Contract vs Spot" errors={[csErr, kpiErr, ordErr, laErr]} />
+
+      {/* Bruno 2026-07-09: Contract vs Spot summary KPIs (top of page). Honors
+          the global Range bar + all scope filters, reconciling with the All
+          Orders / Lane Analysis tables below. Total = Profit − Losses. */}
+      <section className="space-y-3">
+        <KpiGroup title="Contractual" subtitle="contract_type = CONTRACT">
+          <CsKpi label="Contractual Profit" value={fmtUsd(kpi?.contract.profit)} tone="yellow" loading={loadingKpi} />
+          <CsKpi label="Contractual Losses" value={fmtUsd(kpi?.contract.losses)} tone="red" loading={loadingKpi} />
+          <CsKpi label="Contractual Total Amount" value={fmtUsd(kpi?.contract.total)} tone="green" loading={loadingKpi} />
+        </KpiGroup>
+        <KpiGroup title="SPOT" subtitle="contract_type = SPOT">
+          <CsKpi label="SPOT Profit" value={fmtUsd(kpi?.spot.profit)} tone="yellow" loading={loadingKpi} />
+          <CsKpi label="SPOT Losses" value={fmtUsd(kpi?.spot.losses)} tone="red" loading={loadingKpi} />
+          <CsKpi label="SPOT Total Amount" value={fmtUsd(kpi?.spot.total)} tone="green" loading={loadingKpi} />
+        </KpiGroup>
+      </section>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <ChartCard title="% Contract — Revenue vs Loads" subtitle="Last 9 weeks" loading={loadingCs}>
           <ResponsiveContainer width="100%" height={220}>
@@ -327,6 +347,53 @@ export function ContractSpot({
           </div>
         )}
       </section>
+    </div>
+  )
+}
+
+const KPI_TONES: Record<string, string> = {
+  red: "border-[#FCA5A5] text-[#DC2626]",
+  yellow: "border-[#FCD34D] text-[#D97706]",
+  green: "border-[#86EFAC] text-[#16A34A]",
+}
+
+function KpiGroup({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[#374151]">{title}</span>
+        <span className="text-[10px] text-[#9CA3AF]">{subtitle}</span>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{children}</div>
+    </div>
+  )
+}
+
+function CsKpi({
+  label,
+  value,
+  tone,
+  loading,
+}: {
+  label: string
+  value: string
+  tone: keyof typeof KPI_TONES
+  loading?: boolean
+}) {
+  return (
+    <div className={`rounded-lg border-2 ${KPI_TONES[tone]} bg-white p-3 text-center shadow-sm`}>
+      <div className="text-xs uppercase tracking-wider text-[#6B7280]">{label}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums">
+        {loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : value}
+      </div>
     </div>
   )
 }
