@@ -88,6 +88,14 @@ function rangeQuery(b: KamBounds): string {
   return `range=custom&start_date=${encodeURIComponent(b.start)}&end_date=${encodeURIComponent(b.end)}`
 }
 
+// DFW sub-team pill (TM1..TM4) — shared across the Service, Lanes, Worst Lanes
+// and Carrier Sales tabs. Empty selection ⇒ no predicate (all sub-teams).
+function subTeamsQuery(subTeams: string[]): string {
+  return subTeams.length
+    ? `&sub_teams=${encodeURIComponent(subTeams.join(","))}`
+    : ""
+}
+
 // ---------------------------------------------------------------------------
 // Tab 1 — SCORECARDS
 // ---------------------------------------------------------------------------
@@ -366,12 +374,23 @@ interface ServiceOverviewResponse {
   kpi: ServiceOverviewKpi
 }
 
-export function useDfwServiceKpi(side: "pu" | "del", bounds: KamBounds) {
+export function useDfwServiceKpi(
+  side: "pu" | "del",
+  bounds: KamBounds,
+  subTeams: string[] = [],
+) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "service-kpi", side, bounds.start, bounds.end],
+    queryKey: [
+      "kam-performance-dfw",
+      "service-kpi",
+      side,
+      bounds.start,
+      bounds.end,
+      subTeams.join(","),
+    ],
     queryFn: () =>
       apiFetch<ServiceOverviewResponse>(
-        `custom/ops-customer-score/${side}/overview?${rangeQuery(bounds)}&division=DFW`,
+        `custom/ops-customer-score/${side}/overview?${rangeQuery(bounds)}&division=DFW${subTeamsQuery(subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -398,6 +417,7 @@ export function useDfwServiceFailures(
   bounds: KamBounds,
   page: number,
   limit = 200,
+  subTeams: string[] = [],
 ) {
   return useQuery({
     queryKey: [
@@ -409,10 +429,11 @@ export function useDfwServiceFailures(
       bounds.end,
       page,
       limit,
+      subTeams.join(","),
     ],
     queryFn: () =>
       apiFetch<ServiceFailureRow[]>(
-        `custom/ops-customer-score/${side}/${fault === "our" ? "our-fault" : "not-our-fault"}?${rangeQuery(bounds)}&division=DFW&page=${page}&limit=${limit}`,
+        `custom/ops-customer-score/${side}/${fault === "our" ? "our-fault" : "not-our-fault"}?${rangeQuery(bounds)}&division=DFW&page=${page}&limit=${limit}${subTeamsQuery(subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -421,10 +442,11 @@ export function useDfwServiceFailures(
 
 // ---------------------------------------------------------------------------
 // Tab 3 — Top 10 lanes filters (customer + sub-team), rides on xray-dfw.
-// GENERAL MOTORS + HOMEDEPOT are always dropped (Bruno R2).
+// "GM C/O CTSI" is always dropped (Bruno KAM update — was GENERAL MOTORS +
+// HOMEDEPOT; Home Depot is now returned and only GM C/O CTSI stays excluded).
 // ---------------------------------------------------------------------------
 
-const KAM_LANE_EXCLUDE = "GENERAL MOTORS,HOMEDEPOT"
+const KAM_LANE_EXCLUDE = "GM C/O CTSI"
 
 interface XrayDfwFilters {
   sub_teams: string[]
@@ -508,12 +530,18 @@ export interface KamWorstLaneRow {
   action_plan: string
 }
 
-export function useWorstLanes(bounds: KamBounds) {
+export function useWorstLanes(bounds: KamBounds, subTeams: string[] = []) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "worst-lanes", bounds.start, bounds.end],
+    queryKey: [
+      "kam-performance-dfw",
+      "worst-lanes",
+      bounds.start,
+      bounds.end,
+      subTeams.join(","),
+    ],
     queryFn: () =>
       apiFetch<KamWorstLaneRow[]>(
-        `custom/kam-performance-dfw/worst-lanes?${rangeQuery(bounds)}&limit=10`,
+        `custom/kam-performance-dfw/worst-lanes?${rangeQuery(bounds)}&limit=10${subTeamsQuery(subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,
@@ -552,12 +580,18 @@ export interface KamCarrierSalesRow {
   comments: string
 }
 
-export function useCarrierSales(bounds: KamBounds) {
+export function useCarrierSales(bounds: KamBounds, subTeams: string[] = []) {
   return useQuery({
-    queryKey: ["kam-performance-dfw", "carrier-sales", bounds.start, bounds.end],
+    queryKey: [
+      "kam-performance-dfw",
+      "carrier-sales",
+      bounds.start,
+      bounds.end,
+      subTeams.join(","),
+    ],
     queryFn: () =>
       apiFetch<KamCarrierSalesRow[]>(
-        `custom/kam-performance-dfw/carrier-sales?${rangeQuery(bounds)}`,
+        `custom/kam-performance-dfw/carrier-sales?${rangeQuery(bounds)}${subTeamsQuery(subTeams)}`,
       ),
     staleTime: 60 * 1000,
     ...RETRY,

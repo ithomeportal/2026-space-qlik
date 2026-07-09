@@ -38,8 +38,8 @@ const TABS: { k: TabKey; label: string; icon: React.ReactNode }[] = [
   { k: "lanes", label: "Top 10 lanes", icon: <TrendingUp className="h-3.5 w-3.5" /> },
   { k: "worst-lanes", label: "Worst 10 Lanes", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
   { k: "carrier-sales", label: "Carrier Sales", icon: <Truck className="h-3.5 w-3.5" /> },
-  { k: "customer-dev", label: "Customer Dev", icon: <ClipboardList className="h-3.5 w-3.5" /> },
-  { k: "team-dev", label: "Team Dev", icon: <Users className="h-3.5 w-3.5" /> },
+  { k: "customer-dev", label: "Customer Development", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+  { k: "team-dev", label: "Team Development", icon: <Users className="h-3.5 w-3.5" /> },
 ]
 
 function KamPerformanceContent() {

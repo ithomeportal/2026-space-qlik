@@ -8,17 +8,22 @@ import {
   type KamWorstLaneRow,
 } from "@/lib/kam-performance-dfw-api"
 import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
+import { SubTeamFilter } from "./SubTeamFilter"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
 
 export function Tab6WorstLanes() {
   const { value, setValue, bounds } = useKamDateRange("ytd")
-  const { data, isLoading } = useWorstLanes(bounds)
+  const [subTeams, setSubTeams] = useState<string[]>([])
+  const { data, isLoading } = useWorstLanes(bounds, subTeams)
   const upsert = useUpsertWorstLaneNote()
   const rows = data?.data ?? []
 
   return (
     <div className="space-y-4">
-      <DateRangeControl value={value} onChange={setValue} />
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangeControl value={value} onChange={setValue} />
+        <SubTeamFilter value={subTeams} onChange={setSubTeams} />
+      </div>
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="mb-1 flex items-center gap-2">

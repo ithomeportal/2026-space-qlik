@@ -55,6 +55,7 @@ router = APIRouter(
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
 DFW_TEAMS = ("TEAM-DFW",)
+DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
 COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
@@ -124,6 +125,17 @@ def _dfw_scope_where(alias: str, params: list) -> str:
             f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
         ]
     )
+
+
+def _parse_sub_teams(raw: Optional[str]) -> list[str]:
+    """CSV of DFW sub-teams (Bruno KAM update: Team filter on Service / Worst
+    Lanes / Carrier Sales). Only TM1..TM4 are honoured — anything else is
+    dropped so a hand-crafted URL can't widen the scope. Matches ``v4.team``
+    with TRIM equality (same sargable pattern as xray-dfw)."""
+    if not raw:
+        return []
+    wanted = {t.strip().upper() for t in raw.split(",") if t.strip()}
+    return [t for t in DFW_SUB_TEAMS if t in wanted]
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +650,7 @@ async def worst_lanes(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     limit: int = Query(10, ge=1, le=50),
+    sub_teams: Optional[str] = Query(None),
     user: dict = Depends(require_report_access("kam-performance-dfw")),
 ):
     gold = get_datalake_gold_pool(request)
@@ -645,6 +658,10 @@ async def worst_lanes(
 
     params: list = []
     where = _dfw_scope_where("b", params)
+    sub_team_list = _parse_sub_teams(sub_teams)
+    if sub_team_list:
+        params.append(sub_team_list)
+        where += f" AND TRIM(b.team) = ANY(${len(params)})"
     params.extend([s, e, limit])
     p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
 
@@ -780,6 +797,7 @@ async def carrier_sales(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     limit: int = Query(100, ge=1, le=300),
+    sub_teams: Optional[str] = Query(None),
     user: dict = Depends(require_report_access("kam-performance-dfw")),
 ):
     gold = get_datalake_gold_pool(request)
@@ -789,6 +807,12 @@ async def carrier_sales(
     # Scope predicates live on the dispatchers alias ``d``.
     params.append(_pad_variants(list(DFW_TEAMS), width=8))
     p_teams = len(params)
+    # Optional DFW sub-team pill (Bruno KAM update) — filter on v4 ``b.team``.
+    sub_team_list = _parse_sub_teams(sub_teams)
+    sub_clause = ""
+    if sub_team_list:
+        params.append(sub_team_list)
+        sub_clause = f"\n            AND TRIM(b.team) = ANY(${len(params)})"
     params.extend([s, e, limit])
     p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
 
@@ -809,7 +833,7 @@ async def carrier_sales(
             AND UPPER(COALESCE(d.customer_name,'')) NOT LIKE '%UNILINK%'
             AND UPPER(COALESCE(d.customer_name,'')) NOT LIKE '%OILTEX%'
             AND TRIM(COALESCE(b.origin_name,'')) <> ''
-            AND TRIM(COALESCE(b.dest_name,'')) <> ''
+            AND TRIM(COALESCE(b.dest_name,'')) <> ''{sub_clause}
         ),
         carrier_latest AS (
           SELECT lane, carrier_name, MAX(dep) AS last_dep

@@ -8,17 +8,22 @@ import {
   type KamCarrierSalesRow,
 } from "@/lib/kam-performance-dfw-api"
 import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
+import { SubTeamFilter } from "./SubTeamFilter"
 import { fmtCount, fmtUsd } from "./format"
 
 export function Tab7CarrierSales() {
   const { value, setValue, bounds } = useKamDateRange("mtd")
-  const { data, isLoading } = useCarrierSales(bounds)
+  const [subTeams, setSubTeams] = useState<string[]>([])
+  const { data, isLoading } = useCarrierSales(bounds, subTeams)
   const upsert = useUpsertCarrierComment()
   const rows = data?.data ?? []
 
   return (
     <div className="space-y-4">
-      <DateRangeControl value={value} onChange={setValue} />
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangeControl value={value} onChange={setValue} />
+        <SubTeamFilter value={subTeams} onChange={setSubTeams} />
+      </div>
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="mb-1 flex items-center gap-2">

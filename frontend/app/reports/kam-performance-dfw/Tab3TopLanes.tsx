@@ -10,9 +10,8 @@ import {
   useXrayDfwFilters,
 } from "@/lib/kam-performance-dfw-api"
 import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
+import { SubTeamFilter } from "./SubTeamFilter"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
-
-const SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"]
 
 export function Tab3TopLanes() {
   const { value, setValue, bounds } = useKamDateRange("wtd")
@@ -25,11 +24,6 @@ export function Tab3TopLanes() {
   const k = kpiRes?.data
   const lanes = lanesRes?.data ?? []
   const customers = filters?.data?.customers ?? []
-
-  const toggleTeam = (t: string) =>
-    setSubTeams((prev) =>
-      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
-    )
 
   return (
     <div className="space-y-4">
@@ -47,29 +41,7 @@ export function Tab3TopLanes() {
             </option>
           ))}
         </select>
-        <div className="inline-flex overflow-hidden rounded-md border border-[#E5E7EB]">
-          {SUB_TEAMS.map((t) => (
-            <button
-              key={t}
-              onClick={() => toggleTeam(t)}
-              className={`px-3 py-1.5 text-xs ${
-                subTeams.includes(t)
-                  ? "bg-[#1B3A5C] text-white"
-                  : "bg-white text-[#374151] hover:bg-[#F9FAFB]"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        {subTeams.length > 0 && (
-          <button
-            onClick={() => setSubTeams([])}
-            className="text-[10px] text-[#6B7280] underline hover:text-[#111827]"
-          >
-            Clear teams
-          </button>
-        )}
+        <SubTeamFilter value={subTeams} onChange={setSubTeams} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -79,8 +51,8 @@ export function Tab3TopLanes() {
         <KpiBox label="Margin %" value={loadingKpi ? "…" : fmtPct(k?.margin_pct)} />
       </div>
       <div className="text-[10px] text-[#6B7280]">
-        {bounds.start} → {bounds.end} · scope: TEAM-DFW · GENERAL MOTORS +
-        HOMEDEPOT excluded · source: xray-dfw-mng
+        {bounds.start} → {bounds.end} · scope: TEAM-DFW · GM C/O CTSI excluded ·
+        source: xray-dfw-mng
       </div>
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">

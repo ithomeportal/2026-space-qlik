@@ -8,14 +8,16 @@ import {
   type ServiceFailureRow,
 } from "@/lib/kam-performance-dfw-api"
 import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
+import { SubTeamFilter } from "./SubTeamFilter"
 import { fmtCount, fmtDate, fmtPct } from "./format"
 
 type Side = "pu" | "del"
 
 export function Tab2Service() {
   const { value, setValue, bounds } = useKamDateRange("wtd")
-  const { data: puKpi, isLoading: loadingPu } = useDfwServiceKpi("pu", bounds)
-  const { data: delKpi, isLoading: loadingDel } = useDfwServiceKpi("del", bounds)
+  const [subTeams, setSubTeams] = useState<string[]>([])
+  const { data: puKpi, isLoading: loadingPu } = useDfwServiceKpi("pu", bounds, subTeams)
+  const { data: delKpi, isLoading: loadingDel } = useDfwServiceKpi("del", bounds, subTeams)
   const [side, setSide] = useState<Side>("pu")
 
   const otp = puKpi?.data?.kpi
@@ -23,7 +25,10 @@ export function Tab2Service() {
 
   return (
     <div className="space-y-4">
-      <DateRangeControl value={value} onChange={setValue} />
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangeControl value={value} onChange={setValue} />
+        <SubTeamFilter value={subTeams} onChange={setSubTeams} />
+      </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <KpiCard
@@ -72,7 +77,7 @@ export function Tab2Service() {
             Click any column to sort
           </span>
         </div>
-        <FailuresTable side={side} bounds={bounds} />
+        <FailuresTable side={side} bounds={bounds} subTeams={subTeams} />
       </div>
     </div>
   )
@@ -155,10 +160,18 @@ function cmpVal(row: FailRow, key: SortKey): string | number {
   return typeof v === "string" ? v.toLowerCase() : ""
 }
 
-function FailuresTable({ side, bounds }: { side: Side; bounds: { start: string; end: string } }) {
+function FailuresTable({
+  side,
+  bounds,
+  subTeams,
+}: {
+  side: Side
+  bounds: { start: string; end: string }
+  subTeams: string[]
+}) {
   // Pull both buckets in parallel; merge into one sortable list.
-  const our = useDfwServiceFailures(side, "our", bounds, 1, 200)
-  const not = useDfwServiceFailures(side, "not", bounds, 1, 200)
+  const our = useDfwServiceFailures(side, "our", bounds, 1, 200, subTeams)
+  const not = useDfwServiceFailures(side, "not", bounds, 1, 200, subTeams)
 
   const [sortKey, setSortKey] = useState<SortKey>("counted")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
