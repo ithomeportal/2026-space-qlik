@@ -55,7 +55,7 @@ export function TopDelayedCustomers({ filters }: Props) {
         </div>
       </div>
       <div className="text-[11px] text-[#6B7280]">
-        Late = bill_date − dest_actual_departure &gt; 10 days · ranked by $
+        Late = bill_date − dest_actual_departure &gt; 2 days · ranked by $
         revenue at risk
       </div>
       <div className="mt-3 max-h-52 overflow-auto">
@@ -65,7 +65,7 @@ export function TopDelayedCustomers({ filters }: Props) {
           </div>
         ) : rows.length === 0 ? (
           <div className="py-8 text-center text-xs text-[#9CA3AF]">
-            No customers with &gt;10-day delays in current filters
+            No customers with &gt;2-day delays in current filters
           </div>
         ) : (
           <table className="w-full text-xs">

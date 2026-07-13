@@ -113,6 +113,17 @@ export interface AdminCashflowFacets {
   alarm_usd: number
 }
 
+// Bruno Aging R (PDF 2026-07-13): trend Δ vs prior period under a KPI card.
+// `curr`/`prev` are the current-window and prior-window values (null when the
+// prior window has no qualifying loads). unit "pp" = percentage points (% cards),
+// "d" = days (avg-days card). basis "LM" = vs last month, "LW" = vs last week.
+export interface KpiTrendCmp {
+  curr: number | null
+  prev: number | null
+  basis: "LM" | "LW"
+  unit: "pp" | "d"
+}
+
 export interface AdminCashflowKpis {
   pct_del_bill_le2: number
   pct_bol_bill_le1: number
@@ -139,6 +150,12 @@ export interface AdminCashflowKpis {
   carrinv_total_count: number
   carrinv_le1_rev: number
   carrinv_total_rev: number
+  // Bruno Aging R (PDF 2026-07-13) — trend Δ vs prior period on 3 cards.
+  trend?: {
+    del: KpiTrendCmp
+    bol: KpiTrendCmp
+    avg_days_bol: KpiTrendCmp
+  }
   window: { start: string; end: string }
 }
 
@@ -158,7 +175,13 @@ export interface TimingMetricSeries {
   over: number[]
 }
 
+export type TimingGrain = "week" | "month"
+
 export interface AdminCashflowTimingMonthly {
+  // Bruno Aging R (PDF 2026-07-13): buckets are months (default) or weeks.
+  // The field stays named `months` for back-compat; values are bucket-start
+  // ISO dates (month-1st for month grain, ISO-Monday for week grain).
+  grain?: TimingGrain
   months: string[]
   del: TimingMetricSeries
   bol: TimingMetricSeries
@@ -287,8 +310,10 @@ export function useAdminCashflowSparklines(f: AdminCashflowFilters) {
 export function useAdminCashflowTimingMonthly(
   f: AdminCashflowFilters,
   enabled: boolean,
+  grain: TimingGrain = "month",
 ) {
   const scopeKey = [
+    grain,
     (f.teams ?? []).slice().sort().join(","),
     (f.companies ?? []).slice().sort().join(","),
     f.customer ?? "",
@@ -300,6 +325,7 @@ export function useAdminCashflowTimingMonthly(
     queryKey: ["admin-cashflow", "timing-monthly", ...scopeKey],
     queryFn: () => {
       const q = new URLSearchParams()
+      q.set("grain", grain)
       if (f.teams?.length) q.set("teams", f.teams.join(","))
       if (f.companies?.length) q.set("companies", f.companies.join(","))
       if (f.customers && f.customers.length) {

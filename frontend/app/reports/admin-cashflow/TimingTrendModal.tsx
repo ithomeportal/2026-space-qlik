@@ -17,6 +17,7 @@ import {
 import {
   useAdminCashflowTimingMonthly,
   type AdminCashflowFilters,
+  type TimingGrain,
   type TimingMetricKey,
 } from "@/lib/admin-cashflow-api"
 import { UnbilledExpandModal } from "./UnbilledShared"
@@ -49,7 +50,16 @@ function fmtMonth(iso: string): string {
   return `${MONTHS_ABBR[mi]} ${y.slice(2)}`
 }
 
-// Default the brush to the most recent 8 months (matches the reference image).
+// Week grain: ISO-Monday bucket start "2026-06-15" → "Jun 15"
+function fmtWeek(iso: string): string {
+  const [, m, d] = iso.split("-")
+  const mi = Number(m) - 1
+  if (mi < 0 || mi > 11 || !d) return iso
+  return `${MONTHS_ABBR[mi]} ${Number(d)}`
+}
+
+// Default the brush to the most recent 8 buckets (matches the reference image;
+// Bruno Aging R 2026-07-13 also wants the Week view defaulting to 8 weeks).
 const DEFAULT_VISIBLE = 8
 
 export function TimingTrendModal({
@@ -62,22 +72,26 @@ export function TimingTrendModal({
   onClose: () => void
 }) {
   const meta = META[metric]
+  // Bruno Aging R (PDF 2026-07-13): Month (default) / Week grain toggle.
+  const [grain, setGrain] = useState<TimingGrain>("month")
   const { data: res, isLoading, error } = useAdminCashflowTimingMonthly(
     filters,
     true,
+    grain,
   )
   const payload = res?.data
 
   const chartData = useMemo(() => {
     if (!payload) return []
     const s = payload[metric]
+    const fmt = grain === "week" ? fmtWeek : fmtMonth
     return payload.months.map((mon, i) => ({
-      label: fmtMonth(mon),
+      label: fmt(mon),
       total: s.total[i] ?? 0,
       within: s.within[i] ?? 0,
       over: s.over[i] ?? 0,
     }))
-  }, [payload, metric])
+  }, [payload, metric, grain])
 
   const [brush, setBrush] = useState<{ start: number; end: number }>({
     start: 0,
@@ -93,13 +107,35 @@ export function TimingTrendModal({
   return (
     <UnbilledExpandModal
       title={meta.title}
-      subtitle="Monthly orders — bar = total, green = on-time, red = late · trailing 13 months"
+      subtitle={
+        grain === "week"
+          ? "Weekly orders — bar = total, green = on-time, red = late · trailing 13 weeks"
+          : "Monthly orders — bar = total, green = on-time, red = late · trailing 13 months"
+      }
       onClose={onClose}
     >
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-[#374151]">
-        <LegendItem color={COLORS.total} label="Total orders" square />
-        <LegendItem color={COLORS.within} label={`On time (${meta.within})`} />
-        <LegendItem color={COLORS.over} label={`Late (${meta.over})`} />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[#374151]">
+        <div className="flex flex-wrap items-center gap-3">
+          <LegendItem color={COLORS.total} label="Total orders" square />
+          <LegendItem color={COLORS.within} label={`On time (${meta.within})`} />
+          <LegendItem color={COLORS.over} label={`Late (${meta.over})`} />
+        </div>
+        {/* Bruno Aging R (PDF 2026-07-13): Month / Week grain toggle. */}
+        <div className="inline-flex overflow-hidden rounded-md border border-[#E5E7EB]">
+          {(["month", "week"] as TimingGrain[]).map((g) => (
+            <button
+              key={g}
+              onClick={() => setGrain(g)}
+              className={`px-2.5 py-1 text-[11px] capitalize ${
+                grain === g
+                  ? "bg-[#1B3A5C] text-white"
+                  : "bg-white text-[#6B7280] hover:bg-[#F3F4F6]"
+              }`}
+            >
+              {g}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (

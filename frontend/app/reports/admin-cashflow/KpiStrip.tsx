@@ -7,6 +7,7 @@ import type {
   AdminCashflowFilters,
   AdminCashflowKpis,
   AdminCashflowSparklines,
+  KpiTrendCmp,
   TimingMetricKey,
 } from "@/lib/admin-cashflow-api"
 import { fmtCount, fmtPct, fmtUsd, fmtUsdCompact } from "./format"
@@ -22,6 +23,41 @@ interface Props {
 function fmtDays(v: number | undefined) {
   if (v === undefined || v === null || Number.isNaN(v)) return "—"
   return `${v.toFixed(1)}d`
+}
+
+// Bruno Aging R (PDF 2026-07-13): trend indicator under a KPI value.
+// Shows Δ = current − prior (percentage-points for % cards, days for the
+// avg-days card) with an arrow that follows the sign and a colour that
+// follows whether the metric improved. Hidden when either window lacks data.
+function TrendPill({
+  cmp,
+  higherIsBetter,
+}: {
+  cmp?: KpiTrendCmp
+  higherIsBetter: boolean
+}) {
+  if (
+    !cmp ||
+    cmp.curr === null ||
+    cmp.prev === null ||
+    Number.isNaN(cmp.curr) ||
+    Number.isNaN(cmp.prev)
+  ) {
+    return null
+  }
+  const delta = cmp.curr - cmp.prev
+  const flat = Math.abs(delta) < 0.05
+  const improved = higherIsBetter ? delta > 0 : delta < 0
+  const color = flat ? "#6B7280" : improved ? "#059669" : "#DC2626"
+  const arrow = flat ? "→" : delta > 0 ? "↑" : "↓"
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : ""
+  const mag = Math.abs(delta).toFixed(1)
+  const val = cmp.unit === "d" ? `${sign}${mag}d` : `${sign}${mag}%`
+  return (
+    <div className="mt-0.5 text-[10px] font-medium tabular-nums" style={{ color }}>
+      {arrow} {val} vs {cmp.basis}
+    </div>
+  )
 }
 
 // Bruno R4 PDF 2026-05-26 — supporting breakdown shown under each timing KPI.
@@ -96,10 +132,12 @@ export function KpiStrip({ kpis, loading, sparklines, filters }: Props) {
         label="Delivery vs Bill ≤2d"
         value={loading ? "…" : fmtPct(kpis?.pct_del_bill_le2)}
         threshold={95}
+        targetLabel="target ≤2 days"
         actual={kpis?.pct_del_bill_le2}
         spark={sparklines?.del_bill_le2 ?? []}
         weeks={sparklines?.weeks ?? []}
         detail={detailLeTotal(kpis, "≤2d", "del_le2", "del_total")}
+        trend={kpis?.trend?.del}
         onExpand={() => setOpenMetric("del")}
       />
       <AvgDaysKpiCard
@@ -119,6 +157,7 @@ export function KpiStrip({ kpis, loading, sparklines, filters }: Props) {
         spark={sparklines?.bol_bill_le1 ?? []}
         weeks={sparklines?.weeks ?? []}
         detail={detailLeTotal(kpis, "≤1d", "bol_le1", "bol_total")}
+        trend={kpis?.trend?.bol}
         onExpand={() => setOpenMetric("bol")}
       />
       <AvgDaysKpiCard
@@ -128,6 +167,7 @@ export function KpiStrip({ kpis, loading, sparklines, filters }: Props) {
         actual={kpis?.avg_days_bol_bill}
         warnAbove={1}
         detail={detailLeGt(kpis, "≤1d", ">1d", "bol_le1", "bol_total")}
+        trend={kpis?.trend?.avg_days_bol}
       />
       <PctKpiCard
         icon={<Receipt className="h-4 w-4 text-[#1B3A5C]" />}
@@ -177,9 +217,10 @@ interface AvgDaysKpiProps {
   actual: number | undefined
   warnAbove: number
   detail?: DetailRow[]
+  trend?: KpiTrendCmp
 }
 
-function AvgDaysKpiCard({ icon, label, value, actual, warnAbove, detail }: AvgDaysKpiProps) {
+function AvgDaysKpiCard({ icon, label, value, actual, warnAbove, detail, trend }: AvgDaysKpiProps) {
   // green if at/below target days; amber within 50% over; red beyond.
   let tone = "border-[#E5E7EB] bg-white"
   let valueColor = "text-[#1B3A5C]"
@@ -204,6 +245,7 @@ function AvgDaysKpiCard({ icon, label, value, actual, warnAbove, detail }: AvgDa
       <div className={`mt-1 text-2xl font-semibold tabular-nums ${valueColor}`}>
         {value}
       </div>
+      <TrendPill cmp={trend} higherIsBetter={false} />
       <div className="mt-1 text-[10px] text-[#6B7280]">target ≤{warnAbove}d</div>
       <KpiDetail rows={detail} />
     </div>
@@ -215,14 +257,16 @@ interface PctKpiProps {
   label: string
   value: string
   threshold: number
+  targetLabel?: string
   actual: number | undefined
   spark: (number | null)[]
   weeks: string[]
   detail?: DetailRow[]
+  trend?: KpiTrendCmp
   onExpand?: () => void
 }
 
-function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detail, onExpand }: PctKpiProps) {
+function PctKpiCard({ icon, label, value, threshold, targetLabel, actual, spark, weeks, detail, trend, onExpand }: PctKpiProps) {
   // Card highlight: green if at/above threshold, amber if within 5pts, red below.
   let tone = "border-[#E5E7EB] bg-white"
   let valueColor = "text-[#1B3A5C]"
@@ -263,8 +307,9 @@ function PctKpiCard({ icon, label, value, threshold, actual, spark, weeks, detai
       <div className={`mt-1 text-2xl font-semibold tabular-nums ${valueColor}`}>
         {value}
       </div>
+      <TrendPill cmp={trend} higherIsBetter={true} />
       <div className="mt-1 text-[10px] text-[#6B7280]">
-        target ≥{threshold}%
+        {targetLabel ?? `target ≥${threshold}%`}
       </div>
       <KpiDetail rows={detail} />
       <div className="mt-1 h-10">

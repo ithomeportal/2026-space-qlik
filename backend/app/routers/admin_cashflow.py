@@ -488,6 +488,107 @@ async def kpis(
     ready_not_billed = float(row["ready_not_billed_usd"] or 0)
     total_unbilled = delivered_not_billed + ready_not_billed
 
+    # ------------------------------------------------------------------
+    # Bruno Aging R (PDF 2026-07-13) — trend Δ vs prior period on 3 KPIs.
+    # Per the mockup labels the % cards (Delivery, BOL) compare month-to-date
+    # vs last full month ("vs LM"); the Avg-Days BOL card compares this week
+    # vs last full week ("vs LW"). These windows are FIXED (independent of the
+    # page date range) so the labels stay stable no matter what range is
+    # selected. One extra scan over [last-month-start … today]; the
+    # within/total predicates mirror the headline % so the deltas reconcile.
+    # ------------------------------------------------------------------
+    today = _today_clamped()
+    m_start, _m_end, lm_start, lm_end = _month_bounds(today)
+    wk_start = today - timedelta(days=today.weekday())
+    lw_end = wk_start - timedelta(days=1)
+    lw_start = lw_end - timedelta(days=6)
+
+    t_params: list = []
+    t_where = _scope_where(
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, t_params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    t_params.extend([lm_start, today])
+    p_ws, p_we = len(t_params) - 1, len(t_params)
+    t_params.append(m_start);  p_m0 = len(t_params)
+    t_params.append(lm_start); p_lm0 = len(t_params)
+    t_params.append(lm_end);   p_lm1 = len(t_params)
+    t_params.append(wk_start); p_wk0 = len(t_params)
+    t_params.append(lw_start); p_lw0 = len(t_params)
+    t_params.append(lw_end);   p_lw1 = len(t_params)
+
+    trend_sql = f"""
+    WITH tb AS (
+      SELECT
+        c.id,
+        c.origin_actual_arrival::date AS oad,
+        (c.status IN ('D','P')
+          AND c.bill_date             > '2000-01-01'::date
+          AND c.dest_actual_arrival   > '2000-01-01'::date
+          AND c.dest_actual_departure > '2000-01-01'::date) AS del_ok,
+        (c.status IN ('D','P')
+          AND c.bill_date             > '2000-01-01'::date
+          AND c.dest_actual_arrival   > '2000-01-01'::date
+          AND c.dest_actual_departure > '2000-01-01'::date
+          AND (c.bill_date::date - c.dest_actual_departure::date) <= 2) AS del_win,
+        (c.bill_date > '2000-01-01'::date
+          AND c.bol_recv_date > '2000-01-01'::date) AS bol_ok,
+        (c.bill_date > '2000-01-01'::date
+          AND c.bol_recv_date > '2000-01-01'::date
+          AND (c.bill_date::date - c.bol_recv_date::date) <= 1) AS bol_win,
+        CASE WHEN c.bill_date > '2000-01-01'::date
+                  AND c.bol_recv_date > '2000-01-01'::date
+             THEN (c.bill_date::date - c.bol_recv_date::date) END AS bol_days
+      FROM public.mcleod_gld_cashflow c
+      WHERE {t_where}
+        AND c.origin_actual_arrival >= ${p_ws}
+        AND c.origin_actual_arrival < (${p_we}::date + 1)
+    )
+    SELECT
+      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_m0})                      AS del_mtd_tot,
+      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_m0})                      AS del_mtd_le,
+      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS del_lm_tot,
+      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS del_lm_le,
+      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_m0})                      AS bol_mtd_tot,
+      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_m0})                      AS bol_mtd_le,
+      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS bol_lm_tot,
+      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS bol_lm_le,
+      AVG(bol_days) FILTER (WHERE oad >= ${p_wk0})                                      AS avgbol_wk,
+      AVG(bol_days) FILTER (WHERE oad >= ${p_lw0} AND oad <= ${p_lw1})                  AS avgbol_lw
+    FROM tb
+    """
+    tr = await pool.fetchrow(trend_sql, *t_params)
+
+    def _pct_or_none(le, tot):
+        tot = int(tot or 0)
+        if tot == 0:
+            return None
+        return int(le or 0) * 100.0 / tot
+
+    def _avg_or_none(v):
+        return float(v) if v is not None else None
+
+    trend = {
+        "del": {
+            "curr": _pct_or_none(tr["del_mtd_le"], tr["del_mtd_tot"]),
+            "prev": _pct_or_none(tr["del_lm_le"], tr["del_lm_tot"]),
+            "basis": "LM",
+            "unit": "pp",
+        },
+        "bol": {
+            "curr": _pct_or_none(tr["bol_mtd_le"], tr["bol_mtd_tot"]),
+            "prev": _pct_or_none(tr["bol_lm_le"], tr["bol_lm_tot"]),
+            "basis": "LM",
+            "unit": "pp",
+        },
+        "avg_days_bol": {
+            "curr": _avg_or_none(tr["avgbol_wk"]),
+            "prev": _avg_or_none(tr["avgbol_lw"]),
+            "basis": "LW",
+            "unit": "d",
+        },
+    }
+
     return {
         "success": True,
         "data": {
@@ -515,6 +616,7 @@ async def kpis(
             "carrinv_total_count": int(row["carrinv_total_count"] or 0),
             "carrinv_le1_rev": float(row["carrinv_le1_rev"] or 0),
             "carrinv_total_rev": float(row["carrinv_total_rev"] or 0),
+            "trend": trend,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
@@ -649,6 +751,7 @@ async def sparklines(
 @router.get("/timing-monthly")
 async def timing_monthly(
     request: Request,
+    grain: str = Query("month"),
     teams: Optional[str] = Query(None),
     companies: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
@@ -678,13 +781,29 @@ async def timing_monthly(
     """
     pool = get_datalake_gold_pool(request)
     today = _today_clamped()
-    # 12 full months back through the current month (13 buckets).
-    cur_month = date(today.year, today.month, 1)
-    month12 = cur_month
-    for _ in range(12):
-        prev = month12 - timedelta(days=1)
-        month12 = date(prev.year, prev.month, 1)
-    s, e = month12, today
+    # Bruno Aging R (PDF 2026-07-13): grain toggle — Month (trailing 13 months)
+    # or Week (trailing 13 ISO weeks; the modal defaults the brush to the last
+    # 8). Both anchor a continuous axis via generate_series so empty buckets
+    # still render, and both honour only the scope filters (not the page range).
+    grain = (grain or "month").lower()
+    if grain not in ("week", "month"):
+        grain = "month"
+
+    if grain == "week":
+        # 12 full weeks back through the current (partial) week — 13 buckets.
+        cur_bucket = today - timedelta(days=today.weekday())  # Monday of this week
+        first_bucket = cur_bucket - timedelta(weeks=12)
+        trunc, gs_interval = "week", "1 week"
+    else:
+        # 12 full months back through the current (partial) month — 13 buckets.
+        cur_bucket = date(today.year, today.month, 1)
+        first_bucket = cur_bucket
+        for _ in range(12):
+            prev = first_bucket - timedelta(days=1)
+            first_bucket = date(prev.year, prev.month, 1)
+        trunc, gs_interval = "month", "1 month"
+
+    s, e = first_bucket, today
     team_list = _parse_teams(teams)
     company_list = _parse_companies(companies)
 
@@ -694,17 +813,17 @@ async def timing_monthly(
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
     date_frag = _date_fragment("c", s, e, params)
-    # generate_series bounds (month-truncated) — own params, distinct from the
+    # generate_series bounds (grain-truncated) — own params, distinct from the
     # half-open date_frag window above.
-    params.append(month12)
+    params.append(first_bucket)
     p_gs_start = len(params)
-    params.append(cur_month)
+    params.append(cur_bucket)
     p_gs_end = len(params)
 
     sql = f"""
     WITH base AS (
       SELECT
-        date_trunc('month', c.origin_actual_arrival)::date AS mon,
+        date_trunc('{trunc}', c.origin_actual_arrival)::date AS mon,
         c.id,
         c.bill_date,
         c.bol_recv_date,
@@ -751,7 +870,7 @@ async def timing_monthly(
     ),
     months AS (
       SELECT generate_series(${p_gs_start}::date, ${p_gs_end}::date,
-                             INTERVAL '1 month')::date AS mon
+                             INTERVAL '{gs_interval}')::date AS mon
     )
     SELECT
       m.mon,
@@ -776,6 +895,7 @@ async def timing_monthly(
     return {
         "success": True,
         "data": {
+            "grain": grain,
             "months": [r["mon"].isoformat() for r in rows],
             "del": series("del_total", "del_within"),
             "bol": series("bol_total", "bol_within"),
@@ -1417,11 +1537,17 @@ async def top_delayed_customers(
     limit: int = Query(10, ge=1, le=50),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
-    """Customers ranked by $ revenue on loads where bill - delivery > 10 days."""
+    """Customers ranked by $ revenue on loads where bill - delivery > 2 days.
+
+    Bruno Aging R (PDF 2026-07-13): the "late" threshold was lowered from
+    >10 days to >2 days. Kept as a single constant so the three FILTER sites
+    (n_late / late_revenue / HAVING) can never drift apart.
+    """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_list = _parse_teams(teams)
     company_list = _parse_companies(companies)
+    late_days = 2  # Bruno Aging R (PDF 2026-07-13): was 10
 
     params: list = []
     where = _scope_where(
@@ -1449,13 +1575,13 @@ async def top_delayed_customers(
     )
     SELECT
       customer_name,
-      COUNT(*)                              AS n_loads,
-      COUNT(*) FILTER (WHERE days > 10)     AS n_late,
-      COALESCE(SUM(total_charge) FILTER (WHERE days > 10), 0)::numeric  AS late_revenue,
-      COALESCE(AVG(days), 0)::numeric       AS avg_days
+      COUNT(*)                                       AS n_loads,
+      COUNT(*) FILTER (WHERE days > {late_days})      AS n_late,
+      COALESCE(SUM(total_charge) FILTER (WHERE days > {late_days}), 0)::numeric  AS late_revenue,
+      COALESCE(AVG(days), 0)::numeric                 AS avg_days
     FROM base
     GROUP BY customer_name
-    HAVING COUNT(*) FILTER (WHERE days > 10) > 0
+    HAVING COUNT(*) FILTER (WHERE days > {late_days}) > 0
     ORDER BY late_revenue DESC
     LIMIT ${p_lim}
     """
