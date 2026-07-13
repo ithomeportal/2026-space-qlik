@@ -158,6 +158,10 @@ export interface CustomerAttrition {
 export interface PivotRow {
   week_start: string
   dim_key: string
+  // Bruno Attrition R (PDF 2026-07-13): Team value per row (global team_id for
+  // the "by Customer" view, individual sub-team for "by Customer and Lane";
+  // null for the "by Team" view). Rendered as a Team column after Status.
+  team?: string | null
   value: number | null
   // Bruno round-5 (2026-05-19): backend includes raw rev/prof when metric is
   // "margin" so the Totals row can compute a weighted-avg margin.

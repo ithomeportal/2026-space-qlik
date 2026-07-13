@@ -15,6 +15,7 @@ import { CustomerAttritionChart } from "./CustomerAttritionChart"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
+  fmtCount1,
   fmtPct,
   fmtSignedCount,
   fmtSignedPct,
@@ -135,6 +136,7 @@ export function OverviewTab({ filters, entityLabel }: Props) {
               loading={loadingSummary}
               block={s?.loads}
               fmt={fmtCount}
+              avgFmt={fmtCount1}
               isCount
             />
             <MetricRow
@@ -298,7 +300,7 @@ function ActiveCard({
       <div className="mt-3 grid grid-cols-4 gap-2">
         <CountCell
           label="L8W"
-          value={loading ? "—" : fmtCount(block?.l8w)}
+          value={loading ? "—" : fmtCount1(block?.l8w)}
           accent={accent}
         />
         <CountCell
@@ -345,6 +347,7 @@ function MetricRow({
   loading,
   block,
   fmt,
+  avgFmt,
   isCount,
   isPct,
 }: {
@@ -352,10 +355,16 @@ function MetricRow({
   loading: boolean
   block: MetricBlock | undefined
   fmt: (v: number | null | undefined) => string
+  // Bruno Attrition R (PDF 2026-07-13): the # Loads row shows its L8W-avg and
+  // L2W-avg cells with one decimal place, while LW and the Δ columns stay
+  // integer. Defaults to `fmt` so every other row is unchanged.
+  avgFmt?: (v: number | null | undefined) => string
   isCount?: boolean
   isPct?: boolean
 }) {
   const cell = (v: number | null | undefined) => (loading ? "—" : fmt(v))
+  const cellAvg = (v: number | null | undefined) =>
+    loading ? "—" : (avgFmt ?? fmt)(v)
   const renderDiff = (d: DiffPair | undefined) => {
     if (!d) return { abs: "—", pct: "—", absCls: "text-[#6B7280]", pctCls: "text-[#6B7280]" }
     if (isPct) {
@@ -388,10 +397,10 @@ function MetricRow({
         {label}
       </td>
       <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L8W_BG}`}>
-        {cell(block?.l8w_avg)}
+        {cellAvg(block?.l8w_avg)}
       </td>
       <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L2W_BG}`}>
-        {cell(block?.l2w_avg)}
+        {cellAvg(block?.l2w_avg)}
       </td>
       <td className={`px-3 py-2.5 text-right font-mono text-base ${L2W_BG} ${l2wDiff.absCls}`}>
         {l2wDiff.abs}

@@ -12,7 +12,10 @@ export const COUNT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 })
 
+// Bruno Attrition R (PDF 2026-07-13): the "one decimal place" metrics must
+// ALWAYS show a decimal (e.g. 693 → "693.0"), so pin both min & max to 1.
 export const COUNT1 = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 })
 

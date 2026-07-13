@@ -13,6 +13,7 @@ import { SortableTh, useSortable } from "../../ceo-executive/sortable"
 import { AttritionErrorBanner } from "../ErrorBanner"
 import {
   fmtCount,
+  fmtCount1,
   fmtPct,
   fmtSignedPct,
   fmtTimestamp,
@@ -407,14 +408,20 @@ function ReactiveTable({
                     <span className="text-[#111827]">{r.customer || "—"}</span>
                   )}
                 </td>
-                {/* Bruno round-5 (2026-05-19): reverted round-3's 1-decimal
-                    AVG LOADS — Bruno wants integers across every bucket so
-                    the columns read as plain counts. */}
+                {/* Bruno round-5 (2026-05-19): integers across every bucket.
+                    Bruno Attrition R (PDF 2026-07-13): re-adds one decimal to
+                    Avg Loads (L8W) and Avg Loads (2–4W) in the two named tables
+                    (Last Week 1–7d and Customer Attrition 2–4W). The L5-9W
+                    table is not named, so it keeps integers. */}
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {fmtCount(r.avg_loads_l8w)}
+                  {variant === "l5_9w"
+                    ? fmtCount(r.avg_loads_l8w)
+                    : fmtCount1(r.avg_loads_l8w)}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">
-                  {fmtCount(variant === "lw" ? r.lw_loads : v.loads)}
+                  {variant === "l2_4w"
+                    ? fmtCount1(v.loads)
+                    : fmtCount(variant === "lw" ? r.lw_loads : v.loads)}
                 </td>
                 <PctCell v={v.pct_loads} />
                 <td className="px-3 py-1.5 text-right font-mono">

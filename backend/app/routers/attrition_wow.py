@@ -835,6 +835,20 @@ async def pivot(
             " TRIM(COALESCE(br4.dest_name,'')))"
         )
 
+    # Bruno Attrition R (PDF 2026-07-13): expose a Team value per row so the
+    # "by Customer" / "by Customer and Lane" pivots can show a Team column
+    # after Status. By customer → the GLOBAL division team_id (e.g. 'TEAM-DFW');
+    # by customer+lane → the INDIVIDUAL team (_team_dim resolves DFW rows to the
+    # TM1..TM4 sub-team). Aggregated with MAX since rows are grouped by dim_key
+    # (a customer is single-team in practice). NULL for the "by Team" view (the
+    # dim_key already IS the team).
+    if dim == "customer":
+        team_sql = "MAX(TRIM(br4.team_id))"
+    elif dim == "customer_lane":
+        team_sql = f"MAX({_team_dim('br4')})"
+    else:  # team
+        team_sql = "NULL::text"
+
     if metric == "loads":
         agg_sql = "COUNT(*) FILTER (WHERE br4.total_charge <> 0)::numeric"
     elif metric == "revenue":
@@ -855,6 +869,7 @@ async def pivot(
             SELECT
               date_trunc('week', br4.origin_actual_departure)::date AS week_start,
               {dim_sql}                                              AS dim_key,
+              {team_sql}                                             AS team,
               COALESCE(SUM(br4.total_charge), 0)::numeric            AS revenue,
               COALESCE(SUM(br4.margin_amt),   0)::numeric            AS profit
             FROM public.mcleod_gld_budget_report_v4 br4, bounds b
@@ -877,6 +892,7 @@ async def pivot(
             data.append({
                 "week_start": r["week_start"].isoformat(),
                 "dim_key":    r["dim_key"],
+                "team":       r["team"],
                 "value":      (prof / rev) if rev else None,
                 "revenue":    rev,
                 "profit":     prof,
@@ -892,6 +908,7 @@ async def pivot(
             SELECT
               date_trunc('week', br4.origin_actual_departure)::date AS week_start,
               {dim_sql}                                              AS dim_key,
+              {team_sql}                                             AS team,
               {agg_sql}                                              AS val
             FROM public.mcleod_gld_budget_report_v4 br4, bounds b
             WHERE {where}
@@ -907,6 +924,7 @@ async def pivot(
             {
                 "week_start": r["week_start"].isoformat(),
                 "dim_key":    r["dim_key"],
+                "team":       r["team"],
                 "value":      float(r["val"] or 0),
             }
             for r in rows

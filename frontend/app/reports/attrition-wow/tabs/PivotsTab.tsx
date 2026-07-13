@@ -217,6 +217,9 @@ function PivotPanel({
     const byKey = new Map<
       string,
       {
+        // Bruno Attrition R (2026-07-13): the Team value for this dim_key (all
+        // its long-form rows share it — read off the first seen).
+        team: string | null
         values: Map<string, number | null>
         // Bruno round-5 (2026-05-19): track raw rev/prof per cell when the
         // current metric is "margin" so the Totals row can compute the
@@ -229,7 +232,12 @@ function PivotPanel({
       weekSet.add(r.week_start)
       let bucket = byKey.get(r.dim_key)
       if (!bucket) {
-        bucket = { values: new Map(), revenue: new Map(), profit: new Map() }
+        bucket = {
+          team: r.team ?? null,
+          values: new Map(),
+          revenue: new Map(),
+          profit: new Map(),
+        }
         byKey.set(r.dim_key, bucket)
       }
       bucket.values.set(r.week_start, r.value)
@@ -243,12 +251,17 @@ function PivotPanel({
       const values = weeksList.map((w) => b.values.get(w) ?? null)
       const revenue = weeksList.map((w) => b.revenue.get(w) ?? 0)
       const profit = weeksList.map((w) => b.profit.get(w) ?? 0)
-      // 8-week ref: avg of the 8 most-recent NON-NULL completed weeks per row
+      // 8-week ref (Bruno Attrition R, PDF 2026-07-13): mean of the 8 completed
+      // weeks BEFORE last week — indices 1..8 = weeks −2..−9 (weeksList is
+      // latest-first, so index 0 is last week which is excluded). A missing /
+      // "—" week counts as 0 (fixed divisor), NOT dropped. This makes the
+      // Totals "8-week avg" reconcile exactly with the chart's "8W Avg" line
+      // (backend _l8w_window, weeks −2..−9, 0-filled) and matches the Overview
+      // cards / reactive tables / cell shading, which all exclude last week.
       const ref = (() => {
-        const nonNull = values.filter((v): v is number => v !== null)
-        if (nonNull.length === 0) return null
-        const slice = nonNull.slice(0, 8)
-        return slice.reduce((a, b) => a + b, 0) / slice.length
+        const slice = values.slice(1, 9)
+        if (slice.length === 0) return null
+        return slice.reduce<number>((a, b) => a + (b ?? 0), 0) / slice.length
       })()
       const total = values.reduce<number>((a, b) => a + (b ?? 0), 0)
       const status = computeStatus(values[0] ?? null, values[1] ?? null, ref)
@@ -264,7 +277,7 @@ function PivotPanel({
       // Bruno (2026-05-25 page 5): expose customer/client + lane separately so
       // the customer_lane view can render — and sort — two columns.
       const { cust, lane } = splitDimKey(k)
-      return { dim_key: k, cust, lane, values, revenue, profit, ref, diff, total, status }
+      return { dim_key: k, team: b.team, cust, lane, values, revenue, profit, ref, diff, total, status }
     })
     const strCompare = (av: string, bv: string) => {
       const a = av.toLowerCase()
@@ -280,6 +293,7 @@ function PivotPanel({
         return sortDir === "asc" ? av - bv : bv - av
       }
       if (sortKey === "dim_key") return strCompare(a.dim_key, b.dim_key)
+      if (sortKey === "team") return strCompare(a.team ?? "", b.team ?? "")
       if (sortKey === "cust") return strCompare(a.cust, b.cust)
       if (sortKey === "lane") return strCompare(a.lane, b.lane)
       if (sortKey === "ref") {
@@ -342,20 +356,16 @@ function PivotPanel({
     const totalRef: number | null = (() => {
       if (pivotEntries.length === 0) return null
       if (metric === "margin") {
+        // Bruno Attrition R (2026-07-13): weighted-avg margin over the SAME 8
+        // weeks the chart uses — indices 1..8 (weeks −2..−9, last week
+        // excluded), summing every week (0-filled, no zero-revenue skip) so it
+        // matches the chart's "8W Avg" (Σprofit / Σrevenue over _l8w_window).
         let rev = 0
         let prof = 0
-        let weeksUsed = 0
-        for (let i = 0; i < weeksList.length && weeksUsed < 8; i += 1) {
-          let wRev = 0
-          let wProf = 0
+        for (let i = 1; i < weeksList.length && i <= 8; i += 1) {
           for (const row of pivotEntries) {
-            wRev += row.revenue[i] ?? 0
-            wProf += row.profit[i] ?? 0
-          }
-          if (wRev > 0) {
-            rev += wRev
-            prof += wProf
-            weeksUsed += 1
+            rev += row.revenue[i] ?? 0
+            prof += row.profit[i] ?? 0
           }
         }
         return rev > 0 ? prof / rev : null
@@ -391,9 +401,15 @@ function PivotPanel({
   }
 
   const headerLabel = dim === "team" ? "Team" : entityLabel
-  // Leading non-week columns: Status + (Lane adds an extra entity/lane split) +
-  // dim column(s) + 8-week avg. Used for the empty-state colSpan.
-  const leadingCols = isLane ? 4 : 3
+  // Bruno Attrition R (2026-07-13): a Team column sits after Status in the
+  // "by Customer" and "by Customer and Lane" views (not the "by Team" view,
+  // where the dim_key already IS the team). It's sticky at left-[100px]; the
+  // entity column then shifts right to left-[180px].
+  const showTeam = dim !== "team"
+  const entityLeft = showTeam ? "left-[180px]" : "left-[100px]"
+  // Leading non-week columns: Status + (Team) + (Lane adds an extra entity/lane
+  // split) + dim column(s) + 8-week avg. Used for the empty-state colSpan.
+  const leadingCols = (isLane ? 4 : 3) + (showTeam ? 1 : 0)
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
@@ -412,6 +428,18 @@ function PivotPanel({
               >
                 Status
               </SortTh>
+              {showTeam && (
+                <SortTh
+                  k="team"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onToggle={toggleSort}
+                  align="left"
+                  className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+                >
+                  Team
+                </SortTh>
+              )}
               {isLane ? (
                 <>
                   <SortTh
@@ -420,7 +448,7 @@ function PivotPanel({
                     sortDir={sortDir}
                     onToggle={toggleSort}
                     align="left"
-                    className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+                    className={`sticky ${entityLeft} z-10 bg-[#F9FAFB]`}
                   >
                     {entityLabel}
                   </SortTh>
@@ -442,7 +470,7 @@ function PivotPanel({
                   sortDir={sortDir}
                   onToggle={toggleSort}
                   align="left"
-                  className="sticky left-[100px] z-10 bg-[#F9FAFB]"
+                  className={`sticky ${entityLeft} z-10 bg-[#F9FAFB]`}
                 >
                   {headerLabel}
                 </SortTh>
@@ -456,7 +484,8 @@ function PivotPanel({
               >
                 8-week avg
               </SortTh>
-              {/* Bruno (2026-06-08): Difference = latest week − 8-week avg. */}
+              {/* Bruno (2026-06-08): Difference = latest week − 8-week avg.
+                  Bruno Attrition R (2026-07-13): relabelled "Difference LW – L8W". */}
               <SortTh
                 k="diff"
                 sortKey={sortKey}
@@ -464,7 +493,7 @@ function PivotPanel({
                 onToggle={toggleSort}
                 className="bg-[#F9FAFB] text-[#1B3A5C]"
               >
-                Difference
+                Difference LW – L8W
               </SortTh>
               {weeksList.map((w, i) => (
                 <SortTh
@@ -485,10 +514,15 @@ function PivotPanel({
                 <td className="sticky left-0 z-10 bg-white px-3 py-1.5">
                   <StatusBadge status={row.status} />
                 </td>
+                {showTeam && (
+                  <td className="sticky left-[100px] z-10 bg-white px-3 py-1.5 text-[#374151]">
+                    {row.team ?? "—"}
+                  </td>
+                )}
                 {isLane ? (
                   <>
                     <td
-                      className="sticky left-[100px] z-10 max-w-[240px] truncate bg-white px-3 py-1.5 text-[#111827]"
+                      className={`sticky ${entityLeft} z-10 max-w-[240px] truncate bg-white px-3 py-1.5 text-[#111827]`}
                       title={row.cust}
                     >
                       {onCustomerClick ? (
@@ -522,7 +556,7 @@ function PivotPanel({
                   </>
                 ) : (
                   <td
-                    className="sticky left-[100px] z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]"
+                    className={`sticky ${entityLeft} z-10 max-w-[320px] truncate bg-white px-3 py-1.5 text-[#111827]`}
                     title={row.dim_key}
                   >
                     <DimKeyCell
@@ -567,7 +601,10 @@ function PivotPanel({
                 <td className="sticky left-0 z-10 bg-[#F9FAFB] px-3 py-2 text-[10px] uppercase tracking-wider text-[#1B3A5C]">
                   Totals
                 </td>
-                <td className="sticky left-[100px] z-10 bg-[#F9FAFB] px-3 py-2 text-[#1B3A5C]">
+                {showTeam && (
+                  <td className="sticky left-[100px] z-10 bg-[#F9FAFB] px-3 py-2" />
+                )}
+                <td className={`sticky ${entityLeft} z-10 bg-[#F9FAFB] px-3 py-2 text-[#1B3A5C]`}>
                   {metric === "margin" ? "Weighted avg" : "All rows"}
                 </td>
                 {isLane && <td className="bg-[#F9FAFB] px-3 py-2" />}
