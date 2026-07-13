@@ -91,6 +91,23 @@ def get_bracket_bonus(value: float, brackets: List[Dict[str, float]]) -> float:
     return bonus
 
 
+def bracket_pct_at_or_below(target_pct: float, brackets: List[Dict[str, float]]) -> float:
+    """Highest bonus% in ``brackets`` that does not exceed ``target_pct``.
+
+    The wildcard maps one target % (the LOAD COUNT bracket % for the synthetic
+    wildcard load count) into a role's own bracket. When that bracket has no
+    exact match, the role falls to the next lower available % (Bruno R11,
+    2026-07-13 — Freight Match: target 80% is absent from the MARGIN bracket, so
+    it drops to 70%). Brackets are sorted ascending by bonusPct, so the last one
+    at/below the target wins; returns 0.0 if the target is below every bracket.
+    """
+    result = 0.0
+    for bracket in brackets:
+        if float(bracket["bonusPct"]) <= target_pct + 1e-9:
+            result = float(bracket["bonusPct"])
+    return result
+
+
 def calculate_profit_bracket_bonuses(monthly_profit_usd: float) -> List[Dict[str, Any]]:
     results = []
     for bracket in MONTHLY_PROFIT_BRACKETS:
@@ -134,6 +151,23 @@ def get_wildcard_load_count(service_bracket: Dict[str, float]) -> float:
     return float(LOAD_COUNT_BRACKETS[0]["threshold"])
 
 
+def get_wildcard_margin_threshold(service_bracket: Dict[str, float]) -> float:
+    """Margin bracket threshold the wildcard maps to (Bruno R11, 2026-07-13).
+
+    Freight Match's wildcard % is the LOAD COUNT bracket % for the synthetic
+    wildcard load count, dropped to the next lower available MARGIN bracket %.
+    Returns that margin bracket's threshold (the margin ratio) for the wire —
+    not displayed, but kept consistent with the role % in calculate_wildcard_bonus.
+    """
+    load_count_pct = get_bracket_bonus(get_wildcard_load_count(service_bracket), LOAD_COUNT_BRACKETS)
+    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, MARGIN_BRACKETS)
+    bracket = next(
+        (b for b in MARGIN_BRACKETS if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
+        MARGIN_BRACKETS[0],
+    )
+    return float(bracket["threshold"])
+
+
 def calculate_wildcard_bonus(
     employee: Dict[str, Any], total_profit: float, normalized_service_average: float
 ) -> Dict[str, Any]:
@@ -154,22 +188,35 @@ def calculate_wildcard_bonus(
         }
 
     service_bracket = SERVICE_BRACKETS[wildcard_index]
-    load_bracket = LOAD_COUNT_BRACKETS[wildcard_index] if wildcard_index < len(LOAD_COUNT_BRACKETS) else LOAD_COUNT_BRACKETS[0]
-    margin_bracket = MARGIN_BRACKETS[wildcard_index] if wildcard_index < len(MARGIN_BRACKETS) else MARGIN_BRACKETS[0]
+    base_pay = PAY_PER_LOAD[role]
+
+    # R10 (Bruno 2026-07-13): the wildcard's synthetic weekly load count is the
+    # LOAD_COUNT row whose bonus% == the SERVICE bracket's bonus% (96% → 80% →
+    # 100 loads), not the positionally-aligned load bracket.
+    wildcard_loads = get_wildcard_load_count(service_bracket)
+
+    # R11 (Bruno 2026-07-13, "Bonos Updates.pdf" Req 1): the wildcard role
+    # multiplier is derived from that synthetic load count, NOT the positional
+    # service-index bracket (which over-paid: KAM 90%, FM 100% at 96% service).
+    #   • KAM     → the LOAD COUNT bracket % for the wildcard loads (100 → 80%).
+    #   • Freight → that same target % mapped into the MARGIN bracket, dropping to
+    #               the next lower available % when there's no exact match
+    #               (80% is absent from the MARGIN bracket → 70%).
+    #   • T&T     → its own SERVICE bracket % (unchanged — Bruno: "correct").
+    load_count_pct = get_bracket_bonus(wildcard_loads, LOAD_COUNT_BRACKETS)
+    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, MARGIN_BRACKETS)
+    margin_bracket = next(
+        (b for b in MARGIN_BRACKETS if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
+        MARGIN_BRACKETS[0],
+    )
 
     if role == "kam":
-        role_bonus_pct = float(load_bracket["bonusPct"])
+        role_bonus_pct = load_count_pct
     elif role == "freight_match":
-        role_bonus_pct = float(margin_bracket["bonusPct"])
+        role_bonus_pct = mapped_margin_pct
     else:
         role_bonus_pct = float(service_bracket["bonusPct"])
 
-    base_pay = PAY_PER_LOAD[role]
-    # R10 (Bruno 2026-07-13): the weekly load count is the load row whose bonus%
-    # matches the SERVICE bonus% (e.g. 96% → 80% → 100 loads), not the positional
-    # load bracket. Role bonus %s are unchanged — Bruno's "all other required
-    # calculation criteria" keeps KAM/FM/T&T multipliers where they were.
-    wildcard_loads = get_wildcard_load_count(service_bracket)
     wildcard_weekly_usd = wildcard_loads * role_bonus_pct * base_pay
 
     return {
@@ -182,8 +229,9 @@ def calculate_wildcard_bonus(
         "wildcardBasePayUsd": base_pay,
         "wildcardRuleLabel": (
             f"Weekly wildcard: monthly profit > $100,000 and service at or above "
-            f"{service_bracket['threshold'] * 100:.0f}%; service bracket maps each week to "
-            f"{wildcard_loads:.1f} loads / {margin_bracket['threshold'] * 100:.1f}% margin."
+            f"{service_bracket['threshold'] * 100:.0f}%; maps each week to {wildcard_loads:.1f} "
+            f"loads at the {load_count_pct * 100:.0f}% load-count bracket "
+            f"(margin {margin_bracket['threshold'] * 100:.1f}%)."
         ),
     }
 
@@ -343,7 +391,12 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         "wildcardEligible": wildcard_eligible,
         "wildcardServiceBracketPct": SERVICE_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
         "wildcardEquivalentLoads": get_wildcard_load_count(SERVICE_BRACKETS[wildcard_index]) if wildcard_eligible else 0,
-        "wildcardEquivalentMarginPct": MARGIN_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
+        # R11: the wildcard's mapped margin bracket follows the load-count % (the
+        # Freight Match target), matching calculate_wildcard_bonus — not the
+        # positional service-index margin row.
+        "wildcardEquivalentMarginPct": (
+            get_wildcard_margin_threshold(SERVICE_BRACKETS[wildcard_index]) if wildcard_eligible else 0
+        ),
         "totalLoads": sum(float(week.get("loads", 0) or 0) for week in team["weeks"]),
         "totalRevenue": total_revenue,
         "totalProfit": total_profit,
