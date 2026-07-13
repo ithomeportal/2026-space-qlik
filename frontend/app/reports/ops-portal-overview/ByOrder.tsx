@@ -40,7 +40,7 @@ interface Props {
 type ColumnKey =
   | "order" | "team" | "departure" | "customer" | "carrier" | "lane" | "status"
   | "revenue" | "profit" | "margin" | "otp" | "otd" | "transit"
-  | "bill" | "daystobill"
+  | "bill" | "daystobill" | "pod"
 
 const COLUMNS: {
   k: ColumnKey
@@ -62,6 +62,8 @@ const COLUMNS: {
   { k: "transit",    label: "Transit Time", align: "right" },
   { k: "bill",       label: "Bill",         align: "right" },
   { k: "daystobill", label: "Days to Bill", align: "right" },
+  // Bruno (PDF 2026-07-13): POD Tracker document present (checkbox).
+  { k: "pod",        label: "POD",          align: "right" },
 ]
 
 const NUMERIC_DESC_FIRST = new Set<ColumnKey>([
@@ -111,7 +113,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   // status/bill/daystobill are not server-sortable (no wire sort key), so fall
   // back to revenue for the wire when one of them is the active sort. carrier IS
   // server-sortable (carrier_asc/desc). See _BY_ORDER_SORTS in the backend.
-  const NON_WIRE_SORTS = new Set<ColumnKey>(["status", "bill", "daystobill"])
+  const NON_WIRE_SORTS = new Set<ColumnKey>(["status", "bill", "daystobill", "pod"])
   const wireKey: ColumnKey = NON_WIRE_SORTS.has(sortKey) ? "revenue" : sortKey
   const sort = `${wireKey}_${sortDir}`
 
@@ -353,7 +355,7 @@ function OrderTable({
           <FilterTd value={colFilters.carrier} onChange={(v) => onColFilter({ carrier: v })} placeholder="Carrier" />
           <FilterTd value={colFilters.lane} onChange={(v) => onColFilter({ lane: v })} placeholder="Lane" />
           <FilterTd value={colFilters.status} onChange={(v) => onColFilter({ status: v })} placeholder="Status" />
-          <td colSpan={8} />
+          <td colSpan={9} />
         </tr>
         {totals && (
           <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
@@ -367,7 +369,7 @@ function OrderTable({
             <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
               {fmtPct(totals.margin_pct)}
             </td>
-            <td className="px-2 py-1.5" colSpan={5} />
+            <td className="px-2 py-1.5" colSpan={6} />
           </tr>
         )}
       </thead>
@@ -430,6 +432,16 @@ function OrderTable({
             {/* R11: Days to Bill (bill_date − dest departure, or NOW − departure). */}
             <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
               {r.days_to_bill == null ? <span className="text-[#9CA3AF]">—</span> : r.days_to_bill}
+            </td>
+            {/* Bruno (PDF 2026-07-13): POD Tracker document present. */}
+            <td className="px-2 py-1.5 text-center">
+              <input
+                type="checkbox"
+                checked={r.pod}
+                readOnly
+                aria-label={r.pod ? "Has POD document" : "No POD document"}
+                className="h-3 w-3 cursor-default align-middle accent-[#16A34A]"
+              />
             </td>
           </tr>
         ))}

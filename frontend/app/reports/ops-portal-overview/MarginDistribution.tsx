@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react"
 import {
   useOppMarginDistribution,
   fmtUsd,
+  fmtUsdSigned,
   fmtCount,
   type OppFilters,
   type OppMarginBucket,
@@ -49,6 +50,8 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
     bucket,
     orders: byBucket.get(bucket)?.orders ?? 0,
     revenue: byBucket.get(bucket)?.revenue ?? 0,
+    // Bruno (PDF 2026-07-13): Profit total per bucket.
+    profit: byBucket.get(bucket)?.profit ?? 0,
   }))
 
   // Pinned Totals come from the server-side full-universe aggregate (meta),
@@ -56,6 +59,7 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
   const meta = data?.meta ?? {}
   const totalOrders = Number(meta.total_orders ?? 0)
   const totalRevenue = Number(meta.total_revenue ?? 0)
+  const totalProfit = Number(meta.total_profit ?? 0)
   const hasData = rows.some((r) => r.orders > 0)
 
   return (
@@ -70,7 +74,8 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
           Margin distribution
         </h3>
         <div className="text-[10px] uppercase tracking-wider text-[#6B7280]">
-          {fmtCount(totalOrders)} orders · {fmtUsd(totalRevenue)} revenue
+          {fmtCount(totalOrders)} orders · {fmtUsd(totalRevenue)} revenue ·{" "}
+          {fmtUsdSigned(totalProfit)} profit
         </div>
       </div>
       {isLoading ? (
@@ -110,6 +115,10 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
                   {fmtCount(r.orders)}
                 </div>
                 <div className="text-[10px] text-[#6B7280]">{fmtUsd(r.revenue)}</div>
+                {/* Bruno (PDF 2026-07-13): Profit total per bucket. */}
+                <div className={`text-[10px] ${r.profit < 0 ? "text-[#DC2626]" : "text-[#15803D]"}`}>
+                  {fmtUsdSigned(r.profit)}
+                </div>
               </div>
             ))}
           </div>

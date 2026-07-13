@@ -247,13 +247,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         sort: str = Query("revenue_desc"),
         limit: int = Query(100, ge=1, le=500),
         losses_only: bool = Query(False),
+        unbilled_only: bool = Query(False),
         _user: dict = Depends(gate),
     ):
         return await opo.actuals(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
             exclude_lanes=exclude_lanes, sort=sort, limit=limit,
-            losses_only=losses_only, _user=_user,
+            losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
         )
 
     # ---- /actuals-by-lane -------------------------------------------------
@@ -270,13 +271,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         sort: str = Query("revenue_desc"),
         limit: int = Query(100, ge=1, le=500),
         losses_only: bool = Query(False),
+        unbilled_only: bool = Query(False),
         _user: dict = Depends(gate),
     ):
         return await opo.actuals_by_lane(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
             exclude_lanes=exclude_lanes, sort=sort, limit=limit,
-            losses_only=losses_only, _user=_user,
+            losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
         )
 
     # ---- /service ---------------------------------------------------------
@@ -309,13 +311,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         sort: str = Query("revenue_desc"),
         limit: int = Query(500, ge=1, le=2000),
         losses_only: bool = Query(False),
+        unbilled_only: bool = Query(False),
         _user: dict = Depends(gate),
     ):
         return await opo.by_order(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
             exclude_lanes=exclude_lanes, sort=sort, limit=limit,
-            losses_only=losses_only, _user=_user,
+            losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
         )
 
     # ---- /team-weekly-performance -----------------------------------------
@@ -391,6 +394,35 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
             exclude_lanes=exclude_lanes, _user=_user,
+        )
+
+    # ---- Bruno (PDF 2026-07-13): "Week" toggle on Variance + Projection.
+    # Only the WEEKLY variants are mirrored (locked to this team). The "Team"
+    # (cross-team) breakdown is meaningless / a data-isolation leak on a
+    # single-team portal, so its endpoints are intentionally NOT exposed here —
+    # the frontend hides the Team button when locked, and a crafted URL 404s.
+    @r.get("/team-variance-weekly")
+    async def team_variance_weekly(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.team_variance_weekly(
+            request=request, team=team, customer=customer, _user=_user,
+        )
+
+    @r.get("/team-projection-weekly")
+    async def team_projection_weekly(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        load_type: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.team_projection_weekly(
+            request=request, team=team, customer=customer, load_type=load_type,
+            lanes=lanes, exclude_lanes=exclude_lanes, _user=_user,
         )
 
     return r

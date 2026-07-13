@@ -12,15 +12,22 @@ import {
   useOppCustomerVariance,
   useOppTeamPerformance,
   useOppTeamProjection,
+  useOppTeamProjectionByTeam,
+  useOppTeamProjectionWeekly,
   useOppTeamVariance,
+  useOppTeamVarianceByTeam,
+  useOppTeamVarianceWeekly,
   type OppCustomerLoss,
   type OppCustomerNotBilledRow,
   type OppCustomerNotBilledTotals,
   type OppCustomerVariance,
   type OppFilters,
+  type OppTeamProjection,
+  type OppTeamVariance,
 } from "@/lib/ops-portal-overview-api"
 import { TeamWeeklyModal } from "./TeamWeeklyModal"
 import { TeamMonthlyModal } from "./TeamMonthlyModal"
+import { MetricMatrixModal, type MatrixCell, type MatrixRow } from "./MetricMatrixModal"
 
 interface Props {
   filters: OppFilters
@@ -40,14 +47,14 @@ export function SidePanels({ filters, onPickCustomer, lockedTeam }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <div className="space-y-4">
-        <TeamBudgetVariance filters={filters} />
+        <TeamBudgetVariance filters={filters} lockedTeam={lockedTeam} />
         <CustomerVariance filters={filters} onPickCustomer={onPickCustomer} />
         <CustomerLosses filters={filters} onPickCustomer={onPickCustomer} />
         <CustomerNotBilled filters={filters} />
       </div>
       <div className="space-y-4">
         <TeamPerformance filters={filters} lockedTeam={lockedTeam} />
-        <TeamProjection filters={filters} />
+        <TeamProjection filters={filters} lockedTeam={lockedTeam} />
       </div>
     </div>
   )
@@ -57,11 +64,26 @@ export function SidePanels({ filters, onPickCustomer, lockedTeam }: Props) {
 // §2 — Team Budget Monthly Variance (inverted single-row table)
 // ---------------------------------------------------------------------------
 
-function TeamBudgetVariance({ filters }: { filters: OppFilters }) {
+function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
   const { data, isLoading, error } = useOppTeamVariance(filters)
   const v = data?.data
+  // Bruno (PDF 2026-07-13): Week / Team break-out modals.
+  const [weekOpen, setWeekOpen] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
   return (
-    <PanelCard title="Team Budget Monthly Variance" icon="📊" loading={isLoading} error={error}>
+    <PanelCard
+      title="Team Budget Monthly Variance"
+      icon="📊"
+      loading={isLoading}
+      error={error}
+      action={
+        <WeekTeamButtons
+          onWeek={() => setWeekOpen(true)}
+          onTeam={() => setTeamOpen(true)}
+          lockedTeam={lockedTeam}
+        />
+      }
+    >
       <table className="w-full text-xs">
         <tbody>
           <Row label="Customers"  value={v ? String(v.customers) : "—"} signed numeric={v?.customers ?? 0} />
@@ -73,6 +95,8 @@ function TeamBudgetVariance({ filters }: { filters: OppFilters }) {
           <Row label="Prf. X L."  value={v ? fmtUsdSigned(v.prof_x_l) : "—"}  signed numeric={v?.prof_x_l ?? 0} />
         </tbody>
       </table>
+      {weekOpen && <VarianceWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
+      {teamOpen && <VarianceTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
     </PanelCard>
   )
 }
@@ -347,12 +371,27 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
 // §6 — Team Monthly Projection
 // ---------------------------------------------------------------------------
 
-function TeamProjection({ filters }: { filters: OppFilters }) {
+function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
   const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const { data, isLoading, error } = useOppTeamProjection(cf)
   const v = data?.data
+  // Bruno (PDF 2026-07-13): Week / Team break-out modals.
+  const [weekOpen, setWeekOpen] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
   return (
-    <PanelCard title="Team Monthly Projection" icon="🎯" loading={isLoading} error={error}>
+    <PanelCard
+      title="Team Monthly Projection"
+      icon="🎯"
+      loading={isLoading}
+      error={error}
+      action={
+        <WeekTeamButtons
+          onWeek={() => setWeekOpen(true)}
+          onTeam={() => setTeamOpen(true)}
+          lockedTeam={lockedTeam}
+        />
+      }
+    >
       <table className="w-full text-xs">
         <tbody>
           <Row label="Avg. Vol x Day"  value={v ? fmtCount(v.avg_vol_day)  : "—"} />
@@ -370,6 +409,8 @@ function TeamProjection({ filters }: { filters: OppFilters }) {
           <Row label="Proj. Team Ut."  value={v ? fmtPct(v.proj_team_ut)   : "—"} />
         </tbody>
       </table>
+      {weekOpen && <ProjectionWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
+      {teamOpen && <ProjectionTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
     </PanelCard>
   )
 }
@@ -619,5 +660,215 @@ function MiniTh<K extends string>({
         {active && (dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
       </button>
     </th>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Bruno (PDF 2026-07-13) — Week / Team break-out modals for the Team Budget
+// Variance and Team Monthly Projection panels.
+// ---------------------------------------------------------------------------
+
+function WeekTeamButtons({
+  onWeek,
+  onTeam,
+  lockedTeam,
+}: {
+  onWeek: () => void
+  onTeam: () => void
+  lockedTeam?: string
+}) {
+  const btn =
+    "flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
+  return (
+    <span className="flex items-center gap-1">
+      <button type="button" onClick={onWeek} className={btn} title="Break out by the last 5 weeks">
+        Week
+      </button>
+      {/* Cross-team breakdown is meaningless on the single-team CORP copies. */}
+      {!lockedTeam && (
+        <button type="button" onClick={onTeam} className={btn} title="Break out by team">
+          Team
+        </button>
+      )}
+    </span>
+  )
+}
+
+// Signed colour for a variance/projection numeric cell.
+function signCls(n: number): string {
+  return n < 0 ? "text-[#DC2626]" : "text-[#374151]"
+}
+
+// "% of total" suffix for a team column's additive cell (blank when total is 0).
+function conc(val: number, total: number): string {
+  if (!total) return ""
+  return `  ${((val / total) * 100).toFixed(2)}%`
+}
+
+function VarianceWeekModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
+  const { data, isLoading, error } = useOppTeamVarianceWeekly(filters, true)
+  const weeks = data?.data?.weeks ?? []
+  const columns = weeks.map((w) => w.label)
+  const num = (get: (w: OppTeamVariance) => number, fmt: (n: number) => string, signed = true): MatrixCell[] =>
+    weeks.map((w) => {
+      const v = get(w)
+      return { text: fmt(v), className: signed ? signCls(v) : undefined }
+    })
+  const rows: MatrixRow[] = [
+    { label: "Customers",  cells: num((w) => w.customers, fmtCount, false) },
+    { label: "Volume",     cells: num((w) => w.volume_var, fmtCount), highlight: true },
+    { label: "Revenue",    cells: num((w) => w.revenue_var, fmtUsdSigned) },
+    { label: "Profit",     cells: num((w) => w.profit_var, fmtUsdSigned), highlight: true },
+    { label: "Margin P %", cells: num((w) => w.margin_var_pct, fmtPct) },
+    { label: "Rev. x L.",  cells: num((w) => w.rev_x_l, fmtUsdSigned) },
+    { label: "Prf. X L.",  cells: num((w) => w.prof_x_l, fmtUsdSigned) },
+  ]
+  return (
+    <MetricMatrixModal
+      title="Team Budget Monthly Variance"
+      subtitle="last 5 weeks (Mon–Sun)"
+      icon="📊"
+      columns={columns}
+      rows={rows}
+      loading={isLoading}
+      error={error}
+      onClose={onClose}
+    />
+  )
+}
+
+function VarianceTeamModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
+  const { data, isLoading, error } = useOppTeamVarianceByTeam(filters, true)
+  const total = data?.data?.total
+  const teams = data?.data?.teams ?? []
+  const columns = ["Total", ...teams.map((t) => t.team_id)]
+  const num = (
+    get: (v: OppTeamVariance) => number,
+    fmt: (n: number) => string,
+    { signed = true, showConc = false }: { signed?: boolean; showConc?: boolean } = {},
+  ): MatrixCell[] => {
+    const tv = total ? get(total) : 0
+    const cells: MatrixCell[] = [
+      { text: total ? fmt(tv) : "—", className: signed ? signCls(tv) : undefined },
+    ]
+    for (const t of teams) {
+      const v = get(t)
+      cells.push({ text: fmt(v) + (showConc ? conc(v, tv) : ""), className: signed ? signCls(v) : undefined })
+    }
+    return cells
+  }
+  const rows: MatrixRow[] = [
+    { label: "Customers",  cells: num((v) => v.customers, fmtCount, { signed: false, showConc: true }) },
+    { label: "Volume",     cells: num((v) => v.volume_var, fmtCount, { showConc: true }), highlight: true },
+    { label: "Revenue",    cells: num((v) => v.revenue_var, fmtUsdSigned, { showConc: true }) },
+    { label: "Profit",     cells: num((v) => v.profit_var, fmtUsdSigned, { showConc: true }), highlight: true },
+    { label: "Margin P %", cells: num((v) => v.margin_var_pct, fmtPct) },
+    { label: "Rev. x L.",  cells: num((v) => v.rev_x_l, fmtUsdSigned) },
+    { label: "Prf. X L.",  cells: num((v) => v.prof_x_l, fmtUsdSigned) },
+  ]
+  return (
+    <MetricMatrixModal
+      title="Team Budget Monthly Variance"
+      subtitle="by team"
+      icon="📊"
+      columns={columns}
+      rows={rows}
+      loading={isLoading}
+      error={error}
+      onClose={onClose}
+    />
+  )
+}
+
+function projectionCf(filters: OppFilters) {
+  return {
+    team: filters.team,
+    customer: filters.customer,
+    loadType: filters.loadType,
+    lanes: filters.lanes,
+    excludeLanes: filters.excludeLanes,
+  }
+}
+
+function ProjectionWeekModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
+  const { data, isLoading, error } = useOppTeamProjectionWeekly(projectionCf(filters), true)
+  const weeks = data?.data?.weeks ?? []
+  const columns = weeks.map((w) => w.label)
+  const num = (get: (w: (typeof weeks)[number]) => number, fmt: (n: number) => string, signed = false): MatrixCell[] =>
+    weeks.map((w) => {
+      const v = get(w)
+      return { text: fmt(v), className: signed ? signCls(v) : undefined }
+    })
+  const rows: MatrixRow[] = [
+    { label: "Avg. Vol x Day",   cells: num((w) => w.avg_vol_day, fmtCount) },
+    { label: "Avg. Rev. x Day",  cells: num((w) => w.avg_rev_day, fmtUsd) },
+    { label: "Avg. Prof. x Day", cells: num((w) => w.avg_prof_day, fmtUsdSigned, true) },
+    { label: "Days Worked",      cells: num((w) => w.pending_workdays, fmtCount) },
+    { label: "Volume",           cells: num((w) => w.proj_volume, fmtCount), highlight: true },
+    { label: "Revenue",          cells: num((w) => w.proj_revenue, fmtUsd) },
+    { label: "Profit",           cells: num((w) => w.proj_profit, fmtUsdSigned, true), highlight: true },
+    { label: "Margin P %",       cells: num((w) => w.proj_margin_pct, fmtPct, true) },
+    { label: "Rev. x L.",        cells: num((w) => w.proj_rev_x_l, fmtUsd) },
+    { label: "Prf. X L.",        cells: num((w) => w.proj_prof_x_l, fmtUsdSigned, true) },
+    { label: "Team Ut.",         cells: num((w) => w.proj_team_ut, fmtPct) },
+  ]
+  return (
+    <MetricMatrixModal
+      title="Team Monthly Projection"
+      subtitle="last 5 weeks (Mon–Sun) · weekly actuals"
+      icon="🎯"
+      columns={columns}
+      rows={rows}
+      loading={isLoading}
+      error={error}
+      onClose={onClose}
+    />
+  )
+}
+
+function ProjectionTeamModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
+  const { data, isLoading, error } = useOppTeamProjectionByTeam(projectionCf(filters), true)
+  const total = data?.data?.total
+  const teams = data?.data?.teams ?? []
+  const columns = ["Total", ...teams.map((t) => t.team_id)]
+  const num = (
+    get: (v: OppTeamProjection) => number,
+    fmt: (n: number) => string,
+    { signed = false, showConc = false }: { signed?: boolean; showConc?: boolean } = {},
+  ): MatrixCell[] => {
+    const tv = total ? get(total) : 0
+    const cells: MatrixCell[] = [
+      { text: total ? fmt(tv) : "—", className: signed ? signCls(tv) : undefined },
+    ]
+    for (const t of teams) {
+      const v = get(t)
+      cells.push({ text: fmt(v) + (showConc ? conc(v, tv) : ""), className: signed ? signCls(v) : undefined })
+    }
+    return cells
+  }
+  const rows: MatrixRow[] = [
+    { label: "Avg. Vol x Day",   cells: num((v) => v.avg_vol_day, fmtCount, { showConc: true }) },
+    { label: "Avg. Rev. x Day",  cells: num((v) => v.avg_rev_day, fmtUsd, { showConc: true }) },
+    { label: "Avg. Prof. x Day", cells: num((v) => v.avg_prof_day, fmtUsdSigned, { signed: true, showConc: true }) },
+    { label: "Pending Days",     cells: num((v) => v.pending_workdays, fmtCount) },
+    { label: "Proj. Volume",     cells: num((v) => v.proj_volume, fmtCount, { showConc: true }), highlight: true },
+    { label: "Proj. Revenue",    cells: num((v) => v.proj_revenue, fmtUsd, { showConc: true }) },
+    { label: "Proj. Profit",     cells: num((v) => v.proj_profit, fmtUsdSigned, { signed: true, showConc: true }), highlight: true },
+    { label: "Proj. Margin P %", cells: num((v) => v.proj_margin_pct, fmtPct, { signed: true }) },
+    { label: "Proj. Rev. x L.",  cells: num((v) => v.proj_rev_x_l, fmtUsd) },
+    { label: "Proj. Prf. X L.",  cells: num((v) => v.proj_prof_x_l, fmtUsdSigned, { signed: true }) },
+    { label: "Proj. Team Ut.",   cells: num((v) => v.proj_team_ut, fmtPct) },
+  ]
+  return (
+    <MetricMatrixModal
+      title="Team Monthly Projection"
+      subtitle="by team"
+      icon="🎯"
+      columns={columns}
+      rows={rows}
+      loading={isLoading}
+      error={error}
+      onClose={onClose}
+    />
   )
 }

@@ -78,6 +78,8 @@ export interface OppFilters {
   loadType?: LoadType
   /** Bruno R5: "Losses" button — restrict tables to margin_amt < 0 rows. */
   lossesOnly?: boolean
+  /** Bruno (PDF 2026-07-13): "Unbilled" button — restrict to bill_date < sentinel. */
+  unbilledOnly?: boolean
   /** Bruno R7 (2026-06-05): Lane multi-select — include list. */
   lanes?: string[]
   /** Bruno R7: Lane multi-select — exclude list (mode toggle). */
@@ -98,6 +100,7 @@ function qs(f: OppFilters, extra?: Record<string, string>): string {
   if (f.customer) q.set("customer", f.customer)
   if (f.loadType) q.set("load_type", f.loadType)
   if (f.lossesOnly) q.set("losses_only", "true")
+  if (f.unbilledOnly) q.set("unbilled_only", "true")
   for (const lane of f.lanes ?? []) q.append("lanes", lane)
   for (const lane of f.excludeLanes ?? []) q.append("exclude_lanes", lane)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
@@ -353,6 +356,8 @@ export interface OppOrderRow {
   billed: boolean
   /** Bruno 2026-07-01 R11: bill_date − dest departure (or NOW − departure). */
   days_to_bill: number | null
+  /** Bruno (PDF 2026-07-13): order already has a POD Tracker document. */
+  pod: boolean
 }
 
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
@@ -403,11 +408,45 @@ export interface OppServiceIncidentTotals {
   pct_on_time: number
 }
 
-// Margin-bucket distribution (orders + revenue per margin band).
+// Margin-bucket distribution (orders + revenue + profit per margin band).
 export interface OppMarginBucket {
   bucket: string
   orders: number
   revenue: number
+  /** Bruno (PDF 2026-07-13): Profit total (SUM(margin_amt)) per bucket. */
+  profit: number
+}
+
+// Bruno (PDF 2026-07-13): Week / Team breakouts of the Team Budget Variance
+// and Team Monthly Projection panels.
+export interface OppTeamVarianceWeek extends OppTeamVariance {
+  start: string
+  end: string
+  label: string
+}
+export interface OppTeamVarianceByTeam {
+  total: OppTeamVariance
+  teams: (OppTeamVariance & { team_id: string })[]
+}
+export interface OppTeamProjectionWeek {
+  start: string
+  end: string
+  label: string
+  avg_vol_day: number
+  avg_rev_day: number
+  avg_prof_day: number
+  pending_workdays: number
+  proj_volume: number
+  proj_revenue: number
+  proj_profit: number
+  proj_margin_pct: number
+  proj_rev_x_l: number
+  proj_prof_x_l: number
+  proj_team_ut: number
+}
+export interface OppTeamProjectionByTeam {
+  total: OppTeamProjection
+  teams: (OppTeamProjection & { team_id: string })[]
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +561,7 @@ export function useOppActuals(f: OppFilters, opts?: { sort?: string; limit?: num
     queryKey: [
       prefix, "opp-actuals",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, f.unbilledOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -544,7 +583,7 @@ export function useOppActualsByLane(
     queryKey: [
       prefix, "opp-actuals-by-lane",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, f.unbilledOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -581,7 +620,7 @@ export function useOppByOrder(
     queryKey: [
       prefix, "opp-by-order",
       f.range, f.startDate, f.endDate,
-      f.team, f.customer, f.loadType, f.lossesOnly ?? false, laneKey(f),
+      f.team, f.customer, f.loadType, f.lossesOnly ?? false, f.unbilledOnly ?? false, laneKey(f),
       sort, limit,
     ],
     queryFn: () =>
@@ -640,6 +679,58 @@ export function useOppMarginDistribution(f: OppFilters) {
   return useQuery({
     queryKey: [prefix, "opp-margin-distribution", f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f)],
     queryFn: () => apiFetch<OppMarginBucket[]>(`${prefix}/margin-distribution${qs(f)}`),
+    ...RETRY,
+  })
+}
+
+// Bruno (PDF 2026-07-13): Week / Team breakouts (lazy — only fetched when the
+// modal opens). Variance-weekly + projection variants use a fixed rolling
+// window, so they carry no date range in the querystring.
+export function useOppTeamVarianceWeekly(f: OppFilters, enabled: boolean) {
+  const prefix = useApiPrefix()
+  const filters: OppFilters = { range: "full", team: f.team, customer: f.customer }
+  return useQuery({
+    queryKey: [prefix, "opp-team-variance-weekly", f.team || "", f.customer || ""],
+    queryFn: () => apiFetch<{ weeks: OppTeamVarianceWeek[] }>(`${prefix}/team-variance-weekly${qs(filters)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+export function useOppTeamVarianceByTeam(f: OppFilters, enabled: boolean) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [prefix, "opp-team-variance-by-team", f.range, f.startDate, f.endDate, f.customer || ""],
+    queryFn: () => apiFetch<OppTeamVarianceByTeam>(`${prefix}/team-variance-by-team${qs(f)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+export function useOppTeamProjectionWeekly(
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  enabled: boolean,
+) {
+  const prefix = useApiPrefix()
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    queryKey: [prefix, "opp-team-projection-weekly", f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<{ weeks: OppTeamProjectionWeek[] }>(`${prefix}/team-projection-weekly${qs(filters)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+export function useOppTeamProjectionByTeam(
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  enabled: boolean,
+) {
+  const prefix = useApiPrefix()
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    queryKey: [prefix, "opp-team-projection-by-team", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () => apiFetch<OppTeamProjectionByTeam>(`${prefix}/team-projection-by-team${qs(filters)}`),
+    enabled,
     ...RETRY,
   })
 }

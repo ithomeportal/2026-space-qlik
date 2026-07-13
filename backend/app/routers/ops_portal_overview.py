@@ -1396,6 +1396,7 @@ async def actuals(
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
     losses_only: bool = Query(False),
+    unbilled_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Bottom Actuals table — per customer, stacked Production / Budget / Variance.
@@ -1416,7 +1417,10 @@ async def actuals(
 
     # ---- Production per customer ----------------------------------------
     # Bruno R5 (2026-06-01): "Losses" button → restrict to margin_amt < 0 rows.
+    # Bruno (PDF 2026-07-13): "Unbilled" button → bill_date < sentinel (never
+    # billed). ANDs with Losses when both are on.
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
+    unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
     p_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes)
     p_params.extend([s, e])
@@ -1437,6 +1441,7 @@ async def actuals(
                   AND br4.origin_actual_departure >= ${p_s}
                   AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
                   {losses_clause}
+                  {unbilled_clause}
              )
         SELECT
           customer_name,
@@ -1530,9 +1535,9 @@ async def actuals(
         })
 
     # Customers in budget but with zero production — surface them so the
-    # variance row still shows the gap. Skipped under the Losses filter
-    # (zero-production customers have no margin<0 loads to show).
-    for name, b in ({} if losses_only else bud_map).items():
+    # variance row still shows the gap. Skipped under the Losses / Unbilled
+    # filters (zero-production customers have no margin<0 / unbilled loads).
+    for name, b in ({} if (losses_only or unbilled_only) else bud_map).items():
         vol_budget = _safe_float(b["vol_budget"])
         rev_budget = _safe_float(b["rev_budget"])
         prof_budget = _safe_float(b["prof_budget"])
@@ -1608,6 +1613,7 @@ async def actuals_by_lane(
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
     losses_only: bool = Query(False),
+    unbilled_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Second table below Actuals — Production data only, grouped by lane.
@@ -1619,7 +1625,9 @@ async def actuals_by_lane(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     # Bruno R5 (2026-06-01): "Losses" button → restrict to margin_amt < 0 rows.
+    # Bruno (PDF 2026-07-13): "Unbilled" button → bill_date < sentinel.
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
+    unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     p_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes)
@@ -1656,6 +1664,7 @@ async def actuals_by_lane(
                   AND TRIM(br4.origin_name) <> ''
                   AND TRIM(br4.dest_name)   <> ''
                   {losses_clause}
+                  {unbilled_clause}
              ),
              uni AS (SELECT COUNT(DISTINCT carrier) AS n_carriers_total FROM prod)
         SELECT
@@ -1883,6 +1892,7 @@ async def by_order(
     sort: str = Query("revenue_desc"),
     limit: int = Query(500, ge=1, le=2000),
     losses_only: bool = Query(False),
+    unbilled_only: bool = Query(False),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Load-level Production table (one row per order).
@@ -1924,6 +1934,8 @@ async def by_order(
     s, e = _resolve_range(range, start_date, end_date)
     order_by = _BY_ORDER_SORTS.get(sort, _BY_ORDER_SORTS["revenue_desc"])
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
+    # Bruno (PDF 2026-07-13): "Unbilled" button → bill_date < sentinel.
+    unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     rows_params: list = []
     where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params, lanes, exclude_lanes)
@@ -1981,6 +1993,7 @@ async def by_order(
           AND br4.origin_actual_departure >= ${p_s}
           AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
           {losses_clause}
+          {unbilled_clause}
         ORDER BY {order_by}
         LIMIT ${p_lim}
     """
@@ -2000,6 +2013,7 @@ async def by_order(
           AND br4.origin_actual_departure >= ${t_s}
           AND br4.origin_actual_departure < (${t_e}::date + INTERVAL '1 day')
           {losses_clause}
+          {unbilled_clause}
     """
 
     rows, tot_row = await asyncio.gather(
@@ -2036,6 +2050,37 @@ async def by_order(
             "billed":        bool(r["billed"]),
             "days_to_bill":  int(dtb) if dtb is not None else None,
         })
+
+    # Bruno (PDF 2026-07-13): POD indicator — tick orders that already have a
+    # POD Tracker document. The POD Tracker lives in the AP_module DB
+    # (unilink_portal_ap.pod_tracker_loads, has_pod flag) — a SEPARATE Postgres
+    # server, so it can't be JOINed into the datalake query. Look the fetched
+    # page's order ids up in one bounded extra query and set a boolean. Degrades
+    # to pod=False (never 503s the whole table) if the AP pool is unavailable —
+    # POD is a supplementary indicator, not core production data. NOTE: the
+    # tracker is a synced D/P snapshot, so orders outside its sync scope read
+    # False even if physically documented.
+    pod_set: set[str] = set()
+    order_ids = [r["order_id"] for r in out if r["order_id"]]
+    ap_pool = getattr(request.app.state, "ap_pool", None)
+    if ap_pool is not None and order_ids:
+        try:
+            pod_rows = await ap_pool.fetch(
+                """
+                SELECT UPPER(TRIM(mcleod_order_id)) AS oid
+                FROM pod_tracker_loads
+                WHERE has_pod = TRUE
+                  AND UPPER(TRIM(mcleod_order_id)) = ANY($1::text[])
+                """,
+                [o.upper() for o in order_ids],
+            )
+            pod_set = {r["oid"] for r in pod_rows}
+        except Exception:
+            # Intentional non-fatal degradation: a down/misconfigured AP DB
+            # must not break the By Order table — fall back to pod=False.
+            pod_set = set()
+    for r in out:
+        r["pod"] = bool(r["order_id"]) and r["order_id"].upper() in pod_set
 
     t_rev = _safe_float(tot_row["rev"]) if tot_row else 0.0
     t_prof = _safe_float(tot_row["prof"]) if tot_row else 0.0
@@ -2756,7 +2801,8 @@ async def margin_distribution(
               WHEN br4.margin_amt / br4.total_charge < 0.20  THEN '15_20'
               ELSE                                                'gte_20'
             END AS bucket,
-            br4.total_charge
+            br4.total_charge,
+            br4.margin_amt
           FROM public.mcleod_gld_budget_report_v4 br4
           WHERE {where}
             AND br4.origin_actual_departure >= ${p_s}
@@ -2765,7 +2811,8 @@ async def margin_distribution(
         SELECT
           bucket,
           COUNT(*)::int                          AS orders,
-          COALESCE(SUM(total_charge), 0)::numeric AS revenue
+          COALESCE(SUM(total_charge), 0)::numeric AS revenue,
+          COALESCE(SUM(margin_amt), 0)::numeric   AS profit
         FROM labeled
         GROUP BY bucket
         ORDER BY CASE bucket
@@ -2785,6 +2832,8 @@ async def margin_distribution(
             "bucket": r["bucket"],
             "orders": int(r["orders"] or 0),
             "revenue": _safe_float(r["revenue"]),
+            # Bruno (PDF 2026-07-13): Profit total per bucket (SUM(margin_amt)).
+            "profit": _safe_float(r["profit"]),
         }
         for r in rows
     ]
@@ -2794,6 +2843,7 @@ async def margin_distribution(
     # it stays in `data` for completeness but the frontend renders the six.
     total_orders = sum(d["orders"] for d in data if d["bucket"] != "no_revenue")
     total_revenue = _safe_float(sum(d["revenue"] for d in data if d["bucket"] != "no_revenue"))
+    total_profit = _safe_float(sum(d["profit"] for d in data if d["bucket"] != "no_revenue"))
     return {
         "success": True,
         "data": data,
@@ -2801,5 +2851,368 @@ async def margin_distribution(
             "window": {"start": s.isoformat(), "end": e.isoformat()},
             "total_orders": total_orders,
             "total_revenue": total_revenue,
+            "total_profit": total_profit,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Bruno (PDF 2026-07-13) — Week / Team toggles on the Team Budget Variance and
+# Team Monthly Projection panels. Each returns the SAME metric set as its base
+# panel, broken out by the last 5 Mon-Sun weeks or by CORP team (Total + T1..5).
+# ---------------------------------------------------------------------------
+
+
+def _variance_from_sums(customers, loads_a, loads_b, rev_a, rev_b, prof_a, prof_b) -> dict:
+    """Build one Team-Budget-Variance object (actual − budget) from raw sums."""
+    loads_var = _safe_float(loads_a) - _safe_float(loads_b)
+    revenue_var = _safe_float(rev_a) - _safe_float(rev_b)
+    profit_var = _safe_float(prof_a) - _safe_float(prof_b)
+    margin_var_pct = (profit_var / revenue_var * 100.0) if revenue_var else 0.0
+    return {
+        "customers":      int(customers or 0),
+        "volume_var":     _safe_float(loads_var),
+        "revenue_var":    _safe_float(revenue_var),
+        "profit_var":     _safe_float(profit_var),
+        "margin_var_pct": _safe_float(margin_var_pct),
+        "rev_x_l":        _safe_float((revenue_var / loads_var) if loads_var else 0.0),
+        "prof_x_l":       _safe_float((profit_var / loads_var) if loads_var else 0.0),
+    }
+
+
+def _projection_from_sums(vol_12, rev_12, prof_12, vol_mtd, rev_mtd, prof_mtd,
+                          pending: int, team_count: int) -> dict:
+    """Build one Team-Monthly-Projection object from raw 12-day + MTD sums."""
+    avg_vol = _safe_float(vol_12) / 12.0
+    avg_rev = _safe_float(rev_12) / 12.0
+    avg_prof = _safe_float(prof_12) / 12.0
+    proj_vol = avg_vol * pending + _safe_float(vol_mtd)
+    proj_rev = avg_rev * pending + _safe_float(rev_mtd)
+    proj_prof = avg_prof * pending + _safe_float(prof_mtd)
+    cap = 500.0 * (team_count or 0)
+    return {
+        "avg_vol_day":  _safe_float(avg_vol),
+        "avg_rev_day":  _safe_float(avg_rev),
+        "avg_prof_day": _safe_float(avg_prof),
+        "pending_workdays": pending,
+        "proj_volume":  _safe_float(proj_vol),
+        "proj_revenue": _safe_float(proj_rev),
+        "proj_profit":  _safe_float(proj_prof),
+        "proj_margin_pct": _safe_float((proj_prof / proj_rev * 100.0) if proj_rev else 0.0),
+        "proj_rev_x_l":  _safe_float((proj_rev / proj_vol) if proj_vol else 0.0),
+        "proj_prof_x_l": _safe_float((proj_prof / proj_vol) if proj_vol else 0.0),
+        "proj_team_ut":  _safe_float((proj_vol / cap * 100.0) if cap else 0.0),
+    }
+
+
+def _last_5_weeks(today: date) -> tuple[list[date], date, date]:
+    """The 5 most recent Mon-Sun week-starts (current week included), plus the
+    span bounds. Mirrors /team-weekly-performance so the two Week views align."""
+    this_mon = today - timedelta(days=today.weekday())
+    week_starts = [this_mon - timedelta(weeks=k) for k in range(4, -1, -1)]
+    return week_starts, week_starts[0], week_starts[-1] + timedelta(days=6)
+
+
+def _week_label(ws: date) -> str:
+    we = ws + timedelta(days=6)
+    return f"{ws.day:02d}/{ws.month:02d} - {we.day:02d}/{we.month:02d}"
+
+
+@router.get("/team-variance-weekly")
+async def team_variance_weekly(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Team Budget Variance broken out by the last 5 completed Mon-Sun weeks.
+
+    Each week column is the actual − budget variance for that week (same
+    convention as /team-variance). Fixed rolling 5-week window; team/customer
+    filters apply, the page date filter is intentionally ignored.
+    """
+    pool = get_datalake_gold_pool(request)
+    today = cst_today()
+    week_starts, weeks_start, weeks_end = _last_5_weeks(today)
+    params: list = [weeks_start, weeks_end]
+    extra = ""
+    if team:
+        params.append(team)
+        extra += f" AND ct.team_id = ${len(params)}"
+    if customer:
+        params.append(customer)
+        extra += f' AND budget."Customer Name" = ${len(params)}'
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE},
+        per_cw AS (
+          SELECT
+            DATE_TRUNC('week', budget."Date")::date AS wk,
+            budget."Customer Name" AS cust,
+            SUM(budget."Loads Actual")   AS la, SUM(budget."Loads Budget")   AS lb,
+            SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
+            SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
+          FROM public.daily_production_budget_report budget
+          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          WHERE budget."Date" BETWEEN $1 AND $2
+          {extra}
+          GROUP BY 1, 2
+        )
+        SELECT
+          wk,
+          COUNT(*) FILTER (WHERE COALESCE(la,0) > 0) AS active_customers,
+          COALESCE(SUM(lb),0) AS loads_budget,   COALESCE(SUM(la),0) AS loads_actual,
+          COALESCE(SUM(rb),0) AS revenue_budget, COALESCE(SUM(ra),0) AS revenue_actual,
+          COALESCE(SUM(pb),0) AS profit_budget,  COALESCE(SUM(pa),0) AS profit_actual
+        FROM per_cw
+        GROUP BY wk
+        """,
+        *params,
+    )
+    by_wk = {r["wk"]: r for r in rows}
+    weeks_out = []
+    for ws in week_starts:
+        r = by_wk.get(ws)
+        obj = _variance_from_sums(
+            r["active_customers"] if r else 0,
+            r["loads_actual"] if r else 0, r["loads_budget"] if r else 0,
+            r["revenue_actual"] if r else 0, r["revenue_budget"] if r else 0,
+            r["profit_actual"] if r else 0, r["profit_budget"] if r else 0,
+        )
+        obj["start"] = ws.isoformat()
+        obj["end"] = (ws + timedelta(days=6)).isoformat()
+        obj["label"] = _week_label(ws)
+        weeks_out.append(obj)
+    return {"success": True, "data": {"weeks": weeks_out}}
+
+
+@router.get("/team-variance-by-team")
+async def team_variance_by_team(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    customer: Optional[str] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Team Budget Variance split per CORP team (TEAM1..TEAM5) + a Total.
+
+    The single ``team`` filter is intentionally dropped — this view always
+    returns every CORP team; ``customer`` / date filters still apply.
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+    params: list = [s, e]
+    extra = ""
+    if customer:
+        params.append(customer)
+        extra += f' AND budget."Customer Name" = ${len(params)}'
+    rows = await pool.fetch(
+        f"""
+        WITH {CUSTOMER_TEAM_CTE},
+        per_ct AS (
+          SELECT
+            ct.team_id AS team_id,
+            budget."Customer Name" AS cust,
+            SUM(budget."Loads Actual")   AS la, SUM(budget."Loads Budget")   AS lb,
+            SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
+            SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
+          FROM public.daily_production_budget_report budget
+          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          WHERE budget."Date" BETWEEN $1 AND $2
+          {extra}
+          GROUP BY 1, 2
+        )
+        SELECT
+          team_id,
+          COUNT(*) FILTER (WHERE COALESCE(la,0) > 0) AS active_customers,
+          COALESCE(SUM(lb),0) AS loads_budget,   COALESCE(SUM(la),0) AS loads_actual,
+          COALESCE(SUM(rb),0) AS revenue_budget, COALESCE(SUM(ra),0) AS revenue_actual,
+          COALESCE(SUM(pb),0) AS profit_budget,  COALESCE(SUM(pa),0) AS profit_actual
+        FROM per_ct
+        GROUP BY team_id
+        """,
+        *params,
+    )
+    by_team = {r["team_id"]: r for r in rows}
+    acc = {"cust": 0, "la": 0.0, "lb": 0.0, "ra": 0.0, "rb": 0.0, "pa": 0.0, "pb": 0.0}
+    teams_out = []
+    for t in CORP_TEAMS:
+        r = by_team.get(t)
+        obj = _variance_from_sums(
+            r["active_customers"] if r else 0,
+            r["loads_actual"] if r else 0, r["loads_budget"] if r else 0,
+            r["revenue_actual"] if r else 0, r["revenue_budget"] if r else 0,
+            r["profit_actual"] if r else 0, r["profit_budget"] if r else 0,
+        )
+        obj["team_id"] = t
+        teams_out.append(obj)
+        if r:
+            acc["cust"] += int(r["active_customers"] or 0)
+            acc["la"] += _safe_float(r["loads_actual"]);  acc["lb"] += _safe_float(r["loads_budget"])
+            acc["ra"] += _safe_float(r["revenue_actual"]); acc["rb"] += _safe_float(r["revenue_budget"])
+            acc["pa"] += _safe_float(r["profit_actual"]);  acc["pb"] += _safe_float(r["profit_budget"])
+    total = _variance_from_sums(
+        acc["cust"], acc["la"], acc["lb"], acc["ra"], acc["rb"], acc["pa"], acc["pb"],
+    )
+    return {"success": True, "data": {"total": total, "teams": teams_out}}
+
+
+@router.get("/team-projection-by-team")
+async def team_projection_by_team(
+    request: Request,
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Team Monthly Projection split per CORP team (TEAM1..TEAM5) + a Total.
+
+    Same rolling 12-business-day → EoM extrapolation as /team-projection, run
+    once per team_id. Per-team capacity uses team_count = 1; the Total uses the
+    number of teams with data. The single ``team`` filter is dropped.
+    """
+    pool = get_datalake_gold_pool(request)
+    today = cst_today()
+    m_start, m_end = _month_bounds(today)
+    win_start = _last_n_business_days_start(today, 12)
+    win_end = today - timedelta(days=1)
+    pending_workdays = _count_workdays(today, m_end)
+
+    params: list = []
+    where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes)
+    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
+    p_ws = len(params) - 5
+    p_we = len(params) - 4
+    p_ms1 = len(params) - 3
+    p_we2 = len(params) - 2
+    p_ms2 = len(params) - 1
+    p_me = len(params)
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          TRIM(br4.team_id) AS team_id,
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                             AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.total_charge END), 0)::numeric AS rev_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.margin_amt END), 0)::numeric AS prof_12,
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
+                             AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol_mtd,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
+                            THEN br4.total_charge END), 0)::numeric AS rev_mtd,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
+                            THEN br4.margin_amt END), 0)::numeric AS prof_mtd
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+        GROUP BY TRIM(br4.team_id)
+        """,
+        *params,
+    )
+    by_team = {r["team_id"]: r for r in rows}
+    acc = {"v12": 0.0, "r12": 0.0, "p12": 0.0, "vm": 0.0, "rm": 0.0, "pm": 0.0}
+    teams_out = []
+    for t in CORP_TEAMS:
+        r = by_team.get(t)
+        obj = _projection_from_sums(
+            r["vol_12"] if r else 0, r["rev_12"] if r else 0, r["prof_12"] if r else 0,
+            r["vol_mtd"] if r else 0, r["rev_mtd"] if r else 0, r["prof_mtd"] if r else 0,
+            pending_workdays, 1,
+        )
+        obj["team_id"] = t
+        teams_out.append(obj)
+        if r:
+            acc["v12"] += _safe_float(r["vol_12"]); acc["r12"] += _safe_float(r["rev_12"]); acc["p12"] += _safe_float(r["prof_12"])
+            acc["vm"] += _safe_float(r["vol_mtd"]); acc["rm"] += _safe_float(r["rev_mtd"]); acc["pm"] += _safe_float(r["prof_mtd"])
+    total = _projection_from_sums(
+        acc["v12"], acc["r12"], acc["p12"], acc["vm"], acc["rm"], acc["pm"],
+        pending_workdays, len(rows) or len(CORP_TEAMS),
+    )
+    return {
+        "success": True,
+        "data": {
+            "total": total, "teams": teams_out,
+            "today": today.isoformat(),
+            "month_start": m_start.isoformat(),
+            "month_end": m_end.isoformat(),
+        },
+    }
+
+
+@router.get("/team-projection-weekly")
+async def team_projection_weekly(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Team Monthly Projection "Week" view — per-week ACTUALS for the last 5
+    Mon-Sun weeks (Bruno decision 2026-07-13).
+
+    A projection is inherently forward-looking, so a per-week grouping shows
+    each recent week's realised figures under the projection's row labels:
+    Avg *·Day = week total ÷ that week's Mon-Sat workdays; Proj * = that week's
+    actual; Team Ut. = week volume ÷ (500 × active teams). Fixed rolling
+    window; team/customer/lane filters apply, the page date filter is ignored.
+    """
+    pool = get_datalake_gold_pool(request)
+    today = cst_today()
+    week_starts, weeks_start, weeks_end = _last_5_weeks(today)
+    params: list = []
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    params.extend([weeks_start, weeks_end])
+    p_s = len(params) - 1
+    p_e = len(params)
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          DATE_TRUNC('week', br4.origin_actual_departure)::date AS wk,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS rev,
+          COALESCE(SUM(br4.margin_amt),  0)::numeric AS prof,
+          COUNT(DISTINCT br4.team_id) AS team_count
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+          AND br4.origin_actual_departure >= ${p_s}
+          AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+        GROUP BY wk
+        """,
+        *params,
+    )
+    by_wk = {r["wk"]: r for r in rows}
+    weeks_out = []
+    for ws in week_starts:
+        r = by_wk.get(ws)
+        we = ws + timedelta(days=6)
+        vol = int(r["vol"] or 0) if r else 0
+        rev = _safe_float(r["rev"]) if r else 0.0
+        prof = _safe_float(r["prof"]) if r else 0.0
+        # Workdays elapsed in this week (cap the current, partial week at today).
+        wk_workdays = _count_workdays(ws, min(we, today)) or 1
+        team_count = (int(r["team_count"] or 0) if r else 0) or (1 if team else len(CORP_TEAMS))
+        cap = 500.0 * team_count
+        weeks_out.append({
+            "start": ws.isoformat(),
+            "end": we.isoformat(),
+            "label": _week_label(ws),
+            "avg_vol_day":  _safe_float(vol / wk_workdays),
+            "avg_rev_day":  _safe_float(rev / wk_workdays),
+            "avg_prof_day": _safe_float(prof / wk_workdays),
+            "pending_workdays": wk_workdays,
+            "proj_volume":  vol,
+            "proj_revenue": rev,
+            "proj_profit":  prof,
+            "proj_margin_pct": _safe_float((prof / rev * 100.0) if rev else 0.0),
+            "proj_rev_x_l":  _safe_float((rev / vol) if vol else 0.0),
+            "proj_prof_x_l": _safe_float((prof / vol) if vol else 0.0),
+            "proj_team_ut":  _safe_float((vol / cap * 100.0) if cap else 0.0),
+        })
+    return {"success": True, "data": {"weeks": weeks_out}}

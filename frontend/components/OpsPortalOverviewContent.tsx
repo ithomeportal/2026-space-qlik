@@ -119,6 +119,9 @@ function Body({
   // Bruno R5: "Losses" button — global toggle (margin_amt < 0) for the
   // Actuals / By Lane / By Order tables.
   const [lossesOnly, setLossesOnly] = useState<boolean>(false)
+  // Bruno (PDF 2026-07-13): "Unbilled" button — bill_date < sentinel, same
+  // three tables. ANDs with Losses when both are on.
+  const [unbilledOnly, setUnbilledOnly] = useState<boolean>(false)
   // Bruno R7 (2026-06-05): Lane filter — multi-select with Include⇄Exclude.
   const [laneIds, setLaneIds] = useState<string[]>([])
   const [laneMode, setLaneMode] = useState<FilterMode>("include")
@@ -147,10 +150,11 @@ function Body({
       customer: customer || undefined,
       loadType: loadType || undefined,
       lossesOnly: lossesOnly || undefined,
+      unbilledOnly: unbilledOnly || undefined,
       lanes: laneMode === "include" && laneIds.length > 0 ? laneIds : undefined,
       excludeLanes: laneMode === "exclude" && laneIds.length > 0 ? laneIds : undefined,
     }),
-    [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, laneIds, laneMode],
+    [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, unbilledOnly, laneIds, laneMode],
   )
 
   // R10: clicking a lane in the By-Lane table sets it as the single included lane.
@@ -366,6 +370,20 @@ function Body({
             }`}
           >
             Losses
+          </button>
+
+          {/* Bruno (PDF 2026-07-13): Unbilled button — bill_date < sentinel in the
+              Actuals, By Lane and By Order tables. */}
+          <button
+            onClick={() => setUnbilledOnly((v) => !v)}
+            title="Show only never-billed records (bill_date < '01-01-2000') in the Actuals, By Lane and By Order tables"
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              unbilledOnly
+                ? "border-[#B45309] bg-[#B45309] text-white"
+                : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+            }`}
+          >
+            Unbilled
           </button>
 
           {/* Bruno R1: quick-nav pills to sibling CORP reports. */}
