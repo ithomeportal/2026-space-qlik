@@ -114,6 +114,26 @@ def get_wildcard_bracket_index(normalized_service_average: float) -> int:
     return matched_index
 
 
+def get_wildcard_load_count(service_bracket: Dict[str, float]) -> float:
+    """The wildcard's synthetic weekly load count (Bruno R10, 2026-07-13).
+
+    The load count is the LOAD_COUNT bracket whose bonus% equals the *service*
+    bracket's bonus%, NOT the positionally-aligned load bracket. Example: service
+    96% → 80% service bonus → the 80% Load Count row → 100 loads (was 112.5, the
+    positionally-aligned row). Because service-bonus%[i] == load-bonus%[i-1], this
+    is effectively a one-row shift; matching on bonus% also fixes the latent 95%
+    edge (old code hit LOAD_COUNT_BRACKETS[-1]=150 via negative indexing).
+
+    Floor: 95% service maps to a 70% service bonus with no matching load row, so
+    it falls to the first (100-load) bracket — the wildcard's 100-load minimum.
+    """
+    target = round(float(service_bracket["bonusPct"]), 4)
+    for bracket in LOAD_COUNT_BRACKETS:
+        if round(float(bracket["bonusPct"]), 4) == target:
+            return float(bracket["threshold"])
+    return float(LOAD_COUNT_BRACKETS[0]["threshold"])
+
+
 def calculate_wildcard_bonus(
     employee: Dict[str, Any], total_profit: float, normalized_service_average: float
 ) -> Dict[str, Any]:
@@ -145,20 +165,25 @@ def calculate_wildcard_bonus(
         role_bonus_pct = float(service_bracket["bonusPct"])
 
     base_pay = PAY_PER_LOAD[role]
-    wildcard_weekly_usd = float(load_bracket["threshold"]) * role_bonus_pct * base_pay
+    # R10 (Bruno 2026-07-13): the weekly load count is the load row whose bonus%
+    # matches the SERVICE bonus% (e.g. 96% → 80% → 100 loads), not the positional
+    # load bracket. Role bonus %s are unchanged — Bruno's "all other required
+    # calculation criteria" keeps KAM/FM/T&T multipliers where they were.
+    wildcard_loads = get_wildcard_load_count(service_bracket)
+    wildcard_weekly_usd = wildcard_loads * role_bonus_pct * base_pay
 
     return {
         "wildcardWeeklyUsd": wildcard_weekly_usd,
         "wildcardBonusUsd": wildcard_weekly_usd,
         "wildcardServiceBracketPct": float(service_bracket["threshold"]),
-        "wildcardEquivalentLoads": float(load_bracket["threshold"]),
+        "wildcardEquivalentLoads": wildcard_loads,
         "wildcardEquivalentMarginPct": float(margin_bracket["threshold"]),
         "wildcardRoleBonusPct": role_bonus_pct,
         "wildcardBasePayUsd": base_pay,
         "wildcardRuleLabel": (
             f"Weekly wildcard: monthly profit > $100,000 and service at or above "
             f"{service_bracket['threshold'] * 100:.0f}%; service bracket maps each week to "
-            f"{load_bracket['threshold']:.1f} loads / {margin_bracket['threshold'] * 100:.1f}% margin."
+            f"{wildcard_loads:.1f} loads / {margin_bracket['threshold'] * 100:.1f}% margin."
         ),
     }
 
@@ -317,7 +342,7 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         "serviceAveragePct": service_average_pct,
         "wildcardEligible": wildcard_eligible,
         "wildcardServiceBracketPct": SERVICE_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
-        "wildcardEquivalentLoads": LOAD_COUNT_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
+        "wildcardEquivalentLoads": get_wildcard_load_count(SERVICE_BRACKETS[wildcard_index]) if wildcard_eligible else 0,
         "wildcardEquivalentMarginPct": MARGIN_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
         "totalLoads": sum(float(week.get("loads", 0) or 0) for week in team["weeks"]),
         "totalRevenue": total_revenue,
