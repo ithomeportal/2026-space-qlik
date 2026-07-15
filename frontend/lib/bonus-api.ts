@@ -301,6 +301,19 @@ export function useBonusMutations() {
     onSuccess: ok("Afterhours saved"),
     onError: mutationErrorToast("Save afterhours"),
   })
+  // Bruno Bonus R6 (2026-07-15): add an Afterhours (Night/Weekend) worker.
+  const createAfterhours = useMutation({
+    mutationFn: (b: { shift_group: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
+      apiSend("POST", "/afterhours", b),
+    onSuccess: ok("Afterhours member added"),
+    onError: mutationErrorToast("Add afterhours member"),
+  })
+  // Bruno Bonus R7 (2026-07-15): remove an Afterhours (Night/Weekend) worker.
+  const deleteAfterhours = useMutation({
+    mutationFn: (id: string) => apiSend("DELETE", `/afterhours/${id}`),
+    onSuccess: ok("Afterhours member removed"),
+    onError: mutationErrorToast("Delete afterhours member"),
+  })
   const saveFx = useMutation({
     mutationFn: (b: { period_key: string; team_fx: number; night_fx: number }) => apiSend("PUT", "/settings", b),
     onSuccess: ok("FX rates saved"),
@@ -317,5 +330,15 @@ export function useBonusMutations() {
     onError: mutationErrorToast("Unlock period"),
   })
 
-  return { createRoster, updateRoster, deleteRoster, updateAfterhours, saveFx, lock, unlock }
+  return {
+    createRoster,
+    updateRoster,
+    deleteRoster,
+    updateAfterhours,
+    createAfterhours,
+    deleteAfterhours,
+    saveFx,
+    lock,
+    unlock,
+  }
 }

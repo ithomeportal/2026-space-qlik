@@ -700,6 +700,38 @@ class AfterhoursRow(BaseModel):
     receives_bonus: bool = True
 
 
+class AfterhoursCreate(AfterhoursRow):
+    # Bruno Bonus R6 (PDF 2026-07-15): adding an Afterhours worker also needs the
+    # shift group (the "Group" column, e.g. "Night Shift" / "Weekend Shift").
+    shift_group: str = Field(min_length=1, max_length=60)
+
+
+@router.post("/afterhours")
+async def create_afterhours_row(
+    request: Request,
+    body: AfterhoursCreate,
+    user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """Bruno Bonus R6 (2026-07-15): HR adds an Afterhours (Night/Weekend) worker."""
+    primary = get_pool(request)
+    next_sort = await primary.fetchval(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM bonus_afterhours"
+    )
+    row = await primary.fetchrow(
+        """
+        INSERT INTO bonus_afterhours (shift_group, employee_name, salary_mxn, receives_bonus, sort_order)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        """,
+        body.shift_group.strip(),
+        body.name.strip(),
+        body.salary_mxn,
+        body.receives_bonus,
+        next_sort,
+    )
+    return {"success": True, "data": {"id": str(row["id"])}}
+
+
 @router.put("/afterhours/{row_id}")
 async def update_afterhours_row(
     request: Request,
@@ -719,6 +751,20 @@ async def update_afterhours_row(
         body.salary_mxn,
         body.receives_bonus,
     )
+    if result.endswith("0"):
+        raise HTTPException(status_code=404, detail="Afterhours row not found")
+    return {"success": True}
+
+
+@router.delete("/afterhours/{row_id}")
+async def delete_afterhours_row(
+    request: Request,
+    row_id: UUID,
+    user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """Bruno Bonus R7 (2026-07-15): HR removes an Afterhours (Night/Weekend) worker."""
+    primary = get_pool(request)
+    result = await primary.execute("DELETE FROM bonus_afterhours WHERE id = $1", row_id)
     if result.endswith("0"):
         raise HTTPException(status_code=404, detail="Afterhours row not found")
     return {"success": True}

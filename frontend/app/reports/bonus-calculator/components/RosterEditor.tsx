@@ -159,7 +159,7 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
               )
             })}
 
-            {/* Afterhours */}
+            {/* Afterhours (Bruno R6/R7 2026-07-15: add + remove workers). */}
             <section className="rounded-xl border border-[#E5E7EB] p-4">
               <h3 className="text-sm font-bold text-[#1F2937]">Afterhours (Night / Weekend)</h3>
               <div className="mt-2 space-y-2">
@@ -167,6 +167,12 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                   <AfterhoursRow key={a.id} row={a} mutations={m} />
                 ))}
               </div>
+              <AfterhoursAddForm
+                groups={Array.from(
+                  new Set([...d.afterhours.map((a) => a.group), "Night Shift", "Weekend Shift"]),
+                )}
+                mutations={m}
+              />
             </section>
           </div>
         )}
@@ -244,6 +250,77 @@ function AfterhoursRow({
         className="rounded-md border border-[#E5E7EB] px-2 py-1 text-xs font-medium text-[#475569] enabled:hover:bg-[#F3F4F6] disabled:opacity-40"
       >
         Save
+      </button>
+      {/* Bruno Bonus R7 (2026-07-15): remove an Afterhours worker. */}
+      <button
+        onClick={() => mutations.deleteAfterhours.mutate(row.id)}
+        className="rounded-md border border-[#FCA5A5] p-1 text-[#B91C1C] hover:bg-[#FEF2F2]"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
+// Bruno Bonus R6 (2026-07-15): add an Afterhours (Night/Weekend) worker —
+// mirrors the per-team roster "Add" row, with a shift-group selector.
+function AfterhoursAddForm({
+  groups,
+  mutations,
+}: {
+  groups: string[]
+  mutations: ReturnType<typeof useBonusMutations>
+}) {
+  const [group, setGroup] = useState(groups[0] ?? "Night Shift")
+  const [name, setName] = useState("")
+  const [salary, setSalary] = useState("0")
+  const [receives, setReceives] = useState(true)
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-dashed border-[#E5E7EB] pt-3">
+      <select
+        value={group}
+        onChange={(e) => setGroup(e.target.value)}
+        className="rounded-md border border-[#E5E7EB] px-2 py-1 text-sm"
+      >
+        {groups.map((g) => (
+          <option key={g} value={g}>
+            {g}
+          </option>
+        ))}
+      </select>
+      <input
+        placeholder="New member name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="w-48 rounded-md border border-[#E5E7EB] px-2 py-1 text-sm"
+      />
+      <input
+        type="number"
+        placeholder="Salary MXN"
+        value={salary}
+        onChange={(e) => setSalary(e.target.value)}
+        className="w-28 rounded-md border border-[#E5E7EB] px-2 py-1 text-sm"
+      />
+      <label className="flex items-center gap-1 text-xs text-[#475569]">
+        <input type="checkbox" checked={receives} onChange={(e) => setReceives(e.target.checked)} />
+        Eligible
+      </label>
+      <button
+        disabled={!name || mutations.createAfterhours.isPending}
+        onClick={() => {
+          mutations.createAfterhours.mutate({
+            shift_group: group,
+            name,
+            salary_mxn: Number(salary) || 0,
+            receives_bonus: receives,
+          })
+          setName("")
+          setSalary("0")
+          setReceives(true)
+        }}
+        className="flex items-center gap-1 rounded-md border border-[#DDD6FE] px-2 py-1 text-sm font-medium text-[#6D28D9] hover:bg-[#F5F3FF] disabled:opacity-50"
+      >
+        <Plus className="h-4 w-4" /> Add
       </button>
     </div>
   )
