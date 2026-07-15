@@ -274,10 +274,24 @@ function PivotPanel({
         latest === null || latest === undefined || ref === null
           ? null
           : latest - ref
+      // Bruno Attrition R (PDF 2026-07-15): "Difference LW – L2W" = latest week
+      // − AVG L2W, where AVG L2W is the mean of the 2 completed weeks BEFORE
+      // last week — indices 1..2 (weeks −2..−3, 0-filled, fixed divisor 2),
+      // mirroring the L8W column exactly with a 2-week window. Placed to the
+      // right of "Difference LW – L8W" across all views and metrics.
+      const l2wRef = (() => {
+        const slice = values.slice(1, 3)
+        if (slice.length === 0) return null
+        return slice.reduce<number>((a, b) => a + (b ?? 0), 0) / slice.length
+      })()
+      const diff2w =
+        latest === null || latest === undefined || l2wRef === null
+          ? null
+          : latest - l2wRef
       // Bruno (2026-05-25 page 5): expose customer/client + lane separately so
       // the customer_lane view can render — and sort — two columns.
       const { cust, lane } = splitDimKey(k)
-      return { dim_key: k, team: b.team, cust, lane, values, revenue, profit, ref, diff, total, status }
+      return { dim_key: k, team: b.team, cust, lane, values, revenue, profit, ref, l2wRef, diff, diff2w, total, status }
     })
     const strCompare = (av: string, bv: string) => {
       const a = av.toLowerCase()
@@ -306,6 +320,13 @@ function PivotPanel({
       if (sortKey === "diff") {
         const av = a.diff
         const bv = b.diff
+        if (av === null) return 1
+        if (bv === null) return -1
+        return sortDir === "asc" ? av - bv : bv - av
+      }
+      if (sortKey === "diff2w") {
+        const av = a.diff2w
+        const bv = b.diff2w
         if (av === null) return 1
         if (bv === null) return -1
         return sortDir === "asc" ? av - bv : bv - av
@@ -385,10 +406,38 @@ function PivotPanel({
         ? null
         : totalLatest - totalRef
 
+    // Bruno Attrition R (PDF 2026-07-15): Totals "Difference LW – L2W" — same
+    // basis as the L8W totals but over the 2 weeks before last week. Additive
+    // metrics sum the per-row L2W refs; margin is the weighted avg (Σ profit /
+    // Σ revenue) over indices 1..2.
+    const totalRef2w: number | null = (() => {
+      if (pivotEntries.length === 0) return null
+      if (metric === "margin") {
+        let rev = 0
+        let prof = 0
+        for (let i = 1; i < weeksList.length && i <= 2; i += 1) {
+          for (const row of pivotEntries) {
+            rev += row.revenue[i] ?? 0
+            prof += row.profit[i] ?? 0
+          }
+        }
+        return rev > 0 ? prof / rev : null
+      }
+      const refs = pivotEntries
+        .map((row) => row.l2wRef)
+        .filter((v): v is number => v !== null)
+      if (refs.length === 0) return null
+      return refs.reduce((a, b) => a + b, 0)
+    })()
+    const totalDiff2w: number | null =
+      totalLatest === null || totalLatest === undefined || totalRef2w === null
+        ? null
+        : totalLatest - totalRef2w
+
     return {
       weeksList,
       pivot: pivotEntries,
-      totals: { perWeek, ref: totalRef, diff: totalDiff },
+      totals: { perWeek, ref: totalRef, ref2w: totalRef2w, diff: totalDiff, diff2w: totalDiff2w },
     }
   }, [rows, sortKey, sortDir, metric])
 
@@ -495,6 +544,18 @@ function PivotPanel({
               >
                 Difference LW – L8W
               </SortTh>
+              {/* Bruno Attrition R (PDF 2026-07-15): Difference LW – L2W = latest
+                  week − AVG of the 2 weeks before last week. Sits immediately
+                  right of Difference LW – L8W. */}
+              <SortTh
+                k="diff2w"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onToggle={toggleSort}
+                className="bg-[#F9FAFB] text-[#1B3A5C]"
+              >
+                Difference LW – L2W
+              </SortTh>
               {weeksList.map((w, i) => (
                 <SortTh
                   key={w}
@@ -575,6 +636,11 @@ function PivotPanel({
                 <td className="bg-white px-3 py-1.5 text-right font-mono text-[#374151]">
                   {row.diff === null ? "—" : fmt(row.diff)}
                 </td>
+                {/* Bruno Attrition R (PDF 2026-07-15): per-row Difference LW – L2W,
+                    uncolored like the L8W difference. */}
+                <td className="bg-white px-3 py-1.5 text-right font-mono text-[#374151]">
+                  {row.diff2w === null ? "—" : fmt(row.diff2w)}
+                </td>
                 {row.values.map((v, i) => (
                   <td
                     key={i}
@@ -587,7 +653,7 @@ function PivotPanel({
             ))}
             {pivot.length === 0 && (
               <tr>
-                <td colSpan={weeksList.length + leadingCols + 1} className="py-8 text-center text-xs text-[#9CA3AF]">
+                <td colSpan={weeksList.length + leadingCols + 2} className="py-8 text-center text-xs text-[#9CA3AF]">
                   No data in scope.
                 </td>
               </tr>
@@ -617,6 +683,13 @@ function PivotPanel({
                   className={`bg-[#F9FAFB] px-3 py-2 text-right font-mono ${cellShade(totals.diff, 0)}`}
                 >
                   {totals.diff === null ? "—" : fmt(totals.diff)}
+                </td>
+                {/* Bruno Attrition R (PDF 2026-07-15): Totals Difference LW – L2W,
+                    shaded green when >= 0, red below (like the L8W totals diff). */}
+                <td
+                  className={`bg-[#F9FAFB] px-3 py-2 text-right font-mono ${cellShade(totals.diff2w, 0)}`}
+                >
+                  {totals.diff2w === null ? "—" : fmt(totals.diff2w)}
                 </td>
                 {totals.perWeek.map((v, i) => (
                   <td
