@@ -84,11 +84,20 @@ export interface OppFilters {
   lanes?: string[]
   /** Bruno R7: Lane multi-select — exclude list (mode toggle). */
   excludeLanes?: string[]
+  /** Bruno (PDF 2026-07-15) R1: Carrier multi-select — include list. */
+  carriers?: string[]
+  /** Bruno (PDF 2026-07-15) R1: Carrier multi-select — exclude list. */
+  excludeCarriers?: string[]
 }
 
-/** Stable queryKey fragment for the lane arrays. */
-function laneKey(f: Pick<OppFilters, "lanes" | "excludeLanes">): string {
-  return `${(f.lanes ?? []).join("|")}~${(f.excludeLanes ?? []).join("|")}`
+/** Stable queryKey fragment for the lane + carrier arrays. */
+function laneKey(
+  f: Pick<OppFilters, "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
+): string {
+  return (
+    `${(f.lanes ?? []).join("|")}~${(f.excludeLanes ?? []).join("|")}` +
+    `~${(f.carriers ?? []).join("|")}~${(f.excludeCarriers ?? []).join("|")}`
+  )
 }
 
 function qs(f: OppFilters, extra?: Record<string, string>): string {
@@ -103,6 +112,8 @@ function qs(f: OppFilters, extra?: Record<string, string>): string {
   if (f.unbilledOnly) q.set("unbilled_only", "true")
   for (const lane of f.lanes ?? []) q.append("lanes", lane)
   for (const lane of f.excludeLanes ?? []) q.append("exclude_lanes", lane)
+  for (const c of f.carriers ?? []) q.append("carriers", c)
+  for (const c of f.excludeCarriers ?? []) q.append("exclude_carriers", c)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -117,6 +128,8 @@ export interface OppFilterOptions {
   customers: string[]
   /** Bruno R7: distinct "origin - dest" lane keys (YTD scope). */
   lanes: string[]
+  /** Bruno (PDF 2026-07-15) R1: distinct carrier names (YTD scope). */
+  carriers: string[]
   year_start: string
   year_end: string
 }
@@ -358,6 +371,22 @@ export interface OppOrderRow {
   days_to_bill: number | null
   /** Bruno (PDF 2026-07-13): order already has a POD Tracker document. */
   pod: boolean
+  /** Bruno (PDF 2026-07-15) R14: hours since delivery — shown (green<24/red>24)
+   *  only for orders lacking a POD. Null when no delivery timestamp. */
+  pod_age_hours: number | null
+}
+
+// Bruno (PDF 2026-07-15) R16: "Pending to Cover" — status='A', no carrier yet.
+export interface OppPendingRow {
+  order_id: string
+  team_id: string
+  lane: string
+  revenue: number
+  /** ISO orig scheduled early/late pickup (customer_windows); may be null. */
+  orig_sched_early: string | null
+  orig_sched_late: string | null
+  /** Hours remaining until the late pickup deadline (Orig Sched Late − now). */
+  time_to_cover_hours: number | null
 }
 
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
@@ -406,6 +435,15 @@ export interface OppServiceIncidentTotals {
   orders: number
   fail: number
   pct_on_time: number
+}
+
+// Bruno (PDF 2026-07-15) R8: "by Carrier" table — Vol / %Vol / OTP / OTD.
+export interface OppServiceByCarrierRow {
+  carrier: string
+  vol: number
+  pct_vol: number
+  otp_pct: number
+  otd_pct: number
 }
 
 // Margin-bucket distribution (orders + revenue + profit per margin band).
@@ -474,7 +512,7 @@ export function useOppWorkdays() {
 }
 
 export function useOppCombo(
-  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   grain: OppGrain = "month",
 ) {
   const prefix = useApiPrefix()
@@ -533,7 +571,7 @@ export function useOppCustomerNotBilled(f: OppFilters) {
   })
 }
 
-export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
+export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">) {
   const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
@@ -543,7 +581,7 @@ export function useOppTeamProjection(f: Pick<OppFilters, "team" | "customer" | "
   })
 }
 
-export function useOppProfitTmGauge(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">) {
+export function useOppProfitTmGauge(f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">) {
   const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
@@ -596,7 +634,7 @@ export function useOppActualsByLane(
 
 // Bruno R4: "Service" KPI MANAGEMENT chart — OTP/OTD over the grain.
 export function useOppService(
-  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   grain: OppGrain = "month",
 ) {
   const prefix = useApiPrefix()
@@ -631,9 +669,25 @@ export function useOppByOrder(
   })
 }
 
+// Bruno (PDF 2026-07-15) R16: "Pending to Cover" — status='A', no carrier.
+// Not date-windowed; respects team / customer / lane filters. `enabled` so the
+// fetch only fires when the By Order panel is on the Pending-to-Cover view.
+export function useOppPendingToCover(f: OppFilters, enabled: boolean) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [
+      prefix, "opp-pending-to-cover",
+      f.team, f.customer, laneKey(f),
+    ],
+    queryFn: () => apiFetch<OppPendingRow[]>(`${prefix}/pending-to-cover${qs(f)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
 // Bruno R4: "Team Weekly Performance" modal data.
 export function useOppTeamWeekly(
-  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   enabled: boolean,
 ) {
   const prefix = useApiPrefix()
@@ -673,6 +727,20 @@ export function useOppServiceIncident(f: OppFilters, stopType: "pu" | "del") {
   })
 }
 
+// Bruno (PDF 2026-07-15) R8: per-carrier Vol / %Vol / OTP / OTD.
+export function useOppServiceByCarrier(f: OppFilters) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [
+      prefix, "opp-service-by-carrier",
+      f.range, f.startDate, f.endDate, f.team, f.customer, f.loadType, laneKey(f),
+    ],
+    queryFn: () =>
+      apiFetch<OppServiceByCarrierRow[]>(`${prefix}/service-by-carrier${qs(f)}`),
+    ...RETRY,
+  })
+}
+
 // Margin-band distribution (orders + revenue per bucket).
 export function useOppMarginDistribution(f: OppFilters) {
   const prefix = useApiPrefix()
@@ -708,7 +776,7 @@ export function useOppTeamVarianceByTeam(f: OppFilters, enabled: boolean) {
 }
 
 export function useOppTeamProjectionWeekly(
-  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   enabled: boolean,
 ) {
   const prefix = useApiPrefix()
@@ -722,7 +790,7 @@ export function useOppTeamProjectionWeekly(
 }
 
 export function useOppTeamProjectionByTeam(
-  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes">,
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   enabled: boolean,
 ) {
   const prefix = useApiPrefix()

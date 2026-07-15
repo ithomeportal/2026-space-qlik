@@ -233,6 +233,21 @@ def _lane_expr(alias: str) -> str:
     )
 
 
+def _carrier_first_expr(alias: str) -> str:
+    """First-movement carrier (``payee_name``) for a v4 order.
+
+    Matches exactly what the By Order table / by-Carrier table display: the
+    payee of the earliest movement (``ORDER BY movement_id``). Used only when a
+    carrier filter is active, so the correlated subquery cost is never paid on
+    the default (unfiltered) path.
+    """
+    return (
+        f"(SELECT TRIM(m.payee_name) FROM public.mcleod_gld_movement m "
+        f"WHERE m.order_id = {alias}.id AND m.company_id = {alias}.company_id "
+        f"ORDER BY m.movement_id ASC LIMIT 1)"
+    )
+
+
 def _v4_scope_where(
     alias: str,
     team: Optional[str],
@@ -241,6 +256,8 @@ def _v4_scope_where(
     params: list,
     lanes: Optional[List[str]] = None,
     exclude_lanes: Optional[List[str]] = None,
+    carriers: Optional[List[str]] = None,
+    exclude_carriers: Optional[List[str]] = None,
 ) -> str:
     """CORP-scope WHERE for ``mcleod_gld_budget_report_v4``.
 
@@ -285,6 +302,15 @@ def _v4_scope_where(
     if exclude_lanes:
         params.append(exclude_lanes)
         parts.append(f"{_lane_expr(alias)} <> ALL(${len(params)})")
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude), matched
+    # against the first-movement payee — consistent with the By Order / by-Carrier
+    # display. Correlated subquery cost only when a carrier is actually selected.
+    if carriers:
+        params.append(carriers)
+        parts.append(f"{_carrier_first_expr(alias)} = ANY(${len(params)})")
+    if exclude_carriers:
+        params.append(exclude_carriers)
+        parts.append(f"COALESCE({_carrier_first_expr(alias)}, '') <> ALL(${len(params)})")
     return " AND ".join(parts)
 
 
@@ -439,9 +465,25 @@ async def filters(
           AND br4.origin_actual_departure >= $4
         ORDER BY lane
     """
-    cust_rows, lane_rows = await asyncio.gather(
+    # Bruno (PDF 2026-07-15) R1: distinct carriers (first-movement payee) on
+    # in-scope YTD orders. ~11 rows — the movement join is order_id-indexed.
+    carrier_sql = """
+        SELECT DISTINCT TRIM(m.payee_name) AS carrier
+        FROM public.mcleod_gld_movement m
+        JOIN public.mcleod_gld_budget_report_v4 br4
+          ON m.order_id = br4.id AND m.company_id = br4.company_id
+        WHERE TRIM(br4.team_id)    = ANY($1)
+          AND TRIM(br4.company_id) = ANY($2)
+          AND TRIM(br4.status)     = ANY($3)
+          AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
+          AND br4.origin_actual_departure >= $4
+          AND m.payee_name IS NOT NULL AND TRIM(m.payee_name) <> ''
+        ORDER BY carrier
+    """
+    cust_rows, lane_rows, carrier_rows = await asyncio.gather(
         pool.fetch(cust_sql, *scope_args),
         pool.fetch(lane_sql, *scope_args),
+        pool.fetch(carrier_sql, *scope_args),
     )
     return {
         "success": True,
@@ -449,6 +491,7 @@ async def filters(
             "teams": list(CORP_TEAMS),
             "customers": [r["customer_name"] for r in cust_rows],
             "lanes": [r["lane"] for r in lane_rows],
+            "carriers": [r["carrier"] for r in carrier_rows],
             "year_start": YEAR_START.isoformat(),
             "year_end": YEAR_END.isoformat(),
         },
@@ -536,6 +579,9 @@ async def combo(
     load_type: Optional[str] = Query(None, description="'contract' | 'spot' | null"),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     grain: str = Query("month", description="'day' | 'week' | 'month'"),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -576,7 +622,7 @@ async def combo(
 
     # ---- Production query (bars + losses) -------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
     prod_params.extend([win_start, win_end])
     p_ws = len(prod_params) - 1
     p_we = len(prod_params)
@@ -628,7 +674,7 @@ async def combo(
     pending_workdays = _count_workdays(today, m_end)
 
     proj_params: list = []
-    where_proj = _v4_scope_where("br4", team, customer, load_type, proj_params, lanes, exclude_lanes)
+    where_proj = _v4_scope_where("br4", team, customer, load_type, proj_params, lanes, exclude_lanes, carriers, exclude_carriers)
     proj_params.extend([win14_start, win14_end, m_start, win14_end])
     p_w14s = len(proj_params) - 3
     p_w14e = len(proj_params) - 2
@@ -894,6 +940,9 @@ async def customer_losses(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -901,7 +950,7 @@ async def customer_losses(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([s, e, limit])
     p_s = len(params) - 2
     p_e = len(params) - 1
@@ -955,6 +1004,9 @@ async def customer_not_billed(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -970,7 +1022,7 @@ async def customer_not_billed(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([s, e, limit])
     p_s = len(params) - 2
     p_e = len(params) - 1
@@ -1039,6 +1091,9 @@ async def team_performance(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """§5 Team Monthly Performance — Production + Savings.
@@ -1053,7 +1108,7 @@ async def team_performance(
 
     # ---- Production query ------------------------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
     prod_params.extend([s, e])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
@@ -1121,7 +1176,7 @@ async def team_performance(
     # Customer attrition % = customers with last_load > 30d / customers total
     # Lane attrition % = lanes with last_load > 30d / lanes total
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes)
+    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -1154,7 +1209,7 @@ async def team_performance(
     # departure/arrival from customer_windows (same sources as By Order R11, so
     # the panel reconciles with the Days-to-Bill column). See _bill_sql().
     bill_params: list = []
-    where_bill = _v4_scope_where("br4", team, customer, load_type, bill_params, lanes, exclude_lanes)
+    where_bill = _v4_scope_where("br4", team, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
     bill_params.extend([s, e])
     b_s = len(bill_params) - 1
     b_e = len(bill_params)
@@ -1221,6 +1276,9 @@ async def team_projection(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """§6 Team Monthly Projection — last 12 Mon-Sat business days extrapolated to EoM.
@@ -1240,7 +1298,7 @@ async def team_projection(
     pending_workdays = _count_workdays(today, m_end)
 
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
     p_ws = len(params) - 5
     p_we = len(params) - 4
@@ -1320,6 +1378,9 @@ async def profit_tm_gauge(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Horizontal gauge under the chart. Always current month MTD."""
@@ -1329,7 +1390,7 @@ async def profit_tm_gauge(
 
     # Production MTD profit
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
     p_params.extend([m_start, today])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -1393,6 +1454,9 @@ async def actuals(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
     losses_only: bool = Query(False),
@@ -1422,7 +1486,7 @@ async def actuals(
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -1610,6 +1674,9 @@ async def actuals_by_lane(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(100, ge=1, le=500),
     losses_only: bool = Query(False),
@@ -1630,7 +1697,7 @@ async def actuals_by_lane(
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -1771,6 +1838,9 @@ async def service(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     grain: str = Query("month", description="'day' | 'week' | 'month'"),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -1793,7 +1863,7 @@ async def service(
     }[grain]
 
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([win_start, win_end])
     p_ws = len(params) - 1
     p_we = len(params)
@@ -1889,6 +1959,9 @@ async def by_order(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     sort: str = Query("revenue_desc"),
     limit: int = Query(500, ge=1, le=2000),
     losses_only: bool = Query(False),
@@ -1938,7 +2011,7 @@ async def by_order(
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     rows_params: list = []
-    where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params, lanes, exclude_lanes)
+    where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params, lanes, exclude_lanes, carriers, exclude_carriers)
     rows_params.extend([s, e, limit])
     p_s = len(rows_params) - 2
     p_e = len(rows_params) - 1
@@ -1971,7 +2044,13 @@ async def by_order(
             WHEN br4.bill_date > '2000-01-01'::date
                  THEN (br4.bill_date::date - win.dest_dep_ts::date)
             ELSE (CURRENT_DATE - win.dest_dep_ts::date)
-          END AS days_to_bill
+          END AS days_to_bill,
+          -- Bruno (PDF 2026-07-15) R14: POD Age — hours since delivery (dest
+          -- arrival, falling back to dest departure). Frontend shows it only for
+          -- orders lacking a POD; <24h green, >24h red. CST session → CST now.
+          CASE WHEN COALESCE(win.arr_ts, win.dest_dep_ts) IS NOT NULL
+               THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(win.arr_ts, win.dest_dep_ts))) / 3600.0
+          END AS pod_age_hours
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
         LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
@@ -1999,7 +2078,7 @@ async def by_order(
     """
 
     tot_params: list = []
-    where_tot = _v4_scope_where("br4", team, customer, load_type, tot_params, lanes, exclude_lanes)
+    where_tot = _v4_scope_where("br4", team, customer, load_type, tot_params, lanes, exclude_lanes, carriers, exclude_carriers)
     tot_params.extend([s, e])
     t_s = len(tot_params) - 1
     t_e = len(tot_params)
@@ -2049,6 +2128,7 @@ async def by_order(
             "in_progress":   in_progress,
             "billed":        bool(r["billed"]),
             "days_to_bill":  int(dtb) if dtb is not None else None,
+            "pod_age_hours": _safe_float(r["pod_age_hours"]) if r["pod_age_hours"] is not None else None,
         })
 
     # Bruno (PDF 2026-07-13): POD indicator — tick orders that already have a
@@ -2105,6 +2185,109 @@ async def by_order(
 
 
 # ---------------------------------------------------------------------------
+# /pending-to-cover — Bruno (PDF 2026-07-15) R16: status='A' loads with no
+# carrier assigned yet ("Pending to Cover" toggle in the By Order panel).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pending-to-cover")
+async def pending_to_cover(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Orders that still need a carrier: ``status = 'A'`` AND no carrier assigned
+    (first-movement ``payee_name`` empty), in the CORP universe.
+
+    Columns (Bruno R16): Order=id · Team=team_id · Orig Sched Early/Late from
+    ``mcleod_gld_customer_windows`` (``orig_orig_sched_early`` / ``orig_orig_sched_late``,
+    §42 correlated LATERAL on ``TRIM(UPPER(id))``, sentinel-guard >2000) · Lane ·
+    Revenue=total_charge · Time to Cover = Orig Sched Late − now (hours remaining;
+    frontend colours >48h green / 24-48h amber / <24h red). Not date-windowed —
+    these are the currently-open uncovered loads; ordered by the soonest deadline.
+    ``status='A'`` is outside the D/P universe of ``_v4_scope_where``, so scope is
+    built inline here.
+    """
+    pool = get_datalake_gold_pool(request)
+
+    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    companies_param = _pad_variants(CORP_COMPANIES, width=4)
+    status_param = _pad_variants(("A",), width=1)
+    params: list = [teams_param, companies_param, status_param]
+    parts = [
+        "br4.team_id    = ANY($1)",
+        "br4.company_id = ANY($2)",
+        "br4.status     = ANY($3)",
+        "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
+    ]
+    if team:
+        params.append(_pad_variants([team], width=8))
+        parts.append(f"br4.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"br4.customer_name = ${len(params)}")
+    if lanes:
+        params.append(lanes)
+        parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")
+    if exclude_lanes:
+        params.append(exclude_lanes)
+        parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
+    where = " AND ".join(parts)
+    params.append(limit)
+    p_lim = len(params)
+
+    sql = f"""
+        SELECT
+          TRIM(br4.id)      AS order_id,
+          TRIM(br4.team_id) AS team_id,
+          NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
+          COALESCE(br4.total_charge, 0)::numeric AS revenue,
+          to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
+          to_char(win.sched_late,  'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_late,
+          CASE WHEN win.sched_late IS NOT NULL
+               THEN EXTRACT(EPOCH FROM (win.sched_late - CURRENT_TIMESTAMP)) / 3600.0
+          END AS time_to_cover_hours
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN LATERAL (
+            SELECT MAX(CASE WHEN cw.orig_orig_sched_early > '2000-01-01' THEN cw.orig_orig_sched_early END) AS sched_early,
+                   MAX(CASE WHEN cw.orig_orig_sched_late  > '2000-01-01' THEN cw.orig_orig_sched_late  END) AS sched_late
+            FROM public.mcleod_gld_customer_windows cw
+            WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
+        ) win ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
+        WHERE {where}
+          AND COALESCE(TRIM(mov.payee_name), '') = ''
+        ORDER BY win.sched_late ASC NULLS LAST
+        LIMIT ${p_lim}
+    """
+
+    rows = await pool.fetch(sql, *params)
+    out = [
+        {
+            "order_id":            r["order_id"],
+            "team_id":             r["team_id"],
+            "lane":                r["lane"] or "",
+            "revenue":             _safe_float(r["revenue"]),
+            "orig_sched_early":    r["orig_sched_early"],
+            "orig_sched_late":     r["orig_sched_late"],
+            "time_to_cover_hours": _safe_float(r["time_to_cover_hours"]) if r["time_to_cover_hours"] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+
+
+# ---------------------------------------------------------------------------
 # /team-weekly-performance — Bruno R4 (2026-05-27): "+" modal, last 5 weeks
 # ---------------------------------------------------------------------------
 
@@ -2117,6 +2300,9 @@ async def team_weekly_performance(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Same KPI set as §5 Team Monthly Performance, split into the last 5
@@ -2148,7 +2334,7 @@ async def team_weekly_performance(
 
     # ---- Production grouped by ISO week ---------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
     prod_params.extend([weeks_start, weeks_end])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
@@ -2215,7 +2401,7 @@ async def team_weekly_performance(
 
     # ---- Attrition (window-independent, identical across weeks) ----------
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes)
+    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -2370,6 +2556,9 @@ async def team_performance_by_team(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """§5 Team Monthly Performance split per CORP team (TEAM1..TEAM5) + a Total.
@@ -2385,7 +2574,7 @@ async def team_performance_by_team(
 
     # ---- Production grouped by team_id (team filter intentionally dropped) --
     prod_params: list = []
-    where = _v4_scope_where("br4", None, customer, load_type, prod_params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", None, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
     prod_params.extend([s, e])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
@@ -2448,7 +2637,7 @@ async def team_performance_by_team(
 
     # ---- Attrition grouped by team_id (and rolled up for Total) ----------
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes)
+    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -2482,7 +2671,7 @@ async def team_performance_by_team(
 
     # ---- Billing grouped by team_id (Bruno round 2026-07-01 R12) ---------
     bill_params: list = []
-    where_bill = _v4_scope_where("br4", None, customer, load_type, bill_params, lanes, exclude_lanes)
+    where_bill = _v4_scope_where("br4", None, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
     bill_params.extend([s, e])
     bt_s = len(bill_params) - 1
     bt_e = len(bill_params)
@@ -2559,7 +2748,7 @@ async def team_performance_by_team(
     # Total: distinct customers / lanes can't be summed across teams (a customer
     # may ship on two teams), so re-read the universe-wide distinct counts.
     uni_params: list = []
-    uni_where = _v4_scope_where("br4", None, customer, load_type, uni_params, lanes, exclude_lanes)
+    uni_where = _v4_scope_where("br4", None, customer, load_type, uni_params, lanes, exclude_lanes, carriers, exclude_carriers)
     uni_params.extend([s, e])
     u_s = len(uni_params) - 1
     u_e = len(uni_params)
@@ -2567,7 +2756,7 @@ async def team_performance_by_team(
     # across teams, so re-read them over the whole scope (same treatment as the
     # distinct customer/lane counts above).
     ubill_params: list = []
-    ubill_where = _v4_scope_where("br4", None, customer, load_type, ubill_params, lanes, exclude_lanes)
+    ubill_where = _v4_scope_where("br4", None, customer, load_type, ubill_params, lanes, exclude_lanes, carriers, exclude_carriers)
     ubill_params.extend([s, e])
     ub_s = len(ubill_params) - 1
     ub_e = len(ubill_params)
@@ -2643,6 +2832,9 @@ async def service_incident_by_customer(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     stop_type: str = Query("pu", description="'pu' | 'del'"),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -2750,6 +2942,110 @@ async def service_incident_by_customer(
 
 
 # ---------------------------------------------------------------------------
+# /service-by-carrier — Bruno (PDF 2026-07-15) R8: Vol / %Vol / OTP / OTD per
+# carrier (first-movement payee). Same v4 + _scorecard_cte + movement pattern as
+# /actuals-by-lane, grouped by carrier instead of lane.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/service-by-carrier")
+async def service_by_carrier(
+    request: Request,
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Per-carrier trip counts + OTP/OTD over the production window.
+
+    ``carrier`` = first-movement ``payee_name`` (same definition the By Order /
+    By Lane tables use). ``vol`` = charged loads; ``pct_vol`` = carrier vol /
+    all-carrier vol (loads with an assigned carrier); OTP/OTD use the same
+    ``_scorecard_cte`` per-order late roll-up as /team-performance. Orders with
+    no carrier assigned are excluded (they belong to Pending-to-Cover).
+    """
+    pool = get_datalake_gold_pool(request)
+    s, e = _resolve_range(range, start_date, end_date)
+
+    p_params: list = []
+    where = _v4_scope_where(
+        "br4", team, customer, load_type, p_params,
+        lanes, exclude_lanes, carriers, exclude_carriers,
+    )
+    p_params.extend([s, e])
+    p_s = len(p_params) - 1
+    p_e = len(p_params)
+
+    sql = f"""
+        WITH otp AS ({_scorecard_cte("otp")}),
+             otd AS ({_scorecard_cte("otd")}),
+             prod AS (
+                SELECT
+                    NULLIF(TRIM(mov.payee_name), '') AS carrier,
+                    br4.total_charge,
+                    COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
+                    COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
+                FROM public.mcleod_gld_budget_report_v4 br4
+                LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
+                LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
+                LEFT JOIN LATERAL (
+                    SELECT m.payee_name
+                    FROM public.mcleod_gld_movement m
+                    WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+                    ORDER BY m.movement_id ASC
+                    LIMIT 1
+                ) mov ON TRUE
+                WHERE {where}
+                  AND br4.origin_actual_departure >= ${p_s}
+                  AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+             )
+        SELECT
+          carrier,
+          COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) AS vol,
+          SUM(otp_cnt) AS otp_late,
+          SUM(otd_cnt) AS otd_late
+        FROM prod
+        WHERE carrier IS NOT NULL
+        GROUP BY carrier
+        HAVING COUNT(*) FILTER (WHERE total_charge IS NOT NULL AND total_charge <> 0) > 0
+        ORDER BY vol DESC NULLS LAST
+    """
+
+    rows = await pool.fetch(sql, *p_params)
+    total_vol = sum(int(r["vol"] or 0) for r in rows)
+    out = []
+    for r in rows:
+        vol = int(r["vol"] or 0)
+        otp_late = int(r["otp_late"] or 0)
+        otd_late = int(r["otd_late"] or 0)
+        out.append({
+            "carrier":  r["carrier"],
+            "vol":      vol,
+            "pct_vol":  _safe_float((vol / total_vol * 100.0) if total_vol else 0.0),
+            "otp_pct":  _safe_float((1.0 - otp_late / vol) * 100.0 if vol else 0.0),
+            "otd_pct":  _safe_float((1.0 - otd_late / vol) * 100.0 if vol else 0.0),
+        })
+    out = out[:limit]
+
+    return {
+        "success": True,
+        "data": out,
+        "meta": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "totals": {"vol": total_vol, "carriers": len(rows)},
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # /margin-distribution — ORDERS per per-order margin% bucket (Bruno R18)
 # ---------------------------------------------------------------------------
 
@@ -2765,6 +3061,9 @@ async def margin_distribution(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """ORDER count + revenue per per-order margin% bucket over v4 production.
@@ -2783,7 +3082,7 @@ async def margin_distribution(
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([s, e])
     p_s = len(params) - 1
     p_e = len(params)
@@ -3065,6 +3364,9 @@ async def team_projection_by_team(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Team Monthly Projection split per CORP team (TEAM1..TEAM5) + a Total.
@@ -3081,7 +3383,7 @@ async def team_projection_by_team(
     pending_workdays = _count_workdays(today, m_end)
 
     params: list = []
-    where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
     p_ws = len(params) - 5
     p_we = len(params) - 4
@@ -3152,6 +3454,9 @@ async def team_projection_weekly(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
+    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Team Monthly Projection "Week" view — per-week ACTUALS for the last 5
@@ -3167,7 +3472,7 @@ async def team_projection_weekly(
     today = cst_today()
     week_starts, weeks_start, weeks_end = _last_5_weeks(today)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
     params.extend([weeks_start, weeks_end])
     p_s = len(params) - 1
     p_e = len(params)

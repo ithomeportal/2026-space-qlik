@@ -11,6 +11,9 @@ import { Loader2, X } from "lucide-react"
 export interface MatrixCell {
   text: string
   className?: string
+  // Bruno (PDF 2026-07-15) R3/R4: optional "% of total" shown small + light-gray
+  // beside the value (instead of concatenated into the same text at full size).
+  conc?: number | null
 }
 
 export interface MatrixRow {
@@ -103,13 +106,19 @@ export function MetricMatrixModal({
                       {row.label}
                     </td>
                     {row.cells.map((c, i) => (
-                      <td
-                        key={i}
-                        className={`px-2 py-1.5 text-right tabular-nums ${
-                          c.className ?? (row.highlight ? "font-bold text-[#1B3A5C]" : "text-[#374151]")
-                        }`}
-                      >
-                        {c.text}
+                      <td key={i} className="px-2 py-1.5 text-right tabular-nums">
+                        <span className="inline-flex items-baseline justify-end gap-1">
+                          <span
+                            className={
+                              c.className ?? (row.highlight ? "font-bold text-[#1B3A5C]" : "text-[#374151]")
+                            }
+                          >
+                            {c.text}
+                          </span>
+                          {c.conc != null && (
+                            <span className="text-[10px] text-[#9CA3AF]">{c.conc.toFixed(2)}%</span>
+                          )}
+                        </span>
                       </td>
                     ))}
                   </tr>

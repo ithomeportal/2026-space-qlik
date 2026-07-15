@@ -23,6 +23,7 @@ import {
   useOppCombo,
   useOppProfitTmGauge,
   useOppService,
+  useOppTeamProjection,
   useOppWorkdays,
   type LoadType,
   type OppGrain,
@@ -78,7 +79,15 @@ function labelFmt(measure: Measure, v: number): string {
 }
 
 export function ComboChart({ filters, loadType, setLoadType }: Props) {
-  const cf = { team: filters.team, customer: filters.customer, loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
+  const cf = {
+    team: filters.team,
+    customer: filters.customer,
+    loadType,
+    lanes: filters.lanes,
+    excludeLanes: filters.excludeLanes,
+    carriers: filters.carriers,
+    excludeCarriers: filters.excludeCarriers,
+  }
   const [grain, setGrain] = useState<OppGrain>("month")
   // Bruno 2026-07-01 R5: KPI Management defaults to the "Prof." view on open.
   const [measure, setMeasure] = useState<Measure>("profit")
@@ -98,6 +107,9 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const { data: comboRes, isLoading: comboLoading, error: comboError } = useOppCombo(cf, grain)
   const { data: workdaysRes } = useOppWorkdays()
   const { data: gaugeRes } = useOppProfitTmGauge(cf)
+  // Bruno (PDF 2026-07-15) R10: the Projected series is grain-aware — the Day
+  // view shows the per-day averages from Team Monthly Projection.
+  const { data: projRes } = useOppTeamProjection(cf)
   // Shares the React Query cache with the standalone Service chart (#1) — no
   // extra fetch. Only the data we actually render in Service mode is used.
   const { data: serviceRes, isLoading: svcLoading, error: svcError } = useOppService(cf, grain)
@@ -221,13 +233,30 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     return vals.reduce((a, b) => a + b, 0) / vals.length
   }, [chartData, measure, brush.end])
 
-  // Projected — pick per-measure key from response.
-  const projected = (
-    measure === "revenue"    ? data?.projected_revenue
-    : measure === "profit"   ? data?.projected_profit
-    : measure === "volume"   ? data?.projected_vol
-    : data?.projected_margin_pct
-  ) ?? 0
+  // Projected — Bruno (PDF 2026-07-15) R10: grain-dependent.
+  //   Day   → per-day averages from Team Monthly Projection (Avg. Vol/Rev/Prof x Day).
+  //   Week  → those per-day averages × 7 (margin % is a ratio, so it never scales).
+  //   Month → the calendar-month EoM projection from /combo (unchanged default).
+  const proj = projRes?.data
+  const projected = useMemo(() => {
+    // Per-day value for the active measure (margin% = per-day profit / revenue).
+    const perDay =
+      measure === "revenue"    ? proj?.avg_rev_day ?? 0
+      : measure === "profit"   ? proj?.avg_prof_day ?? 0
+      : measure === "volume"   ? proj?.avg_vol_day ?? 0
+      : measure === "margin_pct"
+        ? (proj && proj.avg_rev_day ? (proj.avg_prof_day / proj.avg_rev_day) * 100 : 0)
+        : 0
+    if (grain === "day") return perDay
+    if (grain === "week") return measure === "margin_pct" ? perDay : perDay * 7
+    // month (default): calendar-month projection from /combo.
+    return (
+      measure === "revenue"    ? data?.projected_revenue
+      : measure === "profit"   ? data?.projected_profit
+      : measure === "volume"   ? data?.projected_vol
+      : data?.projected_margin_pct
+    ) ?? 0
+  }, [grain, measure, proj, data])
 
   const wd = workdaysRes?.data
   const gauge = gaugeRes?.data
@@ -299,16 +328,16 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 onClick={() => toggle("avgLq")}
               />
               <LegendChip
-                label="Projected TM"
+                label="Projected"
                 color="#2563EB"
                 dashed
                 active={!isHidden("projected")}
                 onClick={() => toggle("projected")}
               />
-              {/* Bruno 2026-07-01 R10: Losses x M — hidden in the Rev. view. */}
+              {/* Bruno 2026-07-01 R10: Losses — hidden in the Rev. view. */}
               {showLosses && (
                 <LegendChip
-                  label="Losses x M"
+                  label="Losses"
                   color="#DC2626"
                   active={!isHidden("losses")}
                   onClick={() => toggle("losses")}
@@ -406,9 +435,9 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                     { key: "variance" as SeriesKey,  label: "Variance",  color: "#F59E0B", value: actualVal - budgetVal },
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
-                    // Bruno 2026-07-01 R10: Losses x M row (hidden in Rev. view).
+                    // Bruno 2026-07-01 R10: Losses row (hidden in Rev. view).
                     ...(showLosses
-                      ? [{ key: "losses" as SeriesKey, label: "Losses x M", color: "#DC2626", value: Number(row[lossesKey] ?? 0) }]
+                      ? [{ key: "losses" as SeriesKey, label: "Losses", color: "#DC2626", value: Number(row[lossesKey] ?? 0) }]
                       : []),
                   ].filter((i) => !isHidden(i.key))
                   return (
@@ -465,16 +494,16 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   y={projected}
                   stroke="#2563EB"
                   strokeDasharray="6 4"
-                  label={{ value: `Projected TM ${fmt(projected)}`, fontSize: 10, fill: "#2563EB", position: "right" }}
+                  label={{ value: `Projected ${fmt(projected)}`, fontSize: 10, fill: "#2563EB", position: "right" }}
                 />
               )}
-              {/* Bruno 2026-07-01 R10: Losses x M overlay line — per-tab key so it
+              {/* Bruno 2026-07-01 R10: Losses overlay line — per-tab key so it
                   shares the bars' Y-axis unit; only in Vol./Prof./Marg.% views. */}
               {showLosses && !isHidden("losses") && (
                 <Line
                   type="monotone"
                   dataKey={lossesKey}
-                  name="Losses x M"
+                  name="Losses"
                   stroke="#DC2626"
                   strokeWidth={2}
                   strokeDasharray="4 3"

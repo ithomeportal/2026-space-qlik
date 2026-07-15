@@ -96,9 +96,24 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
               AND br4.origin_actual_departure >= $4
             ORDER BY lane
         """
-        cust_rows, lane_rows = await asyncio.gather(
+        # Bruno (PDF 2026-07-15) R1: carriers scoped to this team.
+        carrier_sql = """
+            SELECT DISTINCT TRIM(m.payee_name) AS carrier
+            FROM public.mcleod_gld_movement m
+            JOIN public.mcleod_gld_budget_report_v4 br4
+              ON m.order_id = br4.id AND m.company_id = br4.company_id
+            WHERE TRIM(br4.team_id)    = $1
+              AND TRIM(br4.company_id) = ANY($2)
+              AND TRIM(br4.status)     = ANY($3)
+              AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
+              AND br4.origin_actual_departure >= $4
+              AND m.payee_name IS NOT NULL AND TRIM(m.payee_name) <> ''
+            ORDER BY carrier
+        """
+        cust_rows, lane_rows, carrier_rows = await asyncio.gather(
             pool.fetch(cust_sql, *scope_args),
             pool.fetch(lane_sql, *scope_args),
+            pool.fetch(carrier_sql, *scope_args),
         )
         return {
             "success": True,
@@ -106,6 +121,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
                 "teams": [team],
                 "customers": [r0["customer_name"] for r0 in cust_rows],
                 "lanes": [r0["lane"] for r0 in lane_rows],
+                "carriers": [r0["carrier"] for r0 in carrier_rows],
                 "year_start": opo.YEAR_START.isoformat(),
                 "year_end": opo.YEAR_END.isoformat(),
                 "locked_team": team,
@@ -125,12 +141,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         grain: str = Query("month"),
         _user: dict = Depends(gate),
     ):
         return await opo.combo(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, grain=grain, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     # ---- /team-variance ---------------------------------------------------
@@ -175,13 +193,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         limit: int = Query(50, ge=1, le=200),
         _user: dict = Depends(gate),
     ):
         return await opo.customer_losses(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, limit=limit, _user=_user,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, limit=limit, _user=_user,
         )
 
     # ---- /team-performance ------------------------------------------------
@@ -195,12 +215,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_performance(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, _user=_user,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- /team-projection -------------------------------------------------
@@ -211,11 +233,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_projection(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- /profit-tm-gauge -------------------------------------------------
@@ -226,11 +250,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.profit_tm_gauge(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- /actuals ---------------------------------------------------------
@@ -244,6 +270,8 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         sort: str = Query("revenue_desc"),
         limit: int = Query(100, ge=1, le=500),
         losses_only: bool = Query(False),
@@ -253,7 +281,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         return await opo.actuals(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, sort=sort, limit=limit,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, sort=sort, limit=limit,
             losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
         )
 
@@ -268,6 +296,8 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         sort: str = Query("revenue_desc"),
         limit: int = Query(100, ge=1, le=500),
         losses_only: bool = Query(False),
@@ -277,7 +307,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         return await opo.actuals_by_lane(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, sort=sort, limit=limit,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, sort=sort, limit=limit,
             losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
         )
 
@@ -289,12 +319,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         grain: str = Query("month"),
         _user: dict = Depends(gate),
     ):
         return await opo.service(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, grain=grain, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     # ---- /by-order --------------------------------------------------------
@@ -308,6 +340,8 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         sort: str = Query("revenue_desc"),
         limit: int = Query(500, ge=1, le=2000),
         losses_only: bool = Query(False),
@@ -317,8 +351,23 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         return await opo.by_order(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, sort=sort, limit=limit,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, sort=sort, limit=limit,
             losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
+        )
+
+    # ---- /pending-to-cover (Bruno PDF 2026-07-15 R16) --------------------
+    @r.get("/pending-to-cover")
+    async def pending_to_cover(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        limit: int = Query(500, ge=1, le=2000),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.pending_to_cover(
+            request=request, team=team, customer=customer, lanes=lanes,
+            exclude_lanes=exclude_lanes, limit=limit, _user=_user,
         )
 
     # ---- /team-weekly-performance -----------------------------------------
@@ -329,11 +378,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_weekly_performance(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- /team-performance-by-team ----------------------------------------
@@ -347,6 +398,8 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         # Locked to this team — the "by team" breakdown collapses to a single
@@ -354,7 +407,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         return await opo.team_performance_by_team(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, _user=_user,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- /service-incident-by-customer ------------------------------------
@@ -368,13 +421,38 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         stop_type: str = Query("pu"),
         _user: dict = Depends(gate),
     ):
         return await opo.service_incident_by_customer(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, stop_type=stop_type, _user=_user,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, stop_type=stop_type, _user=_user,
+        )
+
+    # ---- /service-by-carrier (Bruno PDF 2026-07-15 R8) --------------------
+    @r.get("/service-by-carrier")
+    async def service_by_carrier(
+        request: Request,
+        range: Optional[str] = Query("mtd"),
+        start_date: Optional[date] = Query(None),
+        end_date: Optional[date] = Query(None),
+        customer: Optional[str] = Query(None),
+        load_type: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.service_by_carrier(
+            request=request, range=range, start_date=start_date, end_date=end_date,
+            team=team, customer=customer, load_type=load_type, lanes=lanes,
+            exclude_lanes=exclude_lanes, carriers=carriers,
+            exclude_carriers=exclude_carriers, limit=limit, _user=_user,
         )
 
     # ---- /margin-distribution ---------------------------------------------
@@ -388,12 +466,14 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.margin_distribution(
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, _user=_user,
+            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     # ---- Bruno (PDF 2026-07-13): "Week" toggle on Variance + Projection.
@@ -418,11 +498,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_projection_weekly(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
     return r

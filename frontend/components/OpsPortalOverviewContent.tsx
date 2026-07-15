@@ -125,6 +125,9 @@ function Body({
   // Bruno R7 (2026-06-05): Lane filter — multi-select with Include⇄Exclude.
   const [laneIds, setLaneIds] = useState<string[]>([])
   const [laneMode, setLaneMode] = useState<FilterMode>("include")
+  // Bruno (PDF 2026-07-15) R1: Carrier filter — multi-select with Include⇄Exclude.
+  const [carrierIds, setCarrierIds] = useState<string[]>([])
+  const [carrierMode, setCarrierMode] = useState<FilterMode>("include")
 
   const { data: filterRes, isLoading: loadingFilters } = useOppFilters()
   const filterOptions = filterRes?.data
@@ -153,8 +156,10 @@ function Body({
       unbilledOnly: unbilledOnly || undefined,
       lanes: laneMode === "include" && laneIds.length > 0 ? laneIds : undefined,
       excludeLanes: laneMode === "exclude" && laneIds.length > 0 ? laneIds : undefined,
+      carriers: carrierMode === "include" && carrierIds.length > 0 ? carrierIds : undefined,
+      excludeCarriers: carrierMode === "exclude" && carrierIds.length > 0 ? carrierIds : undefined,
     }),
-    [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, unbilledOnly, laneIds, laneMode],
+    [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, unbilledOnly, laneIds, laneMode, carrierIds, carrierMode],
   )
 
   // R10: clicking a lane in the By-Lane table sets it as the single included lane.
@@ -205,6 +210,8 @@ function Body({
               Customer: {customer || "All"}
               {laneIds.length > 0 &&
                 ` · Lanes: ${laneMode === "exclude" ? "excl " : ""}${laneIds.length}`}
+              {carrierIds.length > 0 &&
+                ` · Carriers: ${carrierMode === "exclude" ? "excl " : ""}${carrierIds.length}`}
               {loadType && ` · ${loadType === "contract" ? "Contractual" : "Spot"}`}
             </div>
             <div className="text-[11px] text-[#9CA3AF]">
@@ -359,6 +366,46 @@ function Body({
             width={240}
           />
 
+          {/* Bruno (PDF 2026-07-15) R1: Carrier filter — multi-select + Include⇄Exclude. */}
+          <MultiSelectChips
+            label="Carrier"
+            options={filterOptions?.carriers ?? []}
+            selected={carrierIds}
+            onChange={setCarrierIds}
+            mode={carrierMode}
+            onModeChange={setCarrierMode}
+            placeholder={loadingFilters ? "Loading…" : "All carriers"}
+            width={220}
+          />
+
+          {/* Bruno (PDF 2026-07-15) R1: Contract Type filter — All / Contract / Spot.
+              Wired to the same loadType the KPI Management chart toggles, so the
+              two controls stay in sync and apply across every panel. */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Contract Type
+            </label>
+            <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
+              {[
+                { k: "" as LoadType,         label: "All" },
+                { k: "contract" as LoadType, label: "Contract" },
+                { k: "spot" as LoadType,     label: "Spot" },
+              ].map((opt) => (
+                <button
+                  key={opt.k || "all"}
+                  onClick={() => setLoadType(opt.k)}
+                  className={`px-3 py-1.5 ${
+                    loadType === opt.k
+                      ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
+                      : "text-[#6B7280] hover:text-[#111827]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Bruno R5: Losses button — filters Actuals / By Lane / By Order to margin<0. */}
           <button
             onClick={() => setLossesOnly((v) => !v)}
@@ -405,6 +452,9 @@ function Body({
               <Link
                 key={href}
                 href={href}
+                // Bruno (PDF 2026-07-15) R2: open the destination in a new tab.
+                target="_blank"
+                rel="noopener noreferrer"
                 className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs font-medium text-[#374151] hover:bg-[#F3F4F6] transition-colors whitespace-nowrap"
               >
                 {label}

@@ -699,10 +699,12 @@ function signCls(n: number): string {
   return n < 0 ? "text-[#DC2626]" : "text-[#374151]"
 }
 
-// "% of total" suffix for a team column's additive cell (blank when total is 0).
-function conc(val: number, total: number): string {
-  if (!total) return ""
-  return `  ${((val / total) * 100).toFixed(2)}%`
+// "% of total" for a team column's additive cell (null when total is 0). Bruno
+// (PDF 2026-07-15) R3/R4: returned as a number so MetricMatrixModal can render it
+// small + light-gray beside the value rather than inline at full size.
+function concPct(val: number, total: number): number | null {
+  if (!total) return null
+  return (val / total) * 100
 }
 
 function VarianceWeekModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
@@ -753,7 +755,11 @@ function VarianceTeamModal({ filters, onClose }: { filters: OppFilters; onClose:
     ]
     for (const t of teams) {
       const v = get(t)
-      cells.push({ text: fmt(v) + (showConc ? conc(v, tv) : ""), className: signed ? signCls(v) : undefined })
+      cells.push({
+        text: fmt(v),
+        className: signed ? signCls(v) : undefined,
+        conc: showConc ? concPct(v, tv) : undefined,
+      })
     }
     return cells
   }
@@ -787,6 +793,8 @@ function projectionCf(filters: OppFilters) {
     loadType: filters.loadType,
     lanes: filters.lanes,
     excludeLanes: filters.excludeLanes,
+    carriers: filters.carriers,
+    excludeCarriers: filters.excludeCarriers,
   }
 }
 
@@ -842,7 +850,11 @@ function ProjectionTeamModal({ filters, onClose }: { filters: OppFilters; onClos
     ]
     for (const t of teams) {
       const v = get(t)
-      cells.push({ text: fmt(v) + (showConc ? conc(v, tv) : ""), className: signed ? signCls(v) : undefined })
+      cells.push({
+        text: fmt(v),
+        className: signed ? signCls(v) : undefined,
+        conc: showConc ? concPct(v, tv) : undefined,
+      })
     }
     return cells
   }
