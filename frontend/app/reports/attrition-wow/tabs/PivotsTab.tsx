@@ -274,16 +274,13 @@ function PivotPanel({
         latest === null || latest === undefined || ref === null
           ? null
           : latest - ref
-      // Bruno Attrition R (PDF 2026-07-15): "Difference LW – L2W" = latest week
-      // − AVG L2W, where AVG L2W is the mean of the 2 completed weeks BEFORE
-      // last week — indices 1..2 (weeks −2..−3, 0-filled, fixed divisor 2),
-      // mirroring the L8W column exactly with a 2-week window. Placed to the
-      // right of "Difference LW – L8W" across all views and metrics.
-      const l2wRef = (() => {
-        const slice = values.slice(1, 3)
-        if (slice.length === 0) return null
-        return slice.reduce<number>((a, b) => a + (b ?? 0), 0) / slice.length
-      })()
+      // Bruno Attrition R (PDF 2026-07-17): "Difference LW – L2W" = LW − L2W,
+      // where L2W is the SINGLE second-most-recent week value (2 weeks ago),
+      // NOT the average of the prior 2 weeks. weeksList is latest-first, so
+      // values[1] = the week before last week. Example: LW Jul 6 = 111, L2W
+      // Jun 29 = 148 → 111 − 148 = −37. Applies to all metrics and all views.
+      // (Superseded the 2026-07-15 "mean of weeks −2..−3" formula.)
+      const l2wRef = values[1] ?? null
       const diff2w =
         latest === null || latest === undefined || l2wRef === null
           ? null
@@ -406,16 +403,17 @@ function PivotPanel({
         ? null
         : totalLatest - totalRef
 
-    // Bruno Attrition R (PDF 2026-07-15): Totals "Difference LW – L2W" — same
-    // basis as the L8W totals but over the 2 weeks before last week. Additive
-    // metrics sum the per-row L2W refs; margin is the weighted avg (Σ profit /
-    // Σ revenue) over indices 1..2.
+    // Bruno Attrition R (PDF 2026-07-17): Totals "Difference LW – L2W" = LW − L2W
+    // where L2W is the SINGLE 2-weeks-ago week (index 1), not the 2-week avg.
+    // Additive metrics sum the per-row L2W refs (now each = values[1], so the
+    // total is the week−2 column total); margin is the weighted avg (Σ profit /
+    // Σ revenue) over index 1 only.
     const totalRef2w: number | null = (() => {
       if (pivotEntries.length === 0) return null
       if (metric === "margin") {
         let rev = 0
         let prof = 0
-        for (let i = 1; i < weeksList.length && i <= 2; i += 1) {
+        for (let i = 1; i < weeksList.length && i <= 1; i += 1) {
           for (const row of pivotEntries) {
             rev += row.revenue[i] ?? 0
             prof += row.profit[i] ?? 0
