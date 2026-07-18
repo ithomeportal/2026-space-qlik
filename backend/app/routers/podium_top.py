@@ -72,6 +72,7 @@ BOOKER_NAMES: tuple[str, ...] = (
     "Antonia Bulnes",
     "Roberto Barcenas",
     "Maria Gonzalez",
+    "Ali Cisneros",
 )
 
 # posted_by_name in McLeod can vary by case, accent, token order
