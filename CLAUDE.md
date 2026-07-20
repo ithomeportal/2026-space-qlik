@@ -13,11 +13,9 @@
 ## Critical Rules
 
 ### Git & Docs
-- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
-- Never commit secrets (.env, credentials, API keys)
-- `docs/` is fully gitignored — ALL documentation is local-only, no exceptions
-- Push to GitHub directly via CLI; Vercel/Render auto-deploy from the repo
-- Never include author / co-author names in commits or LICENSE
+- Conventional commits: `feat: fix: refactor: docs: test: chore:`
+- Never commit secrets; `docs/` fully gitignored (local-only, no exceptions)
+- Push via CLI; Vercel/Render auto-deploy. Never author/co-author names in commits or LICENSE
 
 ### Server Actions & API Patterns
 - All mutations via Next.js Server Actions (not API routes) except auth
@@ -33,7 +31,7 @@
 
 ### Security (Non-Negotiable)
 - NO hardcoded secrets — all via environment variables
-- Rate limiting: 300 req/min standard, 10 req/min for token generation
+- Rate limiting: 300 req/min; 10 req/min token generation
 - CSP allows: `cdn.jsdelivr.net`, `two026-space-qlik-back.onrender.com`, fonts.googleapis/gstatic (Qlik origins removed 2026-05-28)
 - CORS: restrict to Vercel deployment origin only
 - Email auth: 8-digit code, 10-min TTL, via Resend (provider ID: `"resend"`, NOT `"email"`)
@@ -278,3 +276,18 @@ them. Archived tenant/IdP/app details: `docs/SPEC-QLIK.md` +
 | `docs/SPEC-CODE-RULES.md` | Cross-cutting code rules (sargability, CST clock, asyncpg, Render env, Outlook fonts, etc.) |
 | `docs/SPEC-RFP-DAILY-DIGEST.md` | RFP Performance daily email digest details |
 | `docs/SPEC-BONUS-CALCULATOR.md` | Bonus Calculator (CEO + HR Manager + OPs Manager + admins only — individual TagRoles, not whole divisions; sensitive payroll → custom `<ReportGuard fallback>` hides required roles & says "review with your Manager"; CEO Cockpit link-tiles access-gated so it isn't advertised, 2026-07-07) — engine port, live-datalake feed, calendar-month Mon→Sun weeks (cutoff 5th of next month), one monthly On time P&D basis (R8), HR-pinned FX, roster. ⚠ Rules flip-flop — ALWAYS read the spec's top changelog block first (§41) |
+
+## Database Credentials (updated 2026-07-20)
+
+⚠ **No service uses the Aiven master `avnadmin` any more** — all migrated to
+dedicated least-privilege roles 2026-07-20 (33 roles across 26 Vercel projects +
+16 Render services/crons). Creds: `~/unilink-{spaceqlik,service,vercel}-db-roles.txt`
+(chmod 600, local only). Full detail: SPEC-CODE-RULES §51 + memory.
+
+- **Never put `avnadmin` back in an env var** — local psql / DDL only.
+- Migration-running apps (Alembic/Prisma) need an **owner** role, not read/write:
+  `ALTER TABLE` requires ownership, and enums must move too (`ALTER TYPE … OWNER TO`).
+- After any role change, **scan deploy logs for `permission denied`** — endpoints
+  return 200 while background jobs fail silently.
+- Secrets live in `.env` only — never in `.claude/settings.local.json` allowlists
+  (approving a command with an inline secret bakes it in permanently) or `aiven.txt`.
