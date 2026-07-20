@@ -17,6 +17,10 @@ interface Props {
    *  Omit both props to keep the plain include-only picker (XRay DFW). */
   mode?: FilterMode
   onModeChange?: (next: FilterMode) => void
+  /** Optional value→display map (DFW Losses: C→Contract, S→Spot). The raw
+   *  option string stays the value on the wire; only the rendered text +
+   *  search matching use the label. Unmapped values fall through unchanged. */
+  optionLabels?: Record<string, string>
 }
 
 /**
@@ -36,10 +40,12 @@ export function MultiSelectChips({
   disabled = false,
   mode,
   onModeChange,
+  optionLabels,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const boxRef = useRef<HTMLDivElement | null>(null)
+  const labelOf = (o: string) => optionLabels?.[o] ?? o
 
   useEffect(() => {
     if (!open) return
@@ -55,15 +61,22 @@ export function MultiSelectChips({
   const lowerQuery = query.trim().toLowerCase()
   const filtered = useMemo(() => {
     if (!lowerQuery) return options.slice(0, 300)
-    return options.filter((o) => o.toLowerCase().includes(lowerQuery)).slice(0, 300)
-  }, [options, lowerQuery])
+    return options
+      .filter(
+        (o) =>
+          o.toLowerCase().includes(lowerQuery) ||
+          labelOf(o).toLowerCase().includes(lowerQuery),
+      )
+      .slice(0, 300)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options, lowerQuery, optionLabels])
 
   const selectedSet = useMemo(() => new Set(selected), [selected])
   const summary =
     selected.length === 0
       ? placeholder ?? `All ${label.toLowerCase()}s`
       : selected.length === 1
-        ? selected[0]
+        ? labelOf(selected[0])
         : `${selected.length} selected`
 
   const toggle = (id: string) => {
@@ -188,7 +201,7 @@ export function MultiSelectChips({
                         </svg>
                       )}
                     </span>
-                    <span className="truncate">{o}</span>
+                    <span className="truncate">{labelOf(o)}</span>
                   </button>
                 </li>
               )

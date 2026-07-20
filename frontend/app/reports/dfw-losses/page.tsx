@@ -25,6 +25,11 @@ const RANGES: { k: DfwLossesRange; label: string }[] = [
   { k: "custom", label: "Custom" },
 ]
 
+// v4 contract_type is varchar(1): C = Contract, S = Spot. Show friendly labels
+// while keeping the raw value on the wire. Unknown codes fall through as-is.
+const CONTRACT_LABELS: Record<string, string> = { C: "Contract", S: "Spot" }
+const contractLabel = (c: string) => CONTRACT_LABELS[c] ?? c
+
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -131,7 +136,9 @@ function DfwLossesContent() {
         <div className="ml-auto flex items-center gap-3 text-xs text-[#6B7280]">
           <span>
             {windowLabel}
-            {contractTypes.length ? ` · Contract: ${contractTypes.join(", ")}` : ""}
+            {contractTypes.length
+              ? ` · Contract: ${contractTypes.map(contractLabel).join(", ")}`
+              : ""}
             {customerNames.length
               ? ` · ${customerNames.length} customer${customerNames.length > 1 ? "s" : ""}`
               : ""}
@@ -187,6 +194,7 @@ function DfwLossesContent() {
           <MultiSelectChips
             label="Contract"
             options={opts?.contract_types ?? []}
+            optionLabels={CONTRACT_LABELS}
             selected={contractTypes}
             onChange={setContractTypes}
             placeholder="All contract types"
