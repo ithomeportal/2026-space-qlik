@@ -16,15 +16,18 @@ import {
   fmtPct,
   fmtUsd,
   useOppByOrder,
+  useOppCover,
   useOppPendingToCover,
   type OppFilters,
   type OppOrderRow,
   type OppOrderTotals,
-  type OppPendingRow,
 } from "@/lib/ops-portal-overview-api"
+import CoverTable from "./CoverTable"
+import PendingTable from "./PendingTable"
 
 // Bruno (PDF 2026-07-15) R15/R16: the By Order panel has two views.
-type ByOrderView = "production" | "pending"
+// Bruno (PDF 2026-07-20) R1: + "Cover" — all status='A' loads.
+type ByOrderView = "production" | "pending" | "cover"
 
 interface Props {
   filters: OppFilters
@@ -134,6 +137,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
 
   const { data, isLoading, error } = useOppByOrder(filters, { sort, limit: LIMIT })
   const pending = useOppPendingToCover(filters, view === "pending")
+  const coverQ = useOppCover(filters, view === "cover")
   const rows: OppOrderRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppOrderTotals | undefined
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
@@ -223,6 +227,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
           {([
             { k: "production" as const, label: "Production" },
             { k: "pending" as const,    label: "Pending to Cover" },
+            { k: "cover" as const,      label: "Cover" },
           ]).map((opt) => (
             <button
               key={opt.k}
@@ -239,9 +244,11 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-3 text-[10px] text-[#6B7280]">
-          {(view === "production" ? isLoading : pending.isLoading) && (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          )}
+          {(view === "production"
+            ? isLoading
+            : view === "cover"
+              ? coverQ.isLoading
+              : pending.isLoading) && <Loader2 className="h-3 w-3 animate-spin" />}
           {view === "production" ? (
             <>
               {total > returned ? (
@@ -256,13 +263,23 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
                 onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               />
             </>
+          ) : view === "cover" ? (
+            <span>Status A · all open loads</span>
           ) : (
             <span>Status A · no carrier assigned</span>
           )}
         </div>
       </div>
 
-      {view === "pending" ? (
+      {view === "cover" ? (
+        coverQ.error ? (
+          <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load open loads</div>
+        ) : (
+          <div className="max-h-[480px] overflow-auto">
+            <CoverTable rows={coverQ.data?.data ?? []} />
+          </div>
+        )
+      ) : view === "pending" ? (
         pending.error ? (
           <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load pending loads</div>
         ) : (
@@ -592,93 +609,4 @@ function SortableTh({
 function fmtPodAge(hours: number): string {
   if (hours < 48) return `${Math.round(hours)}h`
   return `${Math.round(hours / 24)}d`
-}
-
-// Format a CST wall-clock ISO ("YYYY-MM-DDTHH:MM:SS") as "MMM d, HH:MM".
-function fmtSchedTs(iso: string | null): string {
-  if (!iso) return "—"
-  const d = new Date(iso.replace(" ", "T"))
-  if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
-  })
-}
-
-// Bruno (PDF 2026-07-15) R16: "Time to Cover" = hours remaining until the late
-// pickup deadline. >48h green (plenty of runway), 24–48h amber, <24h (incl.
-// overdue) red.
-function timeToCoverColor(hours: number): string {
-  if (hours >= 48) return "text-[#16A34A]"
-  if (hours >= 24) return "text-[#B45309]"
-  return "font-medium text-[#DC2626]"
-}
-
-function fmtTimeToCover(hours: number | null): string {
-  if (hours == null) return "—"
-  const abs = Math.abs(hours)
-  const label = abs < 48 ? `${Math.round(abs)}h` : `${Math.round(abs / 24)}d`
-  return hours < 0 ? `−${label} overdue` : label
-}
-
-// ---------------------------------------------------------------------------
-// Bruno (PDF 2026-07-15) R16 — "Pending to Cover" view: status='A' loads with
-// no carrier assigned. Small set → simple table, no sort/filter/pager.
-// ---------------------------------------------------------------------------
-
-const PENDING_COLUMNS: { label: string; align: "left" | "right" }[] = [
-  { label: "Order", align: "left" },
-  { label: "Team", align: "left" },
-  { label: "Orig Sched Early", align: "left" },
-  { label: "Orig Sched Late", align: "left" },
-  { label: "Lane", align: "left" },
-  { label: "Revenue", align: "right" },
-  { label: "Time to Cover", align: "right" },
-]
-
-function PendingTable({ rows }: { rows: OppPendingRow[] }) {
-  return (
-    <table className="w-full text-xs">
-      <thead className="sticky top-0 z-10 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-        <tr className="border-b border-[#E5E7EB]">
-          {PENDING_COLUMNS.map((c) => (
-            <th
-              key={c.label}
-              className={`px-2 py-2 ${c.align === "right" ? "text-right" : "text-left"}`}
-            >
-              {c.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 ? (
-          <tr>
-            <td colSpan={PENDING_COLUMNS.length} className="px-3 py-6 text-center text-[#9CA3AF]">
-              No loads pending a carrier
-            </td>
-          </tr>
-        ) : (
-          rows.map((r) => (
-            <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
-              <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
-              <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>
-              <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_early)}</td>
-              <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_late)}</td>
-              <td className="px-2 py-1.5 text-[#374151]">{r.lane || <span className="text-[#9CA3AF]">—</span>}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.revenue)}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">
-                {r.time_to_cover_hours == null ? (
-                  <span className="text-[#9CA3AF]">—</span>
-                ) : (
-                  <span className={timeToCoverColor(r.time_to_cover_hours)}>
-                    {fmtTimeToCover(r.time_to_cover_hours)}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  )
 }

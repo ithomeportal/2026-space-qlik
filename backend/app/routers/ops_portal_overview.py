@@ -143,17 +143,26 @@ def _resolve_range(
     Bruno R5 (2026-06-01) reworked the filter options. ``full`` is dropped from
     the UI but kept here as the silent default/fallback (the rolling endpoints —
     /combo, /workdays, /team-projection, /profit-tm-gauge — still pass it):
-      - ytd         → Jan 1 → today
+      - yesterday   → the single prior day (Bruno PDF 2026-07-20 R2)
       - mtd         → 1st of current month → today (Month-to-Date)
       - this_month  → full current month (1st → last day)
       - last_month  → full previous month
       - custom      → user start/end
+      - ytd         → Jan 1 → today (button removed by Bruno PDF 2026-07-20 R2;
+                      the branch is kept so a stale client that still sends
+                      ``range=ytd`` gets YTD rather than silently falling
+                      through to the whole-year default)
       - full (fallback) → whole year
     """
     today = cst_today()
     today_clamped = max(YEAR_START, min(YEAR_END, today))
     if rng == "mtd":
         return today_clamped.replace(day=1), today_clamped
+    # Bruno (PDF 2026-07-20) R2: "Yesterday" replaces the YTD button. Clamped
+    # into the 2026 window, so on Jan 1 it collapses to Jan 1 itself.
+    if rng == "yesterday":
+        y = _clamp(today_clamped - timedelta(days=1), YEAR_START)
+        return y, y
     if rng == "ytd":
         return YEAR_START, today_clamped
     if rng == "this_month":
@@ -2281,6 +2290,129 @@ async def pending_to_cover(
             "orig_sched_early":    r["orig_sched_early"],
             "orig_sched_late":     r["orig_sched_late"],
             "time_to_cover_hours": _safe_float(r["time_to_cover_hours"]) if r["time_to_cover_hours"] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+
+
+# ---------------------------------------------------------------------------
+# /cover — Bruno (PDF 2026-07-20) R1: every status='A' load ("Cover" toggle in
+# the By Order panel). Superset of /pending-to-cover, which shows only the
+# status='A' loads that have no carrier yet.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/cover")
+async def cover(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """All ``status = 'A'`` loads in the CORP universe — the open coverage board.
+
+    Columns (Bruno PDF 2026-07-20 R1): Order=id · Team=team_id ·
+    Customer=customer_name · Carrier · Carrier Phone · Orig Sched Early/Late ·
+    Lane · Revenue=total_charge · Profit=margin_amt.
+
+    Design notes (all verified against the datalake 2026-07-20):
+
+    * **Not date-windowed**, exactly like /pending-to-cover. ``status='A'`` is a
+      live open-orders board that drains as loads move to D/V — 121 rows in the
+      CORP scope, essentially all in the current month, with only 1-5 stragglers
+      in any prior month. Windowing it would return ~0 rows the moment the user
+      picked "Last Month", which defeats the purpose of a coverage board.
+    * **Carrier + phone both come from the first movement** (§5 LATERAL LIMIT 1;
+      ``movement`` fans out to max 5 rows per A-order). ``budget_report_v4`` has
+      no carrier column at all. ``mcleod_gld_dispatchers.carrier_name`` was
+      evaluated as a fallback and rejected: it adds only 4 of 121 carrier names
+      (+3%) but its ``id`` is the *second* PK column
+      (PK = movement_id, id, company_id), so neither ``TRIM(UPPER(d.id))`` nor a
+      raw ``d.id =`` lookup is sargable — it would seq-scan 209k rows per order.
+      Sourcing name and phone from the same row also guarantees they agree.
+      A blank carrier here legitimately means "not covered yet".
+    * ``orig_orig_sched_early/late`` carry **1900-01-01 sentinels, not NULL**, so
+      both are guarded ``> '2000-01-01'`` (§42 correlated LATERAL on
+      ``TRIM(UPPER(id))``; customer_windows is clean order-grain, max 1 row/id).
+    * ``status='A'`` sits outside the D/P universe of ``_v4_scope_where``, so the
+      scope is built inline here — same as /pending-to-cover.
+    """
+    pool = get_datalake_gold_pool(request)
+
+    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    companies_param = _pad_variants(CORP_COMPANIES, width=4)
+    status_param = _pad_variants(("A",), width=1)
+    params: list = [teams_param, companies_param, status_param]
+    parts = [
+        "br4.team_id    = ANY($1)",
+        "br4.company_id = ANY($2)",
+        "br4.status     = ANY($3)",
+        "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
+    ]
+    if team:
+        params.append(_pad_variants([team], width=8))
+        parts.append(f"br4.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"br4.customer_name = ${len(params)}")
+    if lanes:
+        params.append(lanes)
+        parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")
+    if exclude_lanes:
+        params.append(exclude_lanes)
+        parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
+    where = " AND ".join(parts)
+    params.append(limit)
+    p_lim = len(params)
+
+    sql = f"""
+        SELECT
+          TRIM(br4.id)      AS order_id,
+          TRIM(br4.team_id) AS team_id,
+          br4.customer_name AS customer_name,
+          COALESCE(TRIM(mov.payee_name), '')    AS carrier,
+          COALESCE(TRIM(mov.carrier_phone), '') AS carrier_phone,
+          to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
+          to_char(win.sched_late,  'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_late,
+          NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
+          COALESCE(br4.total_charge, 0)::numeric AS revenue,
+          COALESCE(br4.margin_amt, 0)::numeric   AS profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN LATERAL (
+            SELECT MAX(CASE WHEN cw.orig_orig_sched_early > '2000-01-01' THEN cw.orig_orig_sched_early END) AS sched_early,
+                   MAX(CASE WHEN cw.orig_orig_sched_late  > '2000-01-01' THEN cw.orig_orig_sched_late  END) AS sched_late
+            FROM public.mcleod_gld_customer_windows cw
+            WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
+        ) win ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name, m.carrier_phone
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
+        WHERE {where}
+        ORDER BY win.sched_late ASC NULLS LAST
+        LIMIT ${p_lim}
+    """
+
+    rows = await pool.fetch(sql, *params)
+    out = [
+        {
+            "order_id":         r["order_id"],
+            "team_id":          r["team_id"],
+            "customer_name":    r["customer_name"] or "",
+            "carrier":          r["carrier"],
+            "carrier_phone":    r["carrier_phone"],
+            "orig_sched_early": r["orig_sched_early"],
+            "orig_sched_late":  r["orig_sched_late"],
+            "lane":             r["lane"] or "",
+            "revenue":          _safe_float(r["revenue"]),
+            "profit":           _safe_float(r["profit"]),
         }
         for r in rows
     ]

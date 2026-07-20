@@ -66,7 +66,10 @@ function useApiPrefix() {
 
 // Bruno R5 (2026-06-01): "full" dropped from the UI but kept here as the
 // silent default for the rolling endpoints (combo/service/projection/gauge).
-export type OppRange = "mtd" | "ytd" | "this_month" | "last_month" | "full" | "custom"
+// Bruno (PDF 2026-07-20) R2: "ytd" dropped from the UI in favour of
+// "yesterday". The backend still honours range=ytd for stale clients, but no
+// button produces it any more, so it is off the union.
+export type OppRange = "mtd" | "yesterday" | "this_month" | "last_month" | "full" | "custom"
 export type LoadType = "" | "contract" | "spot"
 
 export interface OppFilters {
@@ -389,6 +392,24 @@ export interface OppPendingRow {
   time_to_cover_hours: number | null
 }
 
+// Bruno (PDF 2026-07-20) R1: "Cover" — every status='A' load (superset of
+// Pending to Cover, which is only the status='A' loads with no carrier).
+export interface OppCoverRow {
+  order_id: string
+  team_id: string
+  customer_name: string
+  /** First-movement payee_name; '' when no carrier is assigned yet. */
+  carrier: string
+  /** First-movement carrier_phone; '' when absent (~2/3 of open loads). */
+  carrier_phone: string
+  /** ISO orig scheduled early/late pickup (customer_windows); may be null. */
+  orig_sched_early: string | null
+  orig_sched_late: string | null
+  lane: string
+  revenue: number
+  profit: number
+}
+
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
 export interface OppWeekPerf {
   start: string
@@ -669,17 +690,48 @@ export function useOppByOrder(
   })
 }
 
+// The status='A' board endpoints (/pending-to-cover, /cover) are NOT
+// date-windowed and ignore load_type / losses_only / unbilled_only. Previously
+// they passed the whole filter to `qs()`, which serialised those fields into
+// the URL while the queryKey omitted them — so two genuinely different requests
+// collapsed onto one cache entry and served stale rows after a range or
+// Unbilled toggle. Narrowing the query string to exactly the fields the
+// endpoints honour makes URL and cache key agree by construction.
+function scopeQs(f: OppFilters, extra?: Record<string, string>): string {
+  const scoped = {
+    team: f.team,
+    customer: f.customer,
+    lanes: f.lanes,
+    excludeLanes: f.excludeLanes,
+  } as OppFilters
+  return qs(scoped, extra)
+}
+
+function scopeKey(f: OppFilters): unknown[] {
+  return [f.team, f.customer, laneKey(f)]
+}
+
 // Bruno (PDF 2026-07-15) R16: "Pending to Cover" — status='A', no carrier.
 // Not date-windowed; respects team / customer / lane filters. `enabled` so the
 // fetch only fires when the By Order panel is on the Pending-to-Cover view.
 export function useOppPendingToCover(f: OppFilters, enabled: boolean) {
   const prefix = useApiPrefix()
   return useQuery({
-    queryKey: [
-      prefix, "opp-pending-to-cover",
-      f.team, f.customer, laneKey(f),
-    ],
-    queryFn: () => apiFetch<OppPendingRow[]>(`${prefix}/pending-to-cover${qs(f)}`),
+    queryKey: [prefix, "opp-pending-to-cover", ...scopeKey(f)],
+    queryFn: () => apiFetch<OppPendingRow[]>(`${prefix}/pending-to-cover${scopeQs(f)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+// Bruno (PDF 2026-07-20) R1: "Cover" — every status='A' load, with carrier +
+// carrier phone and the orig scheduled pickup window. Same scope contract as
+// Pending to Cover: not date-windowed, `enabled` so it only fires on that view.
+export function useOppCover(f: OppFilters, enabled: boolean) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [prefix, "opp-cover", ...scopeKey(f)],
+    queryFn: () => apiFetch<OppCoverRow[]>(`${prefix}/cover${scopeQs(f)}`),
     enabled,
     ...RETRY,
   })

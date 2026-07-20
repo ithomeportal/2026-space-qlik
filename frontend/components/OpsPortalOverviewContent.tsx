@@ -33,6 +33,12 @@ function iso(d: Date) {
 function todayIso() {
   return iso(new Date())
 }
+// Bruno (PDF 2026-07-20) R2: "Yesterday" range button. Date-arithmetic via the
+// Date constructor so month/year rollover is handled for us.
+function yesterdayIso() {
+  const d = new Date()
+  return iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1))
+}
 function monthStartIso() {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`
@@ -137,7 +143,8 @@ function Body({
   const effectiveTeam = lockedTeam ?? team
 
   const appliedDates = useMemo(() => {
-    if (range === "ytd")        return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
+    // Bruno (PDF 2026-07-20) R2: "Yesterday" replaced the YTD button.
+    if (range === "yesterday")  return { startDate: clampToYear(yesterdayIso()), endDate: clampToYear(yesterdayIso()) }
     if (range === "mtd")        return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
     if (range === "this_month") return { startDate: monthStartIso(), endDate: clampToYear(monthEndIso()) }
     if (range === "last_month") return { startDate: lastMonthStartIso(), endDate: lastMonthEndIso() }
@@ -236,7 +243,7 @@ function Body({
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
             <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
               {[
-                { k: "ytd" as const,        label: "YTD" },
+                { k: "yesterday" as const,  label: "Yesterday" },
                 { k: "mtd" as const,        label: "MTD" },
                 { k: "this_month" as const, label: "This Month" },
                 { k: "last_month" as const, label: "Last Month" },

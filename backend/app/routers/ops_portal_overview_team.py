@@ -370,6 +370,21 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_lanes=exclude_lanes, limit=limit, _user=_user,
         )
 
+    # ---- /cover (Bruno PDF 2026-07-20 R1) --------------------------------
+    @r.get("/cover")
+    async def cover(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        limit: int = Query(500, ge=1, le=2000),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.cover(
+            request=request, team=team, customer=customer, lanes=lanes,
+            exclude_lanes=exclude_lanes, limit=limit, _user=_user,
+        )
+
     # ---- /team-weekly-performance -----------------------------------------
     @r.get("/team-weekly-performance")
     async def team_weekly_performance(
