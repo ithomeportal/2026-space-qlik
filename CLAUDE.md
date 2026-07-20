@@ -70,7 +70,7 @@
 - ALL reports are now code-made. `reports.report_type` (always `'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path`
 - **4-place mirror for every new report**: `CUSTOM_REPORTS` in `seed.py` · `REPORT_MAP` in `ReportIcons.tsx` · `<ReportGuard reportKey>` · backend `require_report_access("<key>")`. `role_report_access` is the single source of truth (admin UI `/admin/reports`)
 - Endpoints under `/api/custom/<feature>/...`; external DBs get their own `asyncpg` pool + env var via `get_*_pool` in `routers/deps.py`
-- Key SQL/code rules — full text in SPEC-CODE-RULES §: no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards + bind `datetime`/`date` (never `str`) to date params §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter §39 · direct-call shims forward EVERY param §40 · Bonus display bracket % may intentionally ≠ payout money §41 · `mcleod_gld_customer_windows` uses `orig_`/`dest_` prefix, join on `TRIM(UPPER(id))`, /by-order uses correlated LATERAL §42 · never `::date`-cast an indexed timestamp in a WHERE bound (use `>= $s AND < ($e::date + INTERVAL '1 day')`) + `command_timeout` < proxy abort + heavy pages need `keepPreviousData` + never retry a client abort §43 · pinned Totals rows read a server-side FULL-universe aggregate (`data.totals`), never client `reduce()` over LIMIT-capped rows §44
+- Key SQL/code rules — full text in SPEC-CODE-RULES §: no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards + bind `datetime`/`date` (never `str`) to date params §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter §39 · direct-call shims forward EVERY param §40 · Bonus display bracket % may intentionally ≠ payout money §41 · `mcleod_gld_customer_windows` uses `orig_`/`dest_` prefix, join on `TRIM(UPPER(id))`, /by-order uses correlated LATERAL §42 · never `::date`-cast an indexed timestamp in a WHERE bound (use `>= $s AND < ($e::date + INTERVAL '1 day')`) + `command_timeout` < proxy abort + heavy pages need `keepPreviousData` + never retry a client abort §43 · pinned Totals rows read a server-side FULL-universe aggregate (`data.totals`), never client `reduce()` over LIMIT-capped rows §44 · a join col that isn't the PK's LEADING col is unsargable — and "rows matched" ≠ "col populated"; measure the populated coverage delta before adding an enrichment join §49 · React Query `queryKey` must cover every field `qs()` serialises, else different requests share one cache entry §50
 - Vestigial `qlik_app_id`/`qlik_sheet_id`/`use_classic` columns remain on `reports` (always NULL) — harmless; dropping them is tangled with boot-time DDL
 
 ### Backend keep-warm (Render free tier) — full detail in `docs/SPEC-RELIABILITY.md` §3
@@ -105,7 +105,7 @@
 9. **Keep-Alive** — self-hosted n8n (`n8n.unlk-repos.com`, always-on) pings `/api/health` every 5 min (primary, reliable); GitHub Actions `keepalive.yml` is a redundant backstop
 10. **Code-Made Reports** — All reports are `report_type='custom'` Next.js routes. Current catalog: eSavings from Carriers, 2026 Official Budget Follow Up, XRay CORP Mng, XRay DFW Mng, XRay DFW TM1..TM4, CEO Executive, HR Access Doors, DFW Access Doors, Admin Access Doors, Podium Set DFW, DFW Podium Top, DFW Podium Top TM1..TM4, Top Losses Lanes, DFW Losses, Attrition WoW, OPs Margins, OPs Direct Compare, Sales- Attrition to OPs, OPs Customer Score, VoIP Calls Logs, Track Award Loads, Performance for RFPs, Risk Asss for Carriers, IT Tickets Mgmt, Admin Aging Cashflow, Ops Portal - Overview, KAM Performance - DFW, Bonus Calculator, Reports Index, CEO Cockpit, Carrier SMS Score. **Full per-report spec in `docs/SPEC-CUSTOM-REPORTS.md`.**
 
-> **CEO Cockpit** (`ceo-cockpit`, 2026-05-29) is an *aggregator*, not a data report: its `/api/custom/ceo-cockpit/summary` fans out in-process (httpx `ASGITransport`) to ~19 existing report KPI endpoints and renders one RAG-coloured hero KPI per report, click-through to the source. Pure `TILES` config in `routers/ceo_cockpit.py` (no own SQL), personalized by per-tile self-gating. See `docs/SPEC-CUSTOM-REPORTS.md` §31.
+> **CEO Cockpit** (`ceo-cockpit`, 2026-05-29) is an *aggregator*, not a data report: `/summary` fans out in-process (httpx `ASGITransport`) to ~19 report KPI endpoints, one RAG hero KPI per report. Pure `TILES` config in `routers/ceo_cockpit.py`, no own SQL, per-tile self-gating. See `docs/SPEC-CUSTOM-REPORTS.md` §31.
 
 > _Removed 2026-05-28 (Qlik decommission): Viewer-Only Embed, Full-Page Qlik Embed, Classic Embed Mode, TV Display (`/dfw-podium`), Responsive `(Mob)` Qlik reports._
 
@@ -220,7 +220,7 @@ MS_CLIENT_ID=<admin-ms-api client id>
 MS_CLIENT_SECRET=<admin-ms-api secret — expires 2027-12-30>
 MS_SEND_FROM=ithome@unilinktransportation.com
 ```
-> Removed 2026-05-28: `QLIK_TENANT_URL`, `QLIK_PRIVATE_KEY`, `QLIK_ISSUER`, `QLIK_KEY_ID`, `TV_SECRET` (Qlik decommission). These can be deleted from the Render dashboard — the code no longer reads them (leaving them is harmless).
+> Removed 2026-05-28 (Qlik decommission): `QLIK_TENANT_URL`, `QLIK_PRIVATE_KEY`, `QLIK_ISSUER`, `QLIK_KEY_ID`, `TV_SECRET` — safe to delete from Render; the code no longer reads them.
 
 > **Note**: Use the same read-only role (`sa_dfrodriguez`) for
 > `SAVINGS_DATABASE_URL`, `AUTOMATIONS_DATABASE_URL`, and
@@ -244,10 +244,10 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 
 ## Qlik Tenant — DECOMMISSIONED 2026-05-28
 
-Qlik is no longer connected to this app. The tenant
-(`mb01txe2h9rovgh.us.qlikcloud.com`) and its apps still exist in Qlik Cloud
-but the portal no longer embeds, authenticates to, or references them. Archived
-tenant/IdP/app details are in `docs/SPEC-QLIK.md` + `docs/SPEC-QLIK-INVENTORY.md`.
+Qlik is no longer connected to this app. The tenant and its apps still exist in
+Qlik Cloud but the portal no longer embeds, authenticates to, or references
+them. Archived tenant/IdP/app details: `docs/SPEC-QLIK.md` +
+`docs/SPEC-QLIK-INVENTORY.md`.
 
 ---
 
