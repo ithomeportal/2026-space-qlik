@@ -1533,7 +1533,11 @@ async def aging_buckets(
     contract_type: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
-    """Bucket the delivery-to-bill day delta into 0-3 / 4-7 / 8-10 / 11-15 / >15."""
+    """Bucket the delivery-to-bill day delta into <0 / 0-2 / 3-5 / 6-10 / 11-15 / >15.
+
+    Bruno PDF 2026-07-20: buckets recut so the first positive bar is exactly the
+    ≤2 target (green = on-target), then amber/orange/red as the gap widens.
+    """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_list = _parse_teams(teams)
@@ -1557,9 +1561,9 @@ async def aging_buckets(
     )
     SELECT
       COUNT(*) FILTER (WHERE days <  0)                AS bk_neg,
-      COUNT(*) FILTER (WHERE days BETWEEN 0  AND 3)    AS bk_0_3,
-      COUNT(*) FILTER (WHERE days BETWEEN 4  AND 7)    AS bk_4_7,
-      COUNT(*) FILTER (WHERE days BETWEEN 8  AND 10)   AS bk_8_10,
+      COUNT(*) FILTER (WHERE days BETWEEN 0  AND 2)    AS bk_0_2,
+      COUNT(*) FILTER (WHERE days BETWEEN 3  AND 5)    AS bk_3_5,
+      COUNT(*) FILTER (WHERE days BETWEEN 6  AND 10)   AS bk_6_10,
       COUNT(*) FILTER (WHERE days BETWEEN 11 AND 15)   AS bk_11_15,
       COUNT(*) FILTER (WHERE days > 15)                AS bk_gt15,
       COUNT(*)                                         AS total
@@ -1571,9 +1575,9 @@ async def aging_buckets(
         "data": {
             "buckets": [
                 {"label": "<0",    "count": int(row["bk_neg"]   or 0)},
-                {"label": "0-3",   "count": int(row["bk_0_3"]   or 0)},
-                {"label": "4-7",   "count": int(row["bk_4_7"]   or 0)},
-                {"label": "8-10",  "count": int(row["bk_8_10"]  or 0)},
+                {"label": "0-2",   "count": int(row["bk_0_2"]   or 0)},
+                {"label": "3-5",   "count": int(row["bk_3_5"]   or 0)},
+                {"label": "6-10",  "count": int(row["bk_6_10"]  or 0)},
                 {"label": "11-15", "count": int(row["bk_11_15"] or 0)},
                 {"label": ">15",   "count": int(row["bk_gt15"]  or 0)},
             ],

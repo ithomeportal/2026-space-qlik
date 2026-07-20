@@ -18,11 +18,13 @@ interface Props {
   filters: AdminCashflowFilters
 }
 
+// Bruno PDF 2026-07-20: buckets recut to the ≤2 target — 0-2 green (on target),
+// then amber → orange → red as the delivery-to-bill gap widens.
 const BUCKET_COLORS: Record<string, string> = {
   "<0": "#9CA3AF",
-  "0-3": "#10B981",
-  "4-7": "#10B981",
-  "8-10": "#F59E0B",
+  "0-2": "#10B981",
+  "3-5": "#F59E0B",
+  "6-10": "#F97316",
   "11-15": "#EF4444",
   ">15": "#B91C1C",
 }
