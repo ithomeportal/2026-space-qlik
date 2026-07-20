@@ -70,14 +70,14 @@
 - ALL reports are now code-made. `reports.report_type` (always `'custom'`) + `reports.custom_path`; `/reports/[id]` redirects to `custom_path`
 - **4-place mirror for every new report**: `CUSTOM_REPORTS` in `seed.py` · `REPORT_MAP` in `ReportIcons.tsx` · `<ReportGuard reportKey>` · backend `require_report_access("<key>")`. `role_report_access` is the single source of truth (admin UI `/admin/reports`)
 - Endpoints under `/api/custom/<feature>/...`; external DBs get their own `asyncpg` pool + env var via `get_*_pool` in `routers/deps.py`
-- Key SQL/code rules — full text in SPEC-CODE-RULES §: no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards + bind `datetime`/`date` (never `str`) to date params §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter §39 · direct-call shims forward EVERY param §40 · Bonus display bracket % may intentionally ≠ payout money §41 · `mcleod_gld_customer_windows` uses `orig_`/`dest_` prefix, join on `TRIM(UPPER(id))`, /by-order uses correlated LATERAL §42 · never `::date`-cast an indexed timestamp in a WHERE bound (use `>= $s AND < ($e::date + INTERVAL '1 day')`) + `command_timeout` < proxy abort + heavy pages need `keepPreviousData` + never retry a client abort §43 · pinned Totals rows read a server-side FULL-universe aggregate (`data.totals`), never client `reduce()` over LIMIT-capped rows §44 · a join col that isn't the PK's LEADING col is unsargable — and "rows matched" ≠ "col populated"; measure the populated coverage delta before adding an enrichment join §49 · React Query `queryKey` must cover every field `qs()` serialises, else different requests share one cache entry §50
+- Key SQL/code rules — full text in SPEC-CODE-RULES §: no-TRIM sargability §1 · CST clock pin §2 · v4 sparseness §3 · date-decode clamp + NaN/Inf guards + bind `datetime`/`date` (never `str`) to date params §4 · LATERAL first-match §5 · KPI=detail §16 · ratio-pivot numerator+denominator §33 · atomic wire-field rename §34 · per-user `user_id` scoping §35 · per-tab chart series §36 · grain toggle §37 · v4 profit = SUM(margin_amt), no total_charge≠0 filter §39 · direct-call shims forward EVERY param §40 · Bonus display bracket % may intentionally ≠ payout money §41 · `mcleod_gld_customer_windows` uses `orig_`/`dest_` prefix, join on `TRIM(UPPER(id))`, /by-order uses correlated LATERAL §42 · never `::date`-cast an indexed timestamp in a WHERE bound (use `>= $s AND < ($e::date + INTERVAL '1 day')`) + `command_timeout` < proxy abort + heavy pages need `keepPreviousData` + never retry a client abort §43 · pinned Totals rows read a server-side FULL-universe aggregate (`data.totals`), never client `reduce()` over LIMIT-capped rows §44 · a join col that isn't the PK's LEADING col is unsargable — and "rows matched" ≠ "col populated"; measure the populated coverage delta before adding an enrichment join §49 · React Query `queryKey` must cover every field `qs()` serialises, else different requests share one cache entry §50 · backend trusts the proxy's identity JSON — `PROXY_SHARED_SECRET` (`X-Proxy-Secret`, `hmac.compare_digest`) is what makes `role_report_access` real; fail-open while unset, and in-process `ASGITransport` callers must send it too §51
 - Vestigial `qlik_app_id`/`qlik_sheet_id`/`use_classic` columns remain on `reports` (always NULL) — harmless; dropping them is tangled with boot-time DDL
 
 ### Backend keep-warm (Render free tier) — full detail in `docs/SPEC-RELIABILITY.md` §3
-- Render spins the backend down after ~15 min idle (30-60s cold start → empty reports; heavy endpoints blow past the proxy's 45s abort).
+- Render spins down after ~15 min idle (30-60s cold start → empty reports; heavy endpoints blow past the proxy's 45s abort).
 - **Primary keep-warm: always-on n8n workflow** `aF3wH6ZpvDFEPXA5` (`n8n.unlk-repos.com`, `*/5` → GET `/api/health`). **Backstop:** `.github/workflows/keepalive.yml` (GH Actions `*/5`, best-effort). Old Vercel cron removed 2026-06-01.
 - **⚠ `/api/health` warms only the DYNO, not the DB.** `datalake_warmup` APScheduler job (every 5 min, in-process ASGITransport) runs the 3 heaviest queries to keep `aivn_datalake_gold` buffers hot. SPEC-CODE-RULES §43 + SPEC-RELIABILITY §3c.
-- **Scorecard uses portal-owned mirrors, NOT the shared Spark source** (source bloats + collapses PU/DEL). Two n8n-refreshed tables: `mcleod_gld_scorecard_portal` (TRUNCATE+load) and `mcleod_gld_scorecard_incidents_portal` (incident-grain). All scorecard reports read the mirrors. ⚠ **On a new incident-table deploy: import+activate the n8n workflow FIRST or the report 500s.** Full detail: SPEC-CODE-RULES §43, SPEC-RELIABILITY §3d, `docs/BRUNO-scorecard-rootcause-2026-06-15.md`.
+- **Scorecard uses portal-owned mirrors, NOT the shared Spark source** (source bloats + collapses PU/DEL): `mcleod_gld_scorecard_portal` + `mcleod_gld_scorecard_incidents_portal`, both n8n-refreshed. ⚠ **On a new incident-table deploy: import+activate the n8n workflow FIRST or the report 500s.** SPEC-CODE-RULES §43, SPEC-RELIABILITY §3d, `docs/BRUNO-scorecard-rootcause-2026-06-15.md`.
 
 ### Data, Seeding & TagRoles (full detail — `docs/SPEC-DATA.md` + `docs/SPEC-ADMIN.md`)
 - Seed idempotent (`ON CONFLICT … DO UPDATE`); never `dict.pop()` module constants (use `.get()`); auto-seed when `role_report_access` empty; `seed_custom_reports(pool)` runs every startup so a new `CUSTOM_REPORTS` entry ships itself. Router order: search BEFORE reports
@@ -196,6 +196,7 @@ NEXTAUTH_SECRET=<secret>
 DATABASE_URL=postgresql://...
 RESEND_API_KEY=<secret>
 BACKEND_URL=https://two026-space-qlik-back.onrender.com
+PROXY_SHARED_SECRET=<must be IDENTICAL to Render's — proves requests came from the proxy>
 ```
 > Removed 2026-05-28: `NEXT_PUBLIC_QLIK_TENANT`, `TV_SECRET` (Qlik decommission).
 
@@ -210,6 +211,7 @@ FINANCIAL_DATABASE_URL=<UNLK-Financial DB (read-only) — exchange_rates (Banxic
 TIMEOFF_DATABASE_URL=<time-off DB for daily user sync>
 ALLOWED_ORIGINS=https://space.unilinkportal.com,https://2026-space-qlik-front.vercel.app
 SEED_SECRET=<secret>
+PROXY_SHARED_SECRET=<must be IDENTICAL to Vercel's; UNSET = API accepts self-asserted identities>
 RESEND_API_KEY=<shared with frontend — daily Losses Lanes email>
 SONAR_TOKEN=<FreightWaves SONAR static bearer (preferred)>
 LB123_CLIENT_ID=<123LoadBoard OAuth client id>
@@ -222,10 +224,7 @@ MS_SEND_FROM=ithome@unilinktransportation.com
 ```
 > Removed 2026-05-28 (Qlik decommission): `QLIK_TENANT_URL`, `QLIK_PRIVATE_KEY`, `QLIK_ISSUER`, `QLIK_KEY_ID`, `TV_SECRET` — safe to delete from Render; the code no longer reads them.
 
-> **Note**: Use the same read-only role (`sa_dfrodriguez`) for
-> `SAVINGS_DATABASE_URL`, `AUTOMATIONS_DATABASE_URL`, and
-> `FRESHSERVICE_DATABASE_URL`. **Never bake `avnadmin` master creds into
-> Render env vars** — DDL is local psql only. See `docs/SPEC-CODE-RULES.md` §8.
+> **Note**: same read-only role (`sa_dfrodriguez`) for `SAVINGS_`/`AUTOMATIONS_`/`FRESHSERVICE_DATABASE_URL`. **Never bake `avnadmin` master creds into Render env vars** — DDL is local psql only. SPEC-CODE-RULES §8.
 
 ---
 
