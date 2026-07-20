@@ -141,6 +141,54 @@ def _resolve_range(
     return _clamp(m_start, m_start), today
 
 
+def _resolve_prior_range(
+    rng: Optional[str],
+    s: date,
+    e: date,
+) -> tuple[date, date, str]:
+    """Comparison window for the KPI trend Δ, keyed to the selected Range.
+
+    Bruno Aging (PDF 2026-07-20): the baseline now shifts with the range —
+    an equal-length prior window in every case:
+      today      → yesterday
+      wtd        → previous week (same weekday span)
+      last_7d    → the 7 days before (days 8-14 prior)
+      mtd        → same day of the previous month
+      ytd        → same date of the previous year
+      last_month → the month before last
+      custom     → the equal-length span immediately before [s, e]
+    Returns (prior_start, prior_end, basis_label).
+    """
+    if rng == "today":
+        y = s - timedelta(days=1)
+        return y, y, "yesterday"
+    if rng == "wtd":
+        return s - timedelta(days=7), e - timedelta(days=7), "last week"
+    if rng == "last_7d":
+        return s - timedelta(days=7), e - timedelta(days=7), "prev 7d"
+    if rng == "mtd":
+        lm_end = s - timedelta(days=1)              # last day of previous month
+        lm_start = lm_end.replace(day=1)
+        day = min(e.day, lm_end.day)
+        return lm_start, lm_end.replace(day=day), "same day LM"
+    if rng == "ytd":
+        ps = date(s.year - 1, 1, 1)
+        try:
+            pe = e.replace(year=e.year - 1)
+        except ValueError:                          # Feb 29 → Feb 28
+            pe = date(e.year - 1, 2, 28)
+        return ps, pe, "same date LY"
+    if rng == "last_month":
+        pe = s - timedelta(days=1)                  # last day of the month before
+        ps = pe.replace(day=1)
+        return ps, pe, "prior month"
+    # custom (and any fallback): equal-length window immediately before [s, e]
+    span = (e - s).days
+    pe = s - timedelta(days=1)
+    ps = pe - timedelta(days=span)
+    return ps, pe, "prior period"
+
+
 def _parse_teams(teams: Optional[str]) -> list[str]:
     if not teams:
         return list(ALL_TEAMS)
@@ -489,33 +537,30 @@ async def kpis(
     total_unbilled = delivered_not_billed + ready_not_billed
 
     # ------------------------------------------------------------------
-    # Bruno Aging R (PDF 2026-07-13) — trend Δ vs prior period on 3 KPIs.
-    # Per the mockup labels the % cards (Delivery, BOL) compare month-to-date
-    # vs last full month ("vs LM"); the Avg-Days BOL card compares this week
-    # vs last full week ("vs LW"). These windows are FIXED (independent of the
-    # page date range) so the labels stay stable no matter what range is
-    # selected. One extra scan over [last-month-start … today]; the
-    # within/total predicates mirror the headline % so the deltas reconcile.
+    # Bruno Aging (PDF 2026-07-20) — trend Δ is now RANGE-AWARE. The comparison
+    # baseline shifts with the selected Range filter (equal-length prior
+    # window): Today→Yesterday, WTD→previous week, Last 7d→days 8-14 prior,
+    # MTD→same day last month, YTD→same date last year, Last Month→prior month,
+    # Custom→immediately-preceding equal span. `curr` follows the selected
+    # window [s, e] (so it reconciles to the headline %); `prev` follows the
+    # shifted window. One scan over the union of both windows; the within/total
+    # predicates mirror the headline % so the deltas reconcile.
     # ------------------------------------------------------------------
-    today = _today_clamped()
-    m_start, _m_end, lm_start, lm_end = _month_bounds(today)
-    wk_start = today - timedelta(days=today.weekday())
-    lw_end = wk_start - timedelta(days=1)
-    lw_start = lw_end - timedelta(days=6)
+    ps, pe, basis_label = _resolve_prior_range(range, s, e)
+    scan_start = min(s, ps)
+    scan_end = max(e, pe)
 
     t_params: list = []
     t_where = _scope_where(
         "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, t_params,
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
-    t_params.extend([lm_start, today])
+    t_params.extend([scan_start, scan_end])
     p_ws, p_we = len(t_params) - 1, len(t_params)
-    t_params.append(m_start);  p_m0 = len(t_params)
-    t_params.append(lm_start); p_lm0 = len(t_params)
-    t_params.append(lm_end);   p_lm1 = len(t_params)
-    t_params.append(wk_start); p_wk0 = len(t_params)
-    t_params.append(lw_start); p_lw0 = len(t_params)
-    t_params.append(lw_end);   p_lw1 = len(t_params)
+    t_params.append(s);  p_cs = len(t_params)
+    t_params.append(e);  p_ce = len(t_params)
+    t_params.append(ps); p_ps = len(t_params)
+    t_params.append(pe); p_pe = len(t_params)
 
     trend_sql = f"""
     WITH tb AS (
@@ -545,16 +590,16 @@ async def kpis(
         AND c.origin_actual_arrival < (${p_we}::date + 1)
     )
     SELECT
-      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_m0})                      AS del_mtd_tot,
-      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_m0})                      AS del_mtd_le,
-      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS del_lm_tot,
-      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS del_lm_le,
-      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_m0})                      AS bol_mtd_tot,
-      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_m0})                      AS bol_mtd_le,
-      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS bol_lm_tot,
-      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_lm0} AND oad <= ${p_lm1}) AS bol_lm_le,
-      AVG(bol_days) FILTER (WHERE oad >= ${p_wk0})                                      AS avgbol_wk,
-      AVG(bol_days) FILTER (WHERE oad >= ${p_lw0} AND oad <= ${p_lw1})                  AS avgbol_lw
+      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_cs} AND oad <= ${p_ce}) AS del_curr_tot,
+      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_cs} AND oad <= ${p_ce}) AS del_curr_le,
+      COUNT(DISTINCT id) FILTER (WHERE del_ok  AND oad >= ${p_ps} AND oad <= ${p_pe}) AS del_prev_tot,
+      COUNT(DISTINCT id) FILTER (WHERE del_win AND oad >= ${p_ps} AND oad <= ${p_pe}) AS del_prev_le,
+      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_cs} AND oad <= ${p_ce}) AS bol_curr_tot,
+      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_cs} AND oad <= ${p_ce}) AS bol_curr_le,
+      COUNT(DISTINCT id) FILTER (WHERE bol_ok  AND oad >= ${p_ps} AND oad <= ${p_pe}) AS bol_prev_tot,
+      COUNT(DISTINCT id) FILTER (WHERE bol_win AND oad >= ${p_ps} AND oad <= ${p_pe}) AS bol_prev_le,
+      AVG(bol_days) FILTER (WHERE oad >= ${p_cs} AND oad <= ${p_ce})                  AS avgbol_curr,
+      AVG(bol_days) FILTER (WHERE oad >= ${p_ps} AND oad <= ${p_pe})                  AS avgbol_prev
     FROM tb
     """
     tr = await pool.fetchrow(trend_sql, *t_params)
@@ -570,21 +615,21 @@ async def kpis(
 
     trend = {
         "del": {
-            "curr": _pct_or_none(tr["del_mtd_le"], tr["del_mtd_tot"]),
-            "prev": _pct_or_none(tr["del_lm_le"], tr["del_lm_tot"]),
-            "basis": "LM",
+            "curr": _pct_or_none(tr["del_curr_le"], tr["del_curr_tot"]),
+            "prev": _pct_or_none(tr["del_prev_le"], tr["del_prev_tot"]),
+            "basis": basis_label,
             "unit": "pp",
         },
         "bol": {
-            "curr": _pct_or_none(tr["bol_mtd_le"], tr["bol_mtd_tot"]),
-            "prev": _pct_or_none(tr["bol_lm_le"], tr["bol_lm_tot"]),
-            "basis": "LM",
+            "curr": _pct_or_none(tr["bol_curr_le"], tr["bol_curr_tot"]),
+            "prev": _pct_or_none(tr["bol_prev_le"], tr["bol_prev_tot"]),
+            "basis": basis_label,
             "unit": "pp",
         },
         "avg_days_bol": {
-            "curr": _avg_or_none(tr["avgbol_wk"]),
-            "prev": _avg_or_none(tr["avgbol_lw"]),
-            "basis": "LW",
+            "curr": _avg_or_none(tr["avgbol_curr"]),
+            "prev": _avg_or_none(tr["avgbol_prev"]),
+            "basis": basis_label,
             "unit": "d",
         },
     }
@@ -790,9 +835,10 @@ async def timing_monthly(
         grain = "month"
 
     if grain == "week":
-        # 12 full weeks back through the current (partial) week — 13 buckets.
+        # Bruno Aging (PDF 2026-07-20): 13 full weeks back through the current
+        # (partial) week — 14 buckets, so the "+" Table view can list 14 weeks.
         cur_bucket = today - timedelta(days=today.weekday())  # Monday of this week
-        first_bucket = cur_bucket - timedelta(weeks=12)
+        first_bucket = cur_bucket - timedelta(weeks=13)
         trunc, gs_interval = "week", "1 week"
     else:
         # 12 full months back through the current (partial) month — 13 buckets.
@@ -864,7 +910,22 @@ async def timing_monthly(
           WHERE bill_date>'2000-01-01'::date
             AND invoice_recv_date>'2000-01-01'::date
             AND (bill_date::date - invoice_recv_date::date) <= 1
-        ) AS inv_within
+        ) AS inv_within,
+        -- Bruno Aging (PDF 2026-07-20): AVG days per bucket for the "+" Table
+        -- view. Same universe as the matching % so it reconciles with the card.
+        AVG(bill_date::date - dest_actual_departure::date) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND dest_actual_arrival>'2000-01-01'::date
+            AND dest_actual_departure>'2000-01-01'::date
+        ) AS del_avg,
+        AVG(bill_date::date - bol_recv_date::date) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND bol_recv_date>'2000-01-01'::date
+        ) AS bol_avg,
+        AVG(bill_date::date - invoice_recv_date::date) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND invoice_recv_date>'2000-01-01'::date
+        ) AS inv_avg
       FROM base
       GROUP BY mon
     ),
@@ -879,27 +940,31 @@ async def timing_monthly(
       COALESCE(a.bol_total, 0)  AS bol_total,
       COALESCE(a.bol_within, 0) AS bol_within,
       COALESCE(a.inv_total, 0)  AS inv_total,
-      COALESCE(a.inv_within, 0) AS inv_within
+      COALESCE(a.inv_within, 0) AS inv_within,
+      a.del_avg,
+      a.bol_avg,
+      a.inv_avg
     FROM months m
     LEFT JOIN agg a USING (mon)
     ORDER BY m.mon
     """
     rows = await pool.fetch(sql, *params)
 
-    def series(total_col: str, within_col: str) -> dict:
+    def series(total_col: str, within_col: str, avg_col: str) -> dict:
         total = [int(r[total_col] or 0) for r in rows]
         within = [int(r[within_col] or 0) for r in rows]
         over = [t - w for t, w in zip(total, within)]
-        return {"total": total, "within": within, "over": over}
+        avg_days = [float(r[avg_col]) if r[avg_col] is not None else None for r in rows]
+        return {"total": total, "within": within, "over": over, "avg_days": avg_days}
 
     return {
         "success": True,
         "data": {
             "grain": grain,
             "months": [r["mon"].isoformat() for r in rows],
-            "del": series("del_total", "del_within"),
-            "bol": series("bol_total", "bol_within"),
-            "carrinv": series("inv_total", "inv_within"),
+            "del": series("del_total", "del_within", "del_avg"),
+            "bol": series("bol_total", "bol_within", "bol_avg"),
+            "carrinv": series("inv_total", "inv_within", "inv_avg"),
         },
     }
 

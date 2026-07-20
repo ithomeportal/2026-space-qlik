@@ -41,7 +41,7 @@ export function AgingBucketsChart({ filters }: Props) {
           </div>
           <div className="text-[11px] text-[#6B7280]">
             Days between dest_actual_departure and bill_date · target
-            ≤10
+            ≤2
           </div>
         </div>
         <div className="text-xs text-[#6B7280]">

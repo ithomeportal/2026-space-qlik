@@ -927,3 +927,154 @@ async def upsert_carrier_comment(
             "updated_at": _iso(row["updated_at"]),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Carrier Sales — MANUAL per-user table (Bruno PDF 2026-07-20)
+# The tab no longer auto-populates from the datalake; every column is
+# user-entered and rows are private (user_id scoped), mirroring the
+# customer-dev / team-dev full-row CRUD pattern.
+# ---------------------------------------------------------------------------
+
+
+def _carrier_sales_row(r) -> dict:
+    return {
+        "id": str(r["id"]),
+        "lane": r["lane"] or "",
+        "carrier": r["carrier"] or "",
+        "cost": float(r["cost"]) if r["cost"] is not None else None,
+        "moves": int(r["moves"]) if r["moves"] is not None else None,
+        "comments": r["comments"] or "",
+        "created_at": _iso(r["created_at"]),
+        "updated_at": _iso(r["updated_at"]),
+    }
+
+
+class CarrierSalesUpsert(BaseModel):
+    lane: str = Field(default="", max_length=400)
+    carrier: str = Field(default="", max_length=400)
+    cost: Optional[float] = None
+    moves: Optional[int] = Field(default=None, ge=0)
+    comments: str = Field(default="", max_length=5000)
+
+
+class CarrierSalesPatch(BaseModel):
+    lane: Optional[str] = Field(default=None, max_length=400)
+    carrier: Optional[str] = Field(default=None, max_length=400)
+    cost: Optional[float] = None
+    cost_set: bool = False          # explicit-null support
+    moves: Optional[int] = Field(default=None, ge=0)
+    moves_set: bool = False         # explicit-null support
+    comments: Optional[str] = Field(default=None, max_length=5000)
+
+
+@router.get("/carrier-sales-entries")
+async def list_carrier_sales(
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    rows = await pool.fetch(
+        """
+        SELECT id, lane, carrier, cost, moves, comments, created_at, updated_at
+        FROM kam_carrier_sales
+        WHERE user_id = $1
+        ORDER BY updated_at DESC
+        """,
+        user["sub"],
+    )
+    return {"success": True, "data": [_carrier_sales_row(r) for r in rows]}
+
+
+@router.post("/carrier-sales-entries")
+async def create_carrier_sales(
+    body: CarrierSalesUpsert,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    row = await pool.fetchrow(
+        """
+        INSERT INTO kam_carrier_sales (user_id, lane, carrier, cost, moves, comments)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, lane, carrier, cost, moves, comments, created_at, updated_at
+        """,
+        user["sub"],
+        body.lane.strip(),
+        body.carrier.strip(),
+        body.cost,
+        body.moves,
+        body.comments,
+    )
+    return {"success": True, "data": _carrier_sales_row(row)}
+
+
+@router.patch("/carrier-sales-entries/{row_id}")
+async def update_carrier_sales(
+    row_id: UUID,
+    body: CarrierSalesPatch,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    existing = await pool.fetchrow(
+        "SELECT 1 FROM kam_carrier_sales WHERE id = $1 AND user_id = $2",
+        row_id,
+        user["sub"],
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Row not found")
+
+    set_parts: list = []
+    params: list = []
+    if body.lane is not None:
+        params.append(body.lane.strip())
+        set_parts.append(f"lane = ${len(params)}")
+    if body.carrier is not None:
+        params.append(body.carrier.strip())
+        set_parts.append(f"carrier = ${len(params)}")
+    if body.cost_set:
+        params.append(body.cost)
+        set_parts.append(f"cost = ${len(params)}")
+    if body.moves_set:
+        params.append(body.moves)
+        set_parts.append(f"moves = ${len(params)}")
+    if body.comments is not None:
+        params.append(body.comments)
+        set_parts.append(f"comments = ${len(params)}")
+
+    if not set_parts:
+        return {"success": True, "data": {"updated": False}}
+
+    set_parts.append("updated_at = NOW()")
+    params.extend([row_id, user["sub"]])
+    p_id = len(params) - 1
+    p_user = len(params)
+
+    row = await pool.fetchrow(
+        f"""
+        UPDATE kam_carrier_sales
+        SET {", ".join(set_parts)}
+        WHERE id = ${p_id} AND user_id = ${p_user}
+        RETURNING id, lane, carrier, cost, moves, comments, created_at, updated_at
+        """,
+        *params,
+    )
+    return {"success": True, "data": _carrier_sales_row(row)}
+
+
+@router.delete("/carrier-sales-entries/{row_id}")
+async def delete_carrier_sales(
+    row_id: UUID,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    pool = get_pool(request)
+    res = await pool.execute(
+        "DELETE FROM kam_carrier_sales WHERE id = $1 AND user_id = $2",
+        row_id,
+        user["sub"],
+    )
+    if res.endswith(" 0"):
+        raise HTTPException(status_code=404, detail="Row not found")
+    return {"success": True, "data": {"deleted": True}}

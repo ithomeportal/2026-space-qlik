@@ -33,6 +33,12 @@ DEFAULT_ROLES = [
     ("CORP-T2", "CORP Team 2 — OPS KAM (private team portal)"),
     ("CORP-T3", "CORP Team 3 — OPS KAM (private team portal)"),
     ("CORP-T4", "CORP Team 4 — OPS KAM (private team portal)"),
+    # Per-team DFW KAM TagRoles (Bruno PDF 2026-07-20) — grant view+edit on the
+    # KAM Performance - DFW report. Assigned to members manually.
+    ("DFW KAM1", "DFW KAM Team 1 — KAM Performance DFW (assigned manually)"),
+    ("DFW KAM2", "DFW KAM Team 2 — KAM Performance DFW (assigned manually)"),
+    ("DFW KAM3", "DFW KAM Team 3 — KAM Performance DFW (assigned manually)"),
+    ("DFW KAM4", "DFW KAM Team 4 — KAM Performance DFW (assigned manually)"),
     # Individual manager TagRoles (Bruno 2026-07-06) — gate Bonus Calculator to
     # specific people, NOT whole divisions (HR=4 / Operations=52 too broad).
     # Assigned manually: HR Manager→Daniela Nava, OPs Manager→Jaime Anaya.
@@ -243,6 +249,16 @@ CUSTOM_REPORTS = [
         "tags": ["losses", "margin", "lanes", "customers", "leak", "budget", "profit"],
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
+    },
+    {
+        "key": "dfw-losses",  # -> /reports/dfw-losses  (Bruno PDF 2026-07-20)
+        "title": "DFW Losses",
+        "description": "DFW loss loads: daily loads / amount lost / loss-per-load, one column per DFW customer, plus biggest-offender lanes",
+        "note": "Scope: TEAM-DFW only · TMS/TMS3 · excludes UNILINK & OILTEX · Loads = count(total_charge<>0); Amount Lost = SUM(margin_amt) WHERE margin_amt<0 · source: mcleod_gld_budget_report_v4",
+        "category": "Operations",
+        "tags": ["dfw", "losses", "margin", "customers", "lanes", "budget", "profit"],
+        "owner_name": "admin",
+        "roles": ["CEO", "Executive", "DFW", "Operations", "Finance"],
     },
     {
         "key": "ops-margins",  # -> /reports/ops-margins
@@ -527,7 +543,12 @@ CUSTOM_REPORTS = [
             "lanes", "customer-development", "team-development",
         ],
         "owner_name": "Diego",
-        "roles": ["CEO", "Executive", "DFW", "Operations", "Sales"],
+        # DFW KAM1–4 added Bruno PDF 2026-07-20 (view+edit). NB: seed roles apply
+        # only on first creation (xmax=0) — the live grant on this existing report
+        # is applied directly to role_report_access; this list documents intent
+        # and seeds any fresh environment.
+        "roles": ["CEO", "Executive", "DFW", "Operations", "Sales",
+                  "DFW KAM1", "DFW KAM2", "DFW KAM3", "DFW KAM4"],
     },
     {
         "key": "bonus-calculator",  # -> /reports/bonus-calculator

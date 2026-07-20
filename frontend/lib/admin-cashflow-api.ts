@@ -113,14 +113,16 @@ export interface AdminCashflowFacets {
   alarm_usd: number
 }
 
-// Bruno Aging R (PDF 2026-07-13): trend Δ vs prior period under a KPI card.
+// Bruno Aging R (PDF 2026-07-20): trend Δ vs prior period under a KPI card.
 // `curr`/`prev` are the current-window and prior-window values (null when the
 // prior window has no qualifying loads). unit "pp" = percentage points (% cards),
-// "d" = days (avg-days card). basis "LM" = vs last month, "LW" = vs last week.
+// "d" = days (avg-days card). `basis` is a free-text label rendered after "vs"
+// and is now RANGE-AWARE (e.g. "yesterday", "last week", "same day LM",
+// "same date LY") — it shifts with the selected Range filter.
 export interface KpiTrendCmp {
   curr: number | null
   prev: number | null
-  basis: "LM" | "LW"
+  basis: string
   unit: "pp" | "d"
 }
 
@@ -173,6 +175,9 @@ export interface TimingMetricSeries {
   total: number[]
   within: number[]
   over: number[]
+  // Bruno Aging (PDF 2026-07-20): avg days per bucket for the "+" Table view.
+  // null when a bucket has no qualifying loads.
+  avg_days?: (number | null)[]
 }
 
 export type TimingGrain = "week" | "month"

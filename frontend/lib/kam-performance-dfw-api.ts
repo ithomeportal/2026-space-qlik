@@ -567,47 +567,89 @@ export function useUpsertWorstLaneNote() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 7 — CARRIER SALES (Bruno R2). Per-lane latest carriers + avg cost +
-// per-lane editable Comments.
+// Tab 7 — CARRIER SALES (Bruno PDF 2026-07-20). Fully MANUAL per-user table —
+// no datalake auto-populate. Every column is user-entered; full-row CRUD
+// mirrors customer-dev / team-dev. Rows are private (user_id scoped).
 // ---------------------------------------------------------------------------
 
-export interface KamCarrierSalesRow {
-  lane_key: string
+export interface KamCarrierSalesEntry {
+  id: string
   lane: string
-  carriers: string
-  avg_cost: number | null
-  movements: number
+  carrier: string
+  cost: number | null
+  moves: number | null
   comments: string
+  created_at: string
+  updated_at: string
 }
 
-export function useCarrierSales(bounds: KamBounds, subTeams: string[] = []) {
+const CARRIER_SALES_KEY = ["kam-performance-dfw", "carrier-sales-entries"]
+
+export function useCarrierSalesEntries() {
   return useQuery({
-    queryKey: [
-      "kam-performance-dfw",
-      "carrier-sales",
-      bounds.start,
-      bounds.end,
-      subTeams.join(","),
-    ],
+    queryKey: CARRIER_SALES_KEY,
     queryFn: () =>
-      apiFetch<KamCarrierSalesRow[]>(
-        `custom/kam-performance-dfw/carrier-sales?${rangeQuery(bounds)}${subTeamsQuery(subTeams)}`,
+      apiFetch<KamCarrierSalesEntry[]>(
+        "custom/kam-performance-dfw/carrier-sales-entries",
       ),
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
     ...RETRY,
   })
 }
 
-export function useUpsertCarrierComment() {
+export function useCreateCarrierSales() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { lane_key: string; comments: string }) =>
-      apiFetch<{ lane_key: string; comments: string }>(
-        "custom/kam-performance-dfw/carrier-comments",
-        { method: "PUT", body: JSON.stringify(body) },
+    mutationFn: (body: {
+      lane?: string
+      carrier?: string
+      cost?: number | null
+      moves?: number | null
+      comments?: string
+    }) =>
+      apiFetch<KamCarrierSalesEntry>(
+        "custom/kam-performance-dfw/carrier-sales-entries",
+        { method: "POST", body: JSON.stringify(body) },
       ),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "carrier-sales"] }),
-    onError: mutationErrorToast("Save carrier comment"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CARRIER_SALES_KEY }),
+    onError: mutationErrorToast("Add carrier sales row"),
+  })
+}
+
+export function useUpdateCarrierSales() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string
+      lane?: string
+      carrier?: string
+      cost?: number | null
+      cost_set?: boolean
+      moves?: number | null
+      moves_set?: boolean
+      comments?: string
+    }) =>
+      apiFetch<KamCarrierSalesEntry>(
+        `custom/kam-performance-dfw/carrier-sales-entries/${id}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CARRIER_SALES_KEY }),
+    onError: mutationErrorToast("Save carrier sales row"),
+  })
+}
+
+export function useDeleteCarrierSales() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ deleted: boolean }>(
+        `custom/kam-performance-dfw/carrier-sales-entries/${id}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CARRIER_SALES_KEY }),
+    onError: mutationErrorToast("Delete carrier sales row"),
   })
 }

@@ -135,6 +135,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "DFW Podium Top TM3":             { icon: Trophy,         family: "dfw", tag: "TM3" },
   "DFW Podium Top TM4":             { icon: Trophy,         family: "dfw", tag: "TM4" },
   "Top Losses Lanes":               { icon: TrendingDown,   family: "executive" },
+  "DFW Losses":                     { icon: TrendingDown,   family: "dfw" },
   "OPs Margins":                    { icon: Percent,        family: "operations" },
   "OPs Direct Compare":             { icon: ArrowLeftRight, family: "operations" },
   "CORP T1 Direct Compare":         { icon: ArrowLeftRight, family: "corp", tag: "T1" },

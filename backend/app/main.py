@@ -28,6 +28,7 @@ from app.routers import (
     ceo_cockpit,
     ceo_executive,
     dfw_access_doors,
+    dfw_losses,
     hr_access_doors,
     it_tickets,
     kam_performance_dfw,
@@ -424,6 +425,28 @@ async def lifespan(app: FastAPI):
                   PRIMARY KEY (user_id, lane_key)
                 )
                 """
+            )
+            # KAM Carrier Sales (Bruno PDF 2026-07-20): the Carrier Sales tab is
+            # now a fully-manual per-user table — no datalake auto-populate. Every
+            # column (lane, carrier, cost, moves, comments) is user-entered; rows
+            # are private (user_id scoped) like customer-dev / team-dev.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kam_carrier_sales (
+                  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id    TEXT NOT NULL,
+                  lane       TEXT NOT NULL DEFAULT '',
+                  carrier    TEXT NOT NULL DEFAULT '',
+                  cost       NUMERIC,
+                  moves      INTEGER,
+                  comments   TEXT NOT NULL DEFAULT '',
+                  created_at TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_kam_carrier_sales_user ON kam_carrier_sales(user_id, updated_at DESC)"
             )
 
             # Bonus Calculator (2026-05-24): HR-editable roster / afterhours /
@@ -869,6 +892,7 @@ app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")
 app.include_router(losses_lanes.router, prefix="/api")
+app.include_router(dfw_losses.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
