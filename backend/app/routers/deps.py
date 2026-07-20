@@ -1,7 +1,11 @@
+import hmac
 import time
+from typing import Optional
 
 import asyncpg
 from fastapi import Depends, Header, HTTPException, Request
+
+from app.config import settings
 
 
 def get_pool(request: Request) -> asyncpg.Pool:
@@ -171,13 +175,33 @@ def require_report_access(*report_keys: str):
     return _check
 
 
-async def require_user(authorization: str = Header(...)) -> dict:
+async def require_user(
+    authorization: str = Header(...),
+    x_proxy_secret: Optional[str] = Header(None),
+) -> dict:
     """Extract user info from the Authorization header.
 
-    The Next.js proxy forwards the session as a JSON-serialised object.
-    We trust the proxy (it already validated the session) and parse the
-    payload directly.
+    The Next.js proxy forwards the session as a JSON-serialised object. We trust
+    that identity — but ONLY once `X-Proxy-Secret` proves the request actually
+    came from the proxy.
+
+    Without that proof the identity is self-asserted: this backend is directly
+    reachable on the public internet, so any caller could send
+    `Bearer {"sub":"anyone","roles":["admin"]}` and read every report, including
+    the payroll data gated to CEO/HR. `role_report_access` is only meaningful if
+    the caller cannot choose their own roles.
+
+    ⚠ FAIL-OPEN while `PROXY_SHARED_SECRET` is unset, so deploying this code
+    cannot take the portal down before the env vars are in place. Enforcement
+    begins the moment the value is set on Render. See config.py.
     """
+    expected = settings.PROXY_SHARED_SECRET
+    if expected:
+        if not x_proxy_secret or not hmac.compare_digest(x_proxy_secret, expected):
+            # Deliberately vague: don't tell a prober whether the secret is
+            # merely wrong vs. whether the endpoint expects one at all.
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
 

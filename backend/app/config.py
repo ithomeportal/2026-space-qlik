@@ -28,6 +28,22 @@ class Settings(BaseSettings):
     TIMEOFF_DATABASE_URL: str = ""
     SEED_SECRET: str = "change-me-in-production"
 
+    # Shared secret proving a request came from our Next.js proxy.
+    #
+    # `require_user` trusts the JSON identity in the Authorization header, since
+    # the proxy has already validated the NextAuth session. But this backend is
+    # directly reachable on the public internet, so without a secret ANY caller
+    # could assert `roles:["admin"]` with a one-line curl and read every report.
+    # The proxy sends this as `X-Proxy-Secret`; the backend compares it with
+    # `hmac.compare_digest`.
+    #
+    # ⚠ Deliberately FAIL-OPEN when empty: enforcement switches on only once the
+    # value is set on Render. That makes the rollout order safe (deploy code →
+    # set Vercel → set Render) with no window where the frontend is sending a
+    # header the backend rejects, or vice versa. `main.py` logs a loud warning at
+    # startup while it is unset. MUST be identical to Vercel's PROXY_SHARED_SECRET.
+    PROXY_SHARED_SECRET: str = ""
+
     # Microsoft Graph (admin-ms-api app) — used to send the RFP Performance
     # daily digest from ithome@unilinktransportation.com via /sendMail.
     # Requires Mail.Send Application permission with admin consent.

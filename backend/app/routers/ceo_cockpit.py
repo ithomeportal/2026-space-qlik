@@ -30,6 +30,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_now, cst_today
+from app.config import settings
 from app.routers.deps import (
     get_allowed_roles_for_report,
     get_pool,
@@ -505,10 +506,16 @@ async def _fetch_one(
     `value` is None unless hint == "ok".
     """
     try:
+        # These fan-out calls re-enter our own app via ASGITransport and so hit
+        # require_user again — they must carry the proxy secret, exactly like a
+        # request arriving from the Next.js proxy would.
+        headers = {"authorization": auth, "content-type": "application/json"}
+        if settings.PROXY_SHARED_SECRET:
+            headers["x-proxy-secret"] = settings.PROXY_SHARED_SECRET
         resp = await client.get(
             f"/api{endpoint}",
             params=_resolve_params(params),
-            headers={"authorization": auth, "content-type": "application/json"},
+            headers=headers,
         )
     except Exception:
         return None, None, "unavailable"

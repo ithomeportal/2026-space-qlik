@@ -194,6 +194,11 @@ async def _scheduled_datalake_warmup():
     # Synthetic admin header — admin bypasses require_report_access (deps.py),
     # so the warmup runs the exact same SQL real users trigger.
     auth = 'Bearer {"sub":"warmup","email":"warmup@internal","name":"warmup","roles":["admin"]}'
+    # In-process via ASGITransport, but require_user cannot tell that apart from a
+    # network call — so the internal callers must carry the proxy secret too.
+    internal_headers = {"authorization": auth}
+    if settings.PROXY_SHARED_SECRET:
+        internal_headers["x-proxy-secret"] = settings.PROXY_SHARED_SECRET
     endpoints = (
         "/api/custom/ops-portal-overview/actuals",
         "/api/custom/ops-portal-overview/service",
@@ -205,7 +210,7 @@ async def _scheduled_datalake_warmup():
             transport=transport, base_url="http://warmup.internal", timeout=60.0,
         ) as client:
             results = await asyncio.gather(
-                *[client.get(ep, headers={"authorization": auth}) for ep in endpoints],
+                *[client.get(ep, headers=internal_headers) for ep in endpoints],
                 return_exceptions=True,
             )
         ok = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
@@ -258,6 +263,19 @@ async def _set_cst_session(conn: asyncpg.Connection) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
+
+    # This backend is publicly reachable and trusts the identity JSON in the
+    # Authorization header. Without the shared secret, anyone can assert
+    # roles:["admin"] and read every report — so make an unset value loud rather
+    # than a silent fail-open. See config.PROXY_SHARED_SECRET / deps.require_user.
+    if settings.PROXY_SHARED_SECRET:
+        logger.info("Proxy shared secret: ENFORCED")
+    else:
+        logger.warning(
+            "PROXY_SHARED_SECRET is not set — the API is accepting self-asserted "
+            "identities from ANY caller. Set it on Render (and Vercel) to enable "
+            "authentication."
+        )
 
     if settings.DATABASE_URL:
         try:

@@ -44,6 +44,16 @@ async function proxyRequest(
     })}`,
   }
 
+  // Proves to the backend that this request really came from the proxy — i.e.
+  // that the identity above was derived from a validated NextAuth session and
+  // not simply asserted by the caller. The backend is publicly reachable, so
+  // without this any client could send roles:["admin"] and read every report.
+  // Must match Render's PROXY_SHARED_SECRET. Omitted when unset so local dev
+  // (and the pre-rollout window) keeps working — the backend fails open to match.
+  if (process.env.PROXY_SHARED_SECRET) {
+    headers["X-Proxy-Secret"] = process.env.PROXY_SHARED_SECRET
+  }
+
   let body: string | undefined
   if (req.method !== "GET" && req.method !== "HEAD") {
     try {

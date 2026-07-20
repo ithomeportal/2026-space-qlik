@@ -160,6 +160,11 @@ async def _fetch_team_data(app) -> Optional[dict]:
     """In-process call to the exact endpoint the "Team" button uses."""
     # Admin bypasses require_report_access (deps.py) → runs the same SQL users hit.
     auth = 'Bearer {"sub":"digest","email":"digest@internal","name":"digest","roles":["admin"]}'
+    # In-process via ASGITransport, but require_user cannot tell that apart from a
+    # network call — so the internal callers must carry the proxy secret too.
+    headers = {"authorization": auth}
+    if settings.PROXY_SHARED_SECRET:
+        headers["x-proxy-secret"] = settings.PROXY_SHARED_SECRET
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://digest.internal", timeout=60.0,
@@ -167,7 +172,7 @@ async def _fetch_team_data(app) -> Optional[dict]:
         res = await client.get(
             "/api/custom/ops-portal-overview/team-performance-by-team",
             params={"range": "mtd"},
-            headers={"authorization": auth},
+            headers=headers,
         )
     if res.status_code != 200:
         logger.warning("Ops team digest: endpoint returned %s", res.status_code)
