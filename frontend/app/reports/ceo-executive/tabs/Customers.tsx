@@ -45,6 +45,7 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           rows={d?.by_customer ?? []}
           loading={isLoading}
           sortHint="sorted by highest profit"
+          count={d?.customer_count}
           onCustomerSelect={onCustomerSelect}
         />
         <CustomerTable
@@ -85,6 +86,7 @@ function CustomerTable({
   rows,
   loading,
   sortHint,
+  count,
   onCustomerSelect,
 }: {
   title: string
@@ -92,6 +94,9 @@ function CustomerTable({
   rows: CeoCustomerRow[]
   loading?: boolean
   sortHint?: string
+  /** Distinct-customer count for the header. Server-side over the full
+   *  universe — never `rows.length`, which is LIMIT-200 capped (§44). */
+  count?: number
   onCustomerSelect?: (customer: string) => void
 }) {
   const head = tone === "red" ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#D1FAE5] text-[#065F46]"
@@ -111,6 +116,12 @@ function CustomerTable({
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className={`${head} px-3 py-2 text-sm font-semibold`}>
         {title}
+        {/* Bruno PDF 2026-07-22 Overview R1: customer count at the top. */}
+        {!loading && count !== undefined && (
+          <span className="ml-2 rounded-full bg-white/60 px-2 py-0.5 text-xs font-semibold tabular-nums">
+            {count.toLocaleString("en-US")}
+          </span>
+        )}
         {sortHint && <span className="ml-2 text-xs font-normal opacity-75">· {sortHint}</span>}
       </div>
       {loading ? (

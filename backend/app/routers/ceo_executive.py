@@ -880,7 +880,15 @@ async def customers(
                ELSE 0 END AS margin_pct,
           CASE WHEN (SELECT total_margin FROM tot) > 0
                THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
-               ELSE 0 END AS conc_pct
+               ELSE 0 END AS conc_pct,
+          -- Bruno PDF 2026-07-22 Overview R1: customer count for the panel
+          -- header. A window function over the GROUPED set, evaluated BEFORE
+          -- ORDER BY/LIMIT, so it is the FULL-universe distinct-customer count
+          -- even though the rows below are LIMIT 200 (§44: a header number must
+          -- never be `rows.length` off a capped array). Costs no extra scan, and
+          -- agreement with the table is structural rather than maintained by
+          -- keeping a second query's predicates in sync.
+          COUNT(*) OVER () AS customer_count
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {pc_where} AND {pc_df}
           AND br4.customer_name IS NOT NULL
@@ -1051,6 +1059,7 @@ async def customers(
         "success": True,
         "data": {
             "by_customer": [_map_cust(r) for r in pc],
+            "customer_count": int(pc[0]["customer_count"]) if pc else 0,
             "worst_by_customer": [_map_cust(r) for r in wp],
             "top5_revenue": t5r_slices,
             "top5_revenue_others": t5r_others,

@@ -119,6 +119,13 @@ interface Props {
   lockedTeam?: string
   /** Header badge text (defaults to "side-by-side"). */
   badge?: string
+  /** Render for embedding inside another report's tab: drops the full-viewport
+   *  page shell, the "Back" bar + <h1> + freshness pill, and the mobile gate
+   *  banner, all of which the host page already provides. The panels, their
+   *  filters and every data hook are untouched. Same shape as `lockedTeam` /
+   *  OpsPortalOverviewContent's `hideBonusNav`. Used by the CEO Executive
+   *  "Direct Compare" tab (Bruno PDF 2026-07-22). */
+  embedded?: boolean
 }
 
 /**
@@ -134,6 +141,7 @@ export function DirectCompareContent({
   title = "OPs Direct Compare",
   lockedTeam,
   badge,
+  embedded,
 }: Props) {
   return (
     <DcApiProvider prefix={apiPrefix}>
@@ -144,7 +152,7 @@ export function DirectCompareContent({
           </div>
         }
       >
-        <Body title={title} lockedTeam={lockedTeam} badge={badge} />
+        <Body title={title} lockedTeam={lockedTeam} badge={badge} embedded={embedded} />
       </Suspense>
     </DcApiProvider>
   )
@@ -154,10 +162,12 @@ function Body({
   title,
   lockedTeam,
   badge,
+  embedded,
 }: {
   title: string
   lockedTeam?: string
   badge?: string
+  embedded?: boolean
 }) {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -242,14 +252,26 @@ function Body({
   const headerBadge = badge ?? "side-by-side"
 
   return (
-    <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
-      {/* Mobile gate — desktop-only (side-by-side comparison) */}
-      <div className="border-b border-[#FDE68A] bg-[#FEF3C7] px-4 py-2 text-xs text-[#92400E] xl:hidden">
-        <strong>Best viewed on desktop.</strong> OPs Direct Compare shows two side-by-side
-        panels and dense diff tables; mobile rendering is limited.
-      </div>
+    <div
+      className={
+        embedded
+          ? "flex min-h-[400px] flex-col"
+          : "flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]"
+      }
+    >
+      {/* Mobile gate — desktop-only (side-by-side comparison). Hidden when
+          embedded: it names "OPs Direct Compare", a report the viewer thinks
+          they are not on (they are on CEO Executive). */}
+      {!embedded && (
+        <div className="border-b border-[#FDE68A] bg-[#FEF3C7] px-4 py-2 text-xs text-[#92400E] xl:hidden">
+          <strong>Best viewed on desktop.</strong> OPs Direct Compare shows two side-by-side
+          panels and dense diff tables; mobile rendering is limited.
+        </div>
+      )}
 
-      {/* Top bar */}
+      {/* Top bar — hidden when embedded: the host page owns Back / <h1> / chrome,
+          and a second <h1> on one page is also an a11y regression. */}
+      {!embedded && (
       <div className="flex items-center gap-3 border-b border-[#E5E7EB] bg-white px-4 py-2">
         <Link
           href="/"
@@ -277,6 +299,7 @@ function Body({
           )}
         </div>
       </div>
+      )}
 
       {loadingFilters ? (
         <div className="flex flex-1 items-center justify-center">

@@ -60,6 +60,19 @@ from app.routers.ops_margins import (
 
 router = APIRouter(tags=["ops-direct-compare"], prefix="/custom/ops-direct-compare")
 
+# Every endpoint below accepts EITHER "ops-direct-compare" OR "ceo-executive"
+# access (Bruno PDF 2026-07-22: CEO Executive gained a "Direct Compare" tab that
+# embeds this whole report). Same multi-key pattern attrition_wow already uses
+# for the CEO Attrition tab — no SQL duplicated, no new report key, no 4-place
+# mirror. ⚠ Consequence, accepted and identical to the attrition_wow precedent:
+# a ceo-executive holder can now also reach /custom/ops-direct-compare/* at the
+# base URL, not only through the new tab.
+#
+# Not the ops_direct_compare_team.py pattern: that exists to RESTRICT data (a
+# TEAM1 KAM must never see TEAM2 even by crafting ?p1_teams=TEAM2). There is no
+# such restriction here — the tab is a full duplicate for an exec who already
+# sees every division.
+
 
 # ---------------------------------------------------------------------------
 # Per-panel filter binding — same shape as ops_margins but only the date /
@@ -112,7 +125,7 @@ async def filters(
     division: Optional[str] = Query(None),
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     """Static filter shape — no customer/origin/destination dropdowns here."""
     return {
@@ -144,7 +157,7 @@ async def panel_summary(
     division: Optional[str] = Query(None),
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -237,7 +250,7 @@ async def concentration(
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
     top: int = Query(5, ge=3, le=20),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -342,7 +355,7 @@ async def by_customer(
     sort: str = Query("profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -424,7 +437,7 @@ async def by_customer_diff(
     sort: str = Query("p2_profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -552,7 +565,7 @@ async def by_lane(
     sort: str = Query("profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -635,7 +648,7 @@ async def by_lane_diff(
     sort: str = Query("p2_profit_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -752,7 +765,7 @@ def _last_12m_bounds(today: date) -> tuple[date, date]:
 @router.get("/trend-12m")
 async def trend_12m(
     request: Request,
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     today = cst_today()
     cache_key = today.isoformat()
@@ -827,7 +840,7 @@ async def customer_revenue_margin(
     teams: Optional[str] = Query(None),
     sub_teams: Optional[str] = Query(None),
     top: int = Query(20, ge=5, le=50),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     params: list = []
@@ -894,7 +907,7 @@ async def orders_window(
     sort: str = Query("date_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     today = cst_today()
@@ -998,7 +1011,7 @@ async def orders_window(
 @router.get("/freshness")
 async def freshness(
     request: Request,
-    _user: dict = Depends(require_report_access("ops-direct-compare")),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
     pool = get_datalake_gold_pool(request)
     row = await pool.fetchrow(

@@ -69,7 +69,11 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.routers.deps import (
+    get_datalake_gold_pool,
+    require_report_access,
+    user_has_report_access,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -175,6 +179,41 @@ def _parse_csv(raw: Optional[str], allowed: tuple[str, ...]) -> list[str]:
     allowed_set = set(allowed)
     keep = [t for t in wanted if t in allowed_set]
     return keep or list(allowed)
+
+
+# ---------------------------------------------------------------------------
+# Borrowed access — KAM Performance DFW Tab 2 ("Service")
+# ---------------------------------------------------------------------------
+
+# The 6 overview/fault endpoints below are also called by the "Service" tab of
+# KAM Performance DFW, so their guard accepts either report key (the multi-key
+# pattern documented on require_report_access, as already used by attrition_wow
+# for the CEO Executive Attrition tab).
+_SERVICE_TAB_ACCESS = require_report_access("ops-customer-score", "kam-performance-dfw")
+
+
+async def _pin_division(
+    request: Request, user: dict, division: Optional[str]
+) -> Optional[str]:
+    """Force DFW for callers who got in ONLY via the KAM grant.
+
+    ⚠ Without this, admitting DFW KAM1..4 to these endpoints would hand them
+    every division's service data, not the DFW tab Bruno asked for — and not
+    only via a hand-crafted ``division=CORP``: ``_resolve_division(None)``
+    defaults to **ALL_TEAMS**, so merely omitting the param would do it.
+    Genuine ops-customer-score holders keep the full division selector.
+
+    ⚠ **This lives in the ENDPOINT wrappers, never in `_overview`/`_fault_rows`.**
+    Those private helpers are also called directly (§40) by
+    `ops_customer_score_team.py`, whose CORP-T{n} portals pass their own
+    server-locked `division="CORP"`. A CORP-T1-only user has no
+    ops-customer-score grant either, so pinning inside the helper would rewrite
+    their CORP lock to DFW and serve TEAM-DFW data to a role built never to see
+    another team. Any new shim MUST call the private helper, not the endpoint.
+    """
+    if await user_has_report_access(request, user, "ops-customer-score"):
+        return division
+    return "DFW"
 
 
 def _resolve_division(division: Optional[str]) -> tuple[list[str], bool]:
@@ -843,8 +882,9 @@ async def pu_overview(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _overview(
         request, "pu", range, start_date, end_date, division, teams, companies,
         sub_teams, customer, carrier,
@@ -863,8 +903,9 @@ async def del_overview(
     sub_teams: Optional[str] = Query(None),
     customer: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _overview(
         request, "del", range, start_date, end_date, division, teams, companies,
         sub_teams, customer, carrier,
@@ -1214,8 +1255,9 @@ async def pu_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _fault_rows(
         request, "pu", "our", range, start_date, end_date, division, teams,
         companies, sub_teams, customer, carrier, page, limit,
@@ -1236,8 +1278,9 @@ async def pu_not_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _fault_rows(
         request, "pu", "not", range, start_date, end_date, division, teams,
         companies, sub_teams, customer, carrier, page, limit,
@@ -1258,8 +1301,9 @@ async def del_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _fault_rows(
         request, "del", "our", range, start_date, end_date, division, teams,
         companies, sub_teams, customer, carrier, page, limit,
@@ -1280,8 +1324,9 @@ async def del_not_our_fault(
     carrier: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-customer-score")),
+    _user: dict = Depends(_SERVICE_TAB_ACCESS),
 ):
+    division = await _pin_division(request, _user, division)
     return await _fault_rows(
         request, "del", "not", range, start_date, end_date, division, teams,
         companies, sub_teams, customer, carrier, page, limit,

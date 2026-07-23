@@ -64,6 +64,14 @@ PROFIT_GOAL_PER_TEAM = 55_000
 
 router = APIRouter(tags=["xray-dfw"], prefix="/custom/xray-dfw")
 
+# /filters, /kpis and /by-lane are also called by the "Top 10 lanes" tab of KAM
+# Performance DFW, so their guard accepts either report key (the multi-key
+# pattern documented on require_report_access, as already used by attrition_wow
+# for the CEO Executive Attrition tab). No division pin is needed here the way
+# it is on ops_customer_score: this whole router IS the DFW report — its only
+# team knob is `sub_teams`, which is constrained to the DFW TM1..TM4 pills.
+_TOP_LANES_TAB_ACCESS = require_report_access("xray-dfw-mng", "kam-performance-dfw")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -315,7 +323,7 @@ def _week_bounds(today: date) -> tuple[date, date, date, date]:
 async def filters(
     request: Request,
     view: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("xray-dfw-mng")),
+    _user: dict = Depends(_TOP_LANES_TAB_ACCESS),
 ):
     """Sub-teams + distinct customer (or RUAN client) list + lanes in scope."""
     pool = get_datalake_gold_pool(request)
@@ -439,7 +447,7 @@ async def kpis(
     equipment: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
-    _user: dict = Depends(require_report_access("xray-dfw-mng")),
+    _user: dict = Depends(_TOP_LANES_TAB_ACCESS),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -913,7 +921,7 @@ async def by_lane(
     view: Optional[str] = Query(None),
     exclude_customers: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("xray-dfw-mng")),
+    _user: dict = Depends(_TOP_LANES_TAB_ACCESS),
 ):
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)

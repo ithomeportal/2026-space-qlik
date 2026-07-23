@@ -365,6 +365,10 @@ TILES: list[dict[str, Any]] = [
 
 # Reports with no single monitorable headline KPI — shown as subdued
 # "open to explore" cards so the cockpit still represents every report.
+# Tiles whose backing endpoint accepts a borrowed report key (§52) and therefore
+# cannot self-gate on a 403 any more. Re-gated on genuine access below.
+_BORROWED_ENDPOINT_TILES = frozenset({"ops-customer-score"})
+
 LINK_TILES: list[dict[str, Any]] = [
     {"key": "ops-margins", "title": "OPs Margins", "category": "Operations",
      "note": "Best/worst margin leaderboards — open to explore"},
@@ -644,6 +648,23 @@ async def summary(
         transport=transport, base_url="http://cockpit.internal", timeout=30.0,
     ) as client:
         tiles = await asyncio.gather(*[_fetch_tile(client, auth, t) for t in TILES])
+
+    # ⚠ Tiles whose endpoint now accepts a BORROWED report key (SPEC-CODE-RULES
+    # §52) can no longer self-gate on a 403 — the call succeeds, but the borrowed
+    # caller is scope-pinned, so the number is a SUBSET under a company-wide
+    # label. `ops-customer-score/pu/overview` is pinned to DFW for a DFW-KAM /
+    # Sales holder, who would otherwise read "Pickup On-Time % (MTD)" as the
+    # whole company. Re-gate those tiles on GENUINE access, restoring exactly the
+    # locked tile they saw before the widening.
+    if "admin" not in roles:
+        pool = get_pool(request)
+        for _tile_key in _BORROWED_ENDPOINT_TILES:
+            allowed = await get_allowed_roles_for_report(pool, _tile_key)
+            if not (roles & allowed):
+                tiles = [
+                    {**x, "status": "locked", "value": None} if x["key"] == _tile_key else x
+                    for x in tiles
+                ]
 
     # Link-tiles are "open to explore" cards with a live deep-link but no KPI
     # query, so — unlike the self-gating KPI TILES (which render a locked tile on

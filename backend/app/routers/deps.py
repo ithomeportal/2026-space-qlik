@@ -139,6 +139,22 @@ async def get_allowed_roles_for_report(pool, report_key: str) -> frozenset[str]:
     return allowed
 
 
+async def user_has_report_access(request: Request, user: dict, report_key: str) -> bool:
+    """True when ``user`` holds a TagRole granting ``report_key``. Admin always True.
+
+    Read-only companion to ``require_report_access`` for endpoints shared by two
+    reports that must behave *differently* depending on which grant let the
+    caller in — e.g. the Ops Customer Score endpoints that KAM Performance DFW
+    borrows, where a KAM-only caller is pinned to the DFW division. Hits the same
+    60s-TTL ``_ACCESS_CACHE``, so calling it per request is cheap.
+    """
+    roles = {r.lower() for r in user.get("roles", [])}
+    if "admin" in roles:
+        return True
+    allowed = await get_allowed_roles_for_report(get_pool(request), report_key)
+    return bool(roles & allowed)
+
+
 def require_report_access(*report_keys: str):
     """Factory: gate a custom-report endpoint by its DB role assignments.
 

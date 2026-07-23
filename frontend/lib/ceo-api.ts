@@ -179,6 +179,9 @@ export interface CeoTop5Row {
 
 export interface CeoCustomers {
   by_customer: CeoCustomerRow[]
+  /** Distinct customers in the FULL filtered universe. Server-side — `by_customer`
+   *  is LIMIT 200, so its length would freeze at 200 once the cap binds (§44). */
+  customer_count: number
   worst_by_customer: CeoCustomerRow[]
   top5_revenue: CeoTop5Row[]
   top5_profit: CeoTop5Row[]

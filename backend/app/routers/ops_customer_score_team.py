@@ -132,18 +132,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         carrier: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
-        return await ocs.pu_overview(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._overview(
+            request, "pu", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier,
         )
 
     @r.get("/del/overview")
@@ -157,18 +154,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         carrier: Optional[str] = Query(None),
         _user: dict = Depends(gate),
     ):
-        return await ocs.del_overview(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._overview(
+            request, "del", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier,
         )
 
     # ---- Detail -----------------------------------------------------------
@@ -236,20 +230,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         limit: int = Query(200, ge=1, le=500),
         _user: dict = Depends(gate),
     ):
-        return await ocs.pu_our_fault(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            page=page,
-            limit=limit,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._fault_rows(
+            request, "pu", "our", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier, page, limit,
         )
 
     @r.get("/pu/not-our-fault")
@@ -265,20 +254,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         limit: int = Query(200, ge=1, le=500),
         _user: dict = Depends(gate),
     ):
-        return await ocs.pu_not_our_fault(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            page=page,
-            limit=limit,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._fault_rows(
+            request, "pu", "not", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier, page, limit,
         )
 
     @r.get("/del/our-fault")
@@ -294,20 +278,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         limit: int = Query(200, ge=1, le=500),
         _user: dict = Depends(gate),
     ):
-        return await ocs.del_our_fault(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            page=page,
-            limit=limit,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._fault_rows(
+            request, "del", "our", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier, page, limit,
         )
 
     @r.get("/del/not-our-fault")
@@ -323,20 +302,15 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         limit: int = Query(200, ge=1, le=500),
         _user: dict = Depends(gate),
     ):
-        return await ocs.del_not_our_fault(
-            request=request,
-            range=range,
-            start_date=start_date,
-            end_date=end_date,
-            division="CORP",
-            teams=team,
-            companies=companies,
-            sub_teams=None,
-            customer=customer,
-            carrier=carrier,
-            page=page,
-            limit=limit,
-            _user=_user,
+        # ⚠ Calls the PRIVATE helper, never ocs.pu_overview/_fault endpoints.
+        # Those wrappers now begin with `_pin_division`, which forces DFW for any
+        # caller lacking a genuine ops-customer-score grant — which is exactly a
+        # CORP-T{n}-only user. Going through them would override this shim's
+        # server-side CORP lock and serve TEAM-DFW data to a role built never to
+        # see another team. The helpers hold the real logic and no identity.
+        return await ocs._fault_rows(
+            request, "del", "not", range, start_date, end_date,
+            "CORP", team, companies, None, customer, carrier, page, limit,
         )
 
     # ---- /freshness — global (no team/division params) --------------------

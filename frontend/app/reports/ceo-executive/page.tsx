@@ -18,6 +18,7 @@ import { ReportGuard } from "@/components/ReportGuard"
 import { Risk } from "./tabs/Risk"
 import { Orders } from "./tabs/Orders"
 import { Attrition } from "./tabs/Attrition"
+import { DirectCompareContent } from "@/components/DirectCompareContent"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -32,7 +33,7 @@ const DFW_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"] as const
 
 // Overview now bundles Overview + Trends + Customers content, stacked in that
 // order, so those two no longer get their own tabs.
-type TabKey = "overview" | "weekly" | "risk" | "orders" | "attrition"
+type TabKey = "overview" | "weekly" | "risk" | "orders" | "attrition" | "direct-compare"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
@@ -40,6 +41,8 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "risk", label: "Risk" },
   { key: "orders", label: "Orders" },
   { key: "attrition", label: "Attrition" },
+  // Bruno PDF 2026-07-22: embeds the whole OPs Direct Compare report.
+  { key: "direct-compare", label: "Direct Compare" },
 ]
 
 function todayIso() {
@@ -240,6 +243,11 @@ function CeoExecutiveContent() {
       </div>
 
       <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+        {/* Hidden on Direct Compare: that tab drives itself from two independent
+            per-panel scopes, so these controls would be completely inert. An
+            inert-but-visible filter bar reads as broken. Tab bar stays. */}
+        {activeTab !== "direct-compare" && (
+        <>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
@@ -430,6 +438,8 @@ function CeoExecutiveContent() {
           })}
         </div>
 
+        </>
+        )}
         <div className="mx-auto flex w-full max-w-[1920px] gap-1 overflow-x-auto border-t border-[#E5E7EB] px-6">
           {TABS.map((tab) => (
             <button
@@ -459,6 +469,13 @@ function CeoExecutiveContent() {
         {activeTab === "risk" && <Risk filters={filters} onCustomerSelect={setCustomer} />}
         {activeTab === "orders" && <Orders filters={filters} onCustomerSelect={setCustomer} />}
         {activeTab === "attrition" && <Attrition filters={filters} />}
+        {/* Direct Compare owns two INDEPENDENT panel scopes, so the CEO filter
+            bar cannot drive it — the bar is hidden on this tab rather than left
+            visible and inert (a filter that silently does nothing is worse than
+            no filter). Panel state lives in `p1_*`/`p2_*` query params, which
+            cannot clash: ceo-executive holds all its own state in useState and
+            reads zero query params. */}
+        {activeTab === "direct-compare" && <DirectCompareContent embedded />}
       </div>
     </div>
   )

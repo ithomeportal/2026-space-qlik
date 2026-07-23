@@ -13,6 +13,7 @@ import { PivotsTab } from "../../attrition-wow/tabs/PivotsTab"
 import { AttritionErrorBanner } from "../../attrition-wow/ErrorBanner"
 import {
   fmtCount,
+  fmtCount1,
   fmtPct,
   fmtSignedCount,
   fmtSignedPct,
@@ -121,7 +122,9 @@ export function Attrition({ filters }: { filters: CeoFilters }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F3F4F6]">
-            <MetricRow label="# Loads" loading={loadingSummary} block={s?.loads} fmt={fmtCount} isCount />
+            {/* Bruno PDF 2026-07-22 R3: L8W AVG / L2W AVG to one decimal for
+                #Loads only (both are genuine /8 and /2 averages server-side). */}
+            <MetricRow label="# Loads" loading={loadingSummary} block={s?.loads} fmt={fmtCount} avgFmt={fmtCount1} isCount />
             <MetricRow label="$ Revenue" loading={loadingSummary} block={s?.revenue} fmt={fmtUsd} />
             <MetricRow label="$ Profit" loading={loadingSummary} block={s?.profit} fmt={fmtUsd} />
             <MetricRow label="% Margin" loading={loadingSummary} block={s?.margin_pct} fmt={fmtPct} isPct />
@@ -175,7 +178,13 @@ function ActiveCard({
         {title}
       </div>
       <div className="mt-3 grid grid-cols-4 gap-2">
-        <CountCell label="L8W" value={loading ? "—" : fmtCount(block?.l8w)} accent={accent} />
+        {/* Bruno PDF 2026-07-22 R1+R2: L8W to one decimal on BOTH cards (this
+            ActiveCard renders twice — "Lane Attrition" and "<entity> Attrition").
+            Lane L8W is a genuine per-week average (313.9); customer L8W is a
+            union-distinct integer count, so it always renders "51.0" — which is
+            exactly what Bruno's mockup shows, i.e. visual symmetry, NOT a
+            request to divide it by 8. LW stays integer, matching attrition-wow. */}
+        <CountCell label="L8W" value={loading ? "—" : fmtCount1(block?.l8w)} accent={accent} />
         <CountCell label="LW" value={loading ? "—" : fmtCount(block?.lw)} accent={accent} />
         <CountCell label="Δ (LW − L8W)" value={loading ? "—" : sd.text} accent={sd.className} />
         {/* Bruno 2026-07-01 Attrition Request 2: "% Δ" → "% Attrition" (this report only). */}
@@ -201,6 +210,7 @@ function MetricRow({
   loading,
   block,
   fmt,
+  avgFmt,
   isCount,
   isPct,
 }: {
@@ -208,10 +218,15 @@ function MetricRow({
   loading: boolean
   block: MetricBlock | undefined
   fmt: (v: number | null | undefined) => string
+  /** Formatter for the L8W AVG / L2W AVG cells only. Defaults to `fmt`, which
+   *  is what keeps the $ Revenue / $ Profit / % Margin / $ Profit-per-Load rows
+   *  unchanged — they pass no `avgFmt`. Mirrors attrition-wow's OverviewTab. */
+  avgFmt?: (v: number | null | undefined) => string
   isCount?: boolean
   isPct?: boolean
 }) {
   const cell = (v: number | null | undefined) => (loading ? "—" : fmt(v))
+  const cellAvg = (v: number | null | undefined) => (loading ? "—" : (avgFmt ?? fmt)(v))
   const renderDiff = (d: DiffPair | undefined) => {
     if (!d) return { abs: "—", pct: "—", absCls: "text-[#6B7280]", pctCls: "text-[#6B7280]" }
     if (isPct) {
@@ -239,10 +254,10 @@ function MetricRow({
     <tr>
       <td className="px-3 py-2.5 text-left text-xs font-semibold text-[#374151]">{label}</td>
       <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L8W_BG}`}>
-        {cell(block?.l8w_avg)}
+        {cellAvg(block?.l8w_avg)}
       </td>
       <td className={`px-3 py-2.5 text-right font-mono text-base text-[#111827] ${L2W_BG}`}>
-        {cell(block?.l2w_avg)}
+        {cellAvg(block?.l2w_avg)}
       </td>
       <td className={`px-3 py-2.5 text-right font-mono text-base ${L2W_BG} ${l2wDiff.absCls}`}>
         {l2wDiff.abs}
