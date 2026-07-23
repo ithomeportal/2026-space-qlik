@@ -98,6 +98,7 @@ export interface DfwLossesDaily {
 }
 
 export interface DfwLossesLaneRow {
+  customer: string | null
   origin: string | null
   destination: string | null
   loads: number

@@ -1,16 +1,103 @@
 "use client"
 
+import { useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
-import { useDfwLossesDaily, type DfwLossesFilters } from "@/lib/dfw-losses-api"
+import {
+  useDfwLossesDaily,
+  type DfwLossesFilters,
+  type DfwLossesDailyRow,
+} from "@/lib/dfw-losses-api"
+import { SortableTh, type SortDir, type SortState } from "@/components/SortableTable"
 import { DfwLossesErrorBanner } from "./ErrorBanner"
 import { fmtUsd, fmtCount, fmtLossCell } from "./format"
+
+const CUSTOMER_KEY_PREFIX = "cust:"
+
+/**
+ * Sort value for a column key. The per-customer cells live inside the nested
+ * `by_customer` map, which is exactly code-rule §38's "cells aren't flat
+ * scalars" case — so this table keeps local sort state + a metric-aware
+ * comparator instead of `useSortable`, and still feeds a `SortState` to
+ * `<SortableTh>` so the header affordance stays identical to every other report.
+ *
+ * Day and Month both sort chronologically off the real ISO date, not the
+ * day-of-month integer — a range may span months (and weekends are absent, R1).
+ */
+function sortValue(r: DfwLossesDailyRow, key: string): string | number | null {
+  if (key === "date") return r.date
+  if (key === "month") return r.date.slice(0, 7) // yyyy-MM sorts chronologically
+  if (key === "loads") return r.loads
+  if (key === "amount_lost") return r.amount_lost
+  if (key === "loss_per_load") return r.loss_per_load
+  if (key.startsWith(CUSTOMER_KEY_PREFIX)) {
+    // A customer with no loss that day shows as 0 — sort it as 0, not empty.
+    return r.by_customer[key.slice(CUSTOMER_KEY_PREFIX.length)] ?? 0
+  }
+  return null
+}
+
+/**
+ * Direction the FIRST click on a column uses. Every money column here is <= 0
+ * (losses), so "desc" would put the least-bad day on top — the opposite of what
+ * someone clicking "Amount Lost" wants. Worse on a customer column: a day where
+ * that customer lost nothing maps to 0, which is the *maximum* of a non-positive
+ * column, so a "desc" first click would fill the screen with `—` cells.
+ */
+function firstClickDir(key: string): SortDir {
+  if (key === "date" || key === "month") return "asc" // chronological
+  if (key === "loads") return "desc" // busiest day first
+  return "asc" // amount_lost, loss_per_load, cust:* — worst (most negative) first
+}
+
+function compare(a: string | number | null, b: string | number | null): number {
+  if (typeof a === "number" && typeof b === "number") return a - b
+  return String(a).localeCompare(String(b), undefined, { numeric: true })
+}
 
 export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
   const { data, isLoading, isFetching, error } = useDfwLossesDaily(filters)
   const d = data?.data
   const customers = d?.customers ?? []
-  const rows = d?.rows ?? []
+  // Memoised because it feeds the sort useMemo's dep array.
+  const rows = useMemo(() => d?.rows ?? [], [d])
   const summary = d?.summary
+
+  const [sortKey, setSortKey] = useState<string | null>("date")
+  const [sortDir, setSortDir] = useState<SortDir>("asc")
+
+  const sortState: SortState = {
+    sortKey,
+    sortDir,
+    toggleSort: (key: string) => {
+      if (sortKey === key) {
+        setSortDir((dir) => (dir === "asc" ? "desc" : "asc"))
+      } else {
+        setSortKey(key)
+        setSortDir(firstClickDir(key))
+      }
+    },
+  }
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return rows
+    const copy = [...rows]
+    copy.sort((a, b) => {
+      const av = sortValue(a, sortKey)
+      const bv = sortValue(b, sortKey)
+      // Null always sorts last. `loss_per_load` is the only nullable key, and
+      // since R3 put `total_charge <> 0` in the WHERE every day-row has at
+      // least one load — so this is defensive only (the wire type stays
+      // `number | null`), not a case you can reach today.
+      if (av === null && bv === null) return 0
+      if (av === null) return 1
+      if (bv === null) return -1
+      const c = compare(av, bv)
+      if (c !== 0) return sortDir === "asc" ? c : -c
+      // Stable, meaningful tiebreak: chronological.
+      return a.date.localeCompare(b.date)
+    })
+    return copy
+  }, [rows, sortKey, sortDir])
 
   return (
     <section className="rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
@@ -43,24 +130,47 @@ export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
           <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="border-b border-[#E5E7EB] bg-[#F9FAFB] text-left text-[#6B7280]">
-                <th className="sticky left-0 z-10 bg-[#F9FAFB] px-3 py-2 font-semibold">Day</th>
-                <th className="px-3 py-2 font-semibold">Month</th>
-                <th className="px-3 py-2 text-right font-semibold">Loads</th>
-                <th className="px-3 py-2 text-right font-semibold">Amount Lost</th>
-                <th className="px-3 py-2 text-right font-semibold">Loss / Load</th>
+                <SortableTh
+                  label="Day"
+                  columnKey="date"
+                  state={sortState}
+                  className="sticky left-0 z-10 bg-[#F9FAFB]"
+                />
+                <SortableTh label="Month" columnKey="month" state={sortState} />
+                <SortableTh label="Loads" columnKey="loads" state={sortState} align="right" />
+                <SortableTh
+                  label="Amount Lost"
+                  columnKey="amount_lost"
+                  state={sortState}
+                  align="right"
+                />
+                <SortableTh
+                  label="Loss / Load"
+                  columnKey="loss_per_load"
+                  state={sortState}
+                  align="right"
+                />
                 {customers.map((c) => (
-                  <th
+                  <SortableTh
                     key={c}
-                    className="max-w-[140px] truncate px-3 py-2 text-right font-semibold"
-                    title={c}
-                  >
-                    {c}
-                  </th>
+                    /* `title` on the label span, not the th: SortableTh hard-codes
+                       title="Sort" on its button, so without this a truncated
+                       customer name would be unreadable on hover. */
+                    label={
+                      <span className="block max-w-[140px] truncate" title={c}>
+                        {c}
+                      </span>
+                    }
+                    columnKey={`${CUSTOMER_KEY_PREFIX}${c}`}
+                    state={sortState}
+                    align="right"
+                    className="max-w-[140px]"
+                  />
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {sorted.map((r) => (
                 <tr
                   key={r.date}
                   className="border-b border-[#F3F4F6] hover:bg-[#F9FAFB]"
@@ -95,6 +205,7 @@ export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
               ))}
             </tbody>
             {summary && (
+              /* Pinned server-side averages — kept outside the sorted map (§38/§44). */
               <tfoot>
                 <tr className="border-t-2 border-[#E5E7EB] bg-[#F3F4F6] font-semibold text-[#111827]">
                   <td className="sticky left-0 z-10 bg-[#F3F4F6] px-3 py-2">Avg</td>

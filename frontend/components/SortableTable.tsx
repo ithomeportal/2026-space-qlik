@@ -23,11 +23,18 @@ function compareValues(a: unknown, b: unknown): number {
  * Generic client-side table sorting (Bruno 2026-05-28: sortable columns on
  * every XRay DFW tab). Empty/null values always sort last regardless of
  * direction. Clicking the active column flips the direction.
+ *
+ * `dirForKey` (optional) picks the direction the FIRST click on a column uses.
+ * Needed on tables whose columns are **negative-valued** — on a loss column,
+ * plain "desc" puts the least-bad row on top, which is the opposite of what
+ * anyone clicking "Loss" wants. Omit it and every column starts "desc", exactly
+ * as before, so existing call sites are unaffected.
  */
 export function useSortable<T>(
   rows: T[],
   defaultKey: string | null = null,
   defaultDir: SortDir = "desc",
+  dirForKey?: (key: string) => SortDir,
 ): { sorted: T[] } & SortState {
   const [sortKey, setSortKey] = useState<string | null>(defaultKey)
   const [sortDir, setSortDir] = useState<SortDir>(defaultDir)
@@ -37,7 +44,7 @@ export function useSortable<T>(
       setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     } else {
       setSortKey(key)
-      setSortDir("desc")
+      setSortDir(dirForKey?.(key) ?? "desc")
     }
   }
 

@@ -9,11 +9,32 @@ Two panels:
   day's loads, amount lost, loss/load and a per-customer loss pivot.
 - ``/lanes``  — "Biggest Offender Lane" table grouped by origin/dest.
 
-Scope (applied everywhere, mirrors ``losses_lanes.py``):
+Scope (applied everywhere):
 - team_id      = 'TEAM-DFW'  (single team — no team selector)
 - company_id   IN (TMS, TMS3)
 - status       IN (D, P)
 - customer_name NOT LIKE '%UNILINK%' AND NOT LIKE '%OILTEX%'
+- weekdays only — Saturdays/Sundays are dropped even when the selected
+  range spans them (Bruno PDF 2026-07-22 R1)
+- total_charge <> 0                     (Bruno PDF 2026-07-22 R3)
+
+⚠ ``total_charge <> 0`` is a **deliberate, report-scoped exception to
+code-rule §39** ("v4 margin SUM must never filter total_charge <> 0 —
+zero-charge rows carry real accessorial margin"). §39 governs *Profit*
+aggregates; Bruno asked for it explicitly here because this report measures
+*losses*, and an accessorial-only line is not a losing load. Measured cost of
+the exception on 2026-07 MTD: amount lost moves −$217,245 → −$177,645 (38 of
+1,034 rows carry −$39,600). The ``loads`` count is unaffected — it already
+carried ``FILTER (total_charge <> 0)``. Do not propagate this to any other v4
+report without a matching written request.
+
+⚠ **This report no longer reconciles with Top Losses Lanes** (``losses_lanes.py``)
+or with the 07:00 CST losses email for TEAM-DFW. Both carry ``total_charge <> 0``
+on their loss aggregates, but **neither has a weekday filter** — so R1 alone
+splits the universes (69 weekend rows / $4,320 of loss in 2026-07 MTD). Expect
+Bruno to ask why two "losses" screens disagree; the answer is R1, and the fix (if
+he wants them aligned) is to add the same ISODOW filter there, not to remove it
+here.
 
 All scope varchar columns use the padded-variants pattern
 (``pad_variants(width=N)``) so btree indexes stay usable — never TRIM()
@@ -127,6 +148,11 @@ def _scope_where(
     Appends positional params onto ``params`` and returns the SQL snippet.
     Team/company/status use sargable ``= ANY($N)`` with padded variants.
     Contract/customer filters are optional multi-selects.
+
+    The weekday and ``total_charge <> 0`` predicates are always on (R1/R3, see
+    the module docstring). Both are *additional* filters — the caller's
+    sargable ``origin_actual_departure >= $s AND < ($e + 1 day)`` bound still
+    drives ``idx_v4_dep``, so EXTRACT() here costs no index scan.
     """
     params.append(_pad_variants(DFW_TEAMS, width=8))
     p_teams = len(params)
@@ -141,6 +167,10 @@ def _scope_where(
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+        # R1 — weekdays only (ISODOW 1=Mon .. 5=Fri; 6/7 = Sat/Sun dropped).
+        f"EXTRACT(ISODOW FROM {alias}.origin_actual_departure) <= 5",
+        # R3 — see the §39 exception note in the module docstring.
+        f"{alias}.total_charge <> 0",
     ]
     if contract_types:
         # contract_type is varchar(1); pad_variants(width=1) is a no-op but
@@ -168,7 +198,11 @@ async def filters(
     end_date: Optional[date] = Query(None),
     _user: dict = Depends(require_report_access("dfw-losses")),
 ):
-    """Distinct contract_type + customer_name values within the current window."""
+    """Distinct contract_type + customer_name values within the current window.
+
+    Mirrors ``_scope_where``'s weekday + ``total_charge <> 0`` predicates so the
+    pickers never offer a value that cannot appear in either table.
+    """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
 
@@ -190,6 +224,8 @@ async def filters(
           AND status     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
+          AND EXTRACT(ISODOW FROM origin_actual_departure) <= 5
+          AND total_charge <> 0
           AND origin_actual_departure >= $4
           AND origin_actual_departure < ($5::date + INTERVAL '1 day')
         """,
@@ -233,9 +269,11 @@ async def daily(
 
     One grouped query by (date, customer) supplies both the per-day totals
     (aggregated up in Python) and the per-customer pivot cells. Loads count
-    ALL ``total_charge <> 0`` rows for the day; amount_lost sums the negative
-    margins only. The averages summary is computed server-side over the full
-    day-row set (never a client reduce).
+    every in-scope row for the day (``total_charge <> 0`` now lives in the
+    WHERE, so the old COUNT FILTER is redundant and the values are unchanged);
+    amount_lost sums the negative margins only. Weekend days never appear (R1),
+    so the averages summary — computed server-side over the full day-row set,
+    never a client reduce — divides by the weekday count.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -252,7 +290,7 @@ async def daily(
         SELECT
           br4.origin_actual_departure::date AS d,
           NULLIF(TRIM(br4.customer_name), '') AS customer,
-          COUNT(*) FILTER (WHERE br4.total_charge <> 0) AS loads,
+          COUNT(*) AS loads,
           COALESCE(
             SUM(br4.margin_amt) FILTER (WHERE br4.margin_amt < 0), 0
           )::numeric AS lost
@@ -360,7 +398,12 @@ async def lanes(
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(require_report_access("dfw-losses")),
 ):
-    """Worst (most-negative) origin→dest lanes for TEAM-DFW. Loss-making only."""
+    """Worst (most-negative) customer·origin→dest lanes for TEAM-DFW.
+
+    Loss-making only. ``customer_name`` joined the grain in R4 (Bruno PDF
+    2026-07-22); measured split is negligible (155 → 155 groups on 2026-07 MTD,
+    659 → 660 YTD), so in practice it reads as an added display column.
+    """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     contracts = _parse_multi(contract_type)
@@ -376,9 +419,10 @@ async def lanes(
     rows = await pool.fetch(
         f"""
         SELECT
+          NULLIF(TRIM(br4.customer_name), '') AS customer,
           br4.origin_name AS origin,
           br4.dest_name   AS destination,
-          COUNT(*) FILTER (WHERE br4.total_charge <> 0) AS loads,
+          COUNT(*) AS loads,
           COALESCE(
             SUM(br4.margin_amt) FILTER (WHERE br4.margin_amt < 0), 0
           )::numeric AS loss
@@ -386,7 +430,7 @@ async def lanes(
         WHERE {where}
           AND br4.origin_actual_departure >= ${p_s}
           AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
-        GROUP BY br4.origin_name, br4.dest_name
+        GROUP BY NULLIF(TRIM(br4.customer_name), ''), br4.origin_name, br4.dest_name
         HAVING COALESCE(SUM(br4.margin_amt) FILTER (WHERE br4.margin_amt < 0), 0) < 0
         ORDER BY loss ASC
         LIMIT ${p_lim}
@@ -395,6 +439,7 @@ async def lanes(
     )
     data = [
         {
+            "customer": r["customer"],
             "origin": r["origin"],
             "destination": r["destination"],
             "loads": int(r["loads"] or 0),
