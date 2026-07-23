@@ -11,6 +11,22 @@ Scope (verbatim from PDF + project conventions):
 - status      IN (D, P)
 - customer_name NOT LIKE '%UNILINK%'     (PDF)
 - customer_name NOT LIKE '%OILTEX%'      (project-wide exclusion)
+- weekdays only — Sat/Sun dropped even when the range spans them
+  (2026-07-22, aligning with DFW Losses R1)
+
+⚠ **The weekday filter applies to ALL SIX TEAMS, not just DFW**, and it also
+reaches the **07:00 CST losses email** — `losses_alerts.py` imports
+``compute_weekly_movers`` from this module, so it shares ``_scope_where`` and
+inherits the filter automatically. Measured cost at introduction: MTD 2026-07
+loss loads 444 → 425 and amount lost −$228,072 → −$219,087; YTD 5,250 → 4,744
+and −$2,703,491 → **−$2,419,959** (−$283,532, ~10.5% of the YTD loss is now
+out of scope). Weekend losses still exist in McLeod — they are simply no longer
+reported here.
+
+The weekly-movers WoW comparison stays fair: both the this-week and last-week
+CTEs read the same ``{where}``, so both windows narrow to Mon–Fri together.
+
+``/freshness`` is deliberately EXEMPT — see the note on that endpoint.
 
 All varchar columns use the padded-variants pattern (`pad_variants(width=N)`)
 so btree indexes on team_id/company_id/status stay usable. Never wrap those
@@ -121,6 +137,9 @@ def _scope_where(
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+        # Weekdays only (ISODOW 1=Mon..5=Fri), 2026-07-22 — matches DFW Losses R1
+        # so the two loss reports and the 07:00 email agree. See module docstring.
+        f"EXTRACT(ISODOW FROM {alias}.origin_actual_departure) <= 5",
     ]
     if customer:
         params.append(customer)
@@ -161,6 +180,7 @@ async def filters(
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
           AND customer_name IS NOT NULL
           AND TRIM(customer_name) <> ''
+          AND EXTRACT(ISODOW FROM origin_actual_departure) <= 5
           AND origin_actual_departure >= $4
         ORDER BY customer_name
         """,
@@ -824,6 +844,12 @@ async def freshness(
     "how fresh is v4" stamp so the UI can tell users when the backing data
     last refreshed. Cheap query (single MAX over an indexed column if one
     exists, or a full scan guarded by the scope predicates).
+
+    ⚠ **Deliberately EXEMPT from the weekday filter** that `_scope_where`
+    applies everywhere else. This measures the *pipeline*, not the business
+    window: if the last refresh landed on a Saturday, a weekday-filtered MAX()
+    would report the feed as stale and hide a healthy sync (or worse, mask a
+    dead one). Same reason `rows_in_scope` stays a raw volume signal.
     """
     pool = get_datalake_gold_pool(request)
     row = await pool.fetchrow(

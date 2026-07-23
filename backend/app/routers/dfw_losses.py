@@ -28,13 +28,13 @@ the exception on 2026-07 MTD: amount lost moves −$217,245 → −$177,645 (38 
 carried ``FILTER (total_charge <> 0)``. Do not propagate this to any other v4
 report without a matching written request.
 
-⚠ **This report no longer reconciles with Top Losses Lanes** (``losses_lanes.py``)
-or with the 07:00 CST losses email for TEAM-DFW. Both carry ``total_charge <> 0``
-on their loss aggregates, but **neither has a weekday filter** — so R1 alone
-splits the universes (69 weekend rows / $4,320 of loss in 2026-07 MTD). Expect
-Bruno to ask why two "losses" screens disagree; the answer is R1, and the fix (if
-he wants them aligned) is to add the same ISODOW filter there, not to remove it
-here.
+**Weekday alignment with Top Losses Lanes — RESOLVED 2026-07-22.** R1 initially
+split this report from ``losses_lanes.py`` and the 07:00 CST losses email (both
+filter ``total_charge`` but neither excluded weekends). Bruno asked for them to
+match, so the same ISODOW predicate now lives in ``losses_lanes._scope_where``
+and both are Mon–Fri. **Keep them in step** — if a future round changes the
+weekday rule on one, change it on the other, or the two "losses" screens will
+disagree again.
 
 All scope varchar columns use the padded-variants pattern
 (``pad_variants(width=N)``) so btree indexes stay usable — never TRIM()
