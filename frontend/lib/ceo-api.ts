@@ -177,11 +177,25 @@ export interface CeoTop5Row {
   conc_pct: number
 }
 
+export interface CeoCustomerTotals {
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number
+  conc_pct: number
+  avg_p_per_l: number
+}
+
 export interface CeoCustomers {
   by_customer: CeoCustomerRow[]
   /** Distinct customers in the FULL filtered universe. Server-side — `by_customer`
    *  is LIMIT 200, so its length would freeze at 200 once the cap binds (§44). */
   customer_count: number
+  /** Pinned Totals row for BOTH customer tables, over the FULL filtered
+   *  universe (§44 — never a client reduce() over the LIMIT-200 array).
+   *  `by_customer` and `worst_by_customer` share one universe, so they share
+   *  these totals; that is what makes the two tables reconcile. */
+  totals: CeoCustomerTotals
   worst_by_customer: CeoCustomerRow[]
   top5_revenue: CeoTop5Row[]
   top5_profit: CeoTop5Row[]

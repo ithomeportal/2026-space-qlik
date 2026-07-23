@@ -16,6 +16,7 @@ import {
   fmtUsd,
   useCeoCustomers,
   type CeoCustomerRow,
+  type CeoCustomerTotals,
   type CeoFilters,
   type CeoTop5Row,
 } from "@/lib/ceo-api"
@@ -46,6 +47,7 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           loading={isLoading}
           sortHint="sorted by highest profit"
           count={d?.customer_count}
+          totals={d?.totals}
           onCustomerSelect={onCustomerSelect}
         />
         <CustomerTable
@@ -54,6 +56,7 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           rows={d?.worst_by_customer ?? []}
           loading={isLoading}
           sortHint="sorted by worst profit"
+          totals={d?.totals}
           onCustomerSelect={onCustomerSelect}
         />
       </section>
@@ -87,6 +90,7 @@ function CustomerTable({
   loading,
   sortHint,
   count,
+  totals,
   onCustomerSelect,
 }: {
   title: string
@@ -97,20 +101,13 @@ function CustomerTable({
   /** Distinct-customer count for the header. Server-side over the full
    *  universe — never `rows.length`, which is LIMIT-200 capped (§44). */
   count?: number
+  /** Pinned Totals row, server-side over the FULL universe (§44). Both customer
+   *  tables share one universe and therefore ONE totals object — that is what
+   *  makes them reconcile. Renders "—" if absent rather than a wrong number. */
+  totals?: CeoCustomerTotals
   onCustomerSelect?: (customer: string) => void
 }) {
   const head = tone === "red" ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#D1FAE5] text-[#065F46]"
-  const tot = rows.reduce(
-    (acc, r) => ({
-      loads: acc.loads + (r.loads ?? 0),
-      revenue: acc.revenue + (r.revenue ?? 0),
-      profit: acc.profit + (r.profit ?? 0),
-      conc_pct: acc.conc_pct + (r.conc_pct ?? 0),
-    }),
-    { loads: 0, revenue: 0, profit: 0, conc_pct: 0 },
-  )
-  const totMargin = tot.revenue > 0 ? (tot.profit / tot.revenue) * 100 : 0
-  const totPerL = tot.loads > 0 ? tot.profit / tot.loads : 0
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
@@ -145,12 +142,14 @@ function CustomerTable({
             <tbody>
               <tr className="sticky top-[30px] bg-[#F3F4F6] font-semibold">
                 <td className="px-2 py-1.5">Totals</td>
-                <td className="px-1 py-1.5 text-right">{fmtCount(tot.loads)}</td>
-                <td className="px-1 py-1.5 text-right">{fmtUsd(tot.revenue)}</td>
-                <td className="px-1 py-1.5 text-right">{fmtUsd(tot.profit)}</td>
-                <td className={`px-1 py-1.5 text-right ${marginCellClass(totMargin)}`}>{fmtPct(totMargin)}</td>
-                <td className="px-1 py-1.5 text-right">{fmtPct(tot.conc_pct)}</td>
-                <td className="px-1 py-1.5 text-right">{fmtUsd(totPerL)}</td>
+                <td className="px-1 py-1.5 text-right">{totals ? fmtCount(totals.loads) : "—"}</td>
+                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.revenue) : "—"}</td>
+                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.profit) : "—"}</td>
+                <td className={`px-1 py-1.5 text-right ${totals ? marginCellClass(totals.margin_pct) : ""}`}>
+                  {totals ? fmtPct(totals.margin_pct) : "—"}
+                </td>
+                <td className="px-1 py-1.5 text-right">{totals ? fmtPct(totals.conc_pct) : "—"}</td>
+                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.avg_p_per_l) : "—"}</td>
               </tr>
               {rows.map((r) => (
                 <tr key={r.customer} className="border-t border-[#F3F4F6]">

@@ -881,14 +881,22 @@ async def customers(
           CASE WHEN (SELECT total_margin FROM tot) > 0
                THEN SUM(br4.margin_amt)::numeric / (SELECT total_margin FROM tot)
                ELSE 0 END AS conc_pct,
-          -- Bruno PDF 2026-07-22 Overview R1: customer count for the panel
-          -- header. A window function over the GROUPED set, evaluated BEFORE
-          -- ORDER BY/LIMIT, so it is the FULL-universe distinct-customer count
-          -- even though the rows below are LIMIT 200 (§44: a header number must
-          -- never be `rows.length` off a capped array). Costs no extra scan, and
-          -- agreement with the table is structural rather than maintained by
-          -- keeping a second query's predicates in sync.
-          COUNT(*) OVER () AS customer_count
+          -- Header count + pinned Totals row, both as window functions over the
+          -- GROUPED set. Windows are evaluated BEFORE ORDER BY/LIMIT, so these
+          -- are FULL-universe figures even though the rows below are LIMIT 200
+          -- (§44: a header/Totals number must never be a client reduce() over a
+          -- capped array). Costs no extra scan, and agreement with the rows is
+          -- structural rather than maintained by keeping a 2nd query's
+          -- predicates in sync. `worst_by_customer` has an identical WHERE and
+          -- GROUP BY (only ORDER BY differs), so ONE totals object serves both
+          -- tables — §44's "tables that should reconcile share one totals query".
+          COUNT(*) OVER () AS customer_count,
+          (SUM(COUNT(*) FILTER (
+             WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0
+           )) OVER ())::bigint AS tot_loads,
+          (SUM(COALESCE(SUM(br4.total_charge), 0)) OVER ())::numeric AS tot_revenue,
+          (SUM(COALESCE(SUM(br4.margin_amt), 0)) OVER ())::numeric  AS tot_profit,
+          (SELECT total_margin FROM tot) AS scope_margin
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {pc_where} AND {pc_df}
           AND br4.customer_name IS NOT NULL
@@ -1052,6 +1060,34 @@ async def customers(
             )
         return slices, others[:500]
 
+    def _cust_totals(rows):
+        """Full-universe totals for the two customer tables (§44).
+
+        Reads the window-function columns off any row — they are constant across
+        the grouped set — so this is NOT a reduce() over the LIMIT-200 payload.
+        """
+        if not rows:
+            return {
+                "loads": 0, "revenue": 0.0, "profit": 0.0,
+                "margin_pct": 0.0, "conc_pct": 0.0, "avg_p_per_l": 0.0,
+            }
+        r = rows[0]
+        loads = int(r["tot_loads"] or 0)
+        revenue = float(r["tot_revenue"] or 0)
+        profit = float(r["tot_profit"] or 0)
+        scope_margin = float(r["scope_margin"] or 0)
+        return {
+            "loads": loads,
+            "revenue": revenue,
+            "profit": profit,
+            "margin_pct": (profit / revenue * 100.0) if revenue > 0 else 0.0,
+            # Share of the scope's total margin. Sums to ~100% across all
+            # customers; short of it only when NULL-customer rows carry margin
+            # (they are excluded from the grouped set but not from `tot`).
+            "conc_pct": (profit / scope_margin * 100.0) if scope_margin > 0 else 0.0,
+            "avg_p_per_l": (profit / loads) if loads else 0.0,
+        }
+
     t5r_slices, t5r_others = _split_top5(t5r, "revenue")
     t5p_slices, t5p_others = _split_top5(t5p, "profit")
 
@@ -1060,6 +1096,10 @@ async def customers(
         "data": {
             "by_customer": [_map_cust(r) for r in pc],
             "customer_count": int(pc[0]["customer_count"]) if pc else 0,
+            # Pinned Totals row for BOTH customer tables (§44). Derived units
+            # match the per-row mapping in _map_cust: pct fields are already
+            # x100, avg_p_per_l is profit/loads.
+            "totals": _cust_totals(pc),
             "worst_by_customer": [_map_cust(r) for r in wp],
             "top5_revenue": t5r_slices,
             "top5_revenue_others": t5r_others,
