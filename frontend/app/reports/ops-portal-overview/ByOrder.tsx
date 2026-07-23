@@ -316,7 +316,9 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">
                 {view === "pending"
                   ? `${(pending.data?.data ?? []).length.toLocaleString()} pending · Status A · no carrier`
-                  : `${filtered.length.toLocaleString()} orders · all on one page`}
+                  : view === "cover"
+                    ? `${coverRows.length.toLocaleString()} covered · Status A · carrier assigned`
+                    : `${filtered.length.toLocaleString()} orders · all on one page`}
               </span>
               <div className="ml-auto flex items-center gap-3 text-[10px] text-[#6B7280]">
                 <button
@@ -330,9 +332,15 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               </div>
             </div>
             <div className="overflow-auto">
-              {view === "pending"
-                ? <PendingTable rows={pending.data?.data ?? []} />
-                : renderTable(filtered)}
+              {view === "pending" ? (
+                <PendingTable rows={pending.data?.data ?? []} />
+              ) : view === "cover" ? (
+                // Bruno (PDF 2026-07-23) fix: expanding Cover now shows the
+                // CoverTable (was falling through to the Production OrderTable).
+                <CoverTable rows={coverRows} />
+              ) : (
+                renderTable(filtered)
+              )}
             </div>
           </div>
         </div>
