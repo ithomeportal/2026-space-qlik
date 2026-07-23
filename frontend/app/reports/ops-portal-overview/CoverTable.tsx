@@ -2,30 +2,41 @@
 
 // ---------------------------------------------------------------------------
 // Bruno (PDF 2026-07-20) R1 — "Cover" view: every status='A' load, with the
-// carrier and carrier phone needed to chase coverage. Superset of "Pending to
-// Cover" (which is only the status='A' loads that have no carrier yet).
-// Small set (~121 CORP rows) → simple table, no sort/filter/pager, matching the
-// Pending to Cover view.
+// carrier and carrier phone needed to chase coverage.
+// Bruno (PDF 2026-07-23) R1: the caller now passes only carrier-assigned loads
+// (the "Not covered" rows live in Pending to Cover).
+// Bruno (PDF 2026-07-23) R5: every column is now sortable (client-side — the
+// board is a small, fully-fetched set so sorting can't mis-rank a page).
 // ---------------------------------------------------------------------------
 
 import { fmtUsd, type OppCoverRow } from "@/lib/ops-portal-overview-api"
+import { SortableTh, useSortable, type SortDir } from "@/components/SortableTable"
 import { fmtSchedTs } from "./schedTime"
 
-const COVER_COLUMNS: { label: string; align: "left" | "right" }[] = [
-  { label: "Order", align: "left" },
-  { label: "Team", align: "left" },
-  { label: "Customer", align: "left" },
-  { label: "Carrier", align: "left" },
-  { label: "Carrier Phone", align: "left" },
-  { label: "Orig Sched Early", align: "left" },
-  { label: "Orig Sched Late", align: "left" },
-  { label: "Lane", align: "left" },
-  { label: "Revenue", align: "right" },
-  { label: "Profit", align: "right" },
+const COVER_COLUMNS: {
+  label: string
+  key: keyof OppCoverRow
+  align: "left" | "right"
+}[] = [
+  { label: "Order", key: "order_id", align: "left" },
+  { label: "Team", key: "team_id", align: "left" },
+  { label: "Customer", key: "customer_name", align: "left" },
+  { label: "Carrier", key: "carrier", align: "left" },
+  { label: "Carrier Phone", key: "carrier_phone", align: "left" },
+  { label: "Orig Sched Early", key: "orig_sched_early", align: "left" },
+  { label: "Orig Sched Late", key: "orig_sched_late", align: "left" },
+  { label: "Lane", key: "lane", align: "left" },
+  { label: "Revenue", key: "revenue", align: "right" },
+  { label: "Profit", key: "profit", align: "right" },
 ]
 
-// A blank carrier on this board is meaningful — the load is not covered yet —
-// so it reads as an explicit "Not covered" rather than an empty cell.
+// Money columns lead with desc (biggest first); text / schedule columns asc.
+function coverDirForKey(key: string): SortDir {
+  return key === "revenue" || key === "profit" ? "desc" : "asc"
+}
+
+// A blank carrier is meaningful (not covered yet); kept defensive even though
+// the Cover board now only receives carrier-assigned rows.
 function CarrierCell({ carrier }: { carrier: string }) {
   if (!carrier) return <span className="text-[#B45309]">Not covered</span>
   return <span className="text-[#374151]">{carrier}</span>
@@ -46,29 +57,37 @@ function PhoneCell({ phone }: { phone: string }) {
 }
 
 export default function CoverTable({ rows }: { rows: OppCoverRow[] }) {
+  // Default: soonest pickup deadline first (matches the backend ORDER BY).
+  const { sorted, ...sortState } = useSortable<OppCoverRow>(
+    rows,
+    "orig_sched_late",
+    "asc",
+    coverDirForKey,
+  )
   return (
     <table className="w-full text-xs">
       <thead className="sticky top-0 z-10 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
         <tr className="border-b border-[#E5E7EB]">
           {COVER_COLUMNS.map((c) => (
-            <th
-              key={c.label}
-              className={`px-2 py-2 ${c.align === "right" ? "text-right" : "text-left"}`}
-            >
-              {c.label}
-            </th>
+            <SortableTh
+              key={c.key}
+              label={c.label}
+              columnKey={c.key}
+              state={sortState}
+              align={c.align}
+            />
           ))}
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 ? (
+        {sorted.length === 0 ? (
           <tr>
             <td colSpan={COVER_COLUMNS.length} className="px-3 py-6 text-center text-[#9CA3AF]">
               No open loads
             </td>
           </tr>
         ) : (
-          rows.map((r) => (
+          sorted.map((r) => (
             <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
               <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
               <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>

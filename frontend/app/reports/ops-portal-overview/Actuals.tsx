@@ -229,7 +229,15 @@ function ActualsTable({
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otd_pct)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev_x_l)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof_x_l)}</td>
-            <td className="px-2 py-1.5" colSpan={4} />
+            {/* Bruno (PDF 2026-07-23) R4: TOTAL sums for the 4 projection columns. */}
+            <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(totals.vol_x_day)}</td>
+            <td className={`px-2 py-1.5 text-center tabular-nums ${totals.prof_x_day < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(totals.prof_x_day)}
+            </td>
+            <td className="px-2 py-1.5 text-center tabular-nums">{fmtCount(totals.proj_eom_vol)}</td>
+            <td className={`px-2 py-1.5 text-center tabular-nums ${totals.proj_eom_prof < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(totals.proj_eom_prof)}
+            </td>
           </tr>
         )}
       </thead>

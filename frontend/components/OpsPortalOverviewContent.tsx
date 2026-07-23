@@ -175,6 +175,13 @@ function Body({
     setLaneMode("include")
   }
 
+  // Bruno (PDF 2026-07-23) R3: clicking a carrier in the By Carrier table sets
+  // it as the single included carrier filter (applies across every panel).
+  function pickCarrier(carrier: string) {
+    setCarrierIds([carrier])
+    setCarrierMode("include")
+  }
+
   const customerSuggestions = useMemo(() => {
     const q = customerInput.trim().toLowerCase()
     if (!q || !filterOptions?.customers) return []
@@ -478,7 +485,7 @@ function Body({
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
           <div className="space-y-4">
             <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
-            <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} />
+            <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} onPickCarrier={pickCarrier} />
           </div>
           <SidePanels filters={filters} onPickCustomer={setCustomer} lockedTeam={lockedTeam} />
         </div>

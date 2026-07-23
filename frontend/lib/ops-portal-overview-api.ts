@@ -317,6 +317,9 @@ export interface OppActualsTotals {
   prof: number; prof_budget: number; prof_var: number
   margin_pct: number; margin_budget_pct: number; margin_var_pct: number
   otp_pct: number; otd_pct: number; rev_x_l: number; prof_x_l: number
+  // Bruno (PDF 2026-07-23) R4: TOTAL-row sums for the 4 projection columns.
+  vol_x_day: number; prof_x_day: number
+  proj_eom_vol: number; proj_eom_prof: number
 }
 
 export interface OppLaneTotals {

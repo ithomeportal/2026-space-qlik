@@ -1654,6 +1654,16 @@ async def actuals(
         "prof_x_l": _safe_float((t_prof / t_vol) if t_vol else 0.0),
     }
     totals["margin_var_pct"] = _safe_float(totals["margin_pct"] - totals["margin_budget_pct"])
+    # Bruno (PDF 2026-07-23) R4: TOTAL row sums for the 4 projection columns.
+    # Each per-row value is linear (vol/14, prof/14, ×pending + actual) and the
+    # zero-production budget rows contribute 0, so deriving from t_vol/t_prof
+    # equals the exact column sum (§16 KPI=detail, §44 full-universe aggregate).
+    t_vol_x_day = t_vol / 14.0
+    t_prof_x_day = t_prof / 14.0
+    totals["vol_x_day"] = _safe_float(t_vol_x_day)
+    totals["prof_x_day"] = _safe_float(t_prof_x_day)
+    totals["proj_eom_vol"] = _safe_float(t_vol_x_day * pending_workdays + t_vol)
+    totals["proj_eom_prof"] = _safe_float(t_prof_x_day * pending_workdays + t_prof)
 
     return {
         "success": True,

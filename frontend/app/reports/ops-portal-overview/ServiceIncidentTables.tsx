@@ -18,13 +18,16 @@ interface Props {
   onPickCustomer?: (customer: string) => void
   /** Same idea for lane cells (unused here — these tables have no lane grain — kept for the shared contract). */
   onPickLane?: (lane: string) => void
+  /** Bruno (PDF 2026-07-23) R3: clicking a carrier in the By Carrier table
+   *  applies it as the single included carrier filter across every panel. */
+  onPickCarrier?: (carrier: string) => void
 }
 
 // Two side-by-side panels mirroring the §5 incident split (Bruno 2026-06-15):
 // PU service-fails on the left, DEL service-fails on the right. The backend
 // already caps each at the top 100 by fail count; we scroll within the panel
 // and R11 lets each one expand to the full uncapped table in a modal.
-export function ServiceIncidentTables({ filters, onPickCustomer }: Props) {
+export function ServiceIncidentTables({ filters, onPickCustomer, onPickCarrier }: Props) {
   // Bruno (PDF 2026-07-15) R8: three-up so the new "by Carrier" card sits
   // between the Del incident table and Customer Monthly Losses (right column).
   // The two incident cards shrink to make room (R8 suggestion).
@@ -48,7 +51,7 @@ export function ServiceIncidentTables({ filters, onPickCustomer }: Props) {
         pctHeader="% On Time"
         onPickCustomer={onPickCustomer}
       />
-      <CarrierPanel filters={filters} />
+      <CarrierPanel filters={filters} onPickCarrier={onPickCarrier} />
     </div>
   )
 }
@@ -97,7 +100,7 @@ function IncidentPanel({
       {error ? (
         <div className="px-3 py-3 text-xs text-[#DC2626]">Failed to load</div>
       ) : (
-        <div className="max-h-[280px] overflow-x-hidden overflow-y-auto px-3 py-2">
+        <div className="max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
           <IncidentTable
             rows={rows}
             failHeader={failHeader}
@@ -265,7 +268,13 @@ function IncidentModal({
 // Bruno (PDF 2026-07-15) R8 — "by Carrier": Vol / %Vol / OTP / OTD per carrier.
 // ---------------------------------------------------------------------------
 
-function CarrierPanel({ filters }: { filters: OppFilters }) {
+function CarrierPanel({
+  filters,
+  onPickCarrier,
+}: {
+  filters: OppFilters
+  onPickCarrier?: (carrier: string) => void
+}) {
   const { data, isLoading, error } = useOppServiceByCarrier(filters)
   const rows: OppServiceByCarrierRow[] = data?.data ?? []
   const [expanded, setExpanded] = useState(false)
@@ -289,8 +298,8 @@ function CarrierPanel({ filters }: { filters: OppFilters }) {
       {error ? (
         <div className="px-3 py-3 text-xs text-[#DC2626]">Failed to load</div>
       ) : (
-        <div className="max-h-[280px] overflow-x-hidden overflow-y-auto px-3 py-2">
-          <CarrierTable rows={rows} />
+        <div className="max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
+          <CarrierTable rows={rows} onPickCarrier={onPickCarrier} />
         </div>
       )}
       {expanded && (
@@ -316,7 +325,7 @@ function CarrierPanel({ filters }: { filters: OppFilters }) {
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">
-              <CarrierTable rows={rows} />
+              <CarrierTable rows={rows} onPickCarrier={onPickCarrier} />
             </div>
           </div>
         </div>
@@ -325,7 +334,13 @@ function CarrierPanel({ filters }: { filters: OppFilters }) {
   )
 }
 
-function CarrierTable({ rows }: { rows: OppServiceByCarrierRow[] }) {
+function CarrierTable({
+  rows,
+  onPickCarrier,
+}: {
+  rows: OppServiceByCarrierRow[]
+  onPickCarrier?: (carrier: string) => void
+}) {
   return (
     <table className="w-full table-fixed text-xs">
       <colgroup>
@@ -355,7 +370,18 @@ function CarrierTable({ rows }: { rows: OppServiceByCarrierRow[] }) {
           rows.map((r) => (
             <tr key={r.carrier} className="border-t border-[#F3F4F6]">
               <td className="truncate px-2 py-1 text-[#374151]" title={r.carrier}>
-                {r.carrier}
+                {onPickCarrier && r.carrier ? (
+                  <button
+                    type="button"
+                    onClick={() => onPickCarrier(r.carrier)}
+                    className="max-w-full truncate text-left text-[#2563EB] hover:underline"
+                    title={`Filter to ${r.carrier}`}
+                  >
+                    {r.carrier}
+                  </button>
+                ) : (
+                  r.carrier
+                )}
               </td>
               <td className="px-2 py-1 text-right tabular-nums text-[#374151]">
                 {fmtCount(r.vol)}

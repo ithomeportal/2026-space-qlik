@@ -138,6 +138,12 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   const { data, isLoading, error } = useOppByOrder(filters, { sort, limit: LIMIT })
   const pending = useOppPendingToCover(filters, view === "pending")
   const coverQ = useOppCover(filters, view === "cover")
+  // Bruno (PDF 2026-07-23) R1: the "Cover" board shows only loads that already
+  // have a carrier assigned — the "Not covered" rows live in Pending to Cover.
+  const coverRows = useMemo(
+    () => (coverQ.data?.data ?? []).filter((r) => (r.carrier ?? "").trim() !== ""),
+    [coverQ.data],
+  )
   const rows: OppOrderRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppOrderTotals | undefined
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
@@ -264,7 +270,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               />
             </>
           ) : view === "cover" ? (
-            <span>Status A · all open loads</span>
+            <span>Status A · carrier assigned</span>
           ) : (
             <span>Status A · no carrier assigned</span>
           )}
@@ -276,7 +282,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
           <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load open loads</div>
         ) : (
           <div className="max-h-[480px] overflow-auto">
-            <CoverTable rows={coverQ.data?.data ?? []} />
+            <CoverTable rows={coverRows} />
           </div>
         )
       ) : view === "pending" ? (
