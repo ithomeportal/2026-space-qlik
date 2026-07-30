@@ -3,6 +3,7 @@ import NextAuth from "next-auth"
 import Resend from "next-auth/providers/resend"
 
 import { prisma } from "./db"
+import { isOrgEmail } from "./allowed-domains"
 
 function generateCode(token: string): string {
   let hash = 0
@@ -56,7 +57,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   callbacks: {
     async signIn({ user }) {
-      const allowed = user.email?.endsWith("@unilinktransportation.com") ?? false
+      // Shared verified-tenant-domain list (lib/allowed-domains.ts). This ran
+      // as a single hardcoded suffix check, which locked out every tenant domain
+      // except unilinktransportation.com. Auth.js evaluates signIn BEFORE the
+      // magic-link token is generated and mailed, so this is also the send guard.
+      const allowed = isOrgEmail(user.email)
       if (!allowed) {
         console.warn(`[auth] signIn rejected: ${user.email ?? "no email"}`)
       }

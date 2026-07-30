@@ -706,28 +706,32 @@ async def admin_sync_users(_admin: dict = Depends(require_admin)):
 @router.post("/rfp-digest/test")
 async def admin_rfp_digest_test(
     request: Request,
-    secret: str = Query(...),
     to: str = Query(
         "ithome@unilinkportal.com",
-        description="Comma-separated To: addresses",
+        description="Comma-separated To: addresses (company domains only)",
     ),
     cc: str = Query("", description="Comma-separated CC: addresses"),
     bcc: str = Query(
         "dfrodriguez@unilinktransportation.com",
         description="Comma-separated BCC: addresses",
     ),
+    _admin: dict = Depends(require_admin),
 ):
-    """Trigger one-off send of the RFP Performance daily digest.
+    """Trigger one-off send of the RFP Performance daily digest. Admin-only.
 
-    Used to preview the email outside the 17:30 CST cron. Protected by
-    SEED_SECRET. Defaults match the production first-send config so
-    hitting the endpoint with no overrides reproduces what the scheduler
-    would do at 17:30.
+    Used to preview the email outside the 17:30 CST cron. Defaults match the
+    production first-send config so hitting the endpoint with no overrides
+    reproduces what the scheduler would do at 17:30.
+
+    Hardened 2026-07-30. It previously authenticated with ``?secret=`` in the
+    QUERY STRING, compared with a plain ``!=``, and carried no ``require_admin``
+    dependency — while this backend is directly reachable on the public internet.
+    A URL-borne secret leaks into proxy, CDN and Render access logs and into
+    browser history, and the payload is YTD/MTD/QTD awarded revenue and win/loss
+    ratios sent DKIM-aligned from ithome@unilinktransportation.com. It now uses
+    the same session auth as every other admin route, and recipients are filtered
+    to company domains inside msgraph_mailer.send_mail.
     """
-    if secret != settings.SEED_SECRET:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Invalid secret")
 
     from app.services.rfp_daily_digest import send_daily_digest
 

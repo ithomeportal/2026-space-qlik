@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { isOrgEmail } from "@/lib/allowed-domains"
 
 export default function LoginPage() {
   const { status } = useSession()
@@ -22,8 +23,11 @@ export default function LoginPage() {
     e.preventDefault()
     setError("")
 
-    if (!email.endsWith("@unilinktransportation.com")) {
-      setError("Only @unilinktransportation.com emails are allowed")
+    // UX only — lib/auth.ts is authoritative and runs server-side before any
+    // token is generated or mailed. Kept in sync via the shared domain list so
+    // the two cannot drift into disagreeing about who may sign in.
+    if (!isOrgEmail(email)) {
+      setError("Only UNILINK company email addresses are allowed")
       return
     }
 

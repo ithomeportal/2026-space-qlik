@@ -31,6 +31,8 @@ from app.clock import cst_today
 from app.config import settings
 from app.routers.losses_lanes import compute_weekly_movers
 
+from app.services.allowed_domains import partition_recipients
+
 logger = logging.getLogger(__name__)
 
 TO_RECIPIENTS: tuple[str, ...] = (
@@ -234,9 +236,19 @@ async def send_weekly_movers_email(
     )
 
     resend.api_key = settings.RESEND_API_KEY
-    to_list = list(to)
-    cc_list = list(cc)
-    bcc_list = list(bcc)
+    # Company-domain guard — see app/services/allowed_domains.py.
+    to_list, _blocked_to = partition_recipients(list(to))
+    cc_list, _blocked_cc = partition_recipients(list(cc))
+    bcc_list, _blocked_bcc = partition_recipients(list(bcc))
+    _dropped = sorted(set(_blocked_to + _blocked_cc + _blocked_bcc))
+    if _dropped:
+        logger.error(
+            "send_weekly_movers_email: dropped non-company recipients on: %s",
+            ", ".join(_dropped),
+        )
+    if not to_list:
+        return {"sent": False, "reason": "recipient_domain_not_allowed",
+                "blocked_domains": _dropped}
 
     if not to_list:
         logger.warning("send_weekly_movers_email: empty TO list; skipping send")

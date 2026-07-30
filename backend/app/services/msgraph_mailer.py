@@ -34,6 +34,8 @@ from typing import Any, Iterable, Optional
 
 import httpx
 
+from app.services.allowed_domains import partition_recipients
+
 logger = logging.getLogger(__name__)
 
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
@@ -111,6 +113,19 @@ async def send_mail(
     if not (tenant_id and client_id and client_secret and from_address):
         return {"sent": False, "reason": "missing_graph_config"}
 
+    # Company-domain guard. This path sends DKIM-aligned first-party mail from a
+    # real UNILINK mailbox, and two admin endpoints feed it recipients straight
+    # from query parameters. Enforcing here covers every caller; the rejected
+    # *domain* is logged, never the address.
+    to_list, blocked_to = partition_recipients(to_list)
+    if not to_list:
+        logger.error(
+            "Graph sendMail blocked: no company-domain recipient (%s)",
+            ", ".join(blocked_to) or "none",
+        )
+        return {"sent": False, "reason": "recipient_domain_not_allowed",
+                "blocked_domains": blocked_to}
+
     try:
         token = await _get_token(tenant_id, client_id, client_secret)
     except Exception as e:  # GraphMailError or network
@@ -125,8 +140,14 @@ async def send_mail(
         },
         "saveToSentItems": bool(save_to_sent),
     }
-    cc_list = [a for a in (cc or []) if a]
-    bcc_list = [a for a in (bcc or []) if a]
+    cc_list, blocked_cc = partition_recipients([a for a in (cc or []) if a])
+    bcc_list, blocked_bcc = partition_recipients([a for a in (bcc or []) if a])
+    dropped = [d for d in (blocked_to + blocked_cc + blocked_bcc)]
+    if dropped:
+        logger.error(
+            "Graph sendMail dropped non-company recipients on: %s",
+            ", ".join(sorted(set(dropped))),
+        )
     if cc_list:
         payload["message"]["ccRecipients"] = _to_recipients(cc_list)
     if bcc_list:

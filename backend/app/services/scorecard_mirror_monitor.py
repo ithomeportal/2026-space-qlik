@@ -27,6 +27,8 @@ import resend
 from app.clock import cst_today
 from app.config import settings
 
+from app.services.allowed_domains import partition_recipients
+
 logger = logging.getLogger("uvicorn.error")
 
 MIRROR = "public.mcleod_gld_scorecard_portal"
@@ -126,7 +128,12 @@ async def _alert(to, stats, reason, *, reason_code) -> dict[str, Any]:
         logger.warning("check_scorecard_mirror: stale but RESEND_API_KEY not set")
         return {"checked": True, "stale": True, "alerted": False,
                 "reason": "no_resend_key", "detail": reason_code, **stats}
-    to_list = [a for a in to if a]
+    to_list, _blocked = partition_recipients([a for a in to if a])
+    if _blocked:
+        logger.error(
+            "check_scorecard_mirror: dropped non-company recipients on: %s",
+            ", ".join(_blocked),
+        )
     if not to_list:
         return {"checked": True, "stale": True, "alerted": False,
                 "reason": "no_recipients", **stats}
