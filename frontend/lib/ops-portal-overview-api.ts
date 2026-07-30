@@ -441,6 +441,41 @@ export interface OppCoverForecastBucket {
   cover_prof: number
 }
 
+/** §44 pinned Totals for the Cover board — server-side, full-universe. */
+export interface OppCoverTotals {
+  n_orders: number
+  revenue: number
+  carrier_cost: number
+  profit: number
+  margin_pct: number
+}
+
+export interface OppCoverMeta {
+  returned: number
+  limit: number
+  /** Whole status='A' universe (covered + not covered). */
+  total: number
+  /** The carrier-assigned subset the board actually renders. */
+  covered: number
+  totals: OppCoverTotals
+}
+
+/** "Data as of …" — headline is the STALEST source, not the newest. */
+export interface OppFreshnessSource {
+  key: string
+  label: string
+  updated_at: string | null
+  age_minutes: number | null
+}
+
+export interface OppFreshness {
+  sources: OppFreshnessSource[]
+  as_of: string | null
+  age_minutes: number | null
+  stalest: string | null
+  checked_at: string
+}
+
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
 export interface OppWeekPerf {
   start: string
@@ -768,6 +803,19 @@ export function useOppCover(f: OppFilters, enabled: boolean) {
   })
 }
 
+// "Data as of …" for the page header. Refetched on an interval because the
+// whole point is noticing when a feed stops moving; backend caches 60s so the
+// poll is nearly free.
+export function useOppFreshness() {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [prefix, "opp-data-freshness"],
+    queryFn: () => apiFetch<OppFreshness>(`${prefix}/data-freshness`),
+    refetchInterval: 120_000,
+    ...RETRY,
+  })
+}
+
 // Bruno (PDF 2026-07-30) R4: Cover totals per chart bucket, for the "Forecast"
 // pill in KPI Management. Same filter contract as /combo so the two agree;
 // `enabled` keeps the default (Forecast off) page load unchanged.
@@ -782,7 +830,7 @@ export function useOppCoverForecast(
     // §50: the key covers every field qs() serialises for this call.
     queryKey: [prefix, "opp-cover-forecast", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
     queryFn: () =>
-      apiFetch<{ grain: OppGrain; buckets: OppCoverForecastBucket[] }>(
+      apiFetch<{ grain: OppGrain; buckets: OppCoverForecastBucket[]; unscheduled: number }>(
         `${prefix}/cover-forecast${qs(filters, { grain })}`,
       ),
     enabled,

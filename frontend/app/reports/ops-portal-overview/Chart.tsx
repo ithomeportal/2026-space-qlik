@@ -377,6 +377,16 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
             Forecast
           </button>
         )}
+        {/* No silent caps (§53): covered loads with no schedule date can't be
+            placed on the timeline, so say how many rather than drop them. */}
+        {forecastOn && (fcRes?.data?.unscheduled ?? 0) > 0 && (
+          <span
+            className="text-[10px] text-[#9CA3AF]"
+            title="Covered loads with no Orig Sched Late date — not placeable on the timeline, so excluded from the Forecast bars"
+          >
+            {fcRes?.data?.unscheduled} unscheduled
+          </span>
+        )}
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <PillGroup
           options={[

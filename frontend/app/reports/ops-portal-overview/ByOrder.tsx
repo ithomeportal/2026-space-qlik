@@ -19,6 +19,7 @@ import {
   useOppCover,
   useOppPendingToCover,
   type OppFilters,
+  type OppCoverMeta,
   type OppOrderRow,
   type OppOrderTotals,
 } from "@/lib/ops-portal-overview-api"
@@ -144,6 +145,13 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
     () => (coverQ.data?.data ?? []).filter((r) => (r.carrier ?? "").trim() !== ""),
     [coverQ.data],
   )
+  // §44 server-side full-universe aggregate + truncation signal. `covered` is
+  // the carrier-assigned universe; `coverRows.length` is what we actually got,
+  // so a gap means /cover hit its LIMIT and the board is showing a subset.
+  const coverMeta = coverQ.data?.meta as OppCoverMeta | undefined
+  const coverTotals = coverMeta?.totals
+  const coverUniverse = coverMeta?.covered ?? coverRows.length
+  const coverTruncated = coverUniverse > coverRows.length
   const rows: OppOrderRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppOrderTotals | undefined
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
@@ -271,7 +279,11 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               />
             </>
           ) : view === "cover" ? (
-            <span>Status A · carrier assigned</span>
+            <span>
+              Status A · carrier assigned
+              {coverTruncated &&
+                ` · showing ${coverRows.length.toLocaleString()} of ${coverUniverse.toLocaleString()}`}
+            </span>
           ) : (
             <span>Status A · no carrier assigned</span>
           )}
@@ -283,7 +295,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
           <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load open loads</div>
         ) : (
           <div className="max-h-[480px] overflow-auto">
-            <CoverTable rows={coverRows} />
+            <CoverTable rows={coverRows} totals={coverTotals} />
           </div>
         )
       ) : view === "pending" ? (
@@ -338,7 +350,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               ) : view === "cover" ? (
                 // Bruno (PDF 2026-07-23) fix: expanding Cover now shows the
                 // CoverTable (was falling through to the Production OrderTable).
-                <CoverTable rows={coverRows} />
+                <CoverTable rows={coverRows} totals={coverTotals} />
               ) : (
                 renderTable(filtered)
               )}

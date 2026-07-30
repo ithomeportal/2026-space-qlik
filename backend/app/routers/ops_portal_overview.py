@@ -2316,6 +2316,10 @@ async def pending_to_cover(
 # status='A' loads that have no carrier yet.
 # ---------------------------------------------------------------------------
 
+# "This load has a carrier" — the predicate that splits Cover from Pending.
+# Named once so the row list, the pinned totals and the counts can never drift.
+_ASSIGNED = "COALESCE(TRIM(mov.payee_name), '') <> ''"
+
 
 @router.get("/cover")
 async def cover(
@@ -2416,7 +2420,17 @@ async def cover(
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric      AS revenue,
           COALESCE(br4.total_carrier_pay, 0)::numeric AS carrier_cost,
-          COALESCE(br4.margin_amt, 0)::numeric        AS profit
+          COALESCE(br4.margin_amt, 0)::numeric        AS profit,
+          -- §44 pinned-Totals + truncation signal. Window aggregates are
+          -- evaluated after WHERE but BEFORE LIMIT, so these describe the FULL
+          -- universe even when the row list is capped. The money totals are
+          -- FILTERed to carrier-assigned rows because that is exactly the subset
+          -- the Cover board renders (§16 KPI = detail).
+          COUNT(*) OVER ()                                            AS n_all,
+          COUNT(*) FILTER (WHERE {_ASSIGNED}) OVER ()                 AS n_covered,
+          COALESCE(SUM(COALESCE(br4.total_charge,0))      FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_revenue,
+          COALESCE(SUM(COALESCE(br4.total_carrier_pay,0)) FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_carrier_cost,
+          COALESCE(SUM(COALESCE(br4.margin_amt,0))        FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_profit
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
             SELECT MAX(CASE WHEN cw.orig_orig_sched_early > '2000-01-01' THEN cw.orig_orig_sched_early END) AS sched_early,
@@ -2438,6 +2452,20 @@ async def cover(
     """
 
     rows = await pool.fetch(sql, *params)
+    # §44: the pinned Totals row and the "showing N of M" caption both read the
+    # server-side full-universe aggregate carried on every row, never a client
+    # reduce() over the (possibly LIMIT-capped) list.
+    n_all = int(rows[0]["n_all"]) if rows else 0
+    n_covered = int(rows[0]["n_covered"]) if rows else 0
+    t_revenue = _safe_float(rows[0]["t_revenue"]) if rows else 0.0
+    t_profit = _safe_float(rows[0]["t_profit"]) if rows else 0.0
+    totals = {
+        "n_orders":     n_covered,
+        "revenue":      t_revenue,
+        "carrier_cost": _safe_float(rows[0]["t_carrier_cost"]) if rows else 0.0,
+        "profit":       t_profit,
+        "margin_pct":   (t_profit / t_revenue * 100.0) if t_revenue else 0.0,
+    }
     out = []
     for r in rows:
         revenue = _safe_float(r["revenue"])
@@ -2457,7 +2485,19 @@ async def cover(
             "profit":                 profit,
             "margin_pct":             (profit / revenue * 100.0) if revenue else 0.0,
         })
-    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+    return {
+        "success": True,
+        "data": out,
+        "meta": {
+            "returned": len(out),
+            "limit": limit,
+            # Full status='A' universe vs the carrier-assigned subset the board
+            # renders. `returned < total` is the truncation signal the UI shows.
+            "total": n_all,
+            "covered": n_covered,
+            "totals": totals,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2571,13 +2611,16 @@ async def cover_forecast(
             LIMIT 1
         ) mov ON TRUE
         WHERE {where}
-          AND win.arrive_late IS NOT NULL
-          AND COALESCE(TRIM(mov.payee_name), '') <> ''
+          AND {_ASSIGNED}
         GROUP BY 1
-        ORDER BY 1
+        ORDER BY 1 NULLS LAST
     """
 
     rows = await pool.fetch(sql, *params)
+    # Covered loads with no schedule date land in the NULL bucket. They cannot
+    # be placed on a timeline, so they are split out rather than dropped
+    # silently — the UI surfaces the count (SPEC-CODE-RULES §53 "no silent
+    # caps"). `DATE_TRUNC(..., NULL)` is NULL, so one bucket collects them all.
     buckets = [
         {
             "bucket_start": r["bucket_start"].isoformat(),
@@ -2586,8 +2629,124 @@ async def cover_forecast(
             "cover_prof":   _safe_float(r["cover_prof"]),
         }
         for r in rows
+        if r["bucket_start"] is not None
     ]
-    return {"success": True, "data": {"grain": grain, "buckets": buckets}}
+    unscheduled = next(
+        (int(r["cover_vol"]) for r in rows if r["bucket_start"] is None), 0
+    )
+    return {
+        "success": True,
+        "data": {"grain": grain, "buckets": buckets, "unscheduled": unscheduled},
+    }
+
+
+# ---------------------------------------------------------------------------
+# /data-freshness — "Data as of …" signal for the page header.
+# ---------------------------------------------------------------------------
+
+# 60s in-process cache. The page fires this on every mount and the answer only
+# moves when an ETL run lands, so re-querying per render is pure waste.
+_FRESHNESS_TTL = timedelta(seconds=60)
+_freshness_cache: dict[str, object] = {"at": None, "payload": None}
+
+
+@router.get("/data-freshness")
+async def data_freshness(
+    request: Request,
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Newest row timestamp per upstream source, for the header's "Data as of".
+
+    ⚠ **Deliberately NOT named ``/freshness``.** Several reports
+    (``ops_margins``, ``ops_direct_compare``, ``ops_customer_score``,
+    ``attrition_wow``, …) already expose ``GET /freshness`` returning a
+    single-table ``{last_updated, last_created, rows_in_scope}``. This report
+    merges *four* feeds and needs to name the stalest one, which that shape
+    cannot express — so it gets a distinct path rather than the same name with
+    a different contract. If the two ever converge, converge the shape first.
+
+    **Why this exists.** Every panel here reads n8n/Spark-refreshed mirrors. When
+    a refresh stalls the page keeps rendering happily with yesterday's numbers —
+    a dead pipeline and a quiet day look identical. That ambiguity is what hid a
+    3-day production outage on another portal. The headline is deliberately the
+    **oldest** of the sources: a dashboard is only as fresh as its stalest feed.
+
+    ⚠ **None of these columns is indexed**, so an unfiltered ``MAX()`` is a seq
+    scan — ``budget_report_v4`` alone is 391 MB, and ``movement`` is 983 MB for
+    2,183 live tuples (badly bloated). Measured 2026-07-30. So:
+
+    * ``v4`` is scoped to the last 7 days of ``origin_actual_departure``, which
+      rides the existing ``idx_v4_dep``. Verified equivalent: scoped max
+      13:36:20 vs unfiltered 13:37:06 — 46s apart. This still detects a dead
+      pipeline (a stalled ETL stops writing the hot slice first) and it is NOT
+      the "filtered max hides staleness" trap, which is about *business*
+      filters (one customer/team) rather than the recent window the ETL writes.
+    * ``budget`` (7.8 MB) and ``savings`` (15 MB) are small enough to scan.
+    * ``scorecard`` (68 MB) is included because the portal-owned mirror is the
+      one with a known stall mode (``daily_scorecard_mirror_check`` alerts on
+      it) — this makes that visible in the UI rather than only by email.
+    * ``movement`` / ``customer_windows`` are deliberately omitted — 983 MB and
+      185 MB of seq scan for feeds that move with v4 anyway.
+
+    Timestamps are CST already (the gold datalake stores CST and the pool is
+    pinned via ``_set_cst_session``), so ``age_minutes`` compares against
+    ``LOCALTIMESTAMP`` on the same session — no tz maths.
+    """
+    now = datetime.now()
+    cached_at = _freshness_cache.get("at")
+    if isinstance(cached_at, datetime) and now - cached_at < _FRESHNESS_TTL:
+        return {"success": True, "data": _freshness_cache["payload"]}
+
+    pool = get_datalake_gold_pool(request)
+    sql = """
+        SELECT
+          (SELECT MAX(updated_dt) FROM public.mcleod_gld_budget_report_v4
+             WHERE origin_actual_departure >= (CURRENT_DATE - 7))        AS production,
+          (SELECT MAX(updated_dt) FROM public.mcleod_gld_scorecard_portal) AS scorecard,
+          (SELECT MAX(created_at) FROM public.daily_production_budget_report) AS budget,
+          (SELECT MAX(created_at) FROM public.carriers_savings_results_report) AS savings,
+          -- Explicit AT TIME ZONE rather than LOCALTIMESTAMP: the gold pool IS
+          -- pinned to America/Chicago via _set_cst_session, but spelling it out
+          -- means the age maths stays right even if this is ever called from a
+          -- pool that isn't. Getting this wrong shows every feed as ~6h stale
+          -- and cries wolf. Matches clock.CST_NOW_DATE_SQL.
+          (now() AT TIME ZONE 'America/Chicago') AS now_cst
+    """
+    row = await pool.fetchrow(sql)
+
+    now_cst = row["now_cst"]
+    sources = []
+    for key, label in (
+        ("production", "Production"),
+        ("scorecard", "Scorecard"),
+        ("budget", "Budget"),
+        ("savings", "Savings"),
+    ):
+        ts = row[key]
+        sources.append({
+            "key": key,
+            "label": label,
+            "updated_at": ts.isoformat() if ts else None,
+            "age_minutes": (
+                _safe_float((now_cst - ts).total_seconds() / 60.0) if ts else None
+            ),
+        })
+
+    # Headline = the STALEST feed. A dashboard is only as fresh as its worst
+    # source, so reporting the newest would paper over exactly the failure we
+    # are trying to surface.
+    aged = [s for s in sources if s["age_minutes"] is not None]
+    oldest = max(aged, key=lambda s: s["age_minutes"]) if aged else None
+    payload = {
+        "sources": sources,
+        "as_of": oldest["updated_at"] if oldest else None,
+        "age_minutes": oldest["age_minutes"] if oldest else None,
+        "stalest": oldest["label"] if oldest else None,
+        "checked_at": now_cst.isoformat(),
+    }
+    _freshness_cache["at"] = now
+    _freshness_cache["payload"] = payload
+    return {"success": True, "data": payload}
 
 
 # ---------------------------------------------------------------------------

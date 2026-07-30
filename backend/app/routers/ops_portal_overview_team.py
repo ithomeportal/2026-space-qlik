@@ -404,6 +404,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
+    # ---- /data-freshness --------------------------------------------------
+    # Source-level, not team-scoped: staleness is a property of the ETL feed,
+    # so every portal reports the same answer (and shares the 60s cache).
+    @r.get("/data-freshness")
+    async def data_freshness(request: Request, _user: dict = Depends(gate)):
+        return await opo.data_freshness(request=request, _user=_user)
+
     # ---- /team-weekly-performance -----------------------------------------
     @r.get("/team-weekly-performance")
     async def team_weekly_performance(

@@ -13,7 +13,7 @@
 // Carrier Cost and Margin%.
 // ---------------------------------------------------------------------------
 
-import { fmtPct, fmtUsd, type OppCoverRow } from "@/lib/ops-portal-overview-api"
+import { fmtPct, fmtUsd, type OppCoverRow, type OppCoverTotals } from "@/lib/ops-portal-overview-api"
 import { SortableTh, useSortable, type SortDir } from "@/components/SortableTable"
 import { fmtSchedTs } from "./schedTime"
 
@@ -67,7 +67,14 @@ function PhoneCell({ phone }: { phone: string }) {
   )
 }
 
-export default function CoverTable({ rows }: { rows: OppCoverRow[] }) {
+export default function CoverTable({
+  rows,
+  totals,
+}: {
+  rows: OppCoverRow[]
+  /** §44: server-side full-universe aggregate — never a client reduce(). */
+  totals?: OppCoverTotals
+}) {
   // Default: soonest deadline first (matches the backend ORDER BY). Bruno R3
   // moved both onto orig_sched_arrive_late — it is populated on 94.6% of open
   // loads vs 65% for orig_sched_late, which parked a third of the board in a
@@ -92,6 +99,24 @@ export default function CoverTable({ rows }: { rows: OppCoverRow[] }) {
             />
           ))}
         </tr>
+        {/* Pinned TOTAL — open exposure sitting on the board. Read from the
+            server-side full-universe aggregate so it stays correct even if the
+            row list is LIMIT-capped (§44). */}
+        {totals && (
+          <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
+            <td className="px-2 py-1.5" colSpan={8}>
+              TOTAL · {totals.n_orders.toLocaleString()} covered loads
+            </td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.carrier_cost)}</td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${totals.profit < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtUsd(totals.profit)}
+            </td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
+              {fmtPct(totals.margin_pct)}
+            </td>
+          </tr>
+        )}
       </thead>
       <tbody>
         {sorted.length === 0 ? (

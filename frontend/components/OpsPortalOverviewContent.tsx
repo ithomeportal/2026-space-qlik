@@ -20,6 +20,7 @@ import { MarginDistribution } from "@/app/reports/ops-portal-overview/MarginDist
 import { Actuals } from "@/app/reports/ops-portal-overview/Actuals"
 import { ActualsByLane } from "@/app/reports/ops-portal-overview/ActualsByLane"
 import { ByOrder } from "@/app/reports/ops-portal-overview/ByOrder"
+import { DataFreshness } from "@/app/reports/ops-portal-overview/DataFreshness"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -231,6 +232,10 @@ function Body({
             <div className="text-[11px] text-[#9CA3AF]">
               Last auto-refreshed: <span className="font-medium text-[#6B7280]">{refreshedLabel}</span>
             </div>
+            {/* When the DATA was last updated upstream — distinct from the line
+                above, which is when this browser last refetched. A stalled ETL
+                looks identical to a quiet day without this. */}
+            <DataFreshness />
           </div>
           <button
             onClick={() => qc.invalidateQueries()}
