@@ -21,6 +21,7 @@ import {
   fmtPct,
   fmtUsd,
   useOppCombo,
+  useOppCoverForecast,
   useOppProfitTmGauge,
   useOppService,
   useOppTeamProjection,
@@ -61,7 +62,26 @@ const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
 // Bruno R5 (2026-06-01) #3: "variance" (Actual − Budget) legend/tooltip entry
 // after Budget. Bruno 2026-07-01 R10: "losses" (Losses x M) re-added — visible
 // in the Vol./Prof./Marg.% views but NOT in Rev.
-type SeriesKey = "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
+// "cover" / "forecastTotal" are tooltip-only rows — they are driven by the
+// Forecast pill, never by the legend, so they never land in `hidden`.
+type SeriesKey =
+  | "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
+  | "cover" | "forecastTotal"
+
+// Bruno (PDF 2026-07-30) R4: the "Forecast" stack — Production + Cover as one
+// cumulative bar. RGB(176,62,212) exactly as specified in the PDF.
+const FORECAST_COLOR = "#B03ED4"
+
+// Forecast is only defined for the three additive measures. Marg.% is a ratio
+// (stacking it would be meaningless) and Service has no Cover analogue.
+const FORECAST_MEASURES = new Set<Measure>(["volume", "revenue", "profit"])
+
+// Cover key per active measure, mirroring budgetKey/lossesKey.
+const FORECAST_KEY: Record<string, string> = {
+  volume: "cover_vol",
+  revenue: "cover_rev",
+  profit: "cover_prof",
+}
 
 // Compact data-point labels on the bars (Bruno R4 "show the data points").
 // Full USD on every bar overlaps; compact ($210K) keeps the chart readable.
@@ -91,6 +111,8 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const [grain, setGrain] = useState<OppGrain>("month")
   // Bruno 2026-07-01 R5: KPI Management defaults to the "Prof." view on open.
   const [measure, setMeasure] = useState<Measure>("profit")
+  // Bruno (PDF 2026-07-30) R4: "Forecast" — stacks Cover on top of Production.
+  const [forecast, setForecast] = useState(false)
   const [hidden, setHidden] = useState<Set<SeriesKey>>(new Set())
   const toggle = (k: SeriesKey) => {
     setHidden((prev) => {
@@ -122,11 +144,73 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
 
   const serviceBuckets = useMemo(() => serviceRes?.data?.buckets ?? [], [serviceRes])
 
+  // Bruno (PDF 2026-07-30) R4: Cover half of the Forecast stack. Only fetched
+  // while the pill is on and the measure is additive, so the default page load
+  // is unchanged.
+  const forecastOn = forecast && FORECAST_MEASURES.has(measure)
+  const { data: fcRes } = useOppCoverForecast(cf, grain, forecastOn)
+  const forecastKey = FORECAST_KEY[measure] ?? "cover_prof"
+
   // Two separate typed arrays (union data confuses Recharts' generic typing).
-  const chartData = useMemo(
+  const baseData = useMemo(
     () => buckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
     [buckets, grain],
   )
+
+  // Merge the Cover buckets onto the Production ones.
+  //
+  // /combo's anchors stop at the current period, but open loads are scheduled
+  // into the next one (28 of 100 covered loads today), so a plain inner merge
+  // would silently swallow them — future-only buckets are APPENDED instead.
+  // Cover buckets that fall *before* the chart's window are dropped: the chart
+  // already bounds its own history, and prepending would shift every index that
+  // `brush` and `avgLq` are anchored on.
+  const chartData = useMemo(() => {
+    const fcBuckets = fcRes?.data?.buckets ?? []
+    if (!forecastOn || !fcBuckets.length) {
+      return baseData.map((d) => ({ ...d, cover_vol: 0, cover_rev: 0, cover_prof: 0, forecast_total: 0 }))
+    }
+    const byBucket = new Map(fcBuckets.map((b) => [b.bucket_start, b]))
+    const merged = baseData.map((d) => {
+      const fc = byBucket.get(d.bucket_start)
+      const actual = Number((d as Record<string, unknown>)[measure] ?? 0)
+      const cover = Number((fc as Record<string, number> | undefined)?.[forecastKey] ?? 0)
+      return {
+        ...d,
+        cover_vol: fc?.cover_vol ?? 0,
+        cover_rev: fc?.cover_rev ?? 0,
+        cover_prof: fc?.cover_prof ?? 0,
+        forecast_total: actual + cover,
+      }
+    })
+    // Append only the forecast buckets that sit past the last Production one.
+    // A future bucket has no actuals, so every numeric field is zeroed off the
+    // first row rather than left undefined (Recharts would render gaps).
+    const template = merged[0]
+    if (!template) return merged
+    const lastBase = baseData[baseData.length - 1].bucket_start
+    const seen = new Set(baseData.map((d) => d.bucket_start))
+    const future = fcBuckets
+      .filter((b) => !seen.has(b.bucket_start) && b.bucket_start > lastBase)
+      .sort((a, b) => a.bucket_start.localeCompare(b.bucket_start))
+    for (const b of future) {
+      const blank = { ...template }
+      for (const k of Object.keys(blank)) {
+        const rec = blank as unknown as Record<string, unknown>
+        if (typeof rec[k] === "number") rec[k] = 0
+      }
+      merged.push({
+        ...blank,
+        bucket_start: b.bucket_start,
+        label: fmtBucket(b.bucket_start, grain),
+        cover_vol: b.cover_vol,
+        cover_rev: b.cover_rev,
+        cover_prof: b.cover_prof,
+        forecast_total: Number((b as unknown as Record<string, number>)[forecastKey] ?? 0),
+      })
+    }
+    return merged
+  }, [baseData, fcRes, forecastOn, measure, forecastKey, grain])
   const serviceData = useMemo(
     () => serviceBuckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
     [serviceBuckets, grain],
@@ -223,15 +307,18 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const fmt = measureMeta.fmt
 
   // Average-LQ = mean of last 4 closed buckets (exclude latest, which is partial).
+  // Anchored on the last *Production* bucket: with Forecast on, chartData runs
+  // past it into empty future buckets, which would otherwise average in zeros.
   const avgLq = useMemo(() => {
-    if (chartData.length < 5) return 0
-    const closed = chartData.slice(brush.end - 4, brush.end)
+    if (baseData.length < 5) return 0
+    const end = Math.min(brush.end, baseData.length - 1)
+    const closed = baseData.slice(end - 4, end)
     const vals = closed
       .map((d) => Number((d as Record<string, unknown>)[measure] ?? 0))
       .filter((v) => Number.isFinite(v))
     if (!vals.length) return 0
     return vals.reduce((a, b) => a + b, 0) / vals.length
-  }, [chartData, measure, brush.end])
+  }, [baseData, measure, brush.end])
 
   // Projected — Bruno (PDF 2026-07-15) R10: grain-dependent.
   //   Day   → per-day averages from Team Monthly Projection (Avg. Vol/Rev/Prof x Day).
@@ -273,6 +360,23 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
           value={measure}
           onChange={setMeasure}
         />
+        {/* Bruno (PDF 2026-07-30) R4: Forecast = Production + Cover, stacked.
+            Only offered for the additive measures. */}
+        {FORECAST_MEASURES.has(measure) && (
+          <button
+            type="button"
+            onClick={() => setForecast((v) => !v)}
+            aria-pressed={forecast}
+            className={`rounded-lg border px-3 py-1 text-xs ${
+              forecast
+                ? "border-transparent font-semibold text-white"
+                : "border-[#E5E7EB] bg-white text-[#6B7280] hover:text-[#111827]"
+            }`}
+            style={forecast ? { background: FORECAST_COLOR } : undefined}
+          >
+            Forecast
+          </button>
+        )}
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <PillGroup
           options={[
@@ -439,6 +543,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                     ...(showLosses
                       ? [{ key: "losses" as SeriesKey, label: "Losses", color: "#DC2626", value: Number(row[lossesKey] ?? 0) }]
                       : []),
+                    // Bruno (PDF 2026-07-30) R4: Cover, then the combined total.
+                    ...(forecastOn
+                      ? [
+                          { key: "cover" as SeriesKey, label: "Cover", color: FORECAST_COLOR, value: Number(row[forecastKey] ?? 0) },
+                          { key: "forecastTotal" as SeriesKey, label: "Forecast", color: FORECAST_COLOR, value: Number(row.forecast_total ?? 0) },
+                        ]
+                      : []),
                   ].filter((i) => !isHidden(i.key))
                   return (
                     <div className="rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-md">
@@ -461,12 +572,34 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   dataKey={measure}
                   name="Actual"
                   fill="#7DD3FC"
+                  stackId={forecastOn ? "fc" : undefined}
+                >
+                  {/* With Forecast on, the value label moves to the top segment
+                      so it reads as the combined total, not the base. */}
+                  {!forecastOn && (
+                    <LabelList
+                      dataKey={measure}
+                      position="top"
+                      fontSize={9}
+                      fill="#475569"
+                      formatter={(v) => labelFmt(measure, Number(v))}
+                    />
+                  )}
+                </Bar>
+              )}
+              {/* Bruno (PDF 2026-07-30) R4: Cover stacked on Production. */}
+              {forecastOn && (
+                <Bar
+                  dataKey={forecastKey}
+                  name="Forecast"
+                  fill={FORECAST_COLOR}
+                  stackId="fc"
                 >
                   <LabelList
-                    dataKey={measure}
+                    dataKey="forecast_total"
                     position="top"
                     fontSize={9}
-                    fill="#475569"
+                    fill={FORECAST_COLOR}
                     formatter={(v) => labelFmt(measure, Number(v))}
                   />
                 </Bar>

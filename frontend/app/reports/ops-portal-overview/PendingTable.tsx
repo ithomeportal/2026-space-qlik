@@ -19,6 +19,8 @@ const PENDING_COLUMNS: {
 }[] = [
   { label: "Order", key: "order_id", align: "left" },
   { label: "Team", key: "team_id", align: "left" },
+  // Bruno (PDF 2026-07-30) R2: Customer, between Team and Orig Sched Early.
+  { label: "Customer", key: "customer_name", align: "left" },
   { label: "Orig Sched Early", key: "orig_sched_early", align: "left" },
   { label: "Orig Sched Late", key: "orig_sched_late", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
@@ -67,6 +69,9 @@ export default function PendingTable({ rows }: { rows: OppPendingRow[] }) {
             <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
               <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
               <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>
+              <td className="px-2 py-1.5 text-[#374151]">
+                {r.customer_name || <span className="text-[#9CA3AF]">—</span>}
+              </td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_early)}</td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_late)}</td>
               <td className="px-2 py-1.5 text-[#374151]">{r.lane || <span className="text-[#9CA3AF]">—</span>}</td>

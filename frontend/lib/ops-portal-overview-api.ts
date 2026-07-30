@@ -386,6 +386,8 @@ export interface OppOrderRow {
 export interface OppPendingRow {
   order_id: string
   team_id: string
+  /** Bruno (PDF 2026-07-30) R2: Customer, between Team and Orig Sched Early. */
+  customer_name: string
   lane: string
   revenue: number
   /** ISO orig scheduled early/late pickup (customer_windows); may be null. */
@@ -407,10 +409,36 @@ export interface OppCoverRow {
   carrier_phone: string
   /** ISO orig scheduled early/late pickup (customer_windows); may be null. */
   orig_sched_early: string | null
+  /**
+   * `customer_windows.orig_orig_sched_late`. Bruno (PDF 2026-07-30) R3 relabels
+   * this column **"Orig Orig Late"** — the wire name is deliberately unchanged
+   * (§34: no mid-flight rename), only the header moved.
+   */
   orig_sched_late: string | null
+  /**
+   * `customer_windows.orig_sched_arrive_late` — Bruno (PDF 2026-07-30) R3's new
+   * **"Orig Sched Late"** column, and the board's default sort. Populated on
+   * 94.6% of open loads vs 65% for `orig_sched_late`.
+   */
+  orig_sched_arrive_late: string | null
   lane: string
   revenue: number
+  /** `total_carrier_pay` — reconciles to revenue − profit within $1 (rounding). */
+  carrier_cost: number
   profit: number
+  /** profit / revenue × 100, computed server-side so it agrees with both (§16). */
+  margin_pct: number
+}
+
+// Bruno (PDF 2026-07-30) R4: the "Forecast" pill — Cover totals bucketed on
+// `orig_sched_arrive_late`, stacked on top of the Production bars in KPI
+// Management. Buckets can run past today's period (open loads scheduled for
+// next month), so the chart appends any bucket /combo doesn't already carry.
+export interface OppCoverForecastBucket {
+  bucket_start: string
+  cover_vol: number
+  cover_rev: number
+  cover_prof: number
 }
 
 // Bruno R4: "Team Weekly Performance" modal — last 5 Mon-Sun weeks.
@@ -735,6 +763,28 @@ export function useOppCover(f: OppFilters, enabled: boolean) {
   return useQuery({
     queryKey: [prefix, "opp-cover", ...scopeKey(f)],
     queryFn: () => apiFetch<OppCoverRow[]>(`${prefix}/cover${scopeQs(f)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+// Bruno (PDF 2026-07-30) R4: Cover totals per chart bucket, for the "Forecast"
+// pill in KPI Management. Same filter contract as /combo so the two agree;
+// `enabled` keeps the default (Forecast off) page load unchanged.
+export function useOppCoverForecast(
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
+  grain: OppGrain,
+  enabled: boolean,
+) {
+  const prefix = useApiPrefix()
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    // §50: the key covers every field qs() serialises for this call.
+    queryKey: [prefix, "opp-cover-forecast", grain, f.team || "", f.customer || "", f.loadType || "", laneKey(f)],
+    queryFn: () =>
+      apiFetch<{ grain: OppGrain; buckets: OppCoverForecastBucket[] }>(
+        `${prefix}/cover-forecast${qs(filters, { grain })}`,
+      ),
     enabled,
     ...RETRY,
   })

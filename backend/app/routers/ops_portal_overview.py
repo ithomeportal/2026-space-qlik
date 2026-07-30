@@ -2222,7 +2222,9 @@ async def pending_to_cover(
     """Orders that still need a carrier: ``status = 'A'`` AND no carrier assigned
     (first-movement ``payee_name`` empty), in the CORP universe.
 
-    Columns (Bruno R16): Order=id · Team=team_id · Orig Sched Early/Late from
+    Columns (Bruno R16): Order=id · Team=team_id · Customer=customer_name
+    (Bruno PDF 2026-07-30 R2, between Team and Orig Sched Early) · Orig Sched
+    Early/Late from
     ``mcleod_gld_customer_windows`` (``orig_orig_sched_early`` / ``orig_orig_sched_late``,
     §42 correlated LATERAL on ``TRIM(UPPER(id))``, sentinel-guard >2000) · Lane ·
     Revenue=total_charge · Time to Cover = Orig Sched Late − now (hours remaining;
@@ -2263,6 +2265,7 @@ async def pending_to_cover(
         SELECT
           TRIM(br4.id)      AS order_id,
           TRIM(br4.team_id) AS team_id,
+          br4.customer_name AS customer_name,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric AS revenue,
           to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
@@ -2295,6 +2298,7 @@ async def pending_to_cover(
         {
             "order_id":            r["order_id"],
             "team_id":             r["team_id"],
+            "customer_name":       r["customer_name"] or "",
             "lane":                r["lane"] or "",
             "revenue":             _safe_float(r["revenue"]),
             "orig_sched_early":    r["orig_sched_early"],
@@ -2328,6 +2332,26 @@ async def cover(
     Columns (Bruno PDF 2026-07-20 R1): Order=id · Team=team_id ·
     Customer=customer_name · Carrier · Carrier Phone · Orig Sched Early/Late ·
     Lane · Revenue=total_charge · Profit=margin_amt.
+
+    Bruno (PDF 2026-07-30) R3 — the schedule pair is re-cut and the money block
+    is widened:
+
+    * ``orig_sched_late`` is sourced from ``cw.orig_orig_sched_late`` and is now
+      labelled **"Orig Orig Late"** in the UI — the wire name is intentionally
+      left alone (§34: no mid-flight rename), only the label moved.
+    * NEW ``orig_sched_arrive_late`` (``cw.orig_sched_arrive_late``) carries the
+      label **"Orig Sched Late"**. It is the better deadline field: populated on
+      157/166 CORP status='A' rows (94.6%) vs 108/166 (65%) for
+      ``orig_orig_sched_late`` — measured 2026-07-30. The board's ``ORDER BY``
+      moves to it for the same reason; ordering on the sparser column pushed a
+      third of the rows into a NULLS-LAST block.
+    * NEW ``carrier_cost`` = ``total_carrier_pay``. Verified against the
+      identity ``total_charge − margin_amt``: exact on 158/166 rows, max gap
+      $1.00 (McLeod rounding), so this is the real cost field.
+    * NEW ``margin_pct`` = profit / revenue × 100, computed here rather than
+      read from ``br4.margin_prcnt`` so the column always agrees with the
+      Revenue / Profit shown beside it (§16).
+    * Orig Sched Early is dropped from the UI only — the wire field stays.
 
     Design notes (all verified against the datalake 2026-07-20):
 
@@ -2388,13 +2412,16 @@ async def cover(
           COALESCE(TRIM(mov.carrier_phone), '') AS carrier_phone,
           to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
           to_char(win.sched_late,  'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_late,
+          to_char(win.arrive_late, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_arrive_late,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
-          COALESCE(br4.total_charge, 0)::numeric AS revenue,
-          COALESCE(br4.margin_amt, 0)::numeric   AS profit
+          COALESCE(br4.total_charge, 0)::numeric      AS revenue,
+          COALESCE(br4.total_carrier_pay, 0)::numeric AS carrier_cost,
+          COALESCE(br4.margin_amt, 0)::numeric        AS profit
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
             SELECT MAX(CASE WHEN cw.orig_orig_sched_early > '2000-01-01' THEN cw.orig_orig_sched_early END) AS sched_early,
-                   MAX(CASE WHEN cw.orig_orig_sched_late  > '2000-01-01' THEN cw.orig_orig_sched_late  END) AS sched_late
+                   MAX(CASE WHEN cw.orig_orig_sched_late  > '2000-01-01' THEN cw.orig_orig_sched_late  END) AS sched_late,
+                   MAX(CASE WHEN cw.orig_sched_arrive_late > '2000-01-01' THEN cw.orig_sched_arrive_late END) AS arrive_late
             FROM public.mcleod_gld_customer_windows cw
             WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
         ) win ON TRUE
@@ -2406,27 +2433,161 @@ async def cover(
             LIMIT 1
         ) mov ON TRUE
         WHERE {where}
-        ORDER BY win.sched_late ASC NULLS LAST
+        ORDER BY win.arrive_late ASC NULLS LAST
         LIMIT ${p_lim}
     """
 
     rows = await pool.fetch(sql, *params)
-    out = [
+    out = []
+    for r in rows:
+        revenue = _safe_float(r["revenue"])
+        profit = _safe_float(r["profit"])
+        out.append({
+            "order_id":               r["order_id"],
+            "team_id":                r["team_id"],
+            "customer_name":          r["customer_name"] or "",
+            "carrier":                r["carrier"],
+            "carrier_phone":          r["carrier_phone"],
+            "orig_sched_early":       r["orig_sched_early"],
+            "orig_sched_late":        r["orig_sched_late"],
+            "orig_sched_arrive_late": r["orig_sched_arrive_late"],
+            "lane":                   r["lane"] or "",
+            "revenue":                revenue,
+            "carrier_cost":           _safe_float(r["carrier_cost"]),
+            "profit":                 profit,
+            "margin_pct":             (profit / revenue * 100.0) if revenue else 0.0,
+        })
+    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+
+
+# ---------------------------------------------------------------------------
+# /cover-forecast — Bruno (PDF 2026-07-30) R4: the "Forecast" pill in KPI
+# Management. Per-bucket Cover totals that stack on top of the Production bars.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/cover-forecast")
+async def cover_forecast(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None, description="'contract' | 'spot' | null"),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("month", description="'day' | 'week' | 'month'"),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Cover volume / revenue / profit bucketed on ``orig_sched_arrive_late``.
+
+    Bruno (PDF 2026-07-30) R4: KPI Management gains a "Forecast" pill that shows
+    Production + Cover as one cumulative bar. This endpoint supplies only the
+    Cover half — the frontend stacks it on the ``/combo`` bars — so the default
+    (Forecast off) page load is completely unchanged.
+
+    Design notes (verified against the datalake 2026-07-30):
+
+    * **"Cover" means carrier-assigned**, matching the Cover board since Bruno's
+      2026-07-23 R1 (the uncovered rows are Pending to Cover): 100 of the 166
+      CORP status='A' loads.
+    * **No double-counting.** ``/combo``'s bars run over ``_v4_scope_where``,
+      which pins ``status = ANY(('D','P'))``. ``status='A'`` is disjoint from
+      that universe, so Production + Cover never counts an order twice. That
+      same pin is why the scope is rebuilt inline here instead of reusing the
+      helper — as in /cover and /pending-to-cover.
+    * **Bucketed on ``orig_sched_arrive_late``** per Bruno, not on
+      ``origin_actual_departure`` (an open load has no actual departure). The
+      column is populated on 94.6% of status='A' rows; the remainder cannot be
+      placed on a timeline and are dropped by the ``IS NOT NULL`` guard.
+    * **Buckets run into the future** — 28 of the 100 covered loads sit in the
+      month *after* today. ``/combo``'s anchor list stops at the current period,
+      so the frontend appends any forecast-only bucket rather than inner-joining
+      (which would silently swallow them).
+    * ``cover_vol`` mirrors ``/combo``'s volume rule (``total_charge`` non-null
+      and non-zero) so the Vol. stack is apples-to-apples; that excludes exactly
+      1 of the 100 rows today.
+    """
+    if grain not in ("day", "week", "month"):
+        grain = "month"
+    pool = get_datalake_gold_pool(request)
+
+    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    companies_param = _pad_variants(CORP_COMPANIES, width=4)
+    status_param = _pad_variants(("A",), width=1)
+    params: list = [teams_param, companies_param, status_param]
+    parts = [
+        "br4.team_id    = ANY($1)",
+        "br4.company_id = ANY($2)",
+        "br4.status     = ANY($3)",
+        "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
+    ]
+    if team:
+        params.append(_pad_variants([team], width=8))
+        parts.append(f"br4.team_id = ANY(${len(params)})")
+    if customer:
+        params.append(customer)
+        parts.append(f"br4.customer_name = ${len(params)}")
+    if load_type and load_type.lower() in ("contract", "spot"):
+        params.append(load_type.lower())
+        parts.append(f"LOWER(TRIM(COALESCE(br4.contract_type_descr,''))) = ${len(params)}")
+    if lanes:
+        params.append(lanes)
+        parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")
+    if exclude_lanes:
+        params.append(exclude_lanes)
+        parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
+    if carriers:
+        params.append(carriers)
+        parts.append(f"{_carrier_first_expr('br4')} = ANY(${len(params)})")
+    if exclude_carriers:
+        params.append(exclude_carriers)
+        parts.append(f"{_carrier_first_expr('br4')} <> ALL(${len(params)})")
+    where = " AND ".join(parts)
+
+    trunc = {
+        "day":   "win.arrive_late::date",
+        "week":  "DATE_TRUNC('week', win.arrive_late)::date",
+        "month": "DATE_TRUNC('month', win.arrive_late)::date",
+    }[grain]
+
+    sql = f"""
+        SELECT
+          {trunc} AS bucket_start,
+          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS cover_vol,
+          COALESCE(SUM(br4.total_charge), 0)::numeric AS cover_rev,
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS cover_prof
+        FROM public.mcleod_gld_budget_report_v4 br4
+        LEFT JOIN LATERAL (
+            SELECT MAX(CASE WHEN cw.orig_sched_arrive_late > '2000-01-01' THEN cw.orig_sched_arrive_late END) AS arrive_late
+            FROM public.mcleod_gld_customer_windows cw
+            WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
+        ) win ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = br4.id AND m.company_id = br4.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
+        WHERE {where}
+          AND win.arrive_late IS NOT NULL
+          AND COALESCE(TRIM(mov.payee_name), '') <> ''
+        GROUP BY 1
+        ORDER BY 1
+    """
+
+    rows = await pool.fetch(sql, *params)
+    buckets = [
         {
-            "order_id":         r["order_id"],
-            "team_id":          r["team_id"],
-            "customer_name":    r["customer_name"] or "",
-            "carrier":          r["carrier"],
-            "carrier_phone":    r["carrier_phone"],
-            "orig_sched_early": r["orig_sched_early"],
-            "orig_sched_late":  r["orig_sched_late"],
-            "lane":             r["lane"] or "",
-            "revenue":          _safe_float(r["revenue"]),
-            "profit":           _safe_float(r["profit"]),
+            "bucket_start": r["bucket_start"].isoformat(),
+            "cover_vol":    int(r["cover_vol"]),
+            "cover_rev":    _safe_float(r["cover_rev"]),
+            "cover_prof":   _safe_float(r["cover_prof"]),
         }
         for r in rows
     ]
-    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+    return {"success": True, "data": {"grain": grain, "buckets": buckets}}
 
 
 # ---------------------------------------------------------------------------

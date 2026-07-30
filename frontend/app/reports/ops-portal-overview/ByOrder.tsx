@@ -228,12 +228,13 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
         <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
           By Order
         </span>
-        {/* Bruno (PDF 2026-07-15) R15/R16: Production ⇄ Pending to Cover toggle. */}
+        {/* Bruno (PDF 2026-07-15) R15/R16: Production ⇄ Pending to Cover toggle.
+            Bruno (PDF 2026-07-30) R1: order is Production · Cover · Pending. */}
         <div className="flex rounded-lg border border-[#E5E7EB] bg-white text-[11px]">
           {([
             { k: "production" as const, label: "Production" },
-            { k: "pending" as const,    label: "Pending to Cover" },
             { k: "cover" as const,      label: "Cover" },
+            { k: "pending" as const,    label: "Pending to Cover" },
           ]).map((opt) => (
             <button
               key={opt.k}

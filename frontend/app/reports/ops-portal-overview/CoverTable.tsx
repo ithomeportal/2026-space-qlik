@@ -7,9 +7,13 @@
 // (the "Not covered" rows live in Pending to Cover).
 // Bruno (PDF 2026-07-23) R5: every column is now sortable (client-side — the
 // board is a small, fully-fetched set so sorting can't mis-rank a page).
+// Bruno (PDF 2026-07-30) R3: Orig Sched Early dropped · the old "Orig Sched
+// Late" (= customer_windows.orig_orig_sched_late) relabelled "Orig Orig Late" ·
+// a new "Orig Sched Late" (= orig_sched_arrive_late) added beside it · plus
+// Carrier Cost and Margin%.
 // ---------------------------------------------------------------------------
 
-import { fmtUsd, type OppCoverRow } from "@/lib/ops-portal-overview-api"
+import { fmtPct, fmtUsd, type OppCoverRow } from "@/lib/ops-portal-overview-api"
 import { SortableTh, useSortable, type SortDir } from "@/components/SortableTable"
 import { fmtSchedTs } from "./schedTime"
 
@@ -23,16 +27,23 @@ const COVER_COLUMNS: {
   { label: "Customer", key: "customer_name", align: "left" },
   { label: "Carrier", key: "carrier", align: "left" },
   { label: "Carrier Phone", key: "carrier_phone", align: "left" },
-  { label: "Orig Sched Early", key: "orig_sched_early", align: "left" },
-  { label: "Orig Sched Late", key: "orig_sched_late", align: "left" },
+  // The wire field keeps its old name; only the header moved (§34).
+  { label: "Orig Orig Late", key: "orig_sched_late", align: "left" },
+  { label: "Orig Sched Late", key: "orig_sched_arrive_late", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
+  // Revenue − Carrier Cost = Profit, so the money block reads left to right.
   { label: "Revenue", key: "revenue", align: "right" },
+  { label: "Carrier Cost", key: "carrier_cost", align: "right" },
   { label: "Profit", key: "profit", align: "right" },
+  { label: "Margin%", key: "margin_pct", align: "right" },
 ]
 
 // Money columns lead with desc (biggest first); text / schedule columns asc.
+const MONEY_KEYS = new Set<keyof OppCoverRow>([
+  "revenue", "carrier_cost", "profit", "margin_pct",
+])
 function coverDirForKey(key: string): SortDir {
-  return key === "revenue" || key === "profit" ? "desc" : "asc"
+  return MONEY_KEYS.has(key as keyof OppCoverRow) ? "desc" : "asc"
 }
 
 // A blank carrier is meaningful (not covered yet); kept defensive even though
@@ -57,10 +68,13 @@ function PhoneCell({ phone }: { phone: string }) {
 }
 
 export default function CoverTable({ rows }: { rows: OppCoverRow[] }) {
-  // Default: soonest pickup deadline first (matches the backend ORDER BY).
+  // Default: soonest deadline first (matches the backend ORDER BY). Bruno R3
+  // moved both onto orig_sched_arrive_late — it is populated on 94.6% of open
+  // loads vs 65% for orig_sched_late, which parked a third of the board in a
+  // NULLS-LAST block.
   const { sorted, ...sortState } = useSortable<OppCoverRow>(
     rows,
-    "orig_sched_late",
+    "orig_sched_arrive_late",
     "asc",
     coverDirForKey,
   )
@@ -96,18 +110,28 @@ export default function CoverTable({ rows }: { rows: OppCoverRow[] }) {
               </td>
               <td className="px-2 py-1.5"><CarrierCell carrier={r.carrier} /></td>
               <td className="px-2 py-1.5"><PhoneCell phone={r.carrier_phone} /></td>
-              <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_early)}</td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_late)}</td>
+              <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_arrive_late)}</td>
               <td className="px-2 py-1.5 text-[#374151]">
                 {r.lane || <span className="text-[#9CA3AF]">—</span>}
               </td>
               <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.revenue)}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
+                {fmtUsd(r.carrier_cost)}
+              </td>
               <td
                 className={`px-2 py-1.5 text-right tabular-nums ${
                   r.profit < 0 ? "font-medium text-[#DC2626]" : "text-[#374151]"
                 }`}
               >
                 {fmtUsd(r.profit)}
+              </td>
+              <td
+                className={`px-2 py-1.5 text-right tabular-nums ${
+                  r.margin_pct < 0 ? "font-medium text-[#DC2626]" : "text-[#374151]"
+                }`}
+              >
+                {fmtPct(r.margin_pct)}
               </td>
             </tr>
           ))

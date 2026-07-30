@@ -385,6 +385,25 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_lanes=exclude_lanes, limit=limit, _user=_user,
         )
 
+    # ---- /cover-forecast (Bruno PDF 2026-07-30 R4) -----------------------
+    @r.get("/cover-forecast")
+    async def cover_forecast(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        load_type: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
+        grain: str = Query("month"),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.cover_forecast(
+            request=request, team=team, customer=customer, load_type=load_type,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
+            exclude_carriers=exclude_carriers, grain=grain, _user=_user,
+        )
+
     # ---- /team-weekly-performance -----------------------------------------
     @r.get("/team-weekly-performance")
     async def team_weekly_performance(
