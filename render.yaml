@@ -1,3 +1,17 @@
+# Render service definition for the FastAPI backend.
+#
+# NOTE: the live service (srv-d6pgdnl6ubrc73d98n3g) was created manually and is
+# NOT currently Blueprint-synced — verified 2026-07-30, no blueprint on this
+# account references this repo. This file is therefore documentation of intent;
+# env values are managed in the Render dashboard / API. Keep it accurate anyway,
+# because it becomes authoritative the moment anyone connects it as a Blueprint.
+#
+# Every secret is `sync: false` — values are never committed.
+# Render bakes env at DEPLOY time: a restart replays the previous snapshot, so a
+# changed var needs a new deploy to take effect.
+# Percent-encode DB URLs ($ -> %24, * -> %2A, @ -> %40, # -> %23, ? -> %3F);
+# Render strips one "$" from "$$" during injection.
+
 services:
   - type: web
     name: 2026-space-qlik-back
@@ -8,23 +22,63 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: DATABASE_URL
+      # --- Databases (one explicit var per database, each its own
+      # least-privilege role — never derive one URL from another) ---
+      - key: DATABASE_URL              # analytics_hub (portal's own)
         sync: false
-      - key: QLIK_TENANT_URL
-        value: https://mb01txe2h9rovgh.us.qlikcloud.com
-      - key: QLIK_PRIVATE_KEY
+      - key: SAVINGS_DATABASE_URL      # aivn_datalake_gold — most reports
         sync: false
-      - key: QLIK_ISSUER
+      - key: AUTOMATIONS_DATABASE_URL  # automations_db
         sync: false
-      - key: QLIK_KEY_ID
+      - key: FRESHSERVICE_DATABASE_URL # fresh_services_unlk
         sync: false
-      - key: RESEND_API_KEY
+      - key: AP_DATABASE_URL           # unilink_portal_ap (read-only)
         sync: false
-      - key: TYPESENSE_API_KEY
+      - key: FINANCIAL_DATABASE_URL    # UNLK-Financial (read-only, optional)
         sync: false
-      - key: TYPESENSE_HOST
+      - key: TIMEOFF_DATABASE_URL      # daily user sync
         sync: false
+
+      # --- App ---
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: SEED_SECRET
+        sync: false
+      # Must be IDENTICAL to the frontend's. UNSET = the API accepts
+      # self-asserted identities from any caller (SPEC-CODE-RULES §51).
+      - key: PROXY_SHARED_SECRET
+        sync: false
+
+      # --- Email ---
+      - key: RESEND_API_KEY            # send-only key, never admin-scoped
+        sync: false
+
+      # --- External market-rate providers ---
+      - key: SONAR_TOKEN
+        sync: false
+      - key: LB123_CLIENT_ID
+        sync: false
+      - key: LB123_CLIENT_SECRET
+        sync: false
+
+      # --- MS Graph (admin-ms-api app) — daily digests ---
+      - key: MS_TENANT_ID
+        sync: false
+      - key: MS_CLIENT_ID
+        sync: false
+      - key: MS_CLIENT_SECRET
+        sync: false
+      - key: MS_SEND_FROM
+        sync: false
+
       - key: PYTHON_VERSION
         value: "3.12.0"
+
+# Removed 2026-07-30 (were declared here but dead):
+#   QLIK_TENANT_URL / QLIK_PRIVATE_KEY / QLIK_ISSUER / QLIK_KEY_ID — Qlik was
+#     decommissioned 2026-05-28; no code reads them.
+#   TYPESENSE_API_KEY / TYPESENSE_HOST — search is PostgreSQL ILIKE.
+# The live service still carries those keys plus QLIK_BACKEND_CLIENT_ID/SECRET,
+# QLIK_IMPERSONATION_CLIENT_ID/SECRET and TV_SECRET. Deleting them from Render
+# is safe (nothing reads them) but is a live-service change, so it is left as a
+# deliberate decision rather than done as cleanup.
