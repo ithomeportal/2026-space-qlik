@@ -20,10 +20,6 @@ class Settings(BaseSettings):
     # HR board-pinned rate is authoritative. Percent-encode $ -> %24 in the URL.
     FINANCIAL_DATABASE_URL: str = ""
     RESEND_API_KEY: str = ""
-    TYPESENSE_API_KEY: str = ""
-    TYPESENSE_HOST: str = "localhost"
-    TYPESENSE_PORT: int = 8108
-    TYPESENSE_PROTOCOL: str = "http"
     ALLOWED_ORIGINS: str = "http://localhost:3000"
     TIMEOFF_DATABASE_URL: str = ""
     SEED_SECRET: str = "change-me-in-production"

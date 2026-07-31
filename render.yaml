@@ -77,7 +77,10 @@ services:
 # Removed 2026-07-30 (were declared here but dead):
 #   QLIK_TENANT_URL / QLIK_PRIVATE_KEY / QLIK_ISSUER / QLIK_KEY_ID — Qlik was
 #     decommissioned 2026-05-28; no code reads them.
-#   TYPESENSE_API_KEY / TYPESENSE_HOST — search is PostgreSQL ILIKE.
+#   TYPESENSE_API_KEY / TYPESENSE_HOST — search is PostgreSQL ILIKE. The dead
+#     Typesense code was deleted 2026-07-31 (services/typesense_client.py,
+#     services/search_indexer.py, the `typesense` pip dep, the 4 config.py
+#     settings and the root docker-compose.yml). Nothing imported any of it.
 # The live service still carries those keys plus QLIK_BACKEND_CLIENT_ID/SECRET,
 # QLIK_IMPERSONATION_CLIENT_ID/SECRET and TV_SECRET. Deleting them from Render
 # is safe (nothing reads them) but is a live-service change, so it is left as a
