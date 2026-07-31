@@ -23,6 +23,10 @@ const C_PROFIT = "rgb(235, 198, 0)"
 const C_CUSTOMER = "rgb(33, 191, 106)"
 const C_MARGIN = "rgb(0, 101, 128)"
 
+// Bruno 2026-07-31 Overview Request 2: the Loads series on "Profit / Loads by
+// Month — Last 15 Months" only. The "by Day" panel keeps C_LOADS (red).
+const C_MONTHLY_LOADS = "rgb(163, 73, 164)"
+
 // ~30 days fit a typical panel width; 80 days overflow into horizontal scroll.
 const PX_PER_DAY = 44
 
@@ -155,11 +159,17 @@ export function Trends({ filters }: TrendsProps) {
                 yAxisId="right"
                 type="monotone"
                 dataKey="loads"
-                stroke="#DC2626"
+                stroke={C_MONTHLY_LOADS}
                 name="Loads"
                 dot={{ r: 3 }}
               >
-                <LabelList dataKey="loads" position="top" fontSize={10} fill="#991B1B" formatter={fmtInt} />
+                <LabelList
+                  dataKey="loads"
+                  position="top"
+                  fontSize={10}
+                  fill={C_MONTHLY_LOADS}
+                  formatter={fmtInt}
+                />
               </Line>
             </ComposedChart>
           </ResponsiveContainer>

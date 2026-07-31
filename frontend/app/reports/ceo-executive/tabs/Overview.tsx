@@ -71,7 +71,7 @@ export function Overview({ filters }: Props) {
   )
 }
 
-// Mirrors the ops-portal-overview Profit-TM gauge (label · "$value / Target $X"
+// Mirrors the ops-portal-overview Profit-TM gauge (label · "$value / Budget $X"
 // · fill bar with a target marker · centered completion %). Green once the
 // scoped profit reaches the budget, red when negative, amber in between.
 function ProfitGauge({
@@ -96,7 +96,9 @@ function ProfitGauge({
         </span>
         <span className="text-sm font-semibold text-[#1B3A5C]">
           {loading ? "…" : fmtUsd(value)}{" "}
-          <span className="text-[#9CA3AF]">/ Target {loading ? "…" : fmtUsd(target)}</span>
+          {/* Bruno 2026-07-31 Overview Request 1: "Target" reads "Budget" —
+              the number is a SUM("Profit Budget"), so the label now says so. */}
+          <span className="text-[#9CA3AF]">/ Budget {loading ? "…" : fmtUsd(target)}</span>
         </span>
       </div>
       <div className="relative h-3 w-full overflow-hidden rounded-full bg-[#F3F4F6]">

@@ -55,6 +55,13 @@ function monthStartIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`
 }
 
+// Last day of the current calendar month — day 0 of next month. Backs the
+// "This Month" pill (Bruno 2026-07-31), same helper as OpsPortalOverviewContent.
+function monthEndIso() {
+  const d = new Date()
+  return isoOf(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+}
+
 // Bruno 2026-07-01 Request 1: "Last Month" = first→last day of the previous
 // calendar month (browser-local, like the other date helpers here).
 function lastMonthBounds(): { start: string; end: string } {
@@ -124,7 +131,8 @@ export default function CeoExecutivePage() {
 
 function CeoExecutiveContent() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview")
-  const [range, setRange] = useState<CeoRange>("mtd")
+  // Bruno 2026-07-31 Request 1: "This Month" is the default landing range.
+  const [range, setRange] = useState<CeoRange>("thisMonth")
   const [startDate, setStartDate] = useState<string>(YEAR_START)
   const [endDate, setEndDate] = useState<string>(clampToYear(todayIso()))
   // Which day-of-week button is active (range === "day"). ISO date.
@@ -169,6 +177,13 @@ function CeoExecutiveContent() {
       return { startDate: YEAR_START, endDate: clampToYear(todayIso()) }
     if (range === "mtd")
       return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+    // Bruno 2026-07-31 Request 1: "This Month" = the WHOLE current calendar
+    // month (1st → last day), not month-to-date. Actuals are identical to MTD
+    // (no future data), but the Overview PROFIT gauge target is a date-scoped
+    // SUM("Profit Budget"), so this measures MTD profit against the FULL
+    // month's budget — which is the point of the pill.
+    if (range === "thisMonth")
+      return { startDate: monthStartIso(), endDate: clampToYear(monthEndIso()) }
     // Bruno 2026-07-01 Request 1: previous calendar month (rides as custom).
     if (range === "lastMonth") {
       const { start, end } = lastMonthBounds()
@@ -254,6 +269,8 @@ function CeoExecutiveContent() {
             <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
               {[
                 { k: "mtd" as const, label: "MTD" },
+                // Order mirrors Ops Portal: MTD · This Month · Last Month.
+                { k: "thisMonth" as const, label: "This Month" },
                 { k: "lastMonth" as const, label: "Last Month" },
                 { k: "ytd" as const, label: "YTD" },
                 { k: "week" as const, label: "Week" },

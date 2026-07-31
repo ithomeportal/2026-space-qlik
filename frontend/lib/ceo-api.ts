@@ -36,6 +36,10 @@ const CEO_RETRY = {
 // day — the page computes its explicit start/end and it rides to the backend
 // as "custom" (see ceoQs). "full" stays in the type (default range logic still
 // references it) even though its pill was removed from the UI.
+// "thisMonth" (Bruno 2026-07-31) is the full CURRENT calendar month (1st → last
+// day), the symmetric counterpart of "lastMonth" and a mirror of the Ops Portal
+// `this_month` pill. Like the other client-resolved windows it rides to the
+// backend as "custom" with explicit bounds, so the API contract is unchanged.
 export type CeoRange =
   | "mtd"
   | "ytd"
@@ -45,6 +49,7 @@ export type CeoRange =
   | "today"
   | "day"
   | "lastMonth"
+  | "thisMonth"
 export type CeoDivision = "CORP" | "DFW"
 // Bruno 2026-07-01 (Overview Request 3): global Contract/Spot filter.
 export type CeoLoadType = "contract" | "spot"
