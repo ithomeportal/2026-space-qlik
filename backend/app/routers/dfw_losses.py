@@ -4,10 +4,14 @@ Bruno's PDF spec. A portal-native, read-only report hard-scoped to the
 single team ``team_id = 'TEAM-DFW'``. Every panel reads from
 ``public.mcleod_gld_budget_report_v4`` (datalake gold).
 
-Two panels:
+Panels:
 - ``/daily``  — one row per calendar day in the selected range, with the
-  day's loads, amount lost, loss/load and a per-customer loss pivot.
+  day's loads, amount lost, loss/load and a per-customer loss pivot, plus
+  server-side ``summary`` (per-day averages) and ``totals`` (§44) rows.
 - ``/lanes``  — "Biggest Offender Lane" table grouped by origin/dest.
+- ``/orders`` — every in-scope order for ONE day; the drill-down behind the
+  Daily table's ``Loads`` cell, which opens it in a new tab. Loss-agnostic on
+  purpose — see the endpoint docstring.
 
 Scope (applied everywhere):
 - team_id      = 'TEAM-DFW'  (single team — no team selector)
@@ -123,17 +127,25 @@ def _resolve_range(
 
 
 def _parse_multi(raw: Optional[list[str]]) -> list[str]:
-    """FastAPI repeated-param list -> cleaned list (drop blanks, dedupe)."""
+    """FastAPI repeated-param list -> cleaned list (drop blanks, dedupe).
+
+    ⚠ Deliberately does NOT split on ",". It used to, and that silently shredded
+    every customer whose NAME contains a comma — e.g. real DFW customers
+    ``CONAGRA FOODS PACKAGED FOODS, LLC`` (121 loads) and ``MONDI BAGS USA, LLC
+    - SLC`` became ``['CONAGRA FOODS PACKAGED FOODS', 'LLC']``, matched nothing,
+    and the whole report rendered empty with no error. Every caller sends
+    repeated keys (`q.append()` on the client, `.append()` through the proxy,
+    §45), so the split was never needed — only harmful.
+    """
     if not raw:
         return []
     seen: set[str] = set()
     out: list[str] = []
     for v in raw:
-        for part in (v or "").split(","):
-            val = part.strip()
-            if val and val not in seen:
-                seen.add(val)
-                out.append(val)
+        val = (v or "").strip()
+        if val and val not in seen:
+            seen.add(val)
+            out.append(val)
     return out
 
 
@@ -364,6 +376,22 @@ async def daily(
         amount_lost_avg = 0.0
         loss_per_load_avg = None
 
+    # Bruno PDF 2026-08-03 R2 — pinned Totals row. §44: server-side over the
+    # FULL filtered universe. That is exact here by construction: /daily has no
+    # LIMIT on day-rows, and the per-customer sums come from `customer_totals`,
+    # which is accumulated BEFORE the CUSTOMER_CAP truncation — so a kept column
+    # totals every one of its rows, not just the ones that fit on screen.
+    #
+    # ⚠ totals.loss_per_load is total lost / total loads (a ratio of sums, §33),
+    # whereas summary.loss_per_load_avg is the mean of the per-day ratios. The
+    # two legitimately differ — days carry different load counts, so the mean of
+    # ratios is not the ratio of sums. Both rows are shown; neither is a bug.
+    # Summed from `per_day` (unrounded), NOT from out_rows — those carry
+    # round(…, 2) per day, and totals.by_customer sums the unrounded
+    # customer_totals, so the two halves of one Totals row would drift apart.
+    total_loads = sum(day["loads"] for day in per_day.values())
+    total_lost = sum(day["amount_lost"] for day in per_day.values())
+
     return {
         "success": True,
         "data": {
@@ -377,8 +405,151 @@ async def daily(
                 if loss_per_load_avg is not None
                 else None,
             },
+            "totals": {
+                "loads": total_loads,
+                "amount_lost": round(total_lost, 2),
+                "loss_per_load": round(total_lost / total_loads, 2)
+                if total_loads
+                else None,
+                "by_customer": {
+                    c: round(customer_totals.get(c, 0.0), 2) for c in ordered_customers
+                },
+            },
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orders — day drill-down behind the /daily "Loads" cell
+# ---------------------------------------------------------------------------
+
+
+_ORDERS_SORT = {
+    "departure_desc": "origin_actual_departure DESC NULLS LAST, order_id DESC",
+    "departure_asc":  "origin_actual_departure ASC NULLS LAST, order_id ASC",
+    "order_id_desc":  "order_id DESC",
+    "order_id_asc":   "order_id ASC",
+    "customer_desc":  "customer DESC NULLS LAST, order_id ASC",
+    "customer_asc":   "customer ASC NULLS LAST, order_id ASC",
+    "revenue_desc":   "revenue DESC NULLS LAST, order_id ASC",
+    "revenue_asc":    "revenue ASC NULLS LAST, order_id ASC",
+    "profit_desc":    "profit DESC NULLS LAST, order_id ASC",
+    "profit_asc":     "profit ASC NULLS LAST, order_id ASC",
+    "margin_desc":    "margin_pct DESC NULLS LAST, order_id ASC",
+    "margin_asc":     "margin_pct ASC NULLS LAST, order_id ASC",
+}
+
+
+@router.get("/orders")
+async def orders(
+    request: Request,
+    day: date = Query(..., description="The single day clicked in the /daily table"),
+    contract_type: Optional[list[str]] = Query(None),
+    customer_name: Optional[list[str]] = Query(None),
+    sort: str = Query("profit_asc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(200, ge=1, le=500),
+    _user: dict = Depends(require_report_access("dfw-losses")),
+):
+    """Every in-scope order for one day (Bruno PDF 2026-08-03 R1).
+
+    Opened in a new tab from the Daily table's ``Loads`` cell, so it MUST
+    reconcile with the number that was clicked (§16 — KPI equals detail):
+
+    - identical scope, via the same ``_scope_where()`` the /daily query uses, so
+      weekdays-only, ``total_charge <> 0``, TEAM-DFW, company and status all
+      match without a second copy of the predicate list;
+    - **no ``margin_amt < 0`` filter.** The Loads cell counts every in-scope
+      load for the day, not just the losing ones (only ``amount_lost`` is
+      loss-only). Filtering here would show 39 in the table and a handful in the
+      drill — the exact "numbers don't agree" complaint §16 exists to prevent.
+      This is the one place it is tempting to copy ``losses_lanes.orders()``,
+      which IS loss-only because its parent cell is a loss figure.
+
+    ``day`` is bound as a python ``date`` and the bound stays sargable
+    (``>= day AND < day + 1 day``) so ``idx_v4_dep`` on the raw timestamp is
+    still usable — never ``::date``-cast the indexed column in a WHERE bound.
+    """
+    pool = get_datalake_gold_pool(request)
+    contracts = _parse_multi(contract_type)
+    customers_filter = _parse_multi(customer_name)
+    offset = (page - 1) * limit
+
+    params: list = []
+    where = _scope_where("br4", contracts, customers_filter, params)
+    params.append(day)
+    p_day = len(params)
+    date_fragment = (
+        f"br4.origin_actual_departure >= ${p_day}"
+        f" AND br4.origin_actual_departure < (${p_day}::date + INTERVAL '1 day')"
+    )
+
+    order_by = _ORDERS_SORT.get(sort, _ORDERS_SORT["profit_asc"])
+
+    params.extend([limit, offset])
+    p_lim, p_off = len(params) - 1, len(params)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+          TRIM(br4.id)                        AS order_id,
+          NULLIF(TRIM(br4.customer_name), '') AS customer,
+          br4.origin_actual_departure         AS origin_actual_departure,
+          br4.total_charge::numeric           AS revenue,
+          br4.margin_amt::numeric             AS profit,
+          CASE WHEN br4.total_charge <> 0
+               THEN br4.margin_amt::numeric / br4.total_charge::numeric
+               ELSE NULL END                  AS margin_pct,
+          COUNT(*)      OVER () AS total_count,
+          SUM(br4.total_charge) OVER () AS tot_revenue,
+          SUM(br4.margin_amt)   OVER () AS tot_profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where} AND {date_fragment}
+        ORDER BY {order_by}
+        LIMIT ${p_lim} OFFSET ${p_off}
+        """,
+        *params,
+    )
+
+    # Universe aggregates ride along on the window functions (§44) — they are
+    # computed over the full filtered set, before LIMIT/OFFSET, so the pinned
+    # Totals row stays correct on every page.
+    total = int(rows[0]["total_count"]) if rows else 0
+    tot_revenue = float(rows[0]["tot_revenue"] or 0.0) if rows else 0.0
+    tot_profit = float(rows[0]["tot_profit"] or 0.0) if rows else 0.0
+
+    data = [
+        {
+            "order_id": r["order_id"],
+            "customer": r["customer"],
+            "origin_actual_departure": r["origin_actual_departure"].isoformat()
+            if r["origin_actual_departure"]
+            else None,
+            "revenue": float(r["revenue"] or 0.0),
+            "profit": float(r["profit"] or 0.0),
+            "margin_pct": float(r["margin_pct"]) * 100.0
+            if r["margin_pct"] is not None
+            else None,
+        }
+        for r in rows
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "day": day.isoformat(),
+            "rows": data,
+            "totals": {
+                "loads": total,
+                "revenue": round(tot_revenue, 2),
+                "profit": round(tot_profit, 2),
+                "margin_pct": round(tot_profit / tot_revenue * 100.0, 2)
+                if tot_revenue
+                else None,
+            },
+        },
+        "meta": {"total": total, "page": page, "limit": limit},
     }
 
 

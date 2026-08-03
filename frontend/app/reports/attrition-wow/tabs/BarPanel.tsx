@@ -18,6 +18,7 @@ export function BarPanel({
   axisColor,
   isPct,
   refValue,
+  refFmt,
   height = 200,
   showLegend = true,
 }: {
@@ -29,6 +30,12 @@ export function BarPanel({
   axisColor: string
   isPct: boolean
   refValue: number | null
+  /** Formatter for the "8W Avg" legend only. Defaults to `fmt`, which formats
+   *  the bars — those are whole-week counts, but the reference line is an
+   *  AVERAGE and usually fractional. Bruno 2026-08-03 requires the Overview
+   *  cards' L8W to match this legend exactly, and those render 1 decimal, so
+   *  the count panels pass `fmtCount1` here while their bars stay integers. */
+  refFmt?: (v: number | null | undefined) => string
   height?: number
   showLegend?: boolean
 }) {
@@ -55,7 +62,7 @@ export function BarPanel({
             <span className="font-semibold" style={{ color: axisColor }}>
               ━━
             </span>{" "}
-            8W Avg: <span className="font-semibold">{fmt(refValue)}</span>
+            8W Avg: <span className="font-semibold">{(refFmt ?? fmt)(refValue)}</span>
           </div>
         )}
       </div>

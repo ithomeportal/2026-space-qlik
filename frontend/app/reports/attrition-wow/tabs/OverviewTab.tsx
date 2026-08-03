@@ -187,6 +187,7 @@ export function OverviewTab({ filters, entityLabel }: Props) {
               axisColor="#DC2626"
               isPct={false}
               refValue={t?.reference?.l8w_avg_loads ?? null}
+              refFmt={fmtCount1}
             />
             <BarPanel
               title="Weekly Customers"
@@ -196,7 +197,10 @@ export function OverviewTab({ filters, entityLabel }: Props) {
               color="#0891B2"
               axisColor="#0891B2"
               isPct={false}
+              /* Bruno 2026-08-03: this legend is the reference the CUSTOMER
+                 ATTRITION card's L8W must match, so both render 1 decimal. */
               refValue={t?.reference?.l8w_avg_customers ?? null}
+              refFmt={fmtCount1}
             />
           </>
         )}

@@ -6,7 +6,7 @@ import {
   type AttritionFilters,
 } from "@/lib/attrition-wow-api"
 import { AttritionErrorBanner } from "../ErrorBanner"
-import { fmtCount, fmtPct, fmtUsd } from "../format"
+import { fmtCount, fmtCount1, fmtPct, fmtUsd } from "../format"
 import { BarPanel, type BarField } from "./BarPanel"
 
 interface Props {
@@ -64,6 +64,13 @@ export function TrendsTab({ filters }: Props) {
                       : f.key === "profit"
                         ? ref?.l8w_avg_profit ?? null
                         : ref?.l8w_avg_margin ?? null
+              }
+              /* The count panels' reference line is a per-week AVERAGE and is
+                 usually fractional — render it to 1 decimal so it reads the
+                 same as the Overview attrition cards' L8W (Bruno 2026-08-03).
+                 Money/% panels keep their own formatter. */
+              refFmt={
+                f.key === "loads" || f.key === "customers" ? fmtCount1 : undefined
               }
             />
           ))}

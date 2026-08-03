@@ -180,10 +180,11 @@ function ActiveCard({
       <div className="mt-3 grid grid-cols-4 gap-2">
         {/* Bruno PDF 2026-07-22 R1+R2: L8W to one decimal on BOTH cards (this
             ActiveCard renders twice — "Lane Attrition" and "<entity> Attrition").
-            Lane L8W is a genuine per-week average (313.9); customer L8W is a
-            union-distinct integer count, so it always renders "51.0" — which is
-            exactly what Bruno's mockup shows, i.e. visual symmetry, NOT a
-            request to divide it by 8. LW stays integer, matching attrition-wow. */}
+            Both are now genuine per-week averages over the 8-week window, so
+            the decimal carries real information: customer L8W stopped being a
+            union-distinct integer on 2026-08-03 (it has to equal the "Weekly
+            Customers" chart's 8W-Avg line — see the l8w_weekly CTE in
+            attrition_wow.py). LW stays integer, matching attrition-wow. */}
         <CountCell label="L8W" value={loading ? "—" : fmtCount1(block?.l8w)} accent={accent} />
         <CountCell label="LW" value={loading ? "—" : fmtCount(block?.lw)} accent={accent} />
         <CountCell label="Δ (LW − L8W)" value={loading ? "—" : sd.text} accent={sd.className} />

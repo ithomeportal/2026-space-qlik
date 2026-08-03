@@ -425,22 +425,34 @@ async def summary(
           WHERE {where}
             AND br4.origin_actual_departure::date BETWEEN ${p_l8s} AND ${p_lwe}
         ),
-        -- Lane Attrition L8W (Bruno R12, 2026-06-30): the per-week AVERAGE of
-        -- distinct active lanes across the 8 weeks in the L8W window — NOT the
-        -- union-distinct over the whole span. SUM(weekly distinct)/8 (Python)
-        -- so an empty week still divides by a fixed 8 (window = exactly 8 ISO
-        -- weeks). Lane Attrition = 1 - (LW / this avg).
-        l8w_weekly_lanes AS (
+        -- Lane / Customer Attrition L8W: the per-week AVERAGE of distinct
+        -- active lanes (resp. customers) across the 8 weeks in the L8W window
+        -- — NOT the union-distinct over the whole span. SUM(weekly distinct)/8
+        -- (Python) so an empty week still divides by a fixed 8; the window is
+        -- exactly 8 ISO weeks because _l8w_window() starts on a Monday and
+        -- ends on a Sunday. Attrition = 1 - (LW / this avg).
+        --
+        -- Lanes: Bruno R12, 2026-06-30.
+        -- Customers: Bruno 2026-08-03 — this REVERSES R12's explicit "the
+        -- customer card stays union-distinct" decision. The card's L8W has to
+        -- equal the "Weekly Customers" chart 8W-Avg line sitting next to it
+        -- (/weekly-trends -> reference.l8w_avg_customers), which has always
+        -- been SUM(weekly distinct)/8. Union-distinct read 55.0 against the
+        -- chart's 35.3 on the same screen. Keep the two definitions in step:
+        -- both bucket on date_trunc('week', dep_date) over the same base, so
+        -- they agree by construction, not by coincidence.
+        l8w_weekly AS (
           SELECT date_trunc('week', dep_date)::date AS wk,
-                 COUNT(DISTINCT lane) AS n_lanes
+                 COUNT(DISTINCT lane)          AS n_lanes,
+                 COUNT(DISTINCT customer_name) AS n_customers
           FROM base
           WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}
           GROUP BY 1
         )
         SELECT
           -- L8W (avg per week over 8 weeks)
-          (SELECT COALESCE(SUM(n_lanes), 0) FROM l8w_weekly_lanes) AS l8w_lanes_sum,
-          COUNT(DISTINCT customer_name) FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}) AS l8w_customers,
+          (SELECT COALESCE(SUM(n_lanes), 0)     FROM l8w_weekly) AS l8w_lanes_sum,
+          (SELECT COALESCE(SUM(n_customers), 0) FROM l8w_weekly) AS l8w_customers_sum,
           COUNT(*) FILTER (WHERE total_charge <> 0 AND dep_date BETWEEN ${p_l8s} AND ${p_l8e}) AS l8w_loads,
           COALESCE(SUM(total_charge) FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}), 0) AS l8w_rev,
           COALESCE(SUM(margin_amt)   FILTER (WHERE dep_date BETWEEN ${p_l8s} AND ${p_l8e}), 0) AS l8w_profit,
@@ -464,11 +476,14 @@ async def summary(
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
-    # active_lanes L8W is the per-week AVERAGE over the 8-week window (Bruno R12,
-    # 2026-06-30); active_customers stays a union-distinct count.
+    # Both attrition cards' L8W is the per-week AVERAGE over the 8-week window
+    # (lanes: Bruno R12 2026-06-30 — customers: Bruno 2026-08-03). Fixed /8, see
+    # the l8w_weekly CTE comment. Floats on purpose: the cards render 1 decimal
+    # and Δ/%Δ are derived from these, so rounding here would desync the card
+    # from the chart it is required to match.
     l8w_lanes = _f(row["l8w_lanes_sum"]) / 8.0
     lw_lanes = int(row["lw_lanes"] or 0)
-    l8w_customers = int(row["l8w_customers"] or 0)
+    l8w_customers = _f(row["l8w_customers_sum"]) / 8.0
     lw_customers = int(row["lw_customers"] or 0)
 
     # Per-week averages
@@ -584,6 +599,13 @@ async def weekly_trends(
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
+    # Must accept sub_team even though only the CEO Executive tab sends it: the
+    # Overview cards' L8W is REQUIRED to equal this endpoint's
+    # reference.l8w_avg_customers line (Bruno 2026-08-03). /summary honours
+    # sub_team, and FastAPI silently DISCARDS undeclared query params — so
+    # while this was missing, a TM1..TM4 pill scoped the card to one sub-team
+    # while the chart still covered all of DFW, re-breaking that invariant.
+    sub_team: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -592,7 +614,9 @@ async def weekly_trends(
     team_list = _parse_csv(teams, ALL_TEAMS)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
+    where = _scope_where(
+        "br4", team_list, customer, contract, lane, params, view, sub_team
+    )
     params.append(weeks)
     p_weeks = len(params)
 

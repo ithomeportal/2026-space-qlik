@@ -1,9 +1,11 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Link from "next/link"
 import { Loader2 } from "lucide-react"
 import {
   useDfwLossesDaily,
+  dfwLossesOrdersHref,
   type DfwLossesFilters,
   type DfwLossesDailyRow,
 } from "@/lib/dfw-losses-api"
@@ -61,6 +63,7 @@ export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
   // Memoised because it feeds the sort useMemo's dep array.
   const rows = useMemo(() => d?.rows ?? [], [d])
   const summary = d?.summary
+  const totals = d?.totals
 
   const [sortKey, setSortKey] = useState<string | null>("date")
   const [sortDir, setSortDir] = useState<SortDir>("asc")
@@ -179,8 +182,20 @@ export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
                     {r.day}
                   </td>
                   <td className="px-3 py-1.5 text-[#374151]">{r.month}</td>
+                  {/* Bruno 2026-08-03 R1: the Loads count drills through to
+                      that day's orders in a NEW tab. The drill carries the
+                      contract/customer filters, so its row count always equals
+                      the number rendered here. */}
                   <td className="px-3 py-1.5 text-right tabular-nums text-[#111827]">
-                    {fmtCount(r.loads)}
+                    <Link
+                      href={dfwLossesOrdersHref(r.date, filters)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open the ${r.loads} order${r.loads === 1 ? "" : "s"} for ${r.month} ${r.day} in a new tab`}
+                      className="rounded font-medium text-[#1D4ED8] underline decoration-dotted underline-offset-2 hover:text-[#1E40AF] hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1D4ED8]"
+                    >
+                      {fmtCount(r.loads)}
+                    </Link>
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-[#DC2626]">
                     {fmtUsd(r.amount_lost)}
@@ -204,25 +219,60 @@ export function DailyTable({ filters }: { filters: DfwLossesFilters }) {
                 </tr>
               ))}
             </tbody>
-            {summary && (
-              /* Pinned server-side averages — kept outside the sorted map (§38/§44). */
+            {(summary || totals) && (
+              /* Pinned server-side rows — kept outside the sorted map (§38/§44). */
               <tfoot>
-                <tr className="border-t-2 border-[#E5E7EB] bg-[#F3F4F6] font-semibold text-[#111827]">
-                  <td className="sticky left-0 z-10 bg-[#F3F4F6] px-3 py-2">Avg</td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {fmtCount(Math.round(summary.loads_avg))}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#DC2626]">
-                    {fmtUsd(summary.amount_lost_avg)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-[#B45309]">
-                    {fmtUsd(summary.loss_per_load_avg)}
-                  </td>
-                  {customers.map((c) => (
-                    <td key={c} className="px-3 py-2" />
-                  ))}
-                </tr>
+                {summary && (
+                  <tr className="border-t-2 border-[#E5E7EB] bg-[#F3F4F6] font-semibold text-[#111827]">
+                    <td className="sticky left-0 z-10 bg-[#F3F4F6] px-3 py-2">Avg</td>
+                    <td className="px-3 py-2" />
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmtCount(Math.round(summary.loads_avg))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#DC2626]">
+                      {fmtUsd(summary.amount_lost_avg)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#B45309]">
+                      {fmtUsd(summary.loss_per_load_avg)}
+                    </td>
+                    {customers.map((c) => (
+                      <td key={c} className="px-3 py-2" />
+                    ))}
+                  </tr>
+                )}
+                {/* Bruno 2026-08-03 R2 — Totals. Server-side over the FULL
+                    filtered universe (§44), never a reduce over `sorted`.
+                    Loss/Load here is total lost / total loads (ratio of sums,
+                    §33) and so legitimately differs from the Avg row above,
+                    which is the mean of the per-day ratios. */}
+                {totals && (
+                  <tr className="border-t border-[#E5E7EB] bg-[#E5E7EB] font-semibold text-[#111827]">
+                    <td className="sticky left-0 z-10 bg-[#E5E7EB] px-3 py-2">Totals</td>
+                    <td className="px-3 py-2" />
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {fmtCount(totals.loads)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#DC2626]">
+                      {fmtUsd(totals.amount_lost)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#B45309]">
+                      {fmtUsd(totals.loss_per_load)}
+                    </td>
+                    {customers.map((c) => {
+                      const v = totals.by_customer[c] ?? 0
+                      return (
+                        <td
+                          key={c}
+                          className={`px-3 py-2 text-right tabular-nums ${
+                            v < 0 ? "text-[#DC2626]" : "text-[#9CA3AF]"
+                          }`}
+                        >
+                          {fmtLossCell(v)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )}
               </tfoot>
             )}
           </table>
