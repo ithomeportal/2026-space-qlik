@@ -40,6 +40,22 @@ class Settings(BaseSettings):
     # startup while it is unset. MUST be identical to Vercel's PROXY_SHARED_SECRET.
     PROXY_SHARED_SECRET: str = ""
 
+    # Machine bearer for external schedulers (n8n) that PULL a rendered report
+    # digest — currently only
+    # `GET /api/custom/ops-portal-overview/team-digest-email`.
+    #
+    # Deliberately NOT PROXY_SHARED_SECRET: that secret's entire meaning is
+    # "this request came through our Vercel proxy, so the identity in the
+    # Authorization header is trustworthy". Handing it to a third-party
+    # scheduler would let that scheduler self-assert `roles:["admin"]` on every
+    # endpoint in the app, silently voiding role_report_access everywhere.
+    #
+    # ⚠ FAILS CLOSED, unlike PROXY_SHARED_SECRET: while this is empty the
+    # machine-bearer path is disabled entirely and the endpoint is reachable
+    # only through the normal report-access gate. An unset secret must never
+    # mean "everyone passes".
+    REPORTS_CRON_SECRET: str = ""
+
     # Microsoft Graph (admin-ms-api app) — used to send the RFP Performance
     # daily digest from ithome@unilinktransportation.com via /sendMail.
     # Requires Mail.Send Application permission with admin consent.

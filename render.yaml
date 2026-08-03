@@ -48,6 +48,14 @@ services:
       # self-asserted identities from any caller (SPEC-CODE-RULES §51).
       - key: PROXY_SHARED_SECRET
         sync: false
+      # Machine bearer for external schedulers (n8n) that PULL a rendered
+      # digest — currently only
+      # /api/custom/ops-portal-overview/team-digest-email.
+      # NOT PROXY_SHARED_SECRET: that one certifies "came through our proxy",
+      # so sharing it would let n8n self-assert admin on every endpoint.
+      # Fails CLOSED — unset disables the machine-bearer path entirely.
+      - key: REPORTS_CRON_SECRET
+        sync: false
 
       # --- Email ---
       - key: RESEND_API_KEY            # send-only key, never admin-scoped
