@@ -422,14 +422,21 @@ def _dual_axis_config(
             },
             "scales": {
                 "x": {"ticks": {"font": {"size": 10}}, "grid": {"display": False}},
+                # ``grace`` adds headroom ABOVE the largest value on each axis.
+                # The legend is drawn inside the canvas (position:"top"), so a
+                # series that peaks at the axis maximum puts its data-label chip
+                # straight through the legend text — seen on TEAM4, where "39.7"
+                # overprinted "Margin %". layout.padding cannot fix this: it pads
+                # above the legend, not between the legend and the plot. Pushing
+                # the peak down is the same fix the HD SPOT chart uses.
                 "y": {
-                    "position": "left", "beginAtZero": True,
+                    "position": "left", "beginAtZero": True, "grace": "12%",
                     "title": {"display": True, "text": bar_axis_title,
                               "font": {"size": 10}},
                     "ticks": {"font": {"size": 10}},
                 },
                 "y1": {
-                    "position": "right", "beginAtZero": True,
+                    "position": "right", "beginAtZero": True, "grace": "12%",
                     "title": {"display": True, "text": line_axis_title,
                               "font": {"size": 10}},
                     "ticks": {"font": {"size": 10}},
