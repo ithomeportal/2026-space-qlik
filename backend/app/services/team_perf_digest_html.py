@@ -395,9 +395,18 @@ def _dual_axis_config(
                     "tension": 0.25,
                     "yAxisID": "y1",
                     "order": 1,
+                    # White chip behind the label: the line crosses the red
+                    # bars, and plain orange-on-red is unreadable (verified on
+                    # the rendered PNG — always look at the image).
                     "datalabels": {
                         "anchor": "end", "align": "top", "offset": 4,
-                        "color": "#C2410C", "font": {"size": 9, "weight": "bold"},
+                        "color": "#C2410C",
+                        "backgroundColor": "#FFFFFF",
+                        "borderColor": "#FDBA74",
+                        "borderWidth": 1,
+                        "borderRadius": 3,
+                        "padding": {"top": 1, "bottom": 1, "left": 3, "right": 3},
+                        "font": {"size": 9, "weight": "bold"},
                     },
                 },
             ],
