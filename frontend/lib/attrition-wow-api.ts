@@ -40,8 +40,11 @@ export interface AttritionFilters {
   // `client` sub-shipper instead of customer_name.
   view?: "ruan"
   // Bruno 2026-06-30: the CEO Executive Attrition tab passes a DFW sub-team
-  // (TM1..TM4) to narrow TEAM-DFW rows to a single team. Only summary/pivot
-  // honor it; the native Attrition-WoW report never sets it.
+  // (TM1..TM4) to narrow TEAM-DFW rows to a single team. The native
+  // Attrition-WoW report never sets it, but buildQs puts it on EVERY attrition
+  // request — so any endpoint whose output has to agree with /summary must
+  // declare it (FastAPI silently drops undeclared params). summary, pivot,
+  // weekly-trends and customer-attrition all honour it.
   sub_team?: string
 }
 
@@ -141,12 +144,20 @@ export interface AttritionTrends {
 }
 
 // Bruno 2026-06-11 (Overview): weekly Customer Attrition ratio. For each
-// completed week, ratio = distinct customers that week / distinct customers
-// in the prior 8 weeks. ``week_no`` is the ISO week (his "Week 23" labels).
+// completed week, ratio = distinct customers that week / the AVERAGE weekly
+// distinct customers over the prior 8 weeks. ``week_no`` is the ISO week (his
+// "Week 23" labels).
+//
+// Bruno 2026-08-05: ``denominator`` is a per-week average (a float, e.g.
+// 35.375 — Σ 8 weekly distinct counts ÷ 8), NOT the union-distinct head count
+// over the 56-day span. It is the same number the Customer Attrition card
+// renders as its L8W, which is the whole point: the chart's last point has to
+// equal LW ÷ L8W off that card. Format it with 1 decimal, never as an integer.
 export interface CustomerAttritionPoint {
   week_start: string
   week_no: number
   numerator: number
+  /** Per-week average over the prior 8 weeks — a float, not a head count. */
   denominator: number
   ratio: number | null
 }

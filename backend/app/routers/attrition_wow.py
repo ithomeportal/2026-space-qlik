@@ -717,7 +717,7 @@ async def weekly_trends(
 #
 #   ratio(W) = distinct customers active in W
 #              ----------------------------------------------------
-#              distinct customers active in the 8 weeks before W
+#              AVG distinct customers per week over the 8 weeks before W
 #
 # i.e. numerator window = [week_start, week_start + 7d); denominator window =
 # [week_start - 56d, week_start) — the 8 full weeks immediately preceding W
@@ -725,6 +725,17 @@ async def weekly_trends(
 # the same entity the rest of the report counts (customer_name, or `client`
 # under the RUAN view) so the numerator matches the adjacent "Weekly
 # Customers" bar exactly. Week number is the ISO week (his "Week 23" labels).
+#
+# Bruno 2026-08-05: the denominator is the per-week AVERAGE — SUM(weekly
+# distinct)/8 — NOT the union-distinct over the 56-day span, and the frontend
+# plots the raw ratio (this REVERSES R13's "1 - ratio"). Both changes exist so
+# the chart's last point equals the Customer Attrition card sitting above it:
+# LW 31 / L8W 35.4 = 87.6%. Union-distinct read 55 on the same screen, so the
+# chart showed 1 - 31/55 = 43.64% against a card that says 31 and 35.4.
+#
+# ⚠ The denominator MUST stay in step with /summary's l8w_weekly CTE (the
+# card's L8W) — same base rows, same date_trunc('week') bucketing, same fixed
+# /8 divisor so an empty week still divides by 8. Change one, change both.
 # ---------------------------------------------------------------------------
 
 
@@ -738,6 +749,14 @@ async def customer_attrition(
     contract: Optional[str] = Query(None),
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
+    # Same reason /weekly-trends declares it (Bruno 2026-08-03): this chart's
+    # last point is now REQUIRED to equal the Customer Attrition card, /summary
+    # honours sub_team, and FastAPI silently DISCARDS undeclared query params.
+    # buildQs() already puts sub_team on the wire for every attrition request,
+    # so without this a TM1..TM4 pill would scope the card to one sub-team
+    # while the chart still covered all of DFW — no error, just two numbers
+    # that disagree.
+    sub_team: Optional[str] = Query(None),
     _user: dict = Depends(require_report_access("attrition-wow")),
 ):
     pool = get_datalake_gold_pool(request)
@@ -746,7 +765,9 @@ async def customer_attrition(
     team_list = _parse_csv(teams, ALL_TEAMS)
 
     params: list = []
-    where = _scope_where("br4", team_list, customer, contract, lane, params, view)
+    where = _scope_where(
+        "br4", team_list, customer, contract, lane, params, view, sub_team
+    )
     params.append(weeks)
     p_weeks = len(params)
 
@@ -777,20 +798,32 @@ async def customer_attrition(
             AND br4.origin_actual_departure >= b.data_start
             AND br4.origin_actual_departure <  b.this_monday
         ),
+        -- One distinct-customer count per ISO week, bucketed exactly like
+        -- /summary's l8w_weekly. Every window below is a plain SUM over these
+        -- pre-aggregated weeks, so the numerator of week W and the denominator
+        -- of week W+1..W+8 are literally the same number — the card and the
+        -- chart cannot drift.
+        weekly AS (
+          SELECT date_trunc('week', base.dep_date)::date AS wk,
+                 COUNT(DISTINCT base.cust)               AS n_cust
+          FROM base
+          GROUP BY 1
+        ),
         calc AS (
           SELECT
             w.ws,
-            COUNT(DISTINCT base.cust) FILTER (
-              WHERE base.dep_date >= w.ws AND base.dep_date < w.ws + 7
-            ) AS num_cust,
-            COUNT(DISTINCT base.cust) FILTER (
-              WHERE base.dep_date >= w.ws - 56 AND base.dep_date < w.ws
-            ) AS den_cust
+            COALESCE(MAX(k.n_cust) FILTER (WHERE k.wk = w.ws), 0) AS num_cust,
+            -- SUM over the 8 preceding weeks; divided by a FIXED 8 in Python
+            -- so a week with no loads still counts as a zero, matching the
+            -- card. A missing week is simply absent from `weekly`.
+            COALESCE(
+              SUM(k.n_cust) FILTER (WHERE k.wk >= w.ws - 56 AND k.wk < w.ws), 0
+            ) AS den_sum
           FROM weeks w
-          JOIN base ON base.dep_date >= (w.ws - 56) AND base.dep_date < (w.ws + 7)
+          LEFT JOIN weekly k ON k.wk >= w.ws - 56 AND k.wk <= w.ws
           GROUP BY w.ws
         )
-        SELECT ws, num_cust, den_cust FROM calc ORDER BY ws
+        SELECT ws, num_cust, den_sum FROM calc ORDER BY ws
         """,
         *params,
     )
@@ -799,7 +832,10 @@ async def customer_attrition(
     for r in rows:
         ws = r["ws"]
         num = int(r["num_cust"] or 0)
-        den = int(r["den_cust"] or 0)
+        # Per-week average over the 8 preceding weeks (fixed /8). Float on
+        # purpose — the card renders 1 decimal (35.4) and the chart divides by
+        # the UNROUNDED value (35.375), so rounding here would desync the two.
+        den = float(r["den_sum"] or 0) / 8.0
         out.append({
             "week_start": ws.isoformat(),
             "week_no":     ws.isocalendar()[1],
