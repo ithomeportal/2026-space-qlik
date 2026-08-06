@@ -194,7 +194,11 @@ async def check_keepwarm(
             "source": source,
             "stale": r["stale"],
             "age": f"{age_min} min ago" if age_min else "just now",
-            "max_gap_seconds": r["max_gap_seconds"],
+            # max_gap_seconds only advances when a ping ARRIVES (the upsert
+            # measures the gap that just closed), so an in-progress stall is not
+            # in it yet — a STALLED row would otherwise print "worst gap: —",
+            # contradicting itself. The current age IS a gap, still open.
+            "max_gap_seconds": max(r["max_gap_seconds"] or 0, r["age_seconds"] or 0),
         })
         if r["stale"]:
             problems.append(f"{label} — <b>stalled</b>: last ping {age_min} min ago.")

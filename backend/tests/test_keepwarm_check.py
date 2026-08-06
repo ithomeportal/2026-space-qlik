@@ -143,6 +143,37 @@ async def test_self_healed_gap_still_reported(sent):
 
 
 @pytest.mark.asyncio
+async def test_stalled_row_reports_the_in_progress_gap_not_a_dash(sent):
+    # A STALLED row printing "worst gap: —" contradicts itself. max_gap_seconds
+    # only advances when a ping arrives, so the still-open stall must be folded
+    # into the displayed gap.
+    pool = _FakePool([
+        _row(km.SOURCE_N8N, age_seconds=5400, stale=True, max_gap=0),
+        _row(km.SOURCE_SYSTEMD),
+    ])
+    await km.check_keepwarm(pool)
+    html = sent[0]["html"]
+    assert "90 min ago" in html
+    assert "<td style=\"padding:4px 0;\">—</td>" not in html, (
+        "stalled row still shows an em-dash for worst gap"
+    )
+    assert "90 min</td>" in html
+
+
+@pytest.mark.asyncio
+async def test_in_progress_gap_does_not_double_report_as_a_problem(sent):
+    # Folding age into the DISPLAY must not leak into the alert logic, or a
+    # stalled pinger would raise both "stalled" and "had a gap".
+    pool = _FakePool([
+        _row(km.SOURCE_N8N, age_seconds=5400, stale=True, max_gap=0),
+        _row(km.SOURCE_SYSTEMD),
+    ])
+    r = await km.check_keepwarm(pool)
+    assert len(r["problems"]) == 1, r["problems"]
+    assert "stalled" in r["problems"][0]
+
+
+@pytest.mark.asyncio
 async def test_gap_within_threshold_is_not_reported(sent):
     pool = _FakePool([
         _row(km.SOURCE_N8N, max_gap=km.STALE_MINUTES * 60 - 1),
