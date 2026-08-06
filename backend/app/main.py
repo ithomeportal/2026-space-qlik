@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import settings
+from app.services.keepwarm_monitor import classify_keepwarm_source
 from app.routers import (
     admin,
     admin_cashflow,
@@ -176,6 +177,25 @@ async def _scheduled_scorecard_mirror_check():
         logger.info(f"Scorecard mirror check complete: {result}")
     except Exception as e:
         logger.error(f"Scorecard mirror check failed: {e}")
+
+
+async def _scheduled_keepwarm_check():
+    """Background job: daily watchdog for the two keep-warm pingers.
+
+    /api/health stamps a row per pinger in ``keepwarm_pings``; this checks both
+    are still beating and emails Diego if one has stalled. It exists because the
+    n8n primary (aF3wH6ZpvDFEPXA5) has no failure visibility of its own — a
+    silent stop would otherwise surface nowhere until users saw blank reports.
+    See app/services/keepwarm_monitor.py.
+    """
+    try:
+        pool = getattr(app.state, "pool", None)
+        from app.services.keepwarm_monitor import check_keepwarm
+
+        result = await check_keepwarm(pool)
+        logger.info(f"Keep-warm check complete: {result}")
+    except Exception as e:
+        logger.error(f"Keep-warm check failed: {e}")
 
 
 async def _scheduled_datalake_warmup():
@@ -415,6 +435,22 @@ async def lifespan(app: FastAPI):
                   user_id    TEXT PRIMARY KEY,
                   notes      TEXT NOT NULL DEFAULT '',
                   updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            # Keep-warm heartbeat ledger — one row per pinger, written by
+            # /api/health. Feeds daily_keepwarm_check (services/keepwarm_monitor.py),
+            # which is the ONLY visibility we have that the n8n primary is alive:
+            # workflow aF3wH6ZpvDFEPXA5 has saveDataSuccessExecution="none" and no
+            # errorWorkflow, so a silent stop surfaces nowhere in n8n itself.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS keepwarm_pings (
+                  source          TEXT PRIMARY KEY,
+                  last_seen       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  ping_count      BIGINT      NOT NULL DEFAULT 1,
+                  max_gap_seconds INTEGER     NOT NULL DEFAULT 0,
+                  window_start    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """
             )
@@ -778,6 +814,19 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Scheduled scorecard mirror freshness check daily 6:15 AM CST")
 
+    # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
+    # check so the two ops alerts land together. Alerts only when a pinger has
+    # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + Resend.
+    if settings.RESEND_API_KEY:
+        scheduler.add_job(
+            _scheduled_keepwarm_check,
+            CronTrigger(hour=6, minute=10, timezone="America/Chicago"),
+            id="daily_keepwarm_check",
+            name="Watch backend keep-warm pingers (n8n primary + systemd backstop)",
+            replace_existing=True,
+        )
+        logger.info("Scheduled keep-warm watchdog daily 6:10 AM CST")
+
     # Schedule daily RFP Performance digest at 5:30 PM CST (Mon-Fri only).
     # Needs the automations_db pool (rfp_results_history) and MS Graph creds.
     if (
@@ -939,5 +988,33 @@ app.include_router(bonus_calculator.router, prefix="/api")
 
 
 @app.get("/api/health")
-async def health():
+async def health(request: Request):
+    # Record keep-warm heartbeats so daily_keepwarm_check can tell whether the
+    # n8n primary is still firing (it has no failure visibility of its own).
+    # STRICTLY best-effort: /api/health must keep returning 200 even if the DB
+    # is down, or a DB blip would make both pingers log a false failure.
+    try:
+        source = classify_keepwarm_source(
+            request.headers.get("user-agent"),
+            request.headers.get("x-forwarded-for"),
+        )
+        pool = getattr(app.state, "pool", None)
+        if source and pool is not None:
+            await pool.execute(
+                """
+                INSERT INTO keepwarm_pings (source, last_seen, ping_count, max_gap_seconds, window_start)
+                VALUES ($1, NOW(), 1, 0, NOW())
+                ON CONFLICT (source) DO UPDATE SET
+                  last_seen       = NOW(),
+                  ping_count      = keepwarm_pings.ping_count + 1,
+                  max_gap_seconds = GREATEST(
+                      keepwarm_pings.max_gap_seconds,
+                      EXTRACT(EPOCH FROM (NOW() - keepwarm_pings.last_seen))::int
+                  )
+                """,
+                source,
+            )
+    except Exception:  # noqa: BLE001 - health must never fail on bookkeeping
+        logger.debug("keepwarm ping not recorded", exc_info=True)
+
     return {"status": "ok"}
