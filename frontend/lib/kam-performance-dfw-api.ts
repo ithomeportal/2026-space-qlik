@@ -105,10 +105,29 @@ export interface KamScorecardRow {
   customer: string
   scorecard_date: string
   scorecard_frequency: string
+  /** Bruno 2026-08-10 R1 — numeric "Percentage" column. */
+  percentage: number | null
+  /** The list never carries the image blob itself; fetch it per row on demand. */
+  has_image: boolean
+  image_name: string | null
+  image_mime: string | null
   uploaded_by_email: string | null
   uploaded_by_name: string | null
   created_at: string
 }
+
+export interface KamScorecardImage {
+  image_data: string | null
+  image_name: string | null
+  image_mime: string | null
+}
+
+/**
+ * Max original image size. Base64 inflates by ~33%, and Vercel rejects
+ * serverless request bodies over ~4.5 MB with an uncatchable 413 — so the cap
+ * is enforced here AND server-side rather than discovered at upload time.
+ */
+export const MAX_SCORECARD_IMAGE_BYTES = 1.5 * 1024 * 1024
 
 export function useKamScorecards() {
   return useQuery({
@@ -120,14 +139,33 @@ export function useKamScorecards() {
   })
 }
 
+/** Lazily fetch one row's image — only when the user opens it. */
+export function useScorecardImage(id: string | null) {
+  return useQuery({
+    queryKey: ["kam-performance-dfw", "scorecard-image", id],
+    queryFn: () =>
+      apiFetch<KamScorecardImage>(
+        `custom/kam-performance-dfw/scorecards/${id}/image`,
+      ),
+    enabled: Boolean(id),
+    staleTime: 5 * 60 * 1000,
+    ...RETRY,
+  })
+}
+
+export interface ScorecardCreateBody {
+  customer: string
+  scorecard_date: string
+  scorecard_frequency: string
+  percentage?: number | null
+  image_data?: string | null
+  image_name?: string | null
+}
+
 export function useCreateScorecard() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: {
-      customer: string
-      scorecard_date: string
-      scorecard_frequency: string
-    }) =>
+    mutationFn: (body: ScorecardCreateBody) =>
       apiFetch<KamScorecardRow>("custom/kam-performance-dfw/scorecards", {
         method: "POST",
         body: JSON.stringify(body),
@@ -135,6 +173,33 @@ export function useCreateScorecard() {
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "scorecards"] }),
     onError: mutationErrorToast("Add scorecard"),
+  })
+}
+
+export interface ScorecardUpdateBody {
+  percentage?: number | null
+  /** `percentage_set: true` with `percentage: null` clears the value. */
+  percentage_set?: boolean
+  /** `""` removes the image; omit the field to leave it untouched. */
+  image_data?: string | null
+  image_name?: string | null
+}
+
+export function useUpdateScorecard() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: ScorecardUpdateBody & { id: string }) =>
+      apiFetch<KamScorecardRow>(
+        `custom/kam-performance-dfw/scorecards/${id}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "scorecards"] })
+      qc.invalidateQueries({
+        queryKey: ["kam-performance-dfw", "scorecard-image", vars.id],
+      })
+    },
+    onError: mutationErrorToast("Update scorecard"),
   })
 }
 

@@ -21,6 +21,7 @@ from app.routers import (
     admin_cashflow,
     attrition_wow,
     bonus_calculator,
+    booker_scorecard,
     budget_followup,
     carrier_risk,
     carrier_sms,
@@ -386,15 +387,43 @@ async def lifespan(app: FastAPI):
                   customer            TEXT NOT NULL,
                   scorecard_date      DATE NOT NULL,
                   scorecard_frequency TEXT NOT NULL,
+                  percentage          NUMERIC(6,2),
+                  image_data          TEXT,
+                  image_name          TEXT,
+                  image_mime          TEXT,
                   uploaded_by_email   TEXT,
                   uploaded_by_name    TEXT,
-                  created_at          TIMESTAMPTZ DEFAULT NOW()
+                  created_at          TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at          TIMESTAMPTZ DEFAULT NOW()
                 )
                 """
             )
             await app.state.pool.execute(
                 "CREATE INDEX IF NOT EXISTS idx_kam_scorecards_user ON kam_scorecards(user_id, scorecard_date DESC)"
             )
+            # Backfill for databases created before the Bruno 2026-08-10 round
+            # (numeric "Percentage" column + image upload).
+            #
+            # Guarded TWICE, deliberately:
+            #  * outer — this whole lifespan block shares ONE `try` whose
+            #    handler sets `pool = None`; an unguarded failure here would
+            #    skip seeding and take the entire portal DB-less on a warning.
+            #  * per statement — a shared try would let one failure (lock wait,
+            #    statement timeout) skip the remaining ALTERs, leaving the table
+            #    half-migrated. Every KAM-scorecard endpoint then 500s with
+            #    `column "image_data" does not exist`, breaking a tab that
+            #    worked fine before the deploy.
+            for _stmt in (
+                "ALTER TABLE kam_scorecards ADD COLUMN IF NOT EXISTS percentage NUMERIC(6,2)",
+                "ALTER TABLE kam_scorecards ADD COLUMN IF NOT EXISTS image_data TEXT",
+                "ALTER TABLE kam_scorecards ADD COLUMN IF NOT EXISTS image_name TEXT",
+                "ALTER TABLE kam_scorecards ADD COLUMN IF NOT EXISTS image_mime TEXT",
+                "ALTER TABLE kam_scorecards ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+            ):
+                try:
+                    await app.state.pool.execute(_stmt)
+                except Exception as e:
+                    logger.warning(f"kam_scorecards backfill failed [{_stmt}]: {e}")
             await app.state.pool.execute(
                 """
                 CREATE TABLE IF NOT EXISTS kam_customer_dev (
@@ -432,6 +461,18 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(
                 """
                 CREATE TABLE IF NOT EXISTS kam_top_lanes_notes (
+                  user_id    TEXT PRIMARY KEY,
+                  notes      TEXT NOT NULL DEFAULT '',
+                  updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            # Booker Performance Scorecard (Bruno PDF 2026-08-10) — the
+            # "Action Plan" box. One row per user, same shape as
+            # kam_top_lanes_notes.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS booker_scorecard_notes (
                   user_id    TEXT PRIMARY KEY,
                   notes      TEXT NOT NULL DEFAULT '',
                   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -956,6 +997,7 @@ app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")
 app.include_router(admin_access_doors.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
+app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")

@@ -29,12 +29,13 @@ if a row id leaks, another user can't read or mutate it.
 
 from __future__ import annotations
 
+import re as _re
 from datetime import date, datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
@@ -143,10 +144,78 @@ def _parse_sub_teams(raw: Optional[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# Image upload (Bruno PDF 2026-08-10, Request 2).
+#
+# Transport is a base64 data URI carried as an ordinary JSON string — NOT
+# multipart. The Next.js proxy reads the body with `req.text()` and hard-codes
+# `Content-Type: application/json`, so a multipart body would arrive corrupted;
+# base64-in-TEXT is also the pattern already used for app favicons
+# (`apps.icon_data`) and needs no CSP change (`img-src 'self' data: blob:`).
+#
+# 1.5 MB of original image ≈ 2.0 MB of base64. Vercel caps a serverless request
+# body around 4.5 MB and surfaces the overflow as an uncatchable 413, so the
+# limit is enforced here AND client-side rather than discovered at runtime.
+MAX_IMAGE_CHARS = 2_200_000
+_IMAGE_DATA_URI_RE = _re.compile(r"^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$")
+
+
+def _check_image(v: Optional[str]) -> Optional[str]:
+    """Validate a base64 image data URI. Empty string means 'remove the image'."""
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return ""
+    if len(v) > MAX_IMAGE_CHARS:
+        raise ValueError("Image is too large (max ~1.5 MB).")
+    if not _IMAGE_DATA_URI_RE.match(v):
+        raise ValueError("Image must be a PNG, JPEG, WEBP or GIF data URI.")
+    return v
+
+
 class ScorecardCreate(BaseModel):
     customer: str = Field(..., min_length=1, max_length=200)
     scorecard_date: date
     scorecard_frequency: str = Field(..., min_length=1, max_length=40)
+    # Bruno Request 1: numeric "Percentage" column. Bounded so a typo cannot
+    # overflow NUMERIC(6,2) — an out-of-range value raises 22003 at INSERT.
+    percentage: Optional[float] = Field(default=None, ge=-9999, le=9999)
+    image_data: Optional[str] = Field(default=None, max_length=MAX_IMAGE_CHARS)
+    image_name: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("image_data")
+    @classmethod
+    def _validate_image(cls, v: Optional[str]) -> Optional[str]:
+        return _check_image(v)
+
+
+class ScorecardUpdate(BaseModel):
+    """Partial update. Every field is optional; omitted fields are untouched.
+
+    ``image_data=""`` explicitly clears the image, which is why omitted and
+    empty must stay distinguishable (the same null-vs-omitted problem
+    ``update_customer_dev`` solves with an explicit flag).
+    """
+
+    customer: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    scorecard_date: Optional[date] = None
+    scorecard_frequency: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    percentage: Optional[float] = Field(default=None, ge=-9999, le=9999)
+    percentage_set: bool = False  # allow explicitly clearing percentage
+    image_data: Optional[str] = Field(default=None, max_length=MAX_IMAGE_CHARS)
+    image_name: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("image_data")
+    @classmethod
+    def _validate_image(cls, v: Optional[str]) -> Optional[str]:
+        return _check_image(v)
+
+
+def _image_mime(data_uri: Optional[str]) -> Optional[str]:
+    if not data_uri:
+        return None
+    head = data_uri.split(";", 1)[0]
+    return head[5:] if head.startswith("data:") else None
 
 
 @router.get("/scorecards")
@@ -154,10 +223,19 @@ async def list_scorecards(
     request: Request,
     user: dict = Depends(require_report_access("kam-performance-dfw")),
 ):
+    """List the caller's scorecards.
+
+    ⚠ Deliberately does NOT select ``image_data``: a handful of 2 MB base64
+    blobs would turn a small metadata list into a multi-megabyte response on
+    every poll. The list carries ``has_image`` and the image itself is fetched
+    on demand from ``/scorecards/{id}/image``.
+    """
     pool = get_pool(request)
     rows = await pool.fetch(
         """
-        SELECT id, customer, scorecard_date, scorecard_frequency,
+        SELECT id, customer, scorecard_date, scorecard_frequency, percentage,
+               (image_data IS NOT NULL AND image_data <> '') AS has_image,
+               image_name, image_mime,
                uploaded_by_email, uploaded_by_name, created_at
         FROM kam_scorecards
         WHERE user_id = $1
@@ -173,12 +251,48 @@ async def list_scorecards(
                 "customer": r["customer"],
                 "scorecard_date": _iso(r["scorecard_date"]),
                 "scorecard_frequency": r["scorecard_frequency"],
+                "percentage": float(r["percentage"]) if r["percentage"] is not None else None,
+                "has_image": bool(r["has_image"]),
+                "image_name": r["image_name"],
+                "image_mime": r["image_mime"],
                 "uploaded_by_email": r["uploaded_by_email"],
                 "uploaded_by_name": r["uploaded_by_name"],
                 "created_at": _iso(r["created_at"]),
             }
             for r in rows
         ],
+    }
+
+
+@router.get("/scorecards/{row_id}/image")
+async def get_scorecard_image(
+    row_id: UUID,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    """Fetch one scorecard's image as a data URI.
+
+    Ownership is enforced in the WHERE clause, so a leaked row id still cannot
+    read another user's upload.
+    """
+    pool = get_pool(request)
+    row = await pool.fetchrow(
+        """
+        SELECT image_data, image_name, image_mime
+        FROM kam_scorecards WHERE id = $1 AND user_id = $2
+        """,
+        row_id,
+        user["sub"],
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scorecard not found")
+    return {
+        "success": True,
+        "data": {
+            "image_data": row["image_data"],
+            "image_name": row["image_name"],
+            "image_mime": row["image_mime"],
+        },
     }
 
 
@@ -189,35 +303,120 @@ async def create_scorecard(
     user: dict = Depends(require_report_access("kam-performance-dfw")),
 ):
     pool = get_pool(request)
+    image = body.image_data or None
     row = await pool.fetchrow(
         """
         INSERT INTO kam_scorecards (
-          user_id, customer, scorecard_date, scorecard_frequency,
+          user_id, customer, scorecard_date, scorecard_frequency, percentage,
+          image_data, image_name, image_mime,
           uploaded_by_email, uploaded_by_name
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, customer, scorecard_date, scorecard_frequency,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, customer, scorecard_date, scorecard_frequency, percentage,
+                  (image_data IS NOT NULL AND image_data <> '') AS has_image,
+                  image_name, image_mime,
                   uploaded_by_email, uploaded_by_name, created_at
         """,
         user["sub"],
         body.customer.strip(),
         body.scorecard_date,
         body.scorecard_frequency.strip(),
+        body.percentage,
+        image,
+        (body.image_name or "").strip() or None,
+        _image_mime(image),
         user.get("email"),
         user.get("name"),
     )
+    return {"success": True, "data": _scorecard_out(row)}
+
+
+def _scorecard_out(row) -> dict:
+    """Wire shape shared by create/update — never includes the image blob."""
     return {
-        "success": True,
-        "data": {
-            "id": str(row["id"]),
-            "customer": row["customer"],
-            "scorecard_date": _iso(row["scorecard_date"]),
-            "scorecard_frequency": row["scorecard_frequency"],
-            "uploaded_by_email": row["uploaded_by_email"],
-            "uploaded_by_name": row["uploaded_by_name"],
-            "created_at": _iso(row["created_at"]),
-        },
+        "id": str(row["id"]),
+        "customer": row["customer"],
+        "scorecard_date": _iso(row["scorecard_date"]),
+        "scorecard_frequency": row["scorecard_frequency"],
+        "percentage": float(row["percentage"]) if row["percentage"] is not None else None,
+        "has_image": bool(row["has_image"]),
+        "image_name": row["image_name"],
+        "image_mime": row["image_mime"],
+        "uploaded_by_email": row["uploaded_by_email"],
+        "uploaded_by_name": row["uploaded_by_name"],
+        "created_at": _iso(row["created_at"]),
     }
+
+
+@router.patch("/scorecards/{row_id}")
+async def update_scorecard(
+    row_id: UUID,
+    body: ScorecardUpdate,
+    request: Request,
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    """Partial update — lets Percentage and the image be set on an existing row.
+
+    The table had no update verb before this round (create + delete only), so
+    without it "add an option to upload an image" would only ever work at
+    creation time.
+    """
+    pool = get_pool(request)
+    sets: list[str] = []
+    params: list = []
+
+    def _add(col: str, val) -> None:
+        params.append(val)
+        sets.append(f"{col} = ${len(params)}")
+
+    if body.customer is not None:
+        _add("customer", body.customer.strip())
+    if body.scorecard_date is not None:
+        _add("scorecard_date", body.scorecard_date)
+    if body.scorecard_frequency is not None:
+        _add("scorecard_frequency", body.scorecard_frequency.strip())
+    # percentage_set distinguishes "clear it" (None + flag) from "leave it".
+    if body.percentage is not None or body.percentage_set:
+        _add("percentage", body.percentage)
+    if body.image_data is not None:
+        image = body.image_data or None  # "" clears the image
+        _add("image_data", image)
+        _add("image_mime", _image_mime(image))
+        if image is None:
+            # Clearing the image clears its filename with it.
+            _add("image_name", None)
+        elif body.image_name is not None:
+            _add("image_name", body.image_name.strip() or None)
+        # else: replacing the bytes without sending a name leaves the stored
+        # name alone — "omitted fields are untouched", as the docstring says.
+    elif body.image_name is not None:
+        # Renaming without re-uploading has to work on its own, or it silently
+        # falls through to the "Nothing to update" 400 below.
+        _add("image_name", body.image_name.strip() or None)
+
+    if not sets:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    sets.append("updated_at = NOW()")
+    params.append(row_id)
+    p_id = len(params)
+    params.append(user["sub"])
+    p_user = len(params)
+
+    row = await pool.fetchrow(
+        f"""
+        UPDATE kam_scorecards SET {", ".join(sets)}
+        WHERE id = ${p_id} AND user_id = ${p_user}
+        RETURNING id, customer, scorecard_date, scorecard_frequency, percentage,
+                  (image_data IS NOT NULL AND image_data <> '') AS has_image,
+                  image_name, image_mime,
+                  uploaded_by_email, uploaded_by_name, created_at
+        """,
+        *params,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scorecard not found")
+    return {"success": True, "data": _scorecard_out(row)}
 
 
 @router.delete("/scorecards/{row_id}")

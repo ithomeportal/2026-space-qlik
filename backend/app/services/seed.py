@@ -189,6 +189,26 @@ CUSTOM_REPORTS = [
         "roles": ["DFW"],
     },
     {
+        "key": "booker-performance-scorecard",  # -> /reports/booker-performance-scorecard
+        "title": "Booker Performance Scorecard",
+        "description": "Per-booker scorecard over the DFW Bookings universe — #Orders, Profit, Margin %, Avg Margin/Load, Broken Threshold, OTP/OTD + 10-week trend",
+        "note": (
+            "TEAM-DFW only · same Rate-Conf-Received universe as Podium Set DFW · "
+            "Carrier Cost = Revenue − Profit · Broken Threshold joins AP_module "
+            "loads_to_cover.thresh (hand-entered, ~60% coverage — always read it "
+            "against 'of N orders with a threshold') · OTP/OTD from "
+            "scorecard_incidents_portal, orders not yet picked up count as on-time · "
+            "the 10-week chart ignores the date filter by design"
+        ),
+        "category": "Operations",
+        "tags": [
+            "dfw", "booker", "scorecard", "rate-conf", "otp", "otd",
+            "threshold", "margin", "profit", "weekly",
+        ],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "DFW", "Operations"],
+    },
+    {
         "key": "dfw-podium-top",  # -> /reports/dfw-podium-top
         "title": "DFW Podium Top",
         "description": "DFW Bookers leaderboards — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists",
