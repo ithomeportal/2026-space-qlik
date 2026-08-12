@@ -214,7 +214,12 @@ export function OverviewTab({ filters, entityLabel }: Props) {
           <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
         </div>
       ) : (
-        <CustomerAttritionChart data={ca?.weeks ?? []} />
+        <CustomerAttritionChart
+          data={ca?.weeks ?? []}
+          /* One customer ⇒ the ratio degenerates into shipping frequency; the
+             chart explains itself instead of plotting ±700% spikes. */
+          singleCustomer={Boolean(filters.customer)}
+        />
       )}
 
       {/* WoW Total $Var headline + by-team line */}

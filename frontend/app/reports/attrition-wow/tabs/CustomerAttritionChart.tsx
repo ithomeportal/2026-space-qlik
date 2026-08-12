@@ -52,8 +52,11 @@ import { fmtCount1, fmtPct } from "../format"
 // formatter typing).
 export function CustomerAttritionChart({
   data,
+  singleCustomer = false,
 }: {
   data: CustomerAttritionPoint[]
+  /** True when the report is filtered to ONE customer — see below. */
+  singleCustomer?: boolean
 }) {
   const rows = useMemo(
     () =>
@@ -93,6 +96,36 @@ export function CustomerAttritionChart({
       Math.ceil((hi + pad) * 20) / 20,
     ] as const
   }, [rows])
+
+  // Under a single-customer filter this measure stops meaning what its title
+  // says. The numerator collapses to 0 or 1 and the denominator to (active
+  // weeks)/8, so the ratio becomes 8/(active weeks) — a lumpy step function
+  // reading ±100%, ±700% and so on. It is describing how OFTEN that one
+  // customer ships, not attrition of a customer base, and a −700% spike reads
+  // as a broken chart. Suppress the line and say why, rather than render a
+  // number nobody should act on. (The card above has the same property by
+  // construction since R17 — the union denominator used to mask it by pinning
+  // this view at a clean 100%.)
+  if (singleCustomer) {
+    return (
+      <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+        <div className="mb-1 text-base font-semibold text-[#1B3A5C]">
+          Customer Attrition
+        </div>
+        <div className="flex h-[180px] items-center justify-center px-6">
+          <p className="max-w-md text-center text-[12px] leading-relaxed text-[#6B7280]">
+            Not shown for a single customer. This measure compares how many
+            distinct customers shipped this week against the weekly average of
+            the prior 8 weeks — with one customer selected it can only be 0 or
+            1 over that average, so it reports shipping frequency, not
+            attrition. Clear the customer filter to see the trend, or use{" "}
+            <span className="font-medium text-[#374151]">Weekly Loads</span> above
+            for this customer&apos;s own cadence.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
