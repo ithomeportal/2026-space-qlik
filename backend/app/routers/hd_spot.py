@@ -653,7 +653,7 @@ async def freshness(
     30 min, so >90 min without an update means two missed runs — that threshold
     is the only reason a 3-day outage of this pipeline became visible last time.
     """
-    out: dict[str, Any] = {"spot": None, "gold": None, "stale_minutes": None}
+    out: dict[str, Any] = {"spot": None, "gold": None, "spot_stale_minutes": None}
     try:
         pricing = get_pricing_pool(request)
         async with pricing.acquire() as conn:
