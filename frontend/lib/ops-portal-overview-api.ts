@@ -405,7 +405,21 @@ export interface OppCoverRow {
   customer_name: string
   /** First-movement payee_name; '' when no carrier is assigned yet. */
   carrier: string
-  /** First-movement carrier_phone; '' when absent (~2/3 of open loads). */
+  /**
+   * First-movement `override_driver_nm` — Bruno (PDF 2026-08-12) R2's new
+   * **"Driver Name"** column, rendered between Carrier and Carrier Phone.
+   * Free text in McLeod; '' on ~75% of covered loads (28/112 measured).
+   */
+  driver_name: string
+  /**
+   * First-movement **`override_drvr_cell`** — Bruno (PDF 2026-08-12) R1 replaced
+   * the old `movement.carrier_phone` source here. The wire name is deliberately
+   * unchanged (§34 inverted: the header still reads "Carrier Phone", only the
+   * source column moved). '' on ~77% of covered loads (26/112 measured, down
+   * from 59/112 under carrier_phone — an accepted, requested regression).
+   * Free text: values like "TBD" / "x" / "will advise" occur, so never assume
+   * this is dialable.
+   */
   carrier_phone: string
   /** ISO orig scheduled early/late pickup (customer_windows); may be null. */
   orig_sched_early: string | null

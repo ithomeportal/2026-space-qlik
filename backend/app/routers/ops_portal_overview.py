@@ -2364,7 +2364,8 @@ async def cover(
       CORP scope, essentially all in the current month, with only 1-5 stragglers
       in any prior month. Windowing it would return ~0 rows the moment the user
       picked "Last Month", which defeats the purpose of a coverage board.
-    * **Carrier + phone both come from the first movement** (§5 LATERAL LIMIT 1;
+    * **Carrier, driver name and phone all come from the first movement** (§5
+      LATERAL LIMIT 1;
       ``movement`` fans out to max 5 rows per A-order). ``budget_report_v4`` has
       no carrier column at all. ``mcleod_gld_dispatchers.carrier_name`` was
       evaluated as a fallback and rejected: it adds only 4 of 121 carrier names
@@ -2373,6 +2374,18 @@ async def cover(
       raw ``d.id =`` lookup is sargable — it would seq-scan 209k rows per order.
       Sourcing name and phone from the same row also guarantees they agree.
       A blank carrier here legitimately means "not covered yet".
+    * **Driver name / phone (Bruno PDF 2026-08-12).** ``driver_name`` =
+      ``override_driver_nm``; the "Carrier Phone" column now renders
+      ``override_drvr_cell`` instead of ``carrier_phone``. Measured on the live
+      112-covered-load board: carrier_phone 59/112, override_drvr_cell 26/112,
+      override_driver_nm 28/112 — the swap is a deliberate net loss of ~40
+      displayed numbers, requested explicitly. Verified that **no** covered
+      order carries driver data only on a *later* movement, so the existing
+      first-movement pin costs nothing. The ``company_id`` predicate is kept
+      even though the request said "join on order_id": 6 covered orders' order_id
+      exists under two company_ids, and dropping it would pick the wrong row.
+      Both columns are free text in McLeod ("TBD", "x", "will advise" all
+      occur), so the frontend must not assume a dialable number.
     * ``orig_orig_sched_early/late`` carry **1900-01-01 sentinels, not NULL**, so
       both are guarded ``> '2000-01-01'`` (§42 correlated LATERAL on
       ``TRIM(UPPER(id))``; customer_windows is clean order-grain, max 1 row/id).
@@ -2412,8 +2425,13 @@ async def cover(
           TRIM(br4.id)      AS order_id,
           TRIM(br4.team_id) AS team_id,
           br4.customer_name AS customer_name,
-          COALESCE(TRIM(mov.payee_name), '')    AS carrier,
-          COALESCE(TRIM(mov.carrier_phone), '') AS carrier_phone,
+          COALESCE(TRIM(mov.payee_name), '')         AS carrier,
+          COALESCE(TRIM(mov.override_driver_nm), '')  AS driver_name,
+          -- Bruno PDF 2026-08-12 R1: the phone shown on the Cover board is the
+          -- DRIVER's cell (movement.override_drvr_cell), not movement.carrier_phone.
+          -- The wire field keeps its old name because the on-screen column is
+          -- still "Carrier Phone" — only the source column moved (§34 inverted).
+          COALESCE(TRIM(mov.override_drvr_cell), '')  AS carrier_phone,
           to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
           to_char(win.sched_late,  'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_late,
           to_char(win.arrive_late, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_arrive_late,
@@ -2440,7 +2458,7 @@ async def cover(
             WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
         ) win ON TRUE
         LEFT JOIN LATERAL (
-            SELECT m.payee_name, m.carrier_phone
+            SELECT m.payee_name, m.override_driver_nm, m.override_drvr_cell
             FROM public.mcleod_gld_movement m
             WHERE m.order_id = br4.id AND m.company_id = br4.company_id
             ORDER BY m.movement_id ASC
@@ -2475,6 +2493,7 @@ async def cover(
             "team_id":                r["team_id"],
             "customer_name":          r["customer_name"] or "",
             "carrier":                r["carrier"],
+            "driver_name":            r["driver_name"],
             "carrier_phone":          r["carrier_phone"],
             "orig_sched_early":       r["orig_sched_early"],
             "orig_sched_late":        r["orig_sched_late"],

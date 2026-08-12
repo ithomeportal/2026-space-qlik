@@ -26,6 +26,9 @@ const COVER_COLUMNS: {
   { label: "Team", key: "team_id", align: "left" },
   { label: "Customer", key: "customer_name", align: "left" },
   { label: "Carrier", key: "carrier", align: "left" },
+  // Bruno (PDF 2026-08-12) R2 — movement.override_driver_nm, seated between
+  // Carrier and Carrier Phone so the driver's name and cell read together.
+  { label: "Driver Name", key: "driver_name", align: "left" },
   { label: "Carrier Phone", key: "carrier_phone", align: "left" },
   // The wire field keeps its old name; only the header moved (§34).
   { label: "Orig Orig Late", key: "orig_sched_late", align: "left" },
@@ -46,6 +49,11 @@ function coverDirForKey(key: string): SortDir {
   return MONEY_KEYS.has(key as keyof OppCoverRow) ? "desc" : "asc"
 }
 
+// The pinned TOTAL label spans every column left of the money block. Derived,
+// not hardcoded: adding a column (R2's "Driver Name") used to require hand-
+// bumping a literal 8, and missing it silently shifts the whole totals row.
+const TOTAL_LABEL_COLSPAN = COVER_COLUMNS.length - MONEY_KEYS.size
+
 // A blank carrier is meaningful (not covered yet); kept defensive even though
 // the Cover board now only receives carrier-assigned rows.
 function CarrierCell({ carrier }: { carrier: string }) {
@@ -53,15 +61,26 @@ function CarrierCell({ carrier }: { carrier: string }) {
   return <span className="text-[#374151]">{carrier}</span>
 }
 
+// `override_driver_nm`, from the same movement row as the carrier and the cell,
+// so all three always agree. Free text; blank on ~75% of covered loads.
+function DriverCell({ name }: { name: string }) {
+  if (!name) return <span className="text-[#9CA3AF]">—</span>
+  return <span className="text-[#374151]">{name}</span>
+}
+
 // Phone comes from the same movement row as the carrier name, so the two always
-// agree. It is absent on roughly two thirds of open loads.
+// agree. Bruno (PDF 2026-08-12) R1 repointed it at `override_drvr_cell` — the
+// driver's cell — which is FREE TEXT in McLeod: "TBD", "x" and "will advise" all
+// occur. Only wrap it in a tel: link when enough digits survive stripping,
+// otherwise `href="tel:"` would render a dead link on placeholder text.
 function PhoneCell({ phone }: { phone: string }) {
   if (!phone) return <span className="text-[#9CA3AF]">—</span>
+  const dialable = phone.replace(/[^\d+]/g, "")
+  if (dialable.replace(/\D/g, "").length < 7) {
+    return <span className="text-[#374151]">{phone}</span>
+  }
   return (
-    <a
-      href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-      className="tabular-nums text-[#2563EB] hover:underline"
-    >
+    <a href={`tel:${dialable}`} className="tabular-nums text-[#2563EB] hover:underline">
       {phone}
     </a>
   )
@@ -104,7 +123,7 @@ export default function CoverTable({
             row list is LIMIT-capped (§44). */}
         {totals && (
           <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
-            <td className="px-2 py-1.5" colSpan={8}>
+            <td className="px-2 py-1.5" colSpan={TOTAL_LABEL_COLSPAN}>
               TOTAL · {totals.n_orders.toLocaleString()} covered loads
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
@@ -134,6 +153,7 @@ export default function CoverTable({
                 {r.customer_name || <span className="text-[#9CA3AF]">—</span>}
               </td>
               <td className="px-2 py-1.5"><CarrierCell carrier={r.carrier} /></td>
+              <td className="px-2 py-1.5"><DriverCell name={r.driver_name} /></td>
               <td className="px-2 py-1.5"><PhoneCell phone={r.carrier_phone} /></td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_late)}</td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_arrive_late)}</td>
