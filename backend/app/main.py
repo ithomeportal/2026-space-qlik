@@ -29,6 +29,7 @@ from app.routers import (
     ceo_cockpit,
     ceo_executive,
     dfw_losses,
+    hd_spot,
     hr_access_doors,
     it_tickets,
     kam_performance_dfw,
@@ -721,6 +722,28 @@ async def lifespan(app: FastAPI):
     else:
         app.state.freshservice_pool = None
 
+    # Pool for modern_pricing_portal (the quoting portal's own DB). Read-only,
+    # SELECT on spot_report_condensed only. Powers the HD Spot report's funnel
+    # half; the money half comes from the gold pool and is merged in Python
+    # (the two are separate databases — no dblink/fdw, see §56).
+    if settings.PRICING_DATABASE_URL:
+        try:
+            app.state.pricing_pool = await asyncpg.create_pool(
+                settings.PRICING_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                command_timeout=40,
+                init=_set_cst_session,
+            )
+            logger.info("Pricing portal pool connected — powers HD Spot")
+        except Exception as e:
+            logger.warning(
+                f"Pricing portal DB connect failed: {e}. HD Spot will 503."
+            )
+            app.state.pricing_pool = None
+    else:
+        app.state.pricing_pool = None
+
     # Fifth pool for unilink_portal_ap (the AP_module app's own DB — carriers +
     # fmcsa_sms_data). Read-only. Powers the Carrier SMS Score report.
     if settings.AP_DATABASE_URL:
@@ -943,6 +966,8 @@ async def lifespan(app: FastAPI):
         await app.state.automations_pool.close()
     if getattr(app.state, "freshservice_pool", None):
         await app.state.freshservice_pool.close()
+    if getattr(app.state, "pricing_pool", None):
+        await app.state.pricing_pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -1002,6 +1027,7 @@ app.include_router(scoped_access_doors.pricing_router, prefix="/api")
 app.include_router(scoped_access_doors.carrier_procurement_router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
+app.include_router(hd_spot.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")

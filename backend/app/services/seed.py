@@ -301,6 +301,32 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Finance"],
     },
     {
+        "key": "hd-spot",  # -> /reports/hd-spot  (Bruno PDF 2026-08-12)
+        "title": "HD Spot",
+        "description": "Home Depot spot performance — Offered / Quoted / Participation / Awarded / Conversion plus covered revenue, profit and margin by equipment and day",
+        "note": (
+            "Portal version of the daily 'HD PERFORMANCE - SPOT' email (n8n "
+            "P36cH2hbx71viRBW) — same formulas, so the numbers agree · funnel from "
+            "modern_pricing_portal.spot_report_condensed (customer HOME DEPOT), money "
+            "from mcleod_gld_customer_view + budget_report_v4, merged in Python on "
+            "order_number = blnum · Awarded = award_status 'WON' only (ACCEPT is a "
+            "pending price, not a win) · Quoted = buy_rate IS NOT NULL · excludes the "
+            "frozen legacy_hd/legacy imports (volume is NULL there), so data starts "
+            "2026-03-01 · Revenue/Profit/Margin KPIs are the COVERED basis; blended "
+            "margin is inflated by cancelled loads (~100%) and unpaid pending ones · "
+            "Loads has no contract-type filter while the splits are SPOT-only, so "
+            "Loads != Cancelled + Covered + Pending · Status filter scopes the money "
+            "columns only (a lost quote has no order status)"
+        ),
+        "category": "Operations",
+        "tags": [
+            "home depot", "hd", "spot", "pricing", "quoting", "offered", "quoted",
+            "awarded", "conversion", "participation", "margin", "funnel",
+        ],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "Procurement", "Sales", "Operations"],
+    },
+    {
         "key": "dfw-losses",  # -> /reports/dfw-losses  (Bruno PDF 2026-07-20)
         "title": "DFW Losses",
         "description": "DFW loss loads: daily loads / amount lost / loss-per-load, one column per DFW customer, plus biggest-offender lanes",

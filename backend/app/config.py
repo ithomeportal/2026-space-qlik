@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # fmcsa_sms_data). Read-only. Powers the Carrier SMS Score report.
     # Percent-encode $ -> %24 in the URL (Render strips $$).
     AP_DATABASE_URL: str = ""
+    # Aiven modern_pricing_portal — the quoting portal's own DB. Read-only,
+    # SELECT on spot_report_condensed ONLY (role spaceqlik_pricing_ro).
+    # Source of the HD Spot funnel (offered/quoted/awarded).
+    # Percent-encode $ -> %24 in the URL (Render strips $$).
+    PRICING_DATABASE_URL: str = ""
     # UNLK-Financial DB (read-only) — exchange_rates table (Banxico FIX = DOF).
     # Optional: used only to PREFILL a suggested FX on Bonus Calculator; the
     # HR board-pinned rate is authoritative. Percent-encode $ -> %24 in the URL.

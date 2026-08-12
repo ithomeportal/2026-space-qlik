@@ -66,6 +66,18 @@ def get_ap_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def get_pricing_pool(request: Request) -> asyncpg.Pool:
+    """Pool for modern_pricing_portal — the quoting portal's own DB
+    (spot_report_condensed). Powers the HD Spot report."""
+    pool = getattr(request.app.state, "pricing_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Pricing portal data source not configured",
+        )
+    return pool
+
+
 def require_tag_role(*allowed: str):
     """Factory: require the user to have at least one of the given tag roles (admin bypasses).
 

@@ -33,6 +33,7 @@ import {
   Stethoscope,
   Target,
   TrendingDown,
+  Store,
   TrendingUp,
   Trophy,
   Truck,
@@ -132,6 +133,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Pricing - Access Log Doors":     { icon: DoorOpen,       family: "operations" },
   "Carrier Procurement - Access Log Doors":
                                     { icon: DoorOpen,       family: "procurement" },
+  "HD Spot":                        { icon: Store,          family: "operations" },
   "Podium Set DFW":                 { icon: Trophy,         family: "dfw" },
   "Booker Performance Scorecard":   { icon: ClipboardCheck, family: "dfw" },
   "DFW Podium Top":                 { icon: Trophy,         family: "dfw", tag: "Top" },
