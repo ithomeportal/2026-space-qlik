@@ -42,6 +42,16 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
     return Math.ceil(max) + 2
   }, [rows])
 
+  // Data labels are requested (Request 4), but they only stay legible while the
+  // series is short. A Custom range can span months — ~180 daily points — and
+  // Recharts' LabelList has no overlap avoidance (the QuickChart version of this
+  // chart relies on the datalabels plugin's `display:'auto'`, which has no
+  // equivalent here). Above the threshold the labels would overprint into an
+  // unreadable smear, so they are dropped and the tooltip carries the values.
+  // A month (31) and MTD both stay under it, which is the everyday case.
+  const LABEL_LIMIT = 45
+  const showLabels = rows.length <= LABEL_LIMIT
+
   if (error) {
     return (
       <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs text-[#991B1B]">
@@ -58,6 +68,9 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
         </h2>
         <span className="text-[10px] text-[#9CA3AF]">
           by day · follows the date filter
+          {!showLabels && rows.length > 0
+            ? ` · labels hidden over ${LABEL_LIMIT} days — hover for values`
+            : ""}
         </span>
       </div>
 
@@ -101,6 +114,7 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
             >
               {/* Data labels (Request 4). Zero days return null so the label is
                   hidden rather than printing a row of 0s. */}
+              {showLabels && (
               <LabelList
                 dataKey="awarded"
                 position="top"
@@ -112,6 +126,7 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
                     : n.toLocaleString("en-US")
                 }}
               />
+              )}
             </Bar>
             <Line
               yAxisId="right"
@@ -125,6 +140,7 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
             >
               {/* Anchored BELOW the line: conversion = awarded/quoted traces the
                   bar tops, so labels above would overprint the bar labels. */}
+              {showLabels && (
               <LabelList
                 dataKey="conversion"
                 position="bottom"
@@ -134,6 +150,7 @@ export function AwardedChart({ filters }: { filters: HdSpotFilters }) {
                   return v === null || v === undefined || !n ? null : `${n.toFixed(1)}%`
                 }}
               />
+              )}
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
