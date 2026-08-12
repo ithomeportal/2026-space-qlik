@@ -25,11 +25,9 @@ from app.routers import (
     budget_followup,
     carrier_risk,
     carrier_sms,
-    admin_access_doors,
     carriers_savings,
     ceo_cockpit,
     ceo_executive,
-    dfw_access_doors,
     dfw_losses,
     hr_access_doors,
     it_tickets,
@@ -995,9 +993,10 @@ for _team_router in xray_dfw_team.team_routers:
 app.include_router(ceo_executive.router, prefix="/api")
 app.include_router(ceo_cockpit.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
-app.include_router(dfw_access_doors.router, prefix="/api")
-app.include_router(admin_access_doors.router, prefix="/api")
-# Scope-locked Access Log Doors clones (Bruno PDF 2026-08-12)
+# Scope-locked Access Log Doors clones — all five share one factory
+# (`scoped_access_doors.py`); DFW + Admin migrated onto it 2026-08-12.
+app.include_router(scoped_access_doors.dfw_router, prefix="/api")
+app.include_router(scoped_access_doors.admin_router, prefix="/api")
 app.include_router(scoped_access_doors.ops_router, prefix="/api")
 app.include_router(scoped_access_doors.pricing_router, prefix="/api")
 app.include_router(scoped_access_doors.carrier_procurement_router, prefix="/api")

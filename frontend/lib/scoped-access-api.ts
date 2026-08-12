@@ -3,8 +3,10 @@
 import { useQuery } from "@tanstack/react-query"
 
 /**
- * Shared React Query layer for the scope-locked "Access Log Doors" reports
- * (OPS / Pricing / Carrier Procurement — Bruno PDF 2026-08-12).
+ * Shared React Query layer for the scope-locked "Access Log Doors" reports —
+ * DFW, Admin, OPS, Pricing and Carrier Procurement. (OPS/Pricing/CP added by
+ * Bruno PDF 2026-08-12; DFW + Admin migrated off their own copy-pasted libs
+ * onto this one the same day.)
  *
  * Every hook takes the report `slug` as its first argument and threads it into
  * both the URL and the `queryKey`, so the three reports never share a cache
@@ -49,6 +51,8 @@ const SCOPED_RETRY = {
 // ---------------------------------------------------------------------------
 
 export type ScopedAccessSlug =
+  | "dfw-access-doors"
+  | "admin-access-doors"
   | "ops-access-doors"
   | "pricing-access-doors"
   | "carrier-procurement-access-doors"
@@ -211,8 +215,8 @@ export function useScopedAccessByJobTitle(
 }
 
 // ---------------------------------------------------------------------------
-// Formatters (kept identical to hr-access-api / dfw-access-api so the five
-// Access Log Doors reports render the same numbers the same way)
+// Formatters (kept identical to hr-access-api so all five Access Log Doors
+// reports render the same numbers the same way)
 // ---------------------------------------------------------------------------
 
 export const INT_COUNT = new Intl.NumberFormat("en-US")

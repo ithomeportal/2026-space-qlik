@@ -1,21 +1,26 @@
-"""Code-made reports: scope-locked clones of `HR - Access Log Doors`.
+"""Code-made reports: every scope-locked clone of `HR - Access Log Doors`.
 
-Bruno PDF 2026-08-12 asked for three more department/role-locked copies of the
-Access Log Doors report:
+One factory — `build_scoped_access_doors_router` — instantiated once per report.
+The emitted SQL differs ONLY in the gate fragment, so all five reports stay
+numerically comparable and a fix lands once:
 
+  * ``DFW - Access Log Doors``                 -> ``dep = 'Operations (DFW)'``
+  * ``Admin - Access Log Doors``               -> ``dep = 'Admin'``
   * ``OPS - Access Log Doors``                 -> ``dep = 'Operations'``
   * ``Pricing - Access Log Doors``             -> ``dep = 'Pricing'``
   * ``Carrier Procurement - Access Log Doors`` -> ``jt IN ('Carrier Procurement',
                                                   'Carrier Procurement Team Leader')``
 
-The two pre-existing clones (`dfw_access_doors.py`, `admin_access_doors.py`)
-are near-verbatim 330-line copies of each other that differ in exactly one
-constant. Rather than paste that file three more times, this module exposes a
-factory — `build_scoped_access_doors_router` — and instantiates it once per
-report. The SQL it emits is byte-identical to the DFW/Admin routers apart from
-the gate fragment, so the numbers stay comparable across all five reports.
+History: DFW (2026-04-28) and Admin (2026-05-07) each began as a hand-written
+~330-line router; the two were near-verbatim copies differing in one constant.
+Bruno's PDF of 2026-08-12 asked for three more, which would have made five
+copies — so that round introduced this factory for the three new reports, then
+migrated DFW and Admin onto it. The migration was gated on a harness that
+called every endpoint on both the old and new implementations with a stub pool
+and diffed the emitted SQL + params: all 12 queries came out identical, so
+neither live report changed.
 
-Design rules carried over from the existing clones:
+Design rules:
   * the gate is a hard-coded SQL literal applied to `scored` in EVERY endpoint,
     so no query string can widen the scope (server-locked, not UI-locked)
   * the front-end therefore drops the Department dropdown entirely (and the
@@ -354,11 +359,27 @@ def build_scoped_access_doors_router(
 
 
 # --------------------------------------------------------------------------
-# The three scope-locked reports (Bruno PDF 2026-08-12)
+# The scope-locked reports
 # --------------------------------------------------------------------------
 
 # `dep` values below are the CANONICAL spellings produced by
 # `_DEPARTMENT_NORMALIZED` in hr_access_doors.py — not the raw source values.
+
+# DFW + Admin: migrated here 2026-08-12 from `dfw_access_doors.py` /
+# `admin_access_doors.py`, both deleted in the same commit (see the module
+# docstring for how equivalence was proven before the swap).
+dfw_router = build_scoped_access_doors_router(
+    report_key="dfw-access-doors",
+    gate_sql="AND dep = 'Operations (DFW)'",
+    scope_label="Operations (DFW)",
+)
+
+admin_router = build_scoped_access_doors_router(
+    report_key="admin-access-doors",
+    gate_sql="AND dep = 'Admin'",
+    scope_label="Admin",
+)
+
 ops_router = build_scoped_access_doors_router(
     report_key="ops-access-doors",
     gate_sql="AND dep = 'Operations'",
