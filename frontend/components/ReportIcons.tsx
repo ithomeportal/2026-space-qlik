@@ -128,6 +128,10 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "HR - Access Log Doors":          { icon: DoorOpen,       family: "hr" },
   "DFW - Access Log Doors":         { icon: DoorOpen,       family: "dfw" },
   "Admin - Access Log Doors":       { icon: DoorOpen,       family: "admin" },
+  "OPS - Access Log Doors":         { icon: DoorOpen,       family: "operations" },
+  "Pricing - Access Log Doors":     { icon: DoorOpen,       family: "operations" },
+  "Carrier Procurement - Access Log Doors":
+                                    { icon: DoorOpen,       family: "procurement" },
   "Podium Set DFW":                 { icon: Trophy,         family: "dfw" },
   "Booker Performance Scorecard":   { icon: ClipboardCheck, family: "dfw" },
   "DFW Podium Top":                 { icon: Trophy,         family: "dfw", tag: "Top" },

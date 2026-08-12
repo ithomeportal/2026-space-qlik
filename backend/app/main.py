@@ -50,6 +50,7 @@ from app.routers import (
     reports_index,
     rfp_performance,
     sales_attrition_to_ops,
+    scoped_access_doors,
     search,
     track_award_loads,
     voip_calls,
@@ -996,6 +997,10 @@ app.include_router(ceo_cockpit.router, prefix="/api")
 app.include_router(hr_access_doors.router, prefix="/api")
 app.include_router(dfw_access_doors.router, prefix="/api")
 app.include_router(admin_access_doors.router, prefix="/api")
+# Scope-locked Access Log Doors clones (Bruno PDF 2026-08-12)
+app.include_router(scoped_access_doors.ops_router, prefix="/api")
+app.include_router(scoped_access_doors.pricing_router, prefix="/api")
+app.include_router(scoped_access_doors.carrier_procurement_router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")

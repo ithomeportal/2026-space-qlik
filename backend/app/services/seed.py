@@ -179,6 +179,36 @@ CUSTOM_REPORTS = [
         "roles": ["AdminFinance"],
     },
     {
+        "key": "ops-access-doors",  # -> /reports/ops-access-doors
+        "title": "OPS - Access Log Doors",
+        "description": "Fingerprint check-in log filtered to the Operations department — on-time vs late by employee, job-title and day",
+        "note": "Same engine as HR Access Log Doors but server-locked to dep='Operations' (excludes Operations (DFW), which has its own report); by-job-title bar replaces by-department · source: zk_gld_onlyfingerprint + timeoff_employee",
+        "category": "Operations",
+        "tags": ["ops", "operations", "attendance", "fingerprint", "on-time", "late", "access", "door"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "Operations", "OPs Manager"],
+    },
+    {
+        "key": "pricing-access-doors",  # -> /reports/pricing-access-doors
+        "title": "Pricing - Access Log Doors",
+        "description": "Fingerprint check-in log filtered to the Pricing department — on-time vs late by employee, job-title and day",
+        "note": "Same engine as HR Access Log Doors but server-locked to dep='Pricing'; by-job-title bar replaces by-department · source: zk_gld_onlyfingerprint + timeoff_employee",
+        "category": "Pricing",
+        "tags": ["pricing", "attendance", "fingerprint", "on-time", "late", "access", "door"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "Pricing"],
+    },
+    {
+        "key": "carrier-procurement-access-doors",  # -> /reports/carrier-procurement-access-doors
+        "title": "Carrier Procurement - Access Log Doors",
+        "description": "Fingerprint check-in log filtered to the Carrier Procurement team — on-time vs late by employee and day",
+        "note": "Same engine as HR Access Log Doors but server-locked by JOB TITLE, not department: jt IN ('Carrier Procurement','Carrier Procurement Team Leader'). Both titles sit in dep='Operations', so this is a subset of OPS Access Log Doors · source: zk_gld_onlyfingerprint + timeoff_employee",
+        "category": "Procurement",
+        "tags": ["carrier", "procurement", "attendance", "fingerprint", "on-time", "late", "access", "door"],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "Procurement"],
+    },
+    {
         "key": "podium-dfw",  # -> /reports/podium-dfw
         "title": "Podium Set DFW",
         "description": "Live DFW Rate-Conf Received podium: KPIs + today's bookings (Today / WTD / MTD)",

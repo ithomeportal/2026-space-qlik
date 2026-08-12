@@ -1,0 +1,382 @@
+"""Code-made reports: scope-locked clones of `HR - Access Log Doors`.
+
+Bruno PDF 2026-08-12 asked for three more department/role-locked copies of the
+Access Log Doors report:
+
+  * ``OPS - Access Log Doors``                 -> ``dep = 'Operations'``
+  * ``Pricing - Access Log Doors``             -> ``dep = 'Pricing'``
+  * ``Carrier Procurement - Access Log Doors`` -> ``jt IN ('Carrier Procurement',
+                                                  'Carrier Procurement Team Leader')``
+
+The two pre-existing clones (`dfw_access_doors.py`, `admin_access_doors.py`)
+are near-verbatim 330-line copies of each other that differ in exactly one
+constant. Rather than paste that file three more times, this module exposes a
+factory — `build_scoped_access_doors_router` — and instantiates it once per
+report. The SQL it emits is byte-identical to the DFW/Admin routers apart from
+the gate fragment, so the numbers stay comparable across all five reports.
+
+Design rules carried over from the existing clones:
+  * the gate is a hard-coded SQL literal applied to `scored` in EVERY endpoint,
+    so no query string can widen the scope (server-locked, not UI-locked)
+  * the front-end therefore drops the Department dropdown entirely (and the
+    Job Title dropdown too on Carrier Procurement, which is job-title-gated)
+  * `/by-job-title` replaces HR's `/by-department` — a single-department report
+    would render one useless bar
+  * the rolling-30-day trend keeps the gate but ignores the user's date filter
+
+Why `dep = 'Operations'` does NOT include DFW: `_DEPARTMENT_NORMALIZED` in
+`hr_access_doors` folds `Operations DFW` into the distinct canonical spelling
+`Operations (DFW)`, which already has its own report. Verified 2026-08-12
+against `aivn_datalake_gold` (last 90d, first punch/day, IT excluded):
+`Operations` 964 rows / 24 people · `Pricing` 385 / 7 · the two Carrier
+Procurement titles 134 / 3 (all of them inside `Operations`).
+
+The SQL fragments + helpers are imported from `hr_access_doors` so the
+on-time-reference rule and the department-drift normalization stay in one place.
+"""
+
+from datetime import date, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request
+
+from app.clock import cst_today
+from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.routers.hr_access_doors import (
+    _CHECK_MINUTES_EXPR,
+    _first_punch_cte,
+    _resolve_window,
+    _scored_cte,
+)
+
+# Sort keys accepted by /rows. Identical to the DFW/Admin clones.
+_SORT_SQL = {
+    "event_time_desc": "event_time DESC, nm DESC",
+    "event_time_asc": "event_time ASC, nm ASC",
+    "check_desc": "check_minutes DESC NULLS LAST",
+    "check_asc": "check_minutes ASC NULLS LAST",
+    "name_asc": "nm ASC, event_time DESC",
+    "job_title": "jt ASC, nm ASC",
+}
+_SORT_DEFAULT = "event_time DESC, nm DESC"
+
+
+def _build_filters_sql(
+    params: list,
+    name: Optional[str],
+    job_title: Optional[str],
+) -> str:
+    """Append name/job_title filter values to `params` and return the AND
+    fragment. Department is intentionally NOT a parameter — it's gated by the
+    router's fixed `gate_sql`."""
+    parts: list[str] = []
+    if name:
+        params.append(name)
+        parts.append(f"nm = ${len(params)}")
+    if job_title:
+        params.append(job_title)
+        parts.append(f"jt = ${len(params)}")
+    return ("".join(f" AND {p}" for p in parts)) if parts else ""
+
+
+def build_scoped_access_doors_router(
+    *,
+    report_key: str,
+    gate_sql: str,
+    scope_label: str,
+) -> APIRouter:
+    """Build a scope-locked Access Log Doors router.
+
+    Args:
+        report_key: stable custom-report key, e.g. ``"ops-access-doors"``. Drives
+            both the URL prefix (``/custom/<key>``) and the
+            ``require_report_access`` gate — the two must always agree.
+        gate_sql: the fixed scope predicate, already prefixed with ``AND`` and
+            written against the `scored` CTE columns (``dep`` / ``jt``). A SQL
+            literal by design: it must never be user-supplied.
+        scope_label: human-readable scope, used only in docstrings/logs.
+    """
+    router = APIRouter(tags=[report_key], prefix=f"/custom/{report_key}")
+    guard = require_report_access(report_key)
+
+    # ----------------------------------------------------------------------
+    # /filters  -- dropdown options for name / job_title (no department)
+    # ----------------------------------------------------------------------
+    @router.get("/filters")
+    async def filters(request: Request, _user: dict = Depends(guard)):
+        """Distinct job titles + employee names inside the locked scope over the
+        last 90 days. Department dropdown intentionally omitted — the report is
+        locked server-side."""
+        pool = get_datalake_gold_pool(request)
+        since = cst_today() - timedelta(days=90)
+
+        rows = await pool.fetch(
+            f"""
+            WITH {_first_punch_cte('$1', 'CURRENT_DATE')},
+            {_scored_cte()}
+            SELECT DISTINCT jt AS job_title, nm AS full_name
+            FROM scored
+            WHERE 1=1 {gate_sql}
+            """,
+            since,
+        )
+        return {
+            "success": True,
+            "data": {
+                "job_titles": sorted({r["job_title"] for r in rows if r["job_title"]}),
+                "names": sorted({r["full_name"] for r in rows if r["full_name"]}),
+                "today": cst_today().isoformat(),
+            },
+        }
+
+    # ----------------------------------------------------------------------
+    # /kpis
+    # ----------------------------------------------------------------------
+    @router.get("/kpis")
+    async def kpis(
+        request: Request,
+        start_date: Optional[date] = Query(None, description="YYYY-MM-DD, default today"),
+        end_date: Optional[date] = Query(None, description="YYYY-MM-DD, default today"),
+        name: Optional[str] = Query(None),
+        job_title: Optional[str] = Query(None),
+        _user: dict = Depends(guard),
+    ):
+        pool = get_datalake_gold_pool(request)
+        s, e = _resolve_window(start_date, end_date)
+
+        params: list = [s, e]
+        filters_sql = _build_filters_sql(params, name, job_title)
+
+        row = await pool.fetchrow(
+            f"""
+            WITH {_first_punch_cte('$1', '$2')},
+                 {_scored_cte()}
+            SELECT
+              COUNT(DISTINCT nm)                                           AS log_in_employees,
+              COUNT(*) FILTER (WHERE expected IS NULL)                     AS not_on_time_ref,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} >= 0)           AS on_time,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} <= -1)          AS out_of_time,
+              COUNT(*)                                                     AS total_rows
+            FROM scored
+            WHERE 1=1 {gate_sql} {filters_sql}
+            """,
+            *params,
+        )
+
+        data = dict(row) if row else {}
+        denom = int(data.get("total_rows") or 0) - int(data.get("not_on_time_ref") or 0)
+        data["pct_on_time"] = float(data["on_time"]) / denom if denom > 0 else None
+        data["pct_out_of_time"] = (
+            float(data["out_of_time"]) / denom if denom > 0 else None
+        )
+        data["window"] = {"start": s.isoformat(), "end": e.isoformat()}
+        return {"success": True, "data": data}
+
+    # ----------------------------------------------------------------------
+    # /rows
+    # ----------------------------------------------------------------------
+    @router.get("/rows")
+    async def rows(
+        request: Request,
+        start_date: Optional[date] = Query(None),
+        end_date: Optional[date] = Query(None),
+        name: Optional[str] = Query(None),
+        job_title: Optional[str] = Query(None),
+        sort: str = Query("event_time_desc"),
+        page: int = Query(1, ge=1),
+        limit: int = Query(100, ge=1, le=500),
+        _user: dict = Depends(guard),
+    ):
+        pool = get_datalake_gold_pool(request)
+        s, e = _resolve_window(start_date, end_date)
+        sort_sql = _SORT_SQL.get(sort, _SORT_DEFAULT)
+
+        offset = (page - 1) * limit
+        params: list = [s, e]
+        filters_sql = _build_filters_sql(params, name, job_title)
+
+        count_params = list(params)
+        params.extend([limit, offset])
+
+        rows_out = await pool.fetch(
+            f"""
+            WITH {_first_punch_cte('$1', '$2')},
+                 {_scored_cte()}
+            SELECT
+              nm                    AS full_name,
+              event_date::text      AS event_date,
+              event_time            AS event_time,
+              jt                    AS job_title,
+              dep                   AS department,
+              expected              AS on_time_reference,
+              CASE WHEN expected IS NULL THEN NULL ELSE {_CHECK_MINUTES_EXPR} END AS check_minutes
+            FROM scored
+            WHERE 1=1 {gate_sql} {filters_sql}
+            ORDER BY {sort_sql}
+            LIMIT ${len(params) - 1} OFFSET ${len(params)}
+            """,
+            *params,
+        )
+
+        total = await pool.fetchval(
+            f"""
+            WITH {_first_punch_cte('$1', '$2')},
+                 {_scored_cte()}
+            SELECT COUNT(*)
+            FROM scored
+            WHERE 1=1 {gate_sql} {filters_sql}
+            """,
+            *count_params,
+        )
+
+        data = [
+            {
+                "full_name": r["full_name"],
+                "event_date": r["event_date"],
+                "event_time": r["event_time"].isoformat() if r["event_time"] else None,
+                "job_title": r["job_title"],
+                "department": r["department"],
+                "on_time_reference": (
+                    r["on_time_reference"].isoformat() if r["on_time_reference"] else None
+                ),
+                "check_minutes": r["check_minutes"],
+            }
+            for r in rows_out
+        ]
+        return {
+            "success": True,
+            "data": data,
+            "meta": {
+                "total": total or 0,
+                "page": page,
+                "limit": limit,
+                "window": {"start": s.isoformat(), "end": e.isoformat()},
+            },
+        }
+
+    # ----------------------------------------------------------------------
+    # /trend-30d  -- rolling 30-day line, still scope-locked
+    # ----------------------------------------------------------------------
+    @router.get("/trend-30d")
+    async def trend_30d(
+        request: Request,
+        name: Optional[str] = Query(None),
+        job_title: Optional[str] = Query(None),
+        _user: dict = Depends(guard),
+    ):
+        """On-Time vs Out-of-Time per day, fixed-window last 30 days. Ignores the
+        user-selected date filter (rolling 30d) but NOT the scope gate — unlike
+        the HR original, which is deliberately global."""
+        pool = get_datalake_gold_pool(request)
+        end = cst_today()
+        start = end - timedelta(days=29)  # inclusive 30-day window
+
+        params: list = [start, end]
+        filters_sql = _build_filters_sql(params, name, job_title)
+
+        rows_out = await pool.fetch(
+            f"""
+            WITH {_first_punch_cte('$1', '$2')},
+                 {_scored_cte()}
+            SELECT
+              event_date::text AS event_date,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} >= 0)  AS on_time,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} <= -1) AS out_of_time
+            FROM scored
+            WHERE 1=1 {gate_sql} {filters_sql}
+            GROUP BY event_date
+            ORDER BY event_date ASC
+            """,
+            *params,
+        )
+        return {
+            "success": True,
+            "data": [dict(r) for r in rows_out],
+            "meta": {"window": {"start": start.isoformat(), "end": end.isoformat()}},
+        }
+
+    # ----------------------------------------------------------------------
+    # /by-job-title  -- bar chart (replaces /by-department, dept is fixed)
+    # ----------------------------------------------------------------------
+    @router.get("/by-job-title")
+    async def by_job_title(
+        request: Request,
+        start_date: Optional[date] = Query(None),
+        end_date: Optional[date] = Query(None),
+        name: Optional[str] = Query(None),
+        _user: dict = Depends(guard),
+    ):
+        """On-Time vs Out-of-Time per job title inside the locked scope for the
+        selected window. Ignores the job-title filter so the chart never
+        collapses to a single bar."""
+        pool = get_datalake_gold_pool(request)
+        s, e = _resolve_window(start_date, end_date)
+
+        params: list = [s, e]
+        # job_title=None on purpose — the chart shows every title regardless of
+        # the filter pill so the breakdown stays visible.
+        filters_sql = _build_filters_sql(params, name, None)
+
+        rows_out = await pool.fetch(
+            f"""
+            WITH {_first_punch_cte('$1', '$2')},
+                 {_scored_cte()}
+            SELECT
+              COALESCE(jt, '—')                                              AS job_title,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} >= 0)              AS on_time,
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} <= -1)             AS out_of_time,
+              COUNT(*) FILTER (WHERE expected IS NULL)                        AS unscored
+            FROM scored
+            WHERE 1=1 {gate_sql} {filters_sql}
+            GROUP BY COALESCE(jt, '—')
+            ORDER BY (
+              COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                 AND {_CHECK_MINUTES_EXPR} >= 0)
+              + COUNT(*) FILTER (WHERE expected IS NOT NULL
+                                   AND {_CHECK_MINUTES_EXPR} <= -1)
+            ) DESC
+            """,
+            *params,
+        )
+        return {
+            "success": True,
+            "data": [dict(r) for r in rows_out],
+            "meta": {"window": {"start": s.isoformat(), "end": e.isoformat()}},
+        }
+
+    return router
+
+
+# --------------------------------------------------------------------------
+# The three scope-locked reports (Bruno PDF 2026-08-12)
+# --------------------------------------------------------------------------
+
+# `dep` values below are the CANONICAL spellings produced by
+# `_DEPARTMENT_NORMALIZED` in hr_access_doors.py — not the raw source values.
+ops_router = build_scoped_access_doors_router(
+    report_key="ops-access-doors",
+    gate_sql="AND dep = 'Operations'",
+    scope_label="Operations",
+)
+
+pricing_router = build_scoped_access_doors_router(
+    report_key="pricing-access-doors",
+    gate_sql="AND dep = 'Pricing'",
+    scope_label="Pricing",
+)
+
+# Job-title-gated rather than department-gated (Request 6): both titles live in
+# `dep = 'Operations'`, so this report is a strict subset of ops-access-doors.
+carrier_procurement_router = build_scoped_access_doors_router(
+    report_key="carrier-procurement-access-doors",
+    gate_sql=(
+        "AND jt IN ('Carrier Procurement', 'Carrier Procurement Team Leader')"
+    ),
+    scope_label="Carrier Procurement",
+)

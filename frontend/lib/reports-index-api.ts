@@ -112,15 +112,37 @@ export const REPORT_OVERLAY: Record<string, ReportOverlay> = {
   },
   "hr-access-doors": {
     kpis: "Badge punch-ins: on-time vs late %, check-minutes, by-department, 30-day trend",
-    related: ["dfw-access-doors", "admin-access-doors"],
+    related: [
+      "dfw-access-doors",
+      "admin-access-doors",
+      "ops-access-doors",
+      "pricing-access-doors",
+      "carrier-procurement-access-doors",
+    ],
   },
   "dfw-access-doors": {
     kpis: "DFW badge punch-ins: on-time vs late %, check-minutes (DFW roster)",
-    related: ["hr-access-doors", "admin-access-doors"],
+    related: ["hr-access-doors", "admin-access-doors", "ops-access-doors"],
   },
   "admin-access-doors": {
     kpis: "Admin/Finance badge punch-ins: on-time vs late %, check-minutes",
     related: ["hr-access-doors", "dfw-access-doors"],
+  },
+  "ops-access-doors": {
+    kpis: "Operations badge punch-ins: on-time vs late %, check-minutes (excludes Operations (DFW))",
+    related: [
+      "hr-access-doors",
+      "dfw-access-doors",
+      "carrier-procurement-access-doors",
+    ],
+  },
+  "pricing-access-doors": {
+    kpis: "Pricing badge punch-ins: on-time vs late %, check-minutes",
+    related: ["hr-access-doors", "ops-access-doors"],
+  },
+  "carrier-procurement-access-doors": {
+    kpis: "Carrier Procurement badge punch-ins: on-time vs late % (job-title locked, subset of OPS)",
+    related: ["hr-access-doors", "ops-access-doors"],
   },
   "podium-dfw": {
     kpis: "DFW reps podium — loads, revenue, margin set with a date filter",
