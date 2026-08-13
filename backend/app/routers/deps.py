@@ -203,6 +203,30 @@ def require_report_access(*report_keys: str):
     return _check
 
 
+async def require_proxy(x_proxy_secret: Optional[str] = Header(None)) -> None:
+    """Prove the caller is our Next.js proxy — WITHOUT requiring a session.
+
+    `require_user` cannot be used by the login endpoints: they run *before* a
+    session exists, so there is no identity to forward. This is the same
+    `X-Proxy-Secret` check with the identity half removed.
+
+    ⚠ FAIL-OPEN while `PROXY_SHARED_SECRET` is unset, matching `require_user`
+    (deploying must never be able to take login down). For the login endpoints
+    that window is worth naming: unset ⇒ anyone on the internet could call
+    `/email-code/issue` or brute-force `/verify`. Two things bound it —
+    recipients are restricted to verified tenant domains, and both endpoints are
+    rate-limited — and it is not a regression, because the Next.js route these
+    replace (`/api/auth/verify-code`) was itself publicly reachable with no
+    secret at all. The secret IS set on both platforms today, so enforcement is
+    live.
+    """
+    expected = settings.PROXY_SHARED_SECRET
+    if expected:
+        if not x_proxy_secret or not hmac.compare_digest(x_proxy_secret, expected):
+            # Same deliberate vagueness as require_user.
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 async def require_user(
     authorization: str = Header(...),
     x_proxy_secret: Optional[str] = Header(None),

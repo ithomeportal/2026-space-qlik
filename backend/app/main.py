@@ -20,6 +20,7 @@ from app.routers import (
     admin,
     admin_cashflow,
     attrition_wow,
+    auth_email,
     bonus_calculator,
     booker_scorecard,
     budget_followup,
@@ -1057,6 +1058,9 @@ app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")
 app.include_router(bonus_calculator.router, prefix="/api")
+# Login-code issue/verify — replaces the frontend's direct Prisma access so
+# Vercel no longer needs DATABASE_URL (Aiven ip_filter remediation).
+app.include_router(auth_email.router, prefix="/api")
 
 
 @app.get("/api/health")

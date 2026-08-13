@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     MS_CLIENT_SECRET: str = ""
     MS_SEND_FROM: str = "ithome@unilinktransportation.com"
 
+    # Public origin of the Next.js frontend. Used ONLY to build the "click here
+    # to sign in directly" link in the login-code email, which replaces the old
+    # NextAuth magic link. Defaulted to production on purpose so the login mail
+    # keeps that affordance without needing a new Render env var (and therefore
+    # without a deploy to pick one up — Render bakes env at deploy time).
+    # Override per environment if a preview deployment ever needs its own link.
+    APP_BASE_URL: str = "https://space.unilinkportal.com"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
