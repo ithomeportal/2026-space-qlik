@@ -20,6 +20,7 @@ from app.services.lane_rates import (
     fetch_sonar_history,
     get_cached_rates,
     make_lane,
+    sonar_status,
     upsert_rates,
 )
 
@@ -121,12 +122,30 @@ async def prewarm_lane_market_rates(pool) -> dict:
             return_exceptions=True,
         )
 
+    # A revoked credential used to produce one warning per lane (4,063 of them
+    # on 2026-08-05) and STILL return status "ok" — the job reported success
+    # while writing nothing. Degrade the status so the failure is in the result,
+    # not only in the log.
+    sonar = sonar_status()
+    degraded = [] if sonar["ok"] else ["sonar"]
+    if todo_sonar and sonar_ok == 0 and "sonar" not in degraded:
+        degraded.append("sonar")
+    if todo_lb123 and lb123_ok == 0:
+        degraded.append("lb123")
+
     summary = {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
+        "degraded_sources": degraded,
         "lanes_total": len(lanes),
-        "sonar": {"refetched": len(todo_sonar), "ok": sonar_ok, "err": sonar_err},
+        "sonar": {
+            "refetched": len(todo_sonar), "ok": sonar_ok, "err": sonar_err,
+            "credential_ok": sonar["ok"], "reason": sonar["reason"],
+        },
         "lb123": {"refetched": len(todo_lb123), "ok": lb123_ok, "err": lb123_err},
         "months": yms,
     }
-    logger.info("[lane-rates prewarm] %s", summary)
+    if degraded:
+        logger.error("[lane-rates prewarm] DEGRADED — %s", summary)
+    else:
+        logger.info("[lane-rates prewarm] %s", summary)
     return summary

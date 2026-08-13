@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.routers.deps import get_pool, require_user
+from app.routers.deps import get_pool, require_user, user_uuid
 
 router = APIRouter(tags=["reports"])
 
@@ -19,7 +19,7 @@ async def list_reports(
 ):
     pool = get_pool(request)
     offset = (page - 1) * limit
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     rows = await pool.fetch(
         """
@@ -131,7 +131,7 @@ async def trending_reports(
     limit: int = Query(6, ge=1, le=20),
 ):
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     rows = await pool.fetch(
         """
@@ -164,7 +164,7 @@ async def get_report(
     user: dict = Depends(require_user),
 ):
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     row = await pool.fetchrow(
         """
@@ -226,7 +226,7 @@ async def list_user_tag_roles(
 ):
     """Return TagRoles assigned to the current user, with report count per role."""
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     rows = await pool.fetch(
         """

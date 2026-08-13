@@ -2,7 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.routers.deps import get_pool, require_user
+from app.routers.deps import get_pool, require_user, user_uuid
 
 router = APIRouter(tags=["search"])
 
@@ -16,7 +16,7 @@ async def search_reports(
     limit: int = Query(20, ge=1, le=50),
 ):
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
     pattern = f"%{q}%"
 
     # Search reports by title, description, note, tags

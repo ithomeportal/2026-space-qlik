@@ -1082,6 +1082,41 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Ops Portal Team digest NOT scheduled — missing env vars")
 
+    # ---- scheduler roster ------------------------------------------------
+    # Every job above is env-gated, and a gate that fails just skips the
+    # `add_job` call. Each branch logs its own warning, but those warnings are
+    # scattered through a noisy startup log and name only the missing var — so
+    # "eight of nine jobs registered" looks identical to "all nine did" unless
+    # you already know there should be nine. Print the roster explicitly, and
+    # make an absence an ERROR rather than something you have to go looking for.
+    #
+    # This is the same failure mode as the /BOT fleet's two dead crons
+    # (2026-unlk-web, 2026-04-14 → 2026-08-13): the job was firing, nobody was
+    # watching, and the only signal was a log line no one read.
+    EXPECTED_JOBS = {
+        "daily_user_sync": "People Management sync, 02:00 CST",
+        "daily_losses_alert": "DFW Losses e-mail, 07:00 CST",
+        "daily_bonus_history_finalize": "Bonus period snapshot, 01:00 CST",
+        "daily_lane_rates_prewarm": "SONAR / 123LB lane rates, 05:00 CST",
+        "datalake_warmup": "Gold buffer warm-up, every 5 min",
+        "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
+        "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
+        "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
+        "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
+    }
+    registered = {j.id for j in scheduler.get_jobs()}
+    missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
+    logger.info(
+        "Scheduler roster: %d/%d jobs registered — %s",
+        len(registered), len(EXPECTED_JOBS), ", ".join(sorted(registered)) or "none",
+    )
+    if missing_jobs:
+        logger.error(
+            "Scheduler roster INCOMPLETE — %d job(s) will NEVER run: %s",
+            len(missing_jobs),
+            "; ".join(f"{j} ({EXPECTED_JOBS[j]})" for j in missing_jobs),
+        )
+
     if scheduler.get_jobs():
         scheduler.start()
 

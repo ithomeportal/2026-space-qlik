@@ -250,3 +250,43 @@ async def test_query_failure_never_raises():
 
     r = await km.check_keepwarm(Boom([]))
     assert r["checked"] is False and r["reason"] == "query_failed"
+
+
+# ---------------------------------------------------------------------------
+# Identity handling — added 2026-08-13 after `GET /api/reports/{id}` was found
+# 500ing in production on subjects 'eromero' / 'dfrodriguez'.
+# ---------------------------------------------------------------------------
+def test_user_uuid_accepts_a_uuid_subject():
+    from uuid import uuid4
+
+    from app.routers.deps import user_uuid
+
+    u = uuid4()
+    assert user_uuid({"sub": str(u)}) == u
+
+
+def test_user_uuid_rejects_a_username_as_401_not_500():
+    import pytest
+    from fastapi import HTTPException
+
+    from app.routers.deps import user_uuid
+
+    for bad in ("eromero", "dfrodriguez", "", None, 7):
+        with pytest.raises(HTTPException) as exc:
+            user_uuid({"sub": bad})
+        assert exc.value.status_code == 401, f"{bad!r} must be 401, not a 500"
+
+
+def test_internal_digest_identities_still_authenticate():
+    """The Ops and RFP digests self-assert a non-UUID subject over
+    ASGITransport. Hoisting the UUID check into `require_user` would 401 them
+    and silently kill both scheduled e-mails — so it must stay out of there."""
+    import inspect
+
+    from app.routers import deps
+
+    src = inspect.getsource(deps.require_user)
+    assert "UUID(" not in src, (
+        "require_user must NOT enforce UUID subjects — the internal digests "
+        "send {'sub': 'digest'} and would start failing"
+    )

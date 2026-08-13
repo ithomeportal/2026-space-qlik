@@ -157,6 +157,36 @@ async def _sonar_token_value(client: httpx.AsyncClient) -> Optional[str]:
         return None
 
 
+# --- SONAR credential breaker ----------------------------------------------
+# Set when SONAR rejects our credential. Every lane afterwards short-circuits
+# instead of re-issuing a request that cannot succeed, and the reason is stated
+# once. Reset only by a process restart — i.e. by a deploy carrying a new token.
+_sonar_disabled_reason: str | None = None
+
+
+def _sonar_disable(reason: str) -> None:
+    global _sonar_disabled_reason
+    if _sonar_disabled_reason is None:
+        _sonar_disabled_reason = reason
+        logger.error(
+            "[SONAR] DISABLED for this process — %s. Lane market rates will be "
+            "blank until SONAR_TOKEN is replaced AND the service is redeployed "
+            "(Render bakes env at deploy time; a restart replays the old "
+            "snapshot). Suppressing further per-lane errors.",
+            reason,
+        )
+
+
+def sonar_status() -> dict:
+    """Health for callers that must report *why* a rate column is empty.
+
+    A rate cell showing "—" because the vendor has no data and one showing "—"
+    because our credential was revoked look identical on screen. This is how the
+    prewarm job tells them apart.
+    """
+    return {"ok": _sonar_disabled_reason is None, "reason": _sonar_disabled_reason}
+
+
 async def _sonar_kma_ref(client: httpx.AsyncClient, token: str) -> list[dict]:
     """SONAR's airport-code/ZIP3 reference list. Cached for the process lifetime."""
     global _sonar_kma_cache
@@ -184,7 +214,16 @@ async def _sonar_kma_ref(client: httpx.AsyncClient, token: str) -> list[dict]:
             ]
             return _sonar_kma_cache
         except Exception as exc:
-            logger.warning("[SONAR] KMARef fetch failed: %s", exc)
+            # A rejected credential is not a per-lane problem, and logging it
+            # per lane buries it: on 2026-08-05 this produced 4,063 warning
+            # lines in one prewarm pass (one per lane) while the job still
+            # reported success. Trip a breaker so the failure is stated ONCE,
+            # loudly, and the remaining ~3,900 requests are not even attempted.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (401, 403):
+                _sonar_disable(f"KMARef rejected the credential (HTTP {status})")
+            else:
+                logger.warning("[SONAR] KMARef fetch failed: %s", exc)
             _sonar_kma_cache = []
             return _sonar_kma_cache
 
@@ -223,6 +262,11 @@ async def fetch_sonar_history(
     if not lane.is_us:
         return []
 
+    # Credential already rejected this process — do not issue ~3,900 more
+    # requests that will each fail the same way.
+    if _sonar_disabled_reason is not None:
+        return []
+
     token = await _sonar_token_value(client)
     if not token:
         logger.debug("[SONAR] no credentials; skipping %s→%s", lane.origin_city, lane.dest_city)
@@ -257,9 +301,10 @@ async def fetch_sonar_history(
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             timeout=_SONAR_TIMEOUT,
         )
-        if r.status_code == 401:
+        if r.status_code in (401, 403):
             global _sonar_token
             _sonar_token = None
+            _sonar_disable(f"rate statistics rejected the credential (HTTP {r.status_code})")
             return []
         if r.status_code >= 400:
             logger.info("[SONAR] %s→%s status=%s body=%s",

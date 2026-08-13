@@ -1,11 +1,15 @@
 import hmac
+import logging
 import time
 from typing import Optional
+from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, Header, HTTPException, Request
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def get_pool(request: Request) -> asyncpg.Pool:
@@ -270,6 +274,37 @@ async def require_user(
         raise HTTPException(status_code=401, detail="Missing subject")
 
     return payload
+
+
+def user_uuid(user: dict) -> UUID:
+    """Return ``user["sub"]`` as a UUID, or 401 if it is not one.
+
+    Most per-user tables (`kam_*`, `booker_scorecard_notes`, …) scope on a TEXT
+    `user_id`, so any subject works there — including the internal digests, which
+    self-assert `{"sub": "digest"}` over ASGITransport. But `user_preferences`
+    and `user_roles` key on a **UUID**, and asyncpg does no coercion: binding a
+    username raises `DataError: invalid input for query argument $1`, i.e. a
+    500 rather than a 401.
+
+    Observed in production 2026-08-12 for subjects 'eromero' and 'dfrodriguez':
+    `GET /api/reports/{id}` 500'd, which broke report navigation AND — because
+    that route is the ONLY writer of `access_log` — silently dropped those users
+    from all four usage-analytics endpoints. A malformed identity is an auth
+    failure, so surface it as one, at the boundary, in the routes that need it.
+
+    ⚠ Do NOT hoist this into ``require_user``: it would 401 the internal digest
+    identities and take out the scheduled Ops/RFP e-mails.
+    """
+    sub = user.get("sub")
+    try:
+        return UUID(str(sub))
+    except (ValueError, AttributeError, TypeError):
+        logger.warning(
+            "Rejected a non-UUID subject (length %d) for a UUID-scoped query — "
+            "the proxy should send users.id, not a username.",
+            len(str(sub)),
+        )
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 async def require_admin(user: dict = Depends(require_user)) -> dict:

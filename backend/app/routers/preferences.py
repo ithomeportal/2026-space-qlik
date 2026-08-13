@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.routers.deps import get_pool, require_user
+from app.routers.deps import get_pool, require_user, user_uuid
 
 router = APIRouter(tags=["preferences"])
 
@@ -20,7 +20,7 @@ async def get_preferences(
     user: dict = Depends(require_user),
 ):
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     row = await pool.fetchrow(
         "SELECT * FROM user_preferences WHERE user_id = $1",
@@ -47,7 +47,7 @@ async def update_preferences(
     user: dict = Depends(require_user),
 ):
     pool = get_pool(request)
-    user_id = user["sub"]
+    user_id = user_uuid(user)
 
     # Upsert preferences
     await pool.execute(
