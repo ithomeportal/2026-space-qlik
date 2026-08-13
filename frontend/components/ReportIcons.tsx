@@ -170,6 +170,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },
   "KAM Performance - DFW":          { icon: Stethoscope,    family: "dfw", tag: "KAM" },
   "Bonus Calculator":               { icon: Calculator,     family: "hr" },
+  "Division Payment Calculator":    { icon: Wallet,         family: "finance" },
   "Reports Index":                  { icon: Library,        family: "executive" },
 
   // ---- Legacy Qlik (still in catalog) ----

@@ -30,6 +30,7 @@ from app.routers import (
     ceo_cockpit,
     ceo_executive,
     dfw_losses,
+    division_payment,
     hd_spot,
     hr_access_doors,
     it_tickets,
@@ -623,6 +624,134 @@ async def lifespan(app: FastAPI):
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Bonus Calculator seed skipped: {e}")
 
+            # Division Payment Calculator (Bruno PDF 2026-08-13) — portal-owned
+            # tables. A&O's GL deduction lines live in the accounting system, not
+            # in any datalake we can reach, and the PDF specifies Revenue /
+            # Carrier Cost as operator inputs — so this report owns its data the
+            # way the Bonus Calculator owns its roster.
+            #
+            # Money is NUMERIC, never float: April 2026 already exercises cents
+            # (4,867,010.58) and its corporate gain (121,675.26) comes out of a
+            # sub-cent intermediate (79,001.4425 + 42,673.82).
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_months (
+                  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  year         INTEGER      NOT NULL,
+                  month        TEXT         NOT NULL,
+                  month_label  TEXT         NOT NULL,
+                  revenue      NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  carrier_cost NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  profit       NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  sort_order   INTEGER      NOT NULL DEFAULT 0,
+                  updated_by   TEXT,
+                  created_at   TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at   TIMESTAMPTZ DEFAULT NOW(),
+                  UNIQUE (year, month)
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_gl_accounts (
+                  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  month_id    UUID NOT NULL REFERENCES dpc_months(id) ON DELETE CASCADE,
+                  code        TEXT NOT NULL DEFAULT '',
+                  category    TEXT NOT NULL,
+                  description TEXT NOT NULL DEFAULT '',
+                  amount      NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  included    BOOLEAN NOT NULL DEFAULT TRUE,
+                  is_custom   BOOLEAN NOT NULL DEFAULT FALSE,
+                  sort_order  INTEGER NOT NULL DEFAULT 0,
+                  created_by  TEXT,
+                  created_at  TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dpc_gl_month ON dpc_gl_accounts(month_id, sort_order)"
+            )
+            # Approved archive — the frozen baseline every recalculation
+            # compares against. Append-only in spirit: re-approving a month
+            # overwrites its archive, but recalcs keep their own snapshot copy,
+            # so a re-approval can never move a settled differential.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_snapshots (
+                  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  year           INTEGER NOT NULL,
+                  month          TEXT    NOT NULL,
+                  month_label    TEXT    NOT NULL,
+                  revenue        NUMERIC(16,2) NOT NULL,
+                  carrier_cost   NUMERIC(16,2) NOT NULL,
+                  profit         NUMERIC(16,2) NOT NULL,
+                  margin_pct     NUMERIC(10,4) NOT NULL,
+                  gl_deductions  NUMERIC(16,2) NOT NULL,
+                  penalty_fee    NUMERIC(16,2) NOT NULL,
+                  corporate_gain NUMERIC(16,2) NOT NULL,
+                  net_payment    NUMERIC(16,2) NOT NULL,
+                  snapshot_date  DATE,
+                  approved_by    TEXT,
+                  approved_at    TIMESTAMPTZ DEFAULT NOW(),
+                  UNIQUE (year, month)
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_recalcs (
+                  recalc_key               TEXT PRIMARY KEY,
+                  year                     INTEGER NOT NULL,
+                  month                    TEXT    NOT NULL,
+                  month_label              TEXT    NOT NULL,
+                  applied_to_month         TEXT    NOT NULL,
+                  applied_to_month_label   TEXT    NOT NULL,
+                  recalc_date              DATE,
+                  status                   TEXT    NOT NULL DEFAULT 'pending',
+                  previously_recalculated  BOOLEAN NOT NULL DEFAULT FALSE,
+                  prior_recalc_net_payment NUMERIC(16,2),
+                  snapshot                 JSONB   NOT NULL,
+                  tms_update               JSONB   NOT NULL,
+                  diff                     JSONB   NOT NULL,
+                  note                     TEXT    NOT NULL DEFAULT '',
+                  note_updated_by          TEXT,
+                  note_updated_at          TIMESTAMPTZ,
+                  created_at               TIMESTAMPTZ DEFAULT NOW()
+                )
+                """
+            )
+            await app.state.pool.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dpc_recalcs_applied "
+                "ON dpc_recalcs(year, applied_to_month)"
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_audit_loads (
+                  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  recalc_key            TEXT NOT NULL REFERENCES dpc_recalcs(recalc_key) ON DELETE CASCADE,
+                  load_number           TEXT NOT NULL,
+                  client                TEXT NOT NULL DEFAULT '',
+                  change_type           TEXT NOT NULL DEFAULT '',
+                  change_description    TEXT NOT NULL DEFAULT '',
+                  original_revenue      NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  updated_revenue       NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  original_carrier_cost NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  updated_carrier_cost  NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  revenue_delta         NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  cost_delta            NUMERIC(16,2) NOT NULL DEFAULT 0,
+                  audit_date            DATE,
+                  UNIQUE (recalc_key, load_number)
+                )
+                """
+            )
+            try:
+                from app.services.division_payment_defaults import seed_division_payment
+
+                await seed_division_payment(app.state.pool)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Division Payment Calculator seed skipped: {e}")
+
             # Auto-seed if no role-report mappings exist
             count = await app.state.pool.fetchval(
                 "SELECT COUNT(*) FROM role_report_access"
@@ -1029,6 +1158,7 @@ app.include_router(scoped_access_doors.carrier_procurement_router, prefix="/api"
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(hd_spot.router, prefix="/api")
+app.include_router(division_payment.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")

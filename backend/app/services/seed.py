@@ -639,6 +639,21 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "HR Manager", "OPs Manager"],
     },
     {
+        "key": "division-payment-calculator",  # -> /reports/division-payment-calculator
+        "title": "Division Payment Calculator",
+        "description": "Monthly payment owed to the A&O division — profit, GL deductions, tariff, corporate gain and net payment, with approved archives and TMS recalculations",
+        "note": "Portal-owned data (dpc_* tables), NOT a datalake report: A&O's GL lines live in the accounting system and the PDF specifies Revenue / Carrier Cost as operator inputs · Net Payment = Profit − GL Deductions − Corporate Gain · Corporate Gain = 25% of profit + tariff · tariff charged only when margin < 10%, and it sits INSIDE corporate gain (subtracted once, not twice) · a recalculation's profit delta splits 25% Corporate / 75% A&O with the tariff frozen from the approved archive · 3 tabs (Dashboard / Calculator / Recalculations) · seeded with 2026 Jan–Jul + 2025 Jan–Dec (Bruno PDF 2026-08-13)",
+        "category": "Finance",
+        "tags": [
+            "division", "payment", "a&o", "gl", "deductions", "tariff",
+            "corporate-gain", "recalculation", "refacturacion", "finance",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15. Live access is
+        # managed at /admin/reports. Financial payout detail: exec + finance only.
+        "roles": ["CEO", "Executive", "Finance"],
+    },
+    {
         "key": "admin-cashflow",  # -> /reports/admin-cashflow
         "title": "Admin Aging Cashflow",
         "description": "A/R cashflow discipline — delivery-vs-bill / BOL-vs-bill / carrier-invoice-vs-bill aging, delivered-not-billed and ready-not-billed inventory",
