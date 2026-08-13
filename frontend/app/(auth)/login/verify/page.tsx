@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useRef, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
+import { signIn } from "next-auth/react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,31 +19,51 @@ function VerifyForm() {
     inputRef.current?.focus()
   }, [])
 
+  // The login email's "click here to sign in directly" link now points here with
+  // ?code=…, replacing the old NextAuth magic link. Submit it automatically so
+  // that path stays one click, exactly as before.
+  const prefilled = searchParams.get("code") || ""
+  const autoSubmitted = useRef(false)
+  useEffect(() => {
+    if (!/^\d{8}$/.test(prefilled) || !email || autoSubmitted.current) return
+    autoSubmitted.current = true
+    setCode(prefilled)
+    void submitCode(prefilled)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefilled, email])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    await submitCode(code)
+  }
+
+  async function submitCode(value: string) {
     setError("")
 
-    if (code.length !== 8) {
+    if (value.length !== 8) {
       setError("Please enter the 8-digit code")
       return
     }
 
     setLoading(true)
     try {
-      const res = await fetch("/api/auth/verify-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
+      // Was: POST /api/auth/verify-code (Prisma) → follow the returned magic
+      // link so NextAuth's Email callback could complete the sign-in. The code
+      // is now the credential itself, verified by the backend inside
+      // authorize(), so one call both checks it and establishes the session.
+      const res = await signIn("email-code", {
+        email,
+        code: value,
+        redirect: false,
       })
 
-      const data = await res.json()
-
-      if (data.url) {
-        window.location.href = data.url
-      } else {
-        setError(data.error || "Invalid code. Please try again.")
+      if (res?.error || !res?.ok) {
+        setError("Invalid or expired code. Please try again.")
         setLoading(false)
+        return
       }
+
+      window.location.href = "/"
     } catch {
       setError("Verification failed. Please try again.")
       setLoading(false)

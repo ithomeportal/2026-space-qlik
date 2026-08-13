@@ -14,5 +14,12 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     sub: string
+    // Roles + org fields are cached in the token so a session read needs no
+    // database and no backend call (see ROLES_TTL_MS in lib/auth.ts).
+    roles?: string[]
+    department?: string | null
+    company?: string | null
+    /** epoch ms when `roles` was last refreshed */
+    rolesAt?: number
   }
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { signIn, useSession } from "next-auth/react"
+import { useSession } from "next-auth/react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,13 +33,18 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      const res = await signIn("resend", {
-        email,
-        redirect: false,
+      // Was signIn("resend", …), whose sendVerificationRequest wrote the code
+      // to Postgres with Prisma. Issuing now happens in the FastAPI backend so
+      // this app never holds DATABASE_URL (see lib/auth-backend.ts).
+      const res = await fetch("/api/auth/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
       })
 
-      if (res?.error) {
-        setError("Failed to send verification code. Please try again.")
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setError(data?.error || "Failed to send verification code. Please try again.")
         setLoading(false)
         return
       }

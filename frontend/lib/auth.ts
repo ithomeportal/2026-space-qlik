@@ -1,107 +1,133 @@
-import { PrismaAdapter } from "@auth/prisma-adapter"
 import NextAuth from "next-auth"
-import Resend from "next-auth/providers/resend"
+import Credentials from "next-auth/providers/credentials"
 
-import { prisma } from "./db"
+import { fetchUserContext, verifyLoginCode } from "./auth-backend"
 import { isOrgEmail } from "./allowed-domains"
 
-function generateCode(token: string): string {
-  let hash = 0
-  for (let i = 0; i < token.length; i++) {
-    const char = token.charCodeAt(i)
-    hash = ((hash << 5) - hash + char) | 0
-  }
-  return String(Math.abs(hash) % 100000000).padStart(8, "0")
-}
+// The 8-digit email code is now verified by the FastAPI backend, not by Prisma
+// in this process. See lib/auth-backend.ts for why (Aiven ip_filter: the
+// frontend must stop reaching Postgres so Vercel's rotating egress IPs stop
+// being part of the allowlist problem).
+//
+// What this replaced: `PrismaAdapter` + the Resend magic-link provider. The
+// adapter was load-bearing for `verification_tokens`, `users` and `accounts`, so
+// the alternative was reimplementing ~8 adapter methods over HTTP with exact
+// date/null semantics. Since the product's actual login IS the 8-digit code
+// (the magic link was a secondary affordance in the mail), a Credentials
+// provider expresses the same flow with far less contract surface — and
+// Credentials + JWT needs no adapter at all.
+//
+// The emailed "click here to sign in directly" link is preserved: the backend
+// points it at /login/verify?email=…&code=…, which auto-submits. Same exposure
+// class as the old magic link, which also carried a usable secret in the URL.
+//
+// ⚠ Session strategy MUST stay "jwt". A database session strategy requires an
+// adapter, which is the thing being removed.
+
+// How long the roles baked into the JWT are trusted before a refresh is
+// attempted. The old `session()` callback hit Postgres on EVERY session read;
+// doing that against this backend would put a Render cold start (30-60s) in
+// front of every page load. Caching in the token and refreshing on an interval
+// is both faster and more robust — a backend outage now degrades to slightly
+// stale roles instead of no roles — at the cost of a role change taking up to
+// this long to appear. Admin role edits are not time-critical.
+const ROLES_TTL_MS = 5 * 60 * 1000
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: PrismaAdapter(prisma),
   debug: process.env.NODE_ENV === "development",
   providers: [
-    Resend({
-      apiKey: process.env.RESEND_API_KEY,
-      from: "UNILINK Space <noreply@unilinkportal.com>",
-      sendVerificationRequest: async ({ identifier: email, token, url }) => {
-        const code = generateCode(token)
-
-        // Store code → callback URL mapping (token is raw here, hashed in DB)
-        await prisma.emailCode.deleteMany({ where: { email } })
-        await prisma.emailCode.create({
-          data: {
-            email,
-            code,
-            callbackUrl: url,
-            expires: new Date(Date.now() + 10 * 60 * 1000),
-          },
-        })
-
-        const { Resend: ResendClient } = await import("resend")
-        const resend = new ResendClient(process.env.RESEND_API_KEY)
-        await resend.emails.send({
-          from: "UNILINK Space <noreply@unilinkportal.com>",
-          to: email,
-          subject: `Your login code: ${code}`,
-          html: `
-            <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-              <h2 style="color: #1B3A5C; margin-bottom: 24px;">UNILINK Space</h2>
-              <p style="color: #111827; font-size: 16px;">Your verification code is:</p>
-              <p style="font-size: 32px; font-weight: 700; color: #2563EB; letter-spacing: 4px; margin: 24px 0;">${code}</p>
-              <p style="color: #6B7280; font-size: 14px;">This code expires in 10 minutes.</p>
-              <p style="color: #6B7280; font-size: 14px; margin-top: 24px;">Or <a href="${url}" style="color: #2563EB;">click here to sign in directly</a>.</p>
-            </div>
-          `,
-        })
+    Credentials({
+      id: "email-code",
+      name: "Email code",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        code: { label: "Code", type: "text" },
       },
-      maxAge: 10 * 60,
+      async authorize(credentials) {
+        const email = String(credentials?.email ?? "").trim().toLowerCase()
+        const code = String(credentials?.code ?? "").trim()
+
+        // Cheap local rejects before spending a backend round-trip. The backend
+        // re-checks both — this is a shortcut, not the authority.
+        if (!email || !/^\d{8}$/.test(code)) return null
+        if (!isOrgEmail(email)) {
+          console.warn("[auth] sign-in rejected for non-tenant domain")
+          return null
+        }
+
+        const res = await verifyLoginCode(email, code)
+        if (!res.ok) {
+          // Returning null renders as "invalid code" to the user. Distinguish
+          // the causes in the log so a backend outage is not misread as a flood
+          // of bad codes.
+          console.warn(`[auth] code verification failed (status ${res.status})`)
+          return null
+        }
+
+        const u = res.data.user
+        return {
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          // Carried into the JWT below.
+          roles: u.roles,
+          department: u.department,
+          company: u.company,
+        } as never
+      },
     }),
   ],
   callbacks: {
-    async signIn({ user }) {
-      // Shared verified-tenant-domain list (lib/allowed-domains.ts). This ran
-      // as a single hardcoded suffix check, which locked out every tenant domain
-      // except unilinktransportation.com. Auth.js evaluates signIn BEFORE the
-      // magic-link token is generated and mailed, so this is also the send guard.
-      const allowed = isOrgEmail(user.email)
-      if (!allowed) {
-        console.warn(`[auth] signIn rejected: ${user.email ?? "no email"}`)
+    async jwt({ token, user }) {
+      // Fresh sign-in: seed everything from what authorize() returned.
+      if (user) {
+        const u = user as unknown as {
+          id: string
+          roles?: string[]
+          department?: string | null
+          company?: string | null
+        }
+        token.sub = u.id
+        token.roles = u.roles ?? []
+        token.department = u.department ?? null
+        token.company = u.company ?? null
+        token.rolesAt = Date.now()
+        return token
       }
-      return allowed
-    },
-    async session({ session, token }) {
-      if (token.sub) {
-        session.user.id = token.sub
 
-        try {
-          const dbUser = await prisma.user.findUnique({
-            where: { id: token.sub },
-            include: {
-              userRoles: {
-                include: { role: true },
-              },
-            },
-          })
-
-          if (dbUser) {
-            session.user.roles = dbUser.userRoles.map((ur: { role: { name: string } }) => ur.role.name)
-            session.user.department = dbUser.department
-            session.user.company = dbUser.company
-          }
-        } catch (e) {
-          console.error("Failed to fetch user roles:", e)
+      // Subsequent reads: refresh roles once the cached copy is stale. On any
+      // failure keep what we have — never sign the user out or blank their roles
+      // because the backend was cold.
+      const rolesAt = typeof token.rolesAt === "number" ? token.rolesAt : 0
+      if (token.sub && Date.now() - rolesAt > ROLES_TTL_MS) {
+        const res = await fetchUserContext(token.sub)
+        if (res.ok && res.data) {
+          token.roles = res.data.roles
+          token.department = res.data.department
+          token.company = res.data.company
+          token.rolesAt = Date.now()
+        } else {
+          // Back off so a hard-down backend is not re-hit on every single
+          // request; the stale roles stay usable meanwhile.
+          token.rolesAt = Date.now() - ROLES_TTL_MS + 30_000
         }
       }
-      return session
-    },
-    async jwt({ token, user }) {
-      if (user) {
-        token.sub = user.id
-      }
       return token
+    },
+    async session({ session, token }) {
+      // Reads the token only — no network, no database. This is what makes page
+      // loads independent of the backend being warm.
+      if (token.sub) {
+        session.user.id = token.sub
+        session.user.roles = (token.roles as string[] | undefined) ?? []
+        session.user.department = (token.department as string | null | undefined) ?? null
+        session.user.company = (token.company as string | null | undefined) ?? null
+      }
+      return session
     },
   },
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",
-    verifyRequest: "/login/verify",
   },
 })
