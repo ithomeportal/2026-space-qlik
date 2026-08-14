@@ -21,7 +21,9 @@ Scope guards
 from __future__ import annotations
 
 import asyncio
+import base64
 import calendar
+import json
 import logging
 import os
 import re
@@ -118,15 +120,78 @@ _SONAR_TIMEOUT = 20.0
 _sonar_token: dict[str, float | str] | None = None  # {token, expires_at}
 _sonar_kma_cache: list[dict] | None = None
 _sonar_kma_lock = asyncio.Lock()
+# Set once SONAR rejects the static SONAR_TOKEN, so the next call reaches for
+# the username/password fallback instead of re-sending a token we know is dead.
+_static_token_rejected = False
+
+
+def note_static_token_rejected() -> None:
+    """SONAR answered 401/403 for the static token — stop presenting it."""
+    global _static_token_rejected, _sonar_kma_cache
+    if not _static_token_rejected:
+        _static_token_rejected = True
+        _sonar_kma_cache = None      # re-fetch the reference list under the new token
+        logger.warning(
+            "[SONAR] static SONAR_TOKEN was rejected — trying "
+            "SONAR_USERNAME/SONAR_PASSWORD for the rest of this process."
+        )
+
+
+def _has_password_auth() -> bool:
+    return bool(os.environ.get("SONAR_USERNAME") and os.environ.get("SONAR_PASSWORD"))
+
+
+def _jwt_exp(token: str) -> Optional[float]:
+    """Read a JWT's ``exp`` claim without verifying it.
+
+    We are not authenticating anything — we only want to know whether a token
+    we are about to send is already dead, so we can reach for the fallback
+    instead of spending a round-trip to be told 401.
+    """
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)          # restore base64url padding
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        exp = claims.get("exp")
+        return float(exp) if exp is not None else None
+    except Exception:
+        return None                                    # not a JWT, or unreadable
 
 
 async def _sonar_token_value(client: httpx.AsyncClient) -> Optional[str]:
-    """Return a valid SONAR bearer token, or None when not configured."""
+    """Return a valid SONAR bearer token, or None when not configured.
+
+    Order: a usable static ``SONAR_TOKEN`` → the cached minted token → mint a
+    new one from ``SONAR_USERNAME``/``SONAR_PASSWORD``.
+
+    ⚠ A static token is used ONLY while it is usable. It used to be returned
+    unconditionally, which meant an expired ``SONAR_TOKEN`` outranked perfectly
+    good credentials **forever** — setting the username/password would have
+    changed nothing. That is exactly how this failed in production: the token
+    was minted 2025-07-22 with a 365-day life, expired 2026-07-22, and the
+    backend kept presenting it. Two guards now:
+
+      * proactive — skip a static token whose own ``exp`` claim has passed;
+      * reactive — ``note_static_token_rejected()`` marks it dead when SONAR
+        answers 401/403, so the very next call falls through to the fallback.
+
+    Both are needed: SONAR returns a bare 401 with an empty body, so the
+    response alone cannot distinguish expired from revoked, and a token without
+    an ``exp`` claim can only be discovered dead by being rejected.
+    """
     global _sonar_token
 
     static = os.environ.get("SONAR_TOKEN")
-    if static:
-        return static
+    if static and not _static_token_rejected:
+        exp = _jwt_exp(static)
+        if exp is None or exp > datetime.now(timezone.utc).timestamp():
+            return static
+        logger.error(
+            "[SONAR] SONAR_TOKEN expired at %s — falling back to "
+            "SONAR_USERNAME/SONAR_PASSWORD if configured. Replace the env var "
+            "and REDEPLOY (Render bakes env at deploy time).",
+            datetime.fromtimestamp(exp, timezone.utc).isoformat(),
+        )
 
     if _sonar_token and float(_sonar_token["expires_at"]) > datetime.now(timezone.utc).timestamp():
         return str(_sonar_token["token"])
@@ -177,6 +242,22 @@ def _sonar_disable(reason: str) -> None:
         )
 
 
+def _handle_auth_rejection(where: str) -> bool:
+    """SONAR rejected our credential. Return True if a fallback is worth trying.
+
+    A rejection is only fatal when there is nothing else to try. If the static
+    token was the thing rejected and username/password are configured, mark the
+    token dead and let the caller retry — do NOT disable the whole feature for
+    the process, which is what used to happen and what turned one expired token
+    into a blank column until a human noticed.
+    """
+    if not _static_token_rejected and os.environ.get("SONAR_TOKEN") and _has_password_auth():
+        note_static_token_rejected()
+        return True
+    _sonar_disable(f"{where} rejected the credential and no fallback is available")
+    return False
+
+
 def sonar_status() -> dict:
     """Health for callers that must report *why* a rate column is empty.
 
@@ -221,7 +302,9 @@ async def _sonar_kma_ref(client: httpx.AsyncClient, token: str) -> list[dict]:
             # loudly, and the remaining ~3,900 requests are not even attempted.
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status in (401, 403):
-                _sonar_disable(f"KMARef rejected the credential (HTTP {status})")
+                if _handle_auth_rejection(f"KMARef (HTTP {status})"):
+                    _sonar_kma_cache = None      # retry under the fallback token
+                    return []
             else:
                 logger.warning("[SONAR] KMARef fetch failed: %s", exc)
             _sonar_kma_cache = []
@@ -304,7 +387,7 @@ async def fetch_sonar_history(
         if r.status_code in (401, 403):
             global _sonar_token
             _sonar_token = None
-            _sonar_disable(f"rate statistics rejected the credential (HTTP {r.status_code})")
+            _handle_auth_rejection(f"rate statistics (HTTP {r.status_code})")
             return []
         if r.status_code >= 400:
             logger.info("[SONAR] %s→%s status=%s body=%s",
