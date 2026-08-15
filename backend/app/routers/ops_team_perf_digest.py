@@ -1,7 +1,9 @@
 """Ops Portal Overview — "Performance for Team N" digest endpoint.
 
-Kept in its own router file so ``ops_portal_overview.py`` (3.9k lines, live UI)
-stays untouched apart from the helpers this imports. Same prefix as its
+Kept in its own router file so the live UI report stays untouched apart from
+the helpers this imports. (``ops_portal_overview`` became a PACKAGE on
+2026-08-14 — this module imports ``CORP_TEAMS`` through its façade, which is
+why that re-export must survive any future re-split.) Same prefix as its
 neighbours, so a user who can see the report can preview its digest.
 
 The consumer is an external n8n workflow that GETs this and mails the HTML —
