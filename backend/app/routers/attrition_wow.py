@@ -866,8 +866,22 @@ async def pivot(
     lane: Optional[str] = Query(None),
     view: Optional[str] = Query(None),
     sub_team: Optional[str] = Query(None),
-    # Reused by the CEO Executive "Attrition" tab (Bruno 2026-06-30).
-    _user: dict = Depends(require_report_access("attrition-wow", "ceo-executive")),
+    # Borrowed endpoint (§52). Reused by the CEO Executive "Attrition" tab
+    # (Bruno 2026-06-30) and, since Bruno 2026-08-14 R3, by the Attrition
+    # button on the Ops Portal "Actuals" header — including the four per-team
+    # KAM portals, which is why all five ops keys are listed. A missing key
+    # here renders as an EMPTY pivot, not an error, so it would go unreported.
+    _user: dict = Depends(
+        require_report_access(
+            "attrition-wow",
+            "ceo-executive",
+            "ops-portal-overview",
+            "corp-t1-ops-kam-portal",
+            "corp-t2-ops-kam-portal",
+            "corp-t3-ops-kam-portal",
+            "corp-t4-ops-kam-portal",
+        )
+    ),
 ):
     pool = get_datalake_gold_pool(request)
     response.headers["Cache-Control"] = CACHE_HEADER

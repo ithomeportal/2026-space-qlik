@@ -26,11 +26,12 @@ const COVER_COLUMNS: {
   { label: "Team", key: "team_id", align: "left" },
   { label: "Customer", key: "customer_name", align: "left" },
   { label: "Carrier", key: "carrier", align: "left" },
-  // Bruno (PDF 2026-08-12) R2 — movement.override_driver_nm, seated between
-  // Carrier and Carrier Phone so the driver's name and cell read together.
-  { label: "Driver Name", key: "driver_name", align: "left" },
-  { label: "Carrier Phone", key: "carrier_phone", align: "left" },
-  // The wire field keeps its old name; only the header moved (§34).
+  // Bruno (PDF 2026-08-14) R2 — "Driver Name" dropped (it was blank on ~75% of
+  // covered loads) and "Carrier Phone" relabelled "Driver Phone". The header is
+  // now the accurate one: the wire field `carrier_phone` has held
+  // movement.override_drvr_cell — the DRIVER's cell — since 2026-08-12. The
+  // wire field keeps its old name; only the header changed (§34).
+  { label: "Driver Phone", key: "carrier_phone", align: "left" },
   { label: "Orig Orig Late", key: "orig_sched_late", align: "left" },
   { label: "Orig Sched Late", key: "orig_sched_arrive_late", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
@@ -50,8 +51,8 @@ function coverDirForKey(key: string): SortDir {
 }
 
 // The pinned TOTAL label spans every column left of the money block. Derived,
-// not hardcoded: adding a column (R2's "Driver Name") used to require hand-
-// bumping a literal 8, and missing it silently shifts the whole totals row.
+// not hardcoded: adding or removing a column used to require hand-bumping a
+// literal, and missing it silently shifts the whole totals row (§61).
 const TOTAL_LABEL_COLSPAN = COVER_COLUMNS.length - MONEY_KEYS.size
 
 // A blank carrier is meaningful (not covered yet); kept defensive even though
@@ -59,13 +60,6 @@ const TOTAL_LABEL_COLSPAN = COVER_COLUMNS.length - MONEY_KEYS.size
 function CarrierCell({ carrier }: { carrier: string }) {
   if (!carrier) return <span className="text-[#B45309]">Not covered</span>
   return <span className="text-[#374151]">{carrier}</span>
-}
-
-// `override_driver_nm`, from the same movement row as the carrier and the cell,
-// so all three always agree. Free text; blank on ~75% of covered loads.
-function DriverCell({ name }: { name: string }) {
-  if (!name) return <span className="text-[#9CA3AF]">—</span>
-  return <span className="text-[#374151]">{name}</span>
 }
 
 // Phone comes from the same movement row as the carrier name, so the two always
@@ -153,7 +147,6 @@ export default function CoverTable({
                 {r.customer_name || <span className="text-[#9CA3AF]">—</span>}
               </td>
               <td className="px-2 py-1.5"><CarrierCell carrier={r.carrier} /></td>
-              <td className="px-2 py-1.5"><DriverCell name={r.driver_name} /></td>
               <td className="px-2 py-1.5"><PhoneCell phone={r.carrier_phone} /></td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_late)}</td>
               <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">{fmtSchedTs(r.orig_sched_arrive_late)}</td>

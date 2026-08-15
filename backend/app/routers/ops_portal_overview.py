@@ -227,6 +227,119 @@ def _month_bounds(today: date) -> tuple[date, date]:
     return m_start, m_end
 
 
+# ---------------------------------------------------------------------------
+# Projected — ONE definition for the whole report (Bruno PDF 2026-08-14 R6)
+# ---------------------------------------------------------------------------
+# Before this round four different formulas shipped under the name "Projected":
+#
+#   KPI chart (Month)  14 CALENDAR days / 14, Sundays included   → /combo
+#   KPI chart (Week)   12 business days / 12, then × 7           → /team-projection
+#   Team Monthly Proj. 12 BUSINESS days / 12, Sundays excluded   → /team-projection
+#   Actuals Proj. EOM  the SELECTED window / 14 (hardcoded)      → /actuals
+#
+# Bruno's ruling: "Team Monthly Projection" is the single source of truth, so
+# its window and divisor are the ones kept here and every other consumer is
+# re-pointed at this helper.
+#
+# ⚠ Do NOT "tidy" the vol_mtd / rev_mtd asymmetry below (volume counts to
+# yesterday, revenue and profit to month-end). It is what produces the numbers
+# Bruno validated against — $2,301,182 revenue / $433,757 profit — so
+# normalising it would move the very figure this round declares correct.
+#
+# ⚠ The projection is a MONTH concept: it always reads the last 12 business
+# days plus month-to-date, and deliberately ignores the report's date-range
+# filter. That is precisely why the Actuals projection columns can now equal
+# Team Monthly Projection — under a non-default range the projection columns
+# stay month-anchored while the actuals columns follow the window.
+
+_PROJ_LOOKBACK_BUSINESS_DAYS = 12
+
+
+def _projection_bounds(today: date) -> tuple[date, date, date, date, int]:
+    """(win_start, win_end, month_start, month_end, pending_workdays)."""
+    m_start, m_end = _month_bounds(today)
+    win_start = _last_n_business_days_start(today, _PROJ_LOOKBACK_BUSINESS_DAYS)
+    win_end = today - timedelta(days=1)
+    return win_start, win_end, m_start, m_end, _count_workdays(today, m_end)
+
+
+def _projection_sums_sql(
+    where: str,
+    p_ws: int, p_we: int, p_ms1: int, p_we2: int, p_ms2: int, p_me: int,
+    group_col: str | None = None,
+) -> str:
+    """The six sums every Projected number is built from.
+
+    ``group_col`` yields one row per group (used by /actuals for its per-
+    customer rows); omit it for the report-wide figure. Bruno's "last 12
+    business days" is Mon-Sat — ``EXTRACT(DOW) = 0`` is Sunday.
+    """
+    sel = f"{group_col} AS grp," if group_col else ""
+    grp = f"GROUP BY {group_col}" if group_col else ""
+    return f"""
+        SELECT
+          {sel}
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS vol_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.total_charge END), 0)::numeric AS rev_12,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
+                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
+                            THEN br4.margin_amt END), 0)::numeric AS prof_12,
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS vol_mtd,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
+                            THEN br4.total_charge END), 0)::numeric AS rev_mtd,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
+                            THEN br4.margin_amt END), 0)::numeric AS prof_mtd,
+          COUNT(DISTINCT br4.team_id) AS team_count
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+        {grp}
+    """
+
+
+def _projection_params(
+    team, customer, load_type, lanes, exclude_lanes, carriers, exclude_carriers,
+    today: date,
+) -> tuple[str, list, tuple[int, int, int, int, int, int], int]:
+    """Scope predicate + bound params for ``_projection_sums_sql``."""
+    win_start, win_end, m_start, m_end, pending = _projection_bounds(today)
+    params: list = []
+    where = _v4_scope_where(
+        "br4", team, customer, load_type, params,
+        lanes, exclude_lanes, carriers, exclude_carriers,
+    )
+    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
+    n = len(params)
+    return where, params, (n - 5, n - 4, n - 3, n - 2, n - 1, n), pending
+
+
+async def _team_projection_core(
+    pool, *, team, customer, load_type, lanes, exclude_lanes,
+    carriers, exclude_carriers, today: date,
+) -> dict:
+    """The report-wide Team Monthly Projection object — the source of truth."""
+    where, params, idx, pending = _projection_params(
+        team, customer, load_type, lanes, exclude_lanes,
+        carriers, exclude_carriers, today,
+    )
+    row = await pool.fetchrow(_projection_sums_sql(where, *idx), *params)
+    team_count = int(row["team_count"] or 0) if row else 0
+    team_count = team_count or (1 if team else len(CORP_TEAMS))
+    if not row:
+        return _projection_from_sums(0, 0, 0, 0, 0, 0, pending, team_count)
+    return _projection_from_sums(
+        row["vol_12"], row["rev_12"], row["prof_12"],
+        row["vol_mtd"], row["rev_mtd"], row["prof_mtd"],
+        pending, team_count,
+    )
+
+
 def _lane_expr(alias: str) -> str:
     """Lane key — ``concat(origin_name, ' - ', dest_name)`` per Bruno R7.
 
@@ -676,58 +789,31 @@ async def combo(
         GROUP BY 1
     """
 
-    # ---- Projected — last 14 calendar days extrapolated to EoM ----------
+    # ---- Projected — Bruno (PDF 2026-08-14) R6 ---------------------------
+    # Was its own 14-calendar-day / 14 formula, which read $2,121,651 against
+    # the Team Monthly Projection panel's $2,301,182 on the same screen. Now
+    # the identical helper, so the chart's reference line and the panel can no
+    # longer disagree.
     m_start, m_end = _month_bounds(today)
-    win14_start = today - timedelta(days=14)
-    win14_end = today - timedelta(days=1)  # don't include today (partial)
     pending_workdays = _count_workdays(today, m_end)
 
-    proj_params: list = []
-    where_proj = _v4_scope_where("br4", team, customer, load_type, proj_params, lanes, exclude_lanes, carriers, exclude_carriers)
-    proj_params.extend([win14_start, win14_end, m_start, win14_end])
-    p_w14s = len(proj_params) - 3
-    p_w14e = len(proj_params) - 2
-    p_ms = len(proj_params) - 1
-    p_w14e2 = len(proj_params)
-    proj_sql = f"""
-        SELECT
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
-                             AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS vol_14,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
-                            THEN br4.total_charge ELSE 0 END), 0)::numeric AS rev_14,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_w14s} AND ${p_w14e}
-                            THEN br4.margin_amt  ELSE 0 END), 0)::numeric AS prof_14,
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
-                             AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS vol_mtd,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
-                            THEN br4.total_charge ELSE 0 END), 0)::numeric AS rev_mtd,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_w14e2}
-                            THEN br4.margin_amt  ELSE 0 END), 0)::numeric AS prof_mtd
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {where_proj}
-    """
-
-    prod_rows, bud_rows, proj_row = await asyncio.gather(
+    prod_rows, bud_rows, proj = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
         pool.fetch(bud_sql, *bud_params),
-        pool.fetchrow(proj_sql, *proj_params),
+        _team_projection_core(
+            pool, team=team, customer=customer, load_type=load_type,
+            lanes=lanes, exclude_lanes=exclude_lanes,
+            carriers=carriers, exclude_carriers=exclude_carriers, today=today,
+        ),
     )
 
     prod_map = {r["bucket_start"]: r for r in prod_rows}
     bud_map = {r["bucket_start"]: r for r in bud_rows}
 
-    vol_14 = _safe_float(proj_row["vol_14"]) if proj_row else 0.0
-    rev_14 = _safe_float(proj_row["rev_14"]) if proj_row else 0.0
-    prof_14 = _safe_float(proj_row["prof_14"]) if proj_row else 0.0
-    vol_mtd = _safe_float(proj_row["vol_mtd"]) if proj_row else 0.0
-    rev_mtd = _safe_float(proj_row["rev_mtd"]) if proj_row else 0.0
-    prof_mtd = _safe_float(proj_row["prof_mtd"]) if proj_row else 0.0
-    projected_vol     = (vol_14  / 14.0) * pending_workdays + vol_mtd
-    projected_revenue = (rev_14  / 14.0) * pending_workdays + rev_mtd
-    projected_profit  = (prof_14 / 14.0) * pending_workdays + prof_mtd
-    projected_margin_pct = (projected_profit / projected_revenue * 100.0) if projected_revenue else 0.0
+    projected_vol        = proj["proj_volume"]
+    projected_revenue    = proj["proj_revenue"]
+    projected_profit     = proj["proj_profit"]
+    projected_margin_pct = proj["proj_margin_pct"]
 
     out = []
     for a in anchors:
@@ -1273,7 +1359,8 @@ async def team_performance(
 
 
 # ---------------------------------------------------------------------------
-# /team-projection — §6 single-row team rolling 14d projection (ignores Date)
+# /team-projection — §6 Team Monthly Projection. SOURCE OF TRUTH for Projected
+# across the whole report (Bruno R6, 2026-08-14). Ignores the Date filter.
 # ---------------------------------------------------------------------------
 
 
@@ -1302,71 +1389,20 @@ async def team_projection(
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
-    win_start = _last_n_business_days_start(today, 12)
-    win_end = today - timedelta(days=1)
-    pending_workdays = _count_workdays(today, m_end)
 
-    params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
-    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
-    p_ws = len(params) - 5
-    p_we = len(params) - 4
-    p_ms1  = len(params) - 3
-    p_we2  = len(params) - 2
-    p_ms2  = len(params) - 1
-    p_me   = len(params)
-
-    # Bruno's "last 12 business days" = Mon-Sat only; EXTRACT(DOW)=0 is Sunday.
-    row = await pool.fetchrow(
-        f"""
-        SELECT
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
-                             AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS vol_12,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
-                            THEN br4.total_charge END), 0)::numeric AS rev_12,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
-                            THEN br4.margin_amt END), 0)::numeric AS prof_12,
-          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
-                             AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS vol_mtd,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
-                            THEN br4.total_charge END), 0)::numeric AS rev_mtd,
-          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
-                            THEN br4.margin_amt END), 0)::numeric AS prof_mtd,
-          COUNT(DISTINCT br4.team_id) AS team_count
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {where}
-        """,
-        *params,
+    # R6: this endpoint IS the source of truth for Projected. The window,
+    # divisor and MTD legs now live in _team_projection_core so /combo and
+    # /actuals compute the identical number instead of their own variants.
+    proj = await _team_projection_core(
+        pool, team=team, customer=customer, load_type=load_type,
+        lanes=lanes, exclude_lanes=exclude_lanes,
+        carriers=carriers, exclude_carriers=exclude_carriers, today=today,
     )
-
-    avg_vol_day  = _safe_float(row["vol_12"]) / 12.0
-    avg_rev_day  = _safe_float(row["rev_12"]) / 12.0
-    avg_prof_day = _safe_float(row["prof_12"]) / 12.0
-
-    proj_volume = avg_vol_day * pending_workdays + _safe_float(row["vol_mtd"])
-    proj_revenue = avg_rev_day * pending_workdays + _safe_float(row["rev_mtd"])
-    proj_profit  = avg_prof_day * pending_workdays + _safe_float(row["prof_mtd"])
-    team_count = int(row["team_count"] or 0) or (1 if team else len(CORP_TEAMS))
 
     return {
         "success": True,
         "data": {
-            "avg_vol_day":  _safe_float(avg_vol_day),
-            "avg_rev_day":  _safe_float(avg_rev_day),
-            "avg_prof_day": _safe_float(avg_prof_day),
-            "pending_workdays": pending_workdays,
-            "proj_volume":  _safe_float(proj_volume),
-            "proj_revenue": _safe_float(proj_revenue),
-            "proj_profit":  _safe_float(proj_profit),
-            "proj_margin_pct": (proj_profit / proj_revenue * 100.0) if proj_revenue else 0.0,
-            "proj_rev_x_l":  (proj_revenue / proj_volume) if proj_volume else 0.0,
-            "proj_prof_x_l": (proj_profit  / proj_volume) if proj_volume else 0.0,
-            "proj_team_ut":  (proj_volume / (500.0 * team_count) * 100.0) if team_count else 0.0,
+            **proj,
             "today": today.isoformat(),
             "month_start": m_start.isoformat(),
             "month_end": m_end.isoformat(),
@@ -1550,10 +1586,40 @@ async def actuals(
         GROUP BY budget."Customer Name"
     """
 
-    prod_rows, bud_rows = await asyncio.gather(
+    # Bruno (PDF 2026-08-14) R6: the projection columns now use the SAME
+    # 12-business-day window and divisor as Team Monthly Projection, per
+    # customer, instead of "the selected window / 14". The projection is a
+    # month concept, so it deliberately ignores the Date filter — that is what
+    # makes the TOTAL row equal the Team Monthly Projection panel.
+    proj_where, proj_params_l, proj_idx, _pending = _projection_params(
+        team, customer, load_type, lanes, exclude_lanes,
+        carriers, exclude_carriers, today,
+    )
+    proj_by_cust_sql = _projection_sums_sql(
+        proj_where, *proj_idx, group_col="br4.customer_name",
+    )
+
+    prod_rows, bud_rows, proj_rows, proj_all = await asyncio.gather(
         pool.fetch(prod_sql, *p_params),
         pool.fetch(bud_sql, *b_params),
+        pool.fetch(proj_by_cust_sql, *proj_params_l),
+        _team_projection_core(
+            pool, team=team, customer=customer, load_type=load_type,
+            lanes=lanes, exclude_lanes=exclude_lanes,
+            carriers=carriers, exclude_carriers=exclude_carriers, today=today,
+        ),
     )
+
+    # team_count is irrelevant per customer — only the volume/profit legs are
+    # read below, and _projection_from_sums guards a zero cap.
+    proj_map = {
+        r["grp"]: _projection_from_sums(
+            r["vol_12"], r["rev_12"], r["prof_12"],
+            r["vol_mtd"], r["rev_mtd"], r["prof_mtd"],
+            pending_workdays, 1,
+        )
+        for r in proj_rows
+    }
 
     bud_map = {r["customer_name"]: r for r in bud_rows}
     # Bruno R4 (2026-05-27): totals row at top of the table. Accumulate over the
@@ -1577,12 +1643,16 @@ async def actuals(
         tot["otp_late"] += otp_late; tot["otd_late"] += otd_late
         margin_pct = (prof / rev * 100.0) if rev else 0.0
         margin_budget_pct = (prof_budget / rev_budget * 100.0) if rev_budget else 0.0
-        # Vol×Day, Prof×Day → 14-day average (Bruno: "/14"). Honors filtered window.
-        vol_x_day = vol / 14.0
-        prof_x_day = prof / 14.0
-        # Projected EoM = (avg per day × pending workdays) + actual
-        proj_vol = vol_x_day * pending_workdays + vol
-        proj_prof = prof_x_day * pending_workdays + prof
+        # R6: Vol×Day / Prof×Day and Projected EoM come from this customer's
+        # own Team-Monthly-Projection sums (last 12 Mon-Sat days ÷ 12, plus
+        # month-to-date actual) — NOT from the filtered window ÷ 14. A customer
+        # with no activity in the projection window projects to zero, which is
+        # the correct answer for "where will they end the month".
+        pc = proj_map.get(name)
+        vol_x_day = pc["avg_vol_day"] if pc else 0.0
+        prof_x_day = pc["avg_prof_day"] if pc else 0.0
+        proj_vol = pc["proj_volume"] if pc else 0.0
+        proj_prof = pc["proj_profit"] if pc else 0.0
         out.append({
             "customer_name": name,
             "vol": vol,
@@ -1654,16 +1724,18 @@ async def actuals(
         "prof_x_l": _safe_float((t_prof / t_vol) if t_vol else 0.0),
     }
     totals["margin_var_pct"] = _safe_float(totals["margin_pct"] - totals["margin_budget_pct"])
-    # Bruno (PDF 2026-07-23) R4: TOTAL row sums for the 4 projection columns.
-    # Each per-row value is linear (vol/14, prof/14, ×pending + actual) and the
-    # zero-production budget rows contribute 0, so deriving from t_vol/t_prof
-    # equals the exact column sum (§16 KPI=detail, §44 full-universe aggregate).
-    t_vol_x_day = t_vol / 14.0
-    t_prof_x_day = t_prof / 14.0
-    totals["vol_x_day"] = _safe_float(t_vol_x_day)
-    totals["prof_x_day"] = _safe_float(t_prof_x_day)
-    totals["proj_eom_vol"] = _safe_float(t_vol_x_day * pending_workdays + t_vol)
-    totals["proj_eom_prof"] = _safe_float(t_prof_x_day * pending_workdays + t_prof)
+    # Bruno (PDF 2026-08-14) R6: the TOTAL row for the 4 projection columns is
+    # the report-wide Team Monthly Projection itself (§44 full-universe
+    # aggregate, never a client reduce). Because every per-row value is the same
+    # linear formula over the same universe, the rows sum to exactly this total
+    # whenever the row set covers the projection window — i.e. on the default
+    # month range (§16 KPI = detail). Under a narrow custom Date range the rows
+    # are a subset while the projection stays month-anchored, which is the
+    # intended behaviour, not drift.
+    totals["vol_x_day"] = _safe_float(proj_all["avg_vol_day"])
+    totals["prof_x_day"] = _safe_float(proj_all["avg_prof_day"])
+    totals["proj_eom_vol"] = _safe_float(proj_all["proj_volume"])
+    totals["proj_eom_prof"] = _safe_float(proj_all["proj_profit"])
 
     return {
         "success": True,

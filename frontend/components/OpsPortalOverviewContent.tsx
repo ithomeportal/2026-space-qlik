@@ -463,6 +463,10 @@ function Body({
               { label: "2026 Official Budget Follow Up", href: "/reports/budget-followup-2026" },
               { label: "Ops Direct Compare", href: "/reports/ops-direct-compare" },
               { label: "XRay CORP Mng", href: "/reports/xray-corp-mng" },
+              // Bruno (PDF 2026-08-14) R7. Relative, like every sibling: an
+              // absolute https://space.unilinkportal.com/... would force a full
+              // page load and break on the *.vercel.app alias.
+              { label: "Attrition", href: "/reports/attrition-wow" },
             ]
               // Per-team KAM portals hide the Bonus Calculator pill (access
               // managed separately); the main Ops Portal keeps it.

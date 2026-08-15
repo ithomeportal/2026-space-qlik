@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ArrowDown, ArrowUp, Loader2, Maximize2, X } from "lucide-react"
+import { ArrowDown, ArrowUp, Loader2, Maximize2, TrendingDown, X } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
@@ -12,6 +12,7 @@ import {
   type OppActualsTotals,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
+import AttritionPivotModal from "./AttritionPivotModal"
 
 interface Props {
   filters: OppFilters
@@ -68,6 +69,8 @@ export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
   // Bruno R11 (2026-06-24): expand the table into an uncapped modal.
   const [expanded, setExpanded] = useState(false)
+  // Bruno (PDF 2026-08-14) R3: Attrition Performance Trends pivot, in a modal.
+  const [attritionOpen, setAttritionOpen] = useState(false)
 
   // Esc closes the expand modal.
   useEffect(() => {
@@ -140,6 +143,17 @@ export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
         <div className="ml-auto flex items-center gap-2 text-[10px] text-[#6B7280]">
           {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
           <span>Click any column header to sort</span>
+          {/* Bruno (PDF 2026-08-14) R3: the Attrition Performance Trends pivot,
+              inline. Borrowed endpoint — see AttritionPivotModal. */}
+          <button
+            type="button"
+            onClick={() => setAttritionOpen(true)}
+            title="Attrition — Performance Trends"
+            className="flex items-center gap-1 rounded-full border border-[#E5E7EB] bg-white px-2.5 py-1 text-[11px] font-medium text-[#374151] transition-colors hover:bg-[#F3F4F6]"
+          >
+            <TrendingDown className="h-3 w-3" />
+            Attrition
+          </button>
         </div>
       </div>
 
@@ -147,6 +161,10 @@ export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load Actuals</div>
       ) : (
         <div className="max-h-[420px] overflow-auto">{table}</div>
+      )}
+
+      {attritionOpen && (
+        <AttritionPivotModal filters={filters} onClose={() => setAttritionOpen(false)} />
       )}
 
       {expanded && (

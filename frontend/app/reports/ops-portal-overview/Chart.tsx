@@ -52,10 +52,22 @@ const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
 // Bruno 2026-06-17: default the brush to the most recent 8 buckets for Week
 // (last 8 weeks) and Month (last 8 months) — was 13 each, which read as
 // "going back ~2 years" once the brush snapped to the full data range.
-const GRAINS: { k: OppGrain; label: string; defaultVisible: number }[] = [
-  { k: "day",   label: "Day",   defaultVisible: 30 },
-  { k: "week",  label: "Week",  defaultVisible: 8 },
-  { k: "month", label: "Month", defaultVisible: 8 },
+// Bruno (PDF 2026-08-14) R5: the selected timeframe now decides how many
+// periods the chart CONTAINS, not just how wide the brush opens. Previously the
+// full backend window (120 days / 50 weeks / 26 months) stayed in the dataset
+// and only the brush narrowed it — so any path where the brush indices did not
+// take (a stale drag on the same grain, or a clamp instead of a reset) rendered
+// the whole history. Slicing the data makes the grain switch deterministic.
+const PERIODS_BY_GRAIN: Record<OppGrain, number> = {
+  day: 52,
+  week: 8,
+  month: 8,
+}
+
+const GRAINS: { k: OppGrain; label: string }[] = [
+  { k: "day",   label: "Day" },
+  { k: "week",  label: "Week" },
+  { k: "month", label: "Month" },
 ]
 
 // Series legend keys — toggled on/off by clicking the legend pills.
@@ -152,9 +164,17 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const forecastKey = FORECAST_KEY[measure] ?? "cover_prof"
 
   // Two separate typed arrays (union data confuses Recharts' generic typing).
-  const baseData = useMemo(
+  // R5: keep only the most recent N buckets for the active grain. `allBase` is
+  // retained for Avg-LQ, which is a "last 4 closed buckets" reference and must
+  // not be re-scoped by the display window.
+  const periods = PERIODS_BY_GRAIN[grain] ?? 13
+  const allBase = useMemo(
     () => buckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
     [buckets, grain],
+  )
+  const baseData = useMemo(
+    () => (allBase.length > periods ? allBase.slice(-periods) : allBase),
+    [allBase, periods],
   )
 
   // Merge the Cover buckets onto the Production ones.
@@ -184,8 +204,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
       }
     })
     // Append only the forecast buckets that sit past the last Production one.
-    // A future bucket has no actuals, so every numeric field is zeroed off the
-    // first row rather than left undefined (Recharts would render gaps).
+    //
+    // Bruno (PDF 2026-08-14) R4: a future bucket has no actuals, and these
+    // fields used to be zeroed. Zero is a VALUE, not a gap — so Budget and
+    // Losses plunged to 0 inside the visible window and the y-axis auto-domain
+    // stretched down to include it, flattening every real bar. That is what
+    // "the current information disappears" was. `null` makes Recharts break
+    // the line and leave the domain alone, so the actuals keep their scale.
     const template = merged[0]
     if (!template) return merged
     const lastBase = baseData[baseData.length - 1].bucket_start
@@ -197,7 +222,7 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
       const blank = { ...template }
       for (const k of Object.keys(blank)) {
         const rec = blank as unknown as Record<string, unknown>
-        if (typeof rec[k] === "number") rec[k] = 0
+        if (typeof rec[k] === "number") rec[k] = null
       }
       merged.push({
         ...blank,
@@ -211,14 +236,25 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     }
     return merged
   }, [baseData, fcRes, forecastOn, measure, forecastKey, grain])
-  const serviceData = useMemo(
-    () => serviceBuckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
-    [serviceBuckets, grain],
-  )
+  // R5: sliced to the same last-N window as the combo chart. Both share one
+  // `brush` state, so an unsliced service series would put the same indices
+  // over a different set of buckets and silently mis-align the two charts.
+  const serviceData = useMemo(() => {
+    const all = serviceBuckets.map((b) => ({
+      ...b,
+      label: fmtBucket(b.bucket_start, grain),
+    }))
+    return all.length > periods ? all.slice(-periods) : all
+  }, [serviceBuckets, grain, periods])
 
-  // Brush position — default to the most recent N buckets per grain.
-  const defaultVisible =
-    GRAINS.find((g) => g.k === grain)?.defaultVisible ?? 13
+  // Brush position. R5 already slices the dataset to the grain's period count,
+  // so the default window is now the WHOLE series — the brush is a manual zoom,
+  // not the thing that decides how much history is on screen.
+  //
+  // This also fixes R4's second cause: the old default was "the last
+  // defaultVisible buckets", so switching Forecast on appended future buckets,
+  // grew maxIdx, and slid the window forward off the most recent actuals.
+  const defaultVisible = chartData.length || 1
   const [brush, setBrush] = useState<{ start: number; end: number }>({
     start: 0,
     end: 0,
@@ -336,14 +372,18 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
         : 0
     if (grain === "day") return perDay
     if (grain === "week") return measure === "margin_pct" ? perDay : perDay * 7
-    // month (default): calendar-month projection from /combo.
+    // Month: the calendar-month EoM projection. Bruno (PDF 2026-08-14) R6 —
+    // this used to read /combo, which ran its own 14-calendar-day formula and
+    // showed $2,121,651 next to the Team Monthly Projection panel's
+    // $2,301,182. Read the panel's endpoint directly so there is exactly one
+    // source, not two that happen to agree.
     return (
-      measure === "revenue"    ? data?.projected_revenue
-      : measure === "profit"   ? data?.projected_profit
-      : measure === "volume"   ? data?.projected_vol
-      : data?.projected_margin_pct
+      measure === "revenue"    ? proj?.proj_revenue
+      : measure === "profit"   ? proj?.proj_profit
+      : measure === "volume"   ? proj?.proj_volume
+      : proj?.proj_margin_pct
     ) ?? 0
-  }, [grain, measure, proj, data])
+  }, [grain, measure, proj])
 
   const wd = workdaysRes?.data
   const gauge = gaugeRes?.data
@@ -584,17 +624,20 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   fill="#7DD3FC"
                   stackId={forecastOn ? "fc" : undefined}
                 >
-                  {/* With Forecast on, the value label moves to the top segment
-                      so it reads as the combined total, not the base. */}
-                  {!forecastOn && (
-                    <LabelList
-                      dataKey={measure}
-                      position="top"
-                      fontSize={9}
-                      fill="#475569"
-                      formatter={(v) => labelFmt(measure, Number(v))}
-                    />
-                  )}
+                  {/* Bruno (PDF 2026-08-14) R4: the Actual label used to be
+                      dropped entirely with Forecast on, leaving only the
+                      combined total — on historic buckets, where Cover is 0,
+                      the purple segment has no height, so the bar looked
+                      unlabelled and "the information disappeared". Keep it:
+                      `position="insideTop"` so it cannot collide with the
+                      forecast total sitting above the stack. */}
+                  <LabelList
+                    dataKey={measure}
+                    position={forecastOn ? "insideTop" : "top"}
+                    fontSize={9}
+                    fill={forecastOn ? "#1E3A5F" : "#475569"}
+                    formatter={(v) => labelFmt(measure, Number(v))}
+                  />
                 </Bar>
               )}
               {/* Bruno (PDF 2026-07-30) R4: Cover stacked on Production. */}
