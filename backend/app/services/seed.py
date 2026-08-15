@@ -39,6 +39,15 @@ DEFAULT_ROLES = [
     ("DFW KAM2", "DFW KAM Team 2 — KAM Performance DFW (assigned manually)"),
     ("DFW KAM3", "DFW KAM Team 3 — KAM Performance DFW (assigned manually)"),
     ("DFW KAM4", "DFW KAM Team 4 — KAM Performance DFW (assigned manually)"),
+    # Per-team CORP KAM TagRoles. These already exist live (created via
+    # /admin/roles) and gate the per-team Attrition WoW clones (Bruno
+    # 2026-08-14). Listed here for parity only — DEFAULT_ROLES is seeded by
+    # seed_all(), which main.py runs solely when role_report_access is empty,
+    # so adding a name here does NOT create it on an existing deployment.
+    ("CORP KAM1", "CORP Team 1 — KAM (private team reports, assigned manually)"),
+    ("CORP KAM2", "CORP Team 2 — KAM (private team reports, assigned manually)"),
+    ("CORP KAM3", "CORP Team 3 — KAM (private team reports, assigned manually)"),
+    ("CORP KAM4", "CORP Team 4 — KAM (private team reports, assigned manually)"),
     # Individual manager TagRoles (Bruno 2026-07-06) — gate Bonus Calculator to
     # specific people, NOT whole divisions (HR=4 / Operations=52 too broad).
     # Assigned manually: HR Manager→Daniela Nava, OPs Manager→Jaime Anaya.
@@ -471,6 +480,51 @@ CUSTOM_REPORTS = [
         "tags": ["attrition", "wow", "weekly", "reactive", "lanes", "customers", "trends", "variance"],
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "Sales", "CORP", "DFW", "Operations", "Finance"],
+    },
+    # Per-CORP-team scope-locked clones of Attrition WoW (Bruno 2026-08-14).
+    # Server-locked to team_id=TEAMn in attrition_wow_team.py — the UI team
+    # pills are replaced by a static badge, and a crafted ?teams= cannot widen
+    # the scope. ⚠ `roles` only applies on the boot that first creates the row
+    # (xmax = 0); after that /admin/reports is the sole authority (§15).
+    {
+        "key": "corp-t1-attrition-wow",  # -> /reports/corp-t1-attrition-wow
+        "title": "CORP T1 Attrition WoW",
+        "description": "Attrition WoW locked to TEAM1 — active lanes/customers, reactive customers, WoW $Var, 15-week trends for TEAM1 only",
+        "note": "Scope: team_id=TEAM1 (server-locked) · same engine as Attrition WoW · no RUAN/sub-team view · Bruno 2026-08-14",
+        "category": "Executive",
+        "tags": ["attrition", "wow", "corp", "team1", "t1", "kam", "weekly"],
+        "owner_name": "Diego",
+        "roles": ["CORP KAM1", "Executive"],
+    },
+    {
+        "key": "corp-t2-attrition-wow",  # -> /reports/corp-t2-attrition-wow
+        "title": "CORP T2 Attrition WoW",
+        "description": "Attrition WoW locked to TEAM2 — active lanes/customers, reactive customers, WoW $Var, 15-week trends for TEAM2 only",
+        "note": "Scope: team_id=TEAM2 (server-locked) · same engine as Attrition WoW · no RUAN/sub-team view · Bruno 2026-08-14",
+        "category": "Executive",
+        "tags": ["attrition", "wow", "corp", "team2", "t2", "kam", "weekly"],
+        "owner_name": "Diego",
+        "roles": ["CORP KAM2", "Executive"],
+    },
+    {
+        "key": "corp-t3-attrition-wow",  # -> /reports/corp-t3-attrition-wow
+        "title": "CORP T3 Attrition WoW",
+        "description": "Attrition WoW locked to TEAM3 — active lanes/customers, reactive customers, WoW $Var, 15-week trends for TEAM3 only",
+        "note": "Scope: team_id=TEAM3 (server-locked) · same engine as Attrition WoW · no RUAN/sub-team view · Bruno 2026-08-14",
+        "category": "Executive",
+        "tags": ["attrition", "wow", "corp", "team3", "t3", "kam", "weekly"],
+        "owner_name": "Diego",
+        "roles": ["CORP KAM3", "Executive"],
+    },
+    {
+        "key": "corp-t4-attrition-wow",  # -> /reports/corp-t4-attrition-wow
+        "title": "CORP T4 Attrition WoW",
+        "description": "Attrition WoW locked to TEAM4 — active lanes/customers, reactive customers, WoW $Var, 15-week trends for TEAM4 only",
+        "note": "Scope: team_id=TEAM4 (server-locked) · same engine as Attrition WoW · no RUAN/sub-team view · Bruno 2026-08-14",
+        "category": "Executive",
+        "tags": ["attrition", "wow", "corp", "team4", "t4", "kam", "weekly"],
+        "owner_name": "Diego",
+        "roles": ["CORP KAM4", "Executive"],
     },
     {
         "key": "track-award-loads",  # -> /reports/track-award-loads

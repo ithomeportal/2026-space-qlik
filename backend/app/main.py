@@ -20,6 +20,7 @@ from app.routers import (
     admin,
     admin_cashflow,
     attrition_wow,
+    attrition_wow_team,
     auth_email,
     bonus_calculator,
     booker_scorecard,
@@ -1200,6 +1201,9 @@ for _podium_team_router in podium_top.team_routers:
 app.include_router(losses_lanes.router, prefix="/api")
 app.include_router(dfw_losses.router, prefix="/api")
 app.include_router(attrition_wow.router, prefix="/api")
+# Per-CORP-team scope-locked clones of Attrition WoW (Bruno 2026-08-14).
+for _aw_team_router in attrition_wow_team.team_routers:
+    app.include_router(_aw_team_router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
 for _odc_team_router in ops_direct_compare_team.team_routers:

@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
@@ -299,15 +300,46 @@ export interface WowVariation {
 }
 
 // ---------------------------------------------------------------------------
+// API prefix — lets the per-CORP-team clones (Bruno 2026-08-14) reuse every
+// hook against their own server-locked router. Mirrors OppApiProvider.
+//
+// The prefix is ALSO the first queryKey segment, so the 5 copies never share a
+// React-Query cache entry — otherwise TEAM1's rows would be served to TEAM2.
+// ---------------------------------------------------------------------------
+
+export const ATTRITION_DEFAULT_PREFIX = "custom/attrition-wow"
+
+const AttritionApiPrefixContext = createContext<string>(ATTRITION_DEFAULT_PREFIX)
+
+export function AttritionApiProvider({
+  prefix,
+  children,
+}: {
+  prefix?: string
+  children: ReactNode
+}) {
+  return createElement(
+    AttritionApiPrefixContext.Provider,
+    { value: prefix ?? ATTRITION_DEFAULT_PREFIX },
+    children,
+  )
+}
+
+export function useAttritionApiPrefix() {
+  return useContext(AttritionApiPrefixContext)
+}
+
+// ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
 
 export function useAttritionFilters(view?: "ruan") {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "filters", view ?? ""],
+    queryKey: [p, "filters", view ?? ""],
     queryFn: () =>
       apiFetch<AttritionFilterOptions>(
-        `custom/attrition-wow/filters${view ? `?view=${view}` : ""}`,
+        `${p}/filters${view ? `?view=${view}` : ""}`,
       ),
     staleTime: 10 * 60_000,
     ...ATTRITION_RETRY,
@@ -315,30 +347,33 @@ export function useAttritionFilters(view?: "ruan") {
 }
 
 export function useAttritionFreshness() {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "freshness"],
-    queryFn: () => apiFetch<AttritionFreshness>("custom/attrition-wow/freshness"),
+    queryKey: [p, "freshness"],
+    queryFn: () => apiFetch<AttritionFreshness>(`${p}/freshness`),
     staleTime: 60_000,
     ...ATTRITION_RETRY,
   })
 }
 
 export function useAttritionSummary(f: AttritionFilters) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "summary", ...keyOf(f)],
+    queryKey: [p, "summary", ...keyOf(f)],
     queryFn: () =>
-      apiFetch<AttritionSummary>(`custom/attrition-wow/summary${buildQs(f)}`),
+      apiFetch<AttritionSummary>(`${p}/summary${buildQs(f)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })
 }
 
 export function useAttritionTrends(f: AttritionFilters, weeks = 15) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "trends", weeks, ...keyOf(f)],
+    queryKey: [p, "trends", weeks, ...keyOf(f)],
     queryFn: () =>
       apiFetch<AttritionTrends>(
-        `custom/attrition-wow/weekly-trends${buildQs(f, { weeks: String(weeks) })}`,
+        `${p}/weekly-trends${buildQs(f, { weeks: String(weeks) })}`,
       ),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
@@ -346,11 +381,12 @@ export function useAttritionTrends(f: AttritionFilters, weeks = 15) {
 }
 
 export function useAttritionCustomerAttrition(f: AttritionFilters, weeks = 15) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "customer-attrition", weeks, ...keyOf(f)],
+    queryKey: [p, "customer-attrition", weeks, ...keyOf(f)],
     queryFn: () =>
       apiFetch<CustomerAttrition>(
-        `custom/attrition-wow/customer-attrition${buildQs(f, { weeks: String(weeks) })}`,
+        `${p}/customer-attrition${buildQs(f, { weeks: String(weeks) })}`,
       ),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
@@ -363,11 +399,12 @@ export function useAttritionPivot(
   metric: "loads" | "revenue" | "profit" | "margin",
   weeks = 12,
 ) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "pivot", dim, metric, weeks, ...keyOf(f)],
+    queryKey: [p, "pivot", dim, metric, weeks, ...keyOf(f)],
     queryFn: async () => {
       const res = await apiFetch<PivotRow[]>(
-        `custom/attrition-wow/pivot${buildQs(f, {
+        `${p}/pivot${buildQs(f, {
           dim,
           metric,
           weeks: String(weeks),
@@ -381,11 +418,12 @@ export function useAttritionPivot(
 }
 
 export function useAttritionReactive(f: AttritionFilters) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "reactive", ...keyOf(f)],
+    queryKey: [p, "reactive", ...keyOf(f)],
     queryFn: async () => {
       const res = await fetch(
-        `/api/proxy/custom/attrition-wow/reactive-summary${buildQs(f)}`,
+        `/api/proxy/${p}/reactive-summary${buildQs(f)}`,
         { headers: { "Content-Type": "application/json" } },
       )
       if (!res.ok) throw new Error(`API error: ${res.status}`)
@@ -402,20 +440,22 @@ export function useAttritionReactive(f: AttritionFilters) {
 }
 
 export function useAttritionLaneSummary(f: AttritionFilters) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "lane-summary", ...keyOf(f)],
+    queryKey: [p, "lane-summary", ...keyOf(f)],
     queryFn: () =>
-      apiFetch<LaneSummaryRow[]>(`custom/attrition-wow/lane-summary${buildQs(f)}`),
+      apiFetch<LaneSummaryRow[]>(`${p}/lane-summary${buildQs(f)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })
 }
 
 export function useAttritionWowVariation(f: AttritionFilters) {
+  const p = useAttritionApiPrefix()
   return useQuery({
-    queryKey: ["attrition-wow", "wow-var", ...keyOf(f)],
+    queryKey: [p, "wow-var", ...keyOf(f)],
     queryFn: () =>
-      apiFetch<WowVariation>(`custom/attrition-wow/wow-variation${buildQs(f)}`),
+      apiFetch<WowVariation>(`${p}/wow-variation${buildQs(f)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })
@@ -481,13 +521,14 @@ export function useAttritionLosses(
   from?: string,
   to?: string,
 ) {
+  const p = useAttritionApiPrefix()
   const extra: Record<string, string> = { range }
   if (range === "custom" && from) extra.from = from
   if (range === "custom" && to) extra.to = to
   return useQuery({
-    queryKey: ["attrition-wow", "losses", ...keyOf(f), range, from ?? "", to ?? ""],
+    queryKey: [p, "losses", ...keyOf(f), range, from ?? "", to ?? ""],
     queryFn: () =>
-      apiFetch<AttritionLosses>(`custom/attrition-wow/losses${buildQs(f, extra)}`),
+      apiFetch<AttritionLosses>(`${p}/losses${buildQs(f, extra)}`),
     staleTime: 5 * 60_000,
     ...ATTRITION_RETRY,
   })
