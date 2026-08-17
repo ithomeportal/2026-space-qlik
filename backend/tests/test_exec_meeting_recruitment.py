@@ -43,8 +43,8 @@ class _StubPool:
         return None
 
 
-def _request(recruit=None, timeoff=None):
-    state = SimpleNamespace(recruit_pool=recruit, timeoff_pool=timeoff)
+def _request(recruit=None, timeoff=None, hub=None):
+    state = SimpleNamespace(recruit_pool=recruit, timeoff_pool=timeoff, pool=hub)
     return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
@@ -254,3 +254,110 @@ async def test_open_vacancies_is_a_remainder_not_a_row_count():
     )
     assert res["data"]["open_roles"] == 2      # two rows are still ACTIVE
     assert res["data"]["open_vacancies"] == 2  # but only two seats remain open
+
+
+# ---------------------------------------------------------------------------
+# 4. Headcount snapshots — the denominator we cannot rebuild later
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPool:
+    """Captures writes so we can assert what the snapshot actually stored."""
+
+    def __init__(self, fetch_rows=None):
+        self.writes: list[tuple] = []
+        self._fetch_rows = fetch_rows or []
+
+    async def execute(self, sql, *params):
+        self.writes.append(params)
+
+    async def fetch(self, sql, *params):
+        return self._fetch_rows
+
+
+@pytest.mark.asyncio
+async def test_snapshot_uses_the_same_definition_as_the_kpi(monkeypatch):
+    """The snapshot and the headcount card must never diverge (§69/§16)."""
+    from datetime import date as _date
+
+    from app.services import headcount_snapshot as hs
+
+    monkeypatch.setattr(hs, "cst_today", lambda: _date(2026, 8, 17))
+
+    timeoff = _StubPool(
+        [
+            (
+                "FROM users",
+                [
+                    {"department": "Operations"},        # -> CORP OPERATIONS
+                    {"department": "Operations"},
+                    {"department": "Operations (DFW)"},  # -> DFW OPERATIONS
+                    {"department": None},                # -> Unassigned, still counted
+                ],
+            )
+        ]
+    )
+    hub = _RecordingPool()
+
+    result = await hs.capture_headcount_snapshot(hub, timeoff)
+
+    assert result["total"] == 4
+    stored = {dept: n for (_month, dept, n) in hub.writes}
+    assert stored == {"CORP OPERATIONS": 2, "DFW OPERATIONS": 1, "Unassigned": 1}
+    # Bucketed to the first of the month, not the capture day.
+    assert all(m == _date(2026, 8, 1) for (m, _d, _n) in hub.writes)
+    # SUM over departments must equal total headcount, so Unassigned is kept.
+    assert sum(stored.values()) == result["total"]
+
+    # And it agrees with what the KPI card would report for the same source.
+    kpi = await emr._active_employees(timeoff, None)
+    assert kpi == result["total"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_refuses_to_write_zeros():
+    """An empty read must not be recorded — a year from now a row of zeros is
+    indistinguishable from 'the company emptied out'."""
+    from app.services import headcount_snapshot as hs
+
+    hub = _RecordingPool()
+    result = await hs.capture_headcount_snapshot(hub, _StubPool([("FROM users", [])]))
+
+    assert hub.writes == []
+    assert "skipped" in result
+
+
+@pytest.mark.asyncio
+async def test_past_year_turnover_needs_snapshots(monkeypatch):
+    """Past-year turnover stays None until snapshots exist — never falling back
+    to today's headcount, which holds survivors rather than that year's staff."""
+    from datetime import date as _date
+
+    monkeypatch.setattr(emr, "cst_today", lambda: _date(2026, 8, 17))
+
+    timeoff = _StubPool([("FROM users", [{"department": "Operations"}] * 10)])
+    recruit = _StubPool(
+        [("FreshServiceTicket", [{"departmentOverride": None, "subCategory": "DFW"}] * 6)]
+    )
+
+    # No snapshots recorded for 2024 -> no rate, and no invented basis.
+    empty_hub = _StubPool([("headcount_snapshots", [])])
+    res = await emr.annual(
+        request=_request(recruit=recruit, timeoff=timeoff, hub=empty_hub),
+        f={"department": None},
+        year=2024,
+        _user={},
+    )
+    assert res["data"]["turnover_rate"] is None
+    assert res["data"]["turnover_basis"] is None
+
+    # With snapshots averaging 20, 6 exits -> 30%, and the basis says so.
+    hub = _StubPool([("headcount_snapshots", [{"headcount": 18}, {"headcount": 22}])])
+    res2 = await emr.annual(
+        request=_request(recruit=recruit, timeoff=timeoff, hub=hub),
+        f={"department": None},
+        year=2024,
+        _user={},
+    )
+    assert res2["data"]["turnover_rate"] == pytest.approx(6 / 20)
+    assert "snapshots" in res2["data"]["turnover_basis"]

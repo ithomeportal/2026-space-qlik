@@ -76,6 +76,27 @@ async def _scheduled_user_sync():
         logger.error(f"Scheduled user sync failed: {e}")
 
 
+async def _scheduled_headcount_snapshot():
+    """Background job: record this month's headcount by department.
+
+    Runs DAILY and upserts the current month on purpose. A once-a-month job
+    gets one attempt, and a single missed firing would lose that month's
+    headcount permanently — the time-off table cannot be replayed, since it
+    drops departed staff over time. Upserting daily is self-healing, and the
+    last write of a month is that month's closing figure.
+    """
+    try:
+        from app.services.headcount_snapshot import capture_headcount_snapshot
+
+        result = await capture_headcount_snapshot(
+            getattr(app.state, "pool", None),
+            getattr(app.state, "timeoff_pool", None),
+        )
+        logger.info(f"Headcount snapshot complete: {result}")
+    except Exception as e:
+        logger.error(f"Headcount snapshot failed: {e}")
+
+
 async def _scheduled_losses_alert():
     """Background job: send daily 7 AM CST Losses Lanes weekly-movers email."""
     try:
@@ -747,6 +768,23 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            # Monthly headcount snapshot (Exec Meeting – Recruitment turnover).
+            # Portal-owned, like dpc_* — the time-off DB is read-only to us and
+            # is a CURRENT-STATE table that drops departed staff, so a past
+            # month's headcount cannot be reconstructed from it afterwards. One
+            # row per (month, department); see services/headcount_snapshot.py.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS headcount_snapshots (
+                  snapshot_month DATE        NOT NULL,
+                  department     TEXT        NOT NULL,
+                  headcount      INTEGER     NOT NULL,
+                  captured_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  PRIMARY KEY (snapshot_month, department)
+                )
+                """
+            )
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
@@ -974,6 +1012,16 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+        # Headcount snapshot at 02:30 CST — after the user sync, in a quiet
+        # slot. Daily by design; see _scheduled_headcount_snapshot.
+        scheduler.add_job(
+            _scheduled_headcount_snapshot,
+            CronTrigger(hour=2, minute=30, timezone="America/Chicago"),
+            id="daily_headcount_snapshot",
+            name="Record monthly headcount by department",
+            replace_existing=True,
+        )
+
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
     # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
     # savings_pool (aivn_datalake_gold) + RESEND_API_KEY.
@@ -1142,6 +1190,7 @@ async def lifespan(app: FastAPI):
     # watching, and the only signal was a log line no one read.
     EXPECTED_JOBS = {
         "daily_user_sync": "People Management sync, 02:00 CST",
+        "daily_headcount_snapshot": "Monthly headcount snapshot, 02:30 CST",
         "daily_losses_alert": "DFW Losses e-mail, 07:00 CST",
         "daily_bonus_history_finalize": "Bonus period snapshot, 01:00 CST",
         "daily_lane_rates_prewarm": "SONAR / 123LB lane rates, 05:00 CST",

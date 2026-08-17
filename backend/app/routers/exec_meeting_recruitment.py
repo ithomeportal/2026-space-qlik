@@ -230,8 +230,14 @@ _TIMEOFF_EXCLUDE = """
 """
 
 
-async def _active_employees(pool, wanted_dept: Optional[str]) -> int:
-    """Request 3 — headcount of active employees, Jobs-portal definition."""
+async def active_headcount_by_department(pool) -> dict[str, int]:
+    """Active headcount per canonical department — the ONE definition of
+    "active employee" in this feature (§69).
+
+    Both the KPI card and the monthly headcount snapshot read through here. If
+    they ever diverge, the turnover denominator stops matching the headcount
+    printed beside it, which is exactly the kind of disagreement §16 forbids.
+    """
     rows = await pool.fetch(
         f"""
         SELECT department FROM users
@@ -240,9 +246,17 @@ async def _active_employees(pool, wanted_dept: Optional[str]) -> int:
         EXCLUDED_EMAILS,
         EXCLUDED_TIMEOFF_DEPARTMENTS,
     )
-    return sum(
-        1 for r in rows if _matches(normalize_timeoff_dept(r["department"]), wanted_dept)
-    )
+    counts: dict[str, int] = {}
+    for r in rows:
+        dept = normalize_timeoff_dept(r["department"])
+        counts[dept] = counts.get(dept, 0) + 1
+    return counts
+
+
+async def _active_employees(pool, wanted_dept: Optional[str]) -> int:
+    """Request 3 — headcount of active employees, Jobs-portal definition."""
+    counts = await active_headcount_by_department(pool)
+    return sum(n for dept, n in counts.items() if _matches(dept, wanted_dept))
 
 
 async def _new_hires(pool, year: int, wanted_dept: Optional[str]) -> int:
@@ -424,12 +438,38 @@ async def annual(
     new_hires = await _new_hires(timeoff, selected, f["department"])
     offboarding = await _offboarding(recruit, selected, f["department"])
 
-    # Turnover only where the denominator is real (docstring note 5).
+    # Turnover only where the denominator is REAL (docstring note 5).
+    #
+    # Current year -> today's active headcount, the same figure on the KPI card.
+    # Past year    -> the mean of that year's recorded monthly snapshots, if we
+    #                 were recording yet. Snapshots began 2026-08; for any year
+    #                 before that there is nothing to average and this stays
+    #                 None, so the UI prints "—" instead of a reconstructed
+    #                 number. Never fall back to today's headcount for a past
+    #                 year: the time-off table holds today's survivors, not that
+    #                 year's staff, which would understate the denominator and
+    #                 overstate turnover.
+    from app.services.headcount_snapshot import average_headcount_for_year
+
     turnover_rate = None
+    turnover_basis = None
     if selected == current:
         headcount = await _active_employees(timeoff, f["department"])
         if headcount:
             turnover_rate = offboarding / headcount
+            turnover_basis = "exits this year / active headcount today"
+    else:
+        # Read app.state directly rather than via get_pool(): a missing hub pool
+        # must degrade to "no turnover figure", not 503 the whole panel over an
+        # optional enrichment (§56 fail soft).
+        avg = await average_headcount_for_year(
+            getattr(request.app.state, "pool", None), selected, f["department"]
+        )
+        if avg:
+            turnover_rate = offboarding / avg
+            turnover_basis = (
+                "exits / average monthly headcount that year (recorded snapshots)"
+            )
 
     return {
         "success": True,
@@ -438,11 +478,7 @@ async def annual(
             "new_hires": new_hires,
             "offboarding": offboarding,
             "turnover_rate": turnover_rate,
-            "turnover_basis": (
-                "exits this year / active headcount today"
-                if turnover_rate is not None
-                else None
-            ),
+            "turnover_basis": turnover_basis,
             # Surfaced so the UI can caption the known undercount rather than
             # letting improving coverage read as a hiring trend (docstring 1).
             "hires_are_historical": selected < current,
