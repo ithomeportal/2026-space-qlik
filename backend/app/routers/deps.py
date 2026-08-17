@@ -82,6 +82,33 @@ def get_pricing_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def get_recruit_pool(request: Request) -> asyncpg.Pool:
+    """Pool for recruit_unilink — the Jobs portal's own DB
+    ("Position" + "FreshServiceTicket"). Powers Exec Meeting – Recruitment."""
+    pool = getattr(request.app.state, "recruit_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Recruitment (Jobs) data source not configured",
+        )
+    return pool
+
+
+def get_timeoff_pool(request: Request) -> asyncpg.Pool:
+    """Pool for the time-off people-management DB (users). Powers the headcount,
+    new-hire and people-flow halves of Exec Meeting – Recruitment.
+
+    Distinct from the pool `sync_users` opens: that one is short-lived and
+    created per 2 AM run, this one serves the request path."""
+    pool = getattr(request.app.state, "timeoff_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Time-off data source not configured",
+        )
+    return pool
+
+
 def require_tag_role(*allowed: str):
     """Factory: require the user to have at least one of the given tag roles (admin bypasses).
 

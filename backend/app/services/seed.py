@@ -751,6 +751,23 @@ CUSTOM_REPORTS = [
         # admin UI (/admin/reports) — the single source of truth.
         "roles": ["CEO", "Executive"],
     },
+    {
+        "key": "exec-meeting-recruitment",  # -> /reports/exec-meeting-recruitment
+        "title": "Exec Meeting – Recruitment",
+        "description": "Recruitment pack for the exec meeting — active headcount and open vacancies, year-by-year new hires vs offboarding, a per-employee hire-to-exit timeline, and every open role with its age",
+        "note": "Two read-only sources, merged in Python (separate DBs, no join): timeoff_at_unilink_portal.users (role spaceqlik_timeoff_ro) for headcount / new hires / people flow, and recruit_unilink \"Position\" + \"FreshServiceTicket\" (role spaceqlik_recruit_ro) for open roles and exits · New hires = time-off \"hireDate\", matching the Jobs portal's Human Capital dashboard, and prior years are UNDERCOUNTS because departed staff age out of that table (2024 25% / 2025 62% / 2026 89% coverage vs FS Onboarding, measured 2026-08-17) — the panel captions this · Exits = FS Offboarding tickets, never time-off \"leaveDate\" (51% of inactive rows have it NULL and it records zero 2026 exits) · §03 People Flow is the one panel using \"leaveDate\", because no reliable key joins a person to an FS ticket, so its exit markers deliberately do NOT tie to the §02 Offboarding KPI · Open Vacancies = SUM(GREATEST(0, vacancies - hiredCount)) over ACTIVE positions, so it exceeds the row count in §05 by design · turnover shown for the current year only (past-year headcount is not reconstructable) · Bruno PDF 2026-08-17",
+        "category": "HR",
+        "tags": [
+            "recruitment", "hr", "headcount", "hiring", "new-hires",
+            "offboarding", "turnover", "open-roles", "vacancies",
+            "people-flow", "exec", "timeline",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15; after that
+        # /admin/reports is the sole authority. Set per Diego 2026-08-17:
+        # HR division + Daniela's individual HR Manager role + CEO.
+        "roles": ["HR", "HR Manager", "CEO"],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

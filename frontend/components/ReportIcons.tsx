@@ -39,6 +39,7 @@ import {
   Truck,
   UserCog,
   UserMinus,
+  UserPlus,
   UserX,
   Users,
   Wallet,
@@ -176,6 +177,9 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Bonus Calculator":               { icon: Calculator,     family: "hr" },
   "Division Payment Calculator":    { icon: Wallet,         family: "finance" },
   "Reports Index":                  { icon: Library,        family: "executive" },
+  // Title carries an EN DASH (U+2013) — it must stay byte-identical to the
+  // `title` in seed.py, or this lookup silently falls through to the fallback.
+  "Exec Meeting – Recruitment":     { icon: UserPlus,       family: "hr" },
 
   // ---- Legacy Qlik (still in catalog) ----
   "Executive Report":               { icon: BarChart3,      family: "executive" },

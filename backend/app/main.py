@@ -32,6 +32,7 @@ from app.routers import (
     ceo_executive,
     dfw_losses,
     division_payment,
+    exec_meeting_recruitment,
     hd_spot,
     hr_access_doors,
     it_tickets,
@@ -918,6 +919,51 @@ async def lifespan(app: FastAPI):
     else:
         app.state.financial_pool = None
 
+    # Pool for recruit_unilink (the Jobs portal's own DB). Read-only, SELECT on
+    # "Position" and "FreshServiceTicket" only. Powers the open-roles and
+    # offboarding halves of Exec Meeting – Recruitment; the people half comes
+    # from the time-off pool and is merged in Python (separate databases — no
+    # dblink/fdw, §56).
+    if settings.RECRUIT_DATABASE_URL:
+        try:
+            app.state.recruit_pool = await asyncpg.create_pool(
+                settings.RECRUIT_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                command_timeout=40,
+                init=_set_cst_session,
+            )
+            logger.info("Recruit pool connected — powers Exec Meeting – Recruitment")
+        except Exception as e:
+            logger.warning(
+                f"Recruit DB connect failed: {e}. Exec Meeting – Recruitment will 503."
+            )
+            app.state.recruit_pool = None
+    else:
+        app.state.recruit_pool = None
+
+    # Shared pool for the time-off people-management DB. This DB was already in
+    # use by the 2 AM user sync, which opens its OWN short-lived pool per run;
+    # this long-lived one exists so request-path readers (Exec Meeting –
+    # Recruitment) don't pay a connect on every call.
+    if settings.TIMEOFF_DATABASE_URL:
+        try:
+            app.state.timeoff_pool = await asyncpg.create_pool(
+                settings.TIMEOFF_DATABASE_URL,
+                min_size=1,
+                max_size=4,
+                command_timeout=40,
+                init=_set_cst_session,
+            )
+            logger.info("Time-off pool connected — powers Exec Meeting – Recruitment")
+        except Exception as e:
+            logger.warning(
+                f"Time-off DB connect failed: {e}. Exec Meeting – Recruitment will 503."
+            )
+            app.state.timeoff_pool = None
+    else:
+        app.state.timeoff_pool = None
+
     # Schedule daily user sync at 2:00 AM CST (America/Chicago)
     if settings.TIMEOFF_DATABASE_URL:
         scheduler.add_job(
@@ -1134,6 +1180,10 @@ async def lifespan(app: FastAPI):
         await app.state.freshservice_pool.close()
     if getattr(app.state, "pricing_pool", None):
         await app.state.pricing_pool.close()
+    if getattr(app.state, "recruit_pool", None):
+        await app.state.recruit_pool.close()
+    if getattr(app.state, "timeoff_pool", None):
+        await app.state.timeoff_pool.close()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -1195,6 +1245,7 @@ app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(hd_spot.router, prefix="/api")
 app.include_router(division_payment.router, prefix="/api")
+app.include_router(exec_meeting_recruitment.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")
