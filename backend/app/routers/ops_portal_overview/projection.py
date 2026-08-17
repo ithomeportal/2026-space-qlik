@@ -16,7 +16,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _last_5_weeks, _last_n_business_days_start, _month_bounds, _week_label
-from ._sql import _v4_scope_where
+from ._sql import _parse_team_scope, _v4_scope_where
 from ._metrics import _projection_from_sums, _safe_float, _team_projection_core
 
 
@@ -30,6 +30,9 @@ from ._metrics import _projection_from_sums, _safe_float, _team_projection_core
 async def team_projection(
     request: Request,
     team: Optional[str] = Query(None),
+    teams: Optional[str] = Query(
+        None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
+    ),
     customer: Optional[str] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
@@ -56,7 +59,7 @@ async def team_projection(
     # divisor and MTD legs now live in _team_projection_core so /combo and
     # /actuals compute the identical number instead of their own variants.
     proj = await _team_projection_core(
-        pool, team=team, customer=customer, load_type=load_type,
+        pool, team=_parse_team_scope(team, teams), customer=customer, load_type=load_type,
         lanes=lanes, exclude_lanes=exclude_lanes,
         carriers=carriers, exclude_carriers=exclude_carriers, today=today,
     )
@@ -81,6 +84,9 @@ async def team_projection(
 async def profit_tm_gauge(
     request: Request,
     team: Optional[str] = Query(None),
+    teams: Optional[str] = Query(
+        None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
+    ),
     customer: Optional[str] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
@@ -94,10 +100,11 @@ async def profit_tm_gauge(
     pool = get_datalake_gold_pool(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
+    team_scope = _parse_team_scope(team, teams)
 
     # Production MTD profit
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
     p_params.extend([m_start, today])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -112,9 +119,10 @@ async def profit_tm_gauge(
     # Budget MTD profit (target)
     b_params: list = [m_start, m_end]
     b_extra = ""
-    if team:
-        b_params.append(team)
-        b_extra += f" AND ct.team_id = ${len(b_params)}"
+    # ct.team_id is the TRIMmed CUSTOMER_TEAM_CTE output — plain ids, no padding.
+    if team_scope:
+        b_params.append(team_scope)
+        b_extra += f" AND ct.team_id = ANY(${len(b_params)})"
     if customer:
         b_params.append(customer)
         b_extra += f' AND budget."Customer Name" = ${len(b_params)}'

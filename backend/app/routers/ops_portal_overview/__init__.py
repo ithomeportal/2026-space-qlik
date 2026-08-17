@@ -92,7 +92,9 @@ from ._sql import (  # noqa: F401
     _bill_metrics_sql,
     _carrier_first_expr,
     _lane_expr,
+    _parse_team_scope,
     _scorecard_cte,
+    _team_list,
     _v4_scope_where,
 )
 from ._metrics import (  # noqa: F401
@@ -179,6 +181,7 @@ __all__ = [
     "_last_5_weeks",
     "_last_n_business_days_start",
     "_month_bounds",
+    "_parse_team_scope",
     "_projection_bounds",
     "_projection_from_sums",
     "_projection_params",
@@ -187,6 +190,7 @@ __all__ = [
     "_resolve_range",
     "_safe_float",
     "_scorecard_cte",
+    "_team_list",
     "_team_perf_obj",
     "_team_projection_core",
     "_v4_scope_where",

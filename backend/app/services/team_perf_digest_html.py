@@ -295,7 +295,7 @@ def _cust_row(
     return "<tr>" + "".join(cells) + "</tr>"
 
 
-def _customer_panel(rows: list[dict], totals: dict) -> str:
+def _customer_panel(rows: list[dict], totals: dict, *, total_scope: str = "team") -> str:
     body = [
         _cust_row(
             "TOTAL",
@@ -330,8 +330,8 @@ def _customer_panel(rows: list[dict], totals: dict) -> str:
         + "</tbody></table>"
         + f'<div style="font-family:{FONT_STACK};font-size:10px;color:{GREY};'
           f'margin-top:6px;">{len(rows)} customer(s) with MTD activity '
-          f'&middot; top 15 by revenue &middot; TOTAL is the full team, not the '
-          f'listed rows</div>'
+          f'&middot; top 15 by revenue &middot; TOTAL is the full {total_scope}, not '
+          f'the listed rows</div>'
     )
     return _card_shell(inner)
 
@@ -494,8 +494,9 @@ def _sent_stamp(now) -> str:
 
 def render_html(
     *,
-    team: str,
-    team_number: str,
+    scope_title: str,
+    scope_footer: str,
+    scope_is_multi_team: bool,
     now,
     card1: dict,
     card2: dict,
@@ -524,7 +525,11 @@ def render_html(
         + '<div style="height:12px;line-height:12px;">&nbsp;</div>'
         + _card_projection(card5)
     )
-    right = _customer_panel(customer_rows, customer_totals)
+    right = _customer_panel(
+        customer_rows,
+        customer_totals,
+        total_scope="CORP scope" if scope_is_multi_team else "team",
+    )
 
     return (
         f"""\
@@ -533,7 +538,7 @@ def render_html(
     <tr><td align="center" style="padding:20px;font-family:{FONT_STACK};">
       <table cellpadding="0" cellspacing="0" border="0" width="880" style="width:880px;max-width:100%;font-family:{FONT_STACK};">
         <tr><td style="background:{NAVY};padding:18px 22px;border-radius:8px 8px 0 0;font-family:{FONT_STACK};">
-          <div style="font-family:{FONT_STACK};font-size:19px;font-weight:800;color:#FFFFFF;">Performance for Team {escape(team_number)}</div>
+          <div style="font-family:{FONT_STACK};font-size:19px;font-weight:800;color:#FFFFFF;">{escape(scope_title)}</div>
           <div style="font-family:{FONT_STACK};font-size:11px;color:#BFDBFE;margin-top:3px;">{_sent_stamp(now)}</div>
         </td></tr>
         <tr><td style="background:#FFFFFF;padding:16px;border:1px solid {BORDER};border-top:0;border-radius:0 0 8px 8px;font-family:{FONT_STACK};">
@@ -547,7 +552,7 @@ def render_html(
           {_chart_block("Customers & Margin % — last 14 days", charts["customers_margin"])}
           <div style="font-family:{FONT_STACK};font-size:10px;color:{GREY};margin-top:14px;text-align:center;">
             Source: <code style="font-family:{MONO_STACK};color:{INK};">ops-portal-overview</code>
-            &middot; scope {escape(team)} (CORP) &middot; rates are recomputed from their components; deltas marked
+            &middot; scope {escape(scope_footer)} &middot; rates are recomputed from their components; deltas marked
             <strong style="font-family:{FONT_STACK};">pp</strong> are percentage points &middot; {DASH} = no baseline
           </div>
         </td></tr>

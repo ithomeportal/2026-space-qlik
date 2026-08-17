@@ -16,7 +16,12 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_TEAMS, CUSTOMER_TEAM_CTE, YEAR_START, router
 from ._dates import _resolve_range
-from ._sql import _bill_metrics_sql, _scorecard_cte, _v4_scope_where
+from ._sql import (
+    _bill_metrics_sql,
+    _parse_team_scope,
+    _scorecard_cte,
+    _v4_scope_where,
+)
 from ._metrics import _safe_float
 
 
@@ -43,6 +48,9 @@ async def team_performance(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
+    teams: Optional[str] = Query(
+        None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
+    ),
     customer: Optional[str] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
@@ -58,13 +66,19 @@ async def team_performance(
     flipped them losses-only and contradicted the $23,000 positive mock. Fix
     confirmed 2026-05-10: top-of-table Profit/Margin/Prof×L drop the filter;
     explicitly named Loads-w/-Loss and Profit-Loss rows keep it.
+
+    ``teams`` widens the scope to several teams at once and aggregates in SQL —
+    the PERFORMANCE CORP digest needs one combined row, and distinct customer
+    counts, OTP/OTD and margin % cannot be recovered by adding four per-team
+    responses together.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
+    team_scope = _parse_team_scope(team, teams)
 
     # ---- Production query ------------------------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
     prod_params.extend([s, e])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
@@ -113,9 +127,11 @@ async def team_performance(
     if customer:
         sav_params.append(customer)
         sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
-    if team:
-        sav_params.append(team)
-        sav_extra += f" AND ct.team_id = ${len(sav_params)}"
+    # ct.team_id comes out of CUSTOMER_TEAM_CTE already TRIMmed, so these are
+    # plain ids — no pad_variants here (unlike the v4 predicate above).
+    if team_scope:
+        sav_params.append(team_scope)
+        sav_extra += f" AND ct.team_id = ANY(${len(sav_params)})"
     sav_sql = f"""
         WITH {CUSTOMER_TEAM_CTE}
         SELECT
@@ -132,7 +148,7 @@ async def team_performance(
     # Customer attrition % = customers with last_load > 30d / customers total
     # Lane attrition % = lanes with last_load > 30d / lanes total
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_attr = _v4_scope_where("br4", team_scope, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -165,7 +181,7 @@ async def team_performance(
     # departure/arrival from customer_windows (same sources as By Order R11, so
     # the panel reconciles with the Days-to-Bill column). See _bill_sql().
     bill_params: list = []
-    where_bill = _v4_scope_where("br4", team, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_bill = _v4_scope_where("br4", team_scope, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
     bill_params.extend([s, e])
     b_s = len(bill_params) - 1
     b_e = len(bill_params)
@@ -181,7 +197,7 @@ async def team_performance(
     revenue = _safe_float(prod_row["revenue"])
     profit  = _safe_float(prod_row["profit"])
     volume  = int(prod_row["volume"] or 0)
-    team_count = int(prod_row["team_count"] or 0) or (1 if team else len(CORP_TEAMS))
+    team_count = int(prod_row["team_count"] or 0) or (len(team_scope) or len(CORP_TEAMS))
     capacity = 500 * team_count
     otp_late = int(prod_row["otp_late_sum"] or 0)
     otd_late = int(prod_row["otd_late_sum"] or 0)

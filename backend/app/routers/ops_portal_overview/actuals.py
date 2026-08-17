@@ -16,7 +16,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _month_bounds, _resolve_range
-from ._sql import _scorecard_cte, _v4_scope_where
+from ._sql import _parse_team_scope, _scorecard_cte, _v4_scope_where
 from ._metrics import _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
 
 
@@ -32,6 +32,9 @@ async def actuals(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
+    teams: Optional[str] = Query(
+        None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
+    ),
     customer: Optional[str] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
@@ -67,8 +70,9 @@ async def actuals(
     # billed). ANDs with Losses when both are on.
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
+    team_scope = _parse_team_scope(team, teams)
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -103,9 +107,10 @@ async def actuals(
     # ---- Budget per customer --------------------------------------------
     b_params: list = [s, e]
     b_extra = ""
-    if team:
-        b_params.append(team)
-        b_extra += f" AND ct.team_id = ${len(b_params)}"
+    # ct.team_id is the TRIMmed CUSTOMER_TEAM_CTE output — plain ids, no padding.
+    if team_scope:
+        b_params.append(team_scope)
+        b_extra += f" AND ct.team_id = ANY(${len(b_params)})"
     if customer:
         b_params.append(customer)
         b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
@@ -129,7 +134,7 @@ async def actuals(
     # month concept, so it deliberately ignores the Date filter — that is what
     # makes the TOTAL row equal the Team Monthly Projection panel.
     proj_where, proj_params_l, proj_idx, _pending = _projection_params(
-        team, customer, load_type, lanes, exclude_lanes,
+        team_scope, customer, load_type, lanes, exclude_lanes,
         carriers, exclude_carriers, today,
     )
     proj_by_cust_sql = _projection_sums_sql(
@@ -141,7 +146,7 @@ async def actuals(
         pool.fetch(bud_sql, *b_params),
         pool.fetch(proj_by_cust_sql, *proj_params_l),
         _team_projection_core(
-            pool, team=team, customer=customer, load_type=load_type,
+            pool, team=team_scope, customer=customer, load_type=load_type,
             lanes=lanes, exclude_lanes=exclude_lanes,
             carriers=carriers, exclude_carriers=exclude_carriers, today=today,
         ),

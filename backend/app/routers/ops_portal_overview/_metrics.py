@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from ._constants import CORP_TEAMS
 from ._dates import _count_workdays, _last_n_business_days_start, _month_bounds
-from ._sql import _v4_scope_where
+from ._sql import _team_list, _v4_scope_where
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,11 @@ async def _team_projection_core(
     )
     row = await pool.fetchrow(_projection_sums_sql(where, *idx), *params)
     team_count = int(row["team_count"] or 0) if row else 0
-    team_count = team_count or (1 if team else len(CORP_TEAMS))
+    # Fallback only when the scan returned no rows at all. `team` may be a
+    # single id or a list of them (PERFORMANCE CORP passes four), so count the
+    # scope rather than testing its truthiness — `1 if team else …` would
+    # charge a four-team scope one team's worth of capacity.
+    team_count = team_count or len(_team_list(team)) or len(CORP_TEAMS)
     if not row:
         return _projection_from_sums(0, 0, 0, 0, 0, 0, pending, team_count)
     return _projection_from_sums(

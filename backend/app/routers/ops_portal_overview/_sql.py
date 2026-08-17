@@ -5,12 +5,60 @@ Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTO
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Sequence, Union
 
 
 from app.datalake import pad_variants as _pad_variants
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES
+
+# A scope is one team, several teams, or none (= the whole CORP base scope).
+TeamScope = Union[str, Sequence[str], None]
+
+
+def _team_list(team: TeamScope) -> List[str]:
+    """Normalise a team scope to a list of ids. ``None``/empty → ``[]``.
+
+    Every team-scoped predicate in this package goes through here, so a single
+    team and a list of teams take the same code path and cannot drift. A bare
+    string is NOT iterated character-wise — that would silently scope a query
+    to ``['T','E','A','M','1']`` and return nothing.
+
+    Anything that is neither a string nor a list of strings is treated as "no
+    scope" — see ``_parse_team_scope`` for why that matters.
+    """
+    if not team:
+        return []
+    if isinstance(team, str):
+        return [team]
+    if isinstance(team, (list, tuple, set, frozenset)):
+        return [t for t in team if isinstance(t, str) and t]
+    return []
+
+
+def _parse_team_scope(team: TeamScope = None, teams: Optional[str] = None) -> List[str]:
+    """Resolve the ``(team, teams)`` query-parameter pair into a team list.
+
+    ``teams`` is the comma-separated multi-team form (same shape
+    ``budget_followup._parse_teams`` uses); ``team`` is the single-team form the
+    UI has always sent. ``teams`` wins when both are given. An empty result
+    means "no narrowing" — the CORP base predicate in ``_v4_scope_where``
+    still applies, so this is never an unscoped query.
+
+    ⚠ Both arguments are type-checked rather than merely truth-tested. Several
+    endpoints in this package are ALSO called as plain Python functions —
+    ``ops_portal_overview_team.py`` does exactly that for /team-performance,
+    /team-projection, /profit-tm-gauge and /actuals — and such a caller omits
+    the newer parameter entirely. Python then binds the literal
+    ``Query(None)`` DEFAULT OBJECT, which is truthy and has no ``.split``. A
+    plain ``if teams:`` would therefore raise ``AttributeError`` on every
+    per-team portal view while working perfectly over HTTP, where FastAPI
+    resolves the default to ``None``. Caught by
+    ``test_ops_portal_projection.py`` — keep the isinstance guards.
+    """
+    if isinstance(teams, str) and teams.strip():
+        return [t.strip().upper() for t in teams.split(",") if t.strip()]
+    return [t.strip().upper() for t in _team_list(team)]
 
 
 def _lane_expr(alias: str) -> str:
@@ -45,7 +93,7 @@ def _carrier_first_expr(alias: str) -> str:
 
 def _v4_scope_where(
     alias: str,
-    team: Optional[str],
+    team: TeamScope,
     customer: Optional[str],
     load_type: Optional[str],
     params: list,
@@ -80,8 +128,15 @@ def _v4_scope_where(
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
-    if team:
-        params.append(_pad_variants([team], width=8))
+    # One team or four — same predicate, same shape. The emitted SQL is
+    # byte-identical either way; only the bound array grows. Each id must go
+    # through pad_variants: McLeod stores team_id BOTH unpadded ('TEAM1', in
+    # budget_report_v4) and right-padded to varchar(8) ('TEAM1   ', in the
+    # scorecard tables), so a literal IN ('TEAM1',...) matches ZERO scorecard
+    # rows and would silently zero OTP/OTD rather than fail.
+    team_ids = _team_list(team)
+    if team_ids:
+        params.append(_pad_variants(team_ids, width=8))
         parts.append(f"{alias}.team_id = ANY(${len(params)})")
     if customer:
         params.append(customer)

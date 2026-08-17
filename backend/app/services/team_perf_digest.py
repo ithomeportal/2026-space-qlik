@@ -52,6 +52,7 @@ from app.routers.ops_portal_overview import (
     _resolve_range,
     _month_bounds,
     _safe_float,
+    _team_list,
     _v4_scope_where,
 )
 from app.services.team_perf_digest_html import render_html
@@ -59,6 +60,17 @@ from app.services.team_perf_digest_html import render_html
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/custom/ops-portal-overview"
+
+# The scope of the PERFORMANCE CORP digest (request PDF, 2026-08-17):
+#   team_id IN ('TEAM1','TEAM2','TEAM3','TEAM4')
+#
+# ⚠ Deliberately NOT `CORP_TEAMS`, which is FIVE teams — it also carries
+# TEAM5. TEAM5 is dormant (last load 2026-04-30; 83 loads and $300 margin in
+# 2026 against $4.2M for TEAM1-4), so the two are numerically indistinguishable
+# today and a reader would never catch the substitution. The request names four
+# teams, so four is what this sends — and if TEAM5 ever revives, this stays
+# right instead of silently widening.
+DIGEST_CORP_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4")
 
 # Chart / series window: today-14 .. today-1 (14 calendar days, zero-filled).
 SERIES_DAYS = 14
@@ -161,7 +173,7 @@ async def _get_many(app, calls: list[tuple[str, dict]]) -> list[Optional[dict]]:
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_daily_series(pool, team: str, start: date, end: date) -> list[dict]:
+async def _fetch_daily_series(pool, team, start: date, end: date) -> list[dict]:
     """One row per calendar day in [start, end] — days with no loads included.
 
     ``loads`` keeps the ``total_charge <> 0`` filter (a $0 load isn't a load);
@@ -225,7 +237,7 @@ async def _fetch_daily_series(pool, team: str, start: date, end: date) -> list[d
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_ytd_profit(pool, team: str, start: date, end: date) -> float:
+async def _fetch_ytd_profit(pool, team, start: date, end: date) -> float:
     params: list = []
     where = _v4_scope_where("br4", team, None, None, params)
     params.extend([start, end])
@@ -246,7 +258,7 @@ async def _fetch_ytd_profit(pool, team: str, start: date, end: date) -> float:
 
 async def _fetch_profit_budgets(
     pool,
-    team: str,
+    team,
     *,
     ytd_start: date,
     ytd_end: date,
@@ -284,11 +296,11 @@ async def _fetch_profit_budgets(
           COALESCE(SUM(b."Profit Budget") FILTER (WHERE b."Date" BETWEEN $8 AND $9), 0)::numeric  AS month_budget
         FROM public.daily_production_budget_report b
         JOIN customer_team ct ON TRIM(b."Customer Name") = ct.customer_name
-        WHERE ct.team_id = $10
+        WHERE ct.team_id = ANY($10)
           AND b."Date" BETWEEN LEAST($1, $3, $4, $6, $8) AND GREATEST($2, $3, $5, $7, $9)
         """,
         ytd_start, ytd_end, day, week_start, week_end,
-        mtd_start, mtd_end, month_start, month_end, team,
+        mtd_start, mtd_end, month_start, month_end, _team_list(team),
     )
     return {
         "ytd_budget": _safe_float(row["ytd_budget"]),
@@ -326,13 +338,37 @@ def _same_elapsed_last_month(mtd_start: date, mtd_end: date) -> Optional[tuple[d
 # ---------------------------------------------------------------------------
 
 
-async def build_team_perf_digest(app, pool, team: str) -> dict[str, Any]:
-    """Assemble the "Performance for Team N" digest payload.
+async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
+    """Assemble the "Performance for Team N" / "PERFORMANCE CORP" payload.
+
+    ``team`` is either one team id (``"TEAM4"``) or several
+    (``["TEAM1","TEAM2","TEAM3","TEAM4"]`` — the CORP roll-up). A multi-team
+    scope is pushed all the way down into SQL and aggregated ONCE. It is never
+    assembled by adding four single-team digests together: distinct customer
+    counts, OTP %, OTD %, margin % and the top-15 customer table are all
+    non-additive across teams, so summing them would produce numbers that look
+    entirely plausible and are wrong.
 
     Returns ``{"subject", "html", "generatedAt", "meta"}``.
     """
-    if team not in CORP_TEAMS:
-        raise ValueError(f"unknown team {team!r}")
+    team_ids = _team_list(team)
+    unknown = [t for t in team_ids if t not in CORP_TEAMS]
+    if not team_ids or unknown:
+        raise ValueError(f"unknown team(s) {unknown or team!r}")
+    multi = len(team_ids) > 1
+
+    # What the downstream endpoints are asked for. One team keeps the original
+    # `team=` parameter so the per-team emails emit byte-identical requests to
+    # the ones they have always sent.
+    scope_query = (
+        {"teams": ",".join(team_ids)} if multi else {"team": team_ids[0]}
+    )
+    if multi:
+        scope_title = "Performance CORP"
+        scope_footer = f"{'+'.join(team_ids)} (CORP)"
+    else:
+        scope_title = f"Performance for Team {team_ids[0].replace('TEAM', '')}"
+        scope_footer = f"{team_ids[0]} (CORP)"
 
     today = cst_today()
     now = cst_now()
@@ -351,15 +387,15 @@ async def build_team_perf_digest(app, pool, team: str) -> dict[str, Any]:
 
     # --- Batch 1: the three /team-performance windows ----------------------
     calls_a: list[tuple[str, dict]] = [
-        ("/team-performance", {"team": team, "range": "mtd"}),
+        ("/team-performance", {**scope_query, "range": "mtd"}),
         ("/team-performance", {
-            "team": team, "range": "custom",
+            **scope_query, "range": "custom",
             "start_date": yesterday.isoformat(), "end_date": yesterday.isoformat(),
         }),
     ]
     if last_month:
         calls_a.append(("/team-performance", {
-            "team": team, "range": "custom",
+            **scope_query, "range": "custom",
             "start_date": last_month[0].isoformat(), "end_date": last_month[1].isoformat(),
         }))
     batch_a = await _get_many(app, calls_a)
@@ -369,16 +405,16 @@ async def build_team_perf_digest(app, pool, team: str) -> dict[str, Any]:
 
     # --- Batch 2: gauge + projection + actuals, alongside the direct SQL ---
     calls_b: list[tuple[str, dict]] = [
-        ("/profit-tm-gauge", {"team": team}),
-        ("/team-projection", {"team": team}),
-        ("/actuals", {"team": team, "range": "mtd", "sort": "revenue_desc", "limit": 15}),
+        ("/profit-tm-gauge", dict(scope_query)),
+        ("/team-projection", dict(scope_query)),
+        ("/actuals", {**scope_query, "range": "mtd", "sort": "revenue_desc", "limit": 15}),
     ]
     batch_b, series, ytd_profit, budgets = await asyncio.gather(
         _get_many(app, calls_b),
-        _fetch_daily_series(pool, team, series_start, series_end),
-        _fetch_ytd_profit(pool, team, YEAR_START, today),
+        _fetch_daily_series(pool, team_ids, series_start, series_end),
+        _fetch_ytd_profit(pool, team_ids, YEAR_START, today),
         _fetch_profit_budgets(
-            pool, team,
+            pool, team_ids,
             ytd_start=YEAR_START, ytd_end=today,
             day=yesterday,
             week_start=week_start, week_end=week_end,
@@ -540,10 +576,10 @@ async def build_team_perf_digest(app, pool, team: str) -> dict[str, Any]:
         "achievement_pct": _achievement_pct(proj_profit, month_budget),
     }
 
-    team_number = team.replace("TEAM", "")
     html, chart_urls = render_html(
-        team=team,
-        team_number=team_number,
+        scope_title=scope_title,
+        scope_footer=scope_footer,
+        scope_is_multi_team=multi,
         now=now,
         card1=card1,
         card2=card2,
@@ -556,18 +592,21 @@ async def build_team_perf_digest(app, pool, team: str) -> dict[str, Any]:
     )
 
     profit_str = ("-" if profit_mtd < 0 else "") + f"${abs(profit_mtd):,.0f}"
-    subject = (
-        f"Performance for Team {team_number} — {profit_str} Profit MTD "
-        f"({today.isoformat()})"
-    )
+    subject = f"{scope_title} — {profit_str} Profit MTD ({today.isoformat()})"
 
     return {
         "subject": subject,
         "html": html,
         "generatedAt": now.isoformat(),
         "meta": {
-            "team": team,
-            "team_number": team_number,
+            # `team` / `team_number` are kept for the four per-team workflows
+            # that already read this payload — ADDED to, never renamed. For a
+            # multi-team scope `team` is the joined list and `team_number` is
+            # "CORP", which is what a single-team consumer would print anyway.
+            "team": ",".join(team_ids),
+            "team_number": "CORP" if multi else team_ids[0].replace("TEAM", ""),
+            "teams": list(team_ids),
+            "scope": "CORP" if multi else team_ids[0],
             "today": today.isoformat(),
             "windows": {
                 "mtd": {"start": mtd_start.isoformat(), "end": mtd_end.isoformat()},

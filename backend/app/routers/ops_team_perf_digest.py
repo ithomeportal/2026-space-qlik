@@ -103,15 +103,46 @@ def _require_digest_access():
 async def team_digest_email(
     request: Request,
     team: str = Query("TEAM1", description="CORP team id, e.g. TEAM1"),
+    teams: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated multi-team scope for the combined CORP digest, "
+            "e.g. TEAM1,TEAM2,TEAM3,TEAM4. Overrides `team` when present."
+        ),
+    ),
     _caller: dict = Depends(_require_digest_access()),
 ):
-    """Render the "Performance for Team N" e-mail digest for one CORP team."""
-    team_id = (team or "").strip().upper()
-    if team_id not in CORP_TEAMS:
+    """Render the "Performance for Team N" or "PERFORMANCE CORP" e-mail digest.
+
+    ``team=TEAM4``                      → one team, exactly as before.
+    ``teams=TEAM1,TEAM2,TEAM3,TEAM4``   → the four teams aggregated into ONE
+                                          report (the PERFORMANCE CORP email).
+
+    The multi-team scope is pushed into SQL, not assembled from four responses
+    — see ``build_team_perf_digest`` for why that distinction is load-bearing.
+    """
+    if teams is not None:
+        scope = [t.strip().upper() for t in teams.split(",") if t.strip()]
+        if not scope:
+            raise HTTPException(
+                status_code=400, detail="teams must name at least one team"
+            )
+    else:
+        scope = [(team or "").strip().upper()]
+
+    unknown = [t for t in scope if t not in CORP_TEAMS]
+    if unknown:
         raise HTTPException(
             status_code=400,
-            detail=f"team must be one of {', '.join(CORP_TEAMS)}",
+            detail=(
+                f"unknown team(s) {', '.join(unknown)} — "
+                f"must be one of {', '.join(CORP_TEAMS)}"
+            ),
         )
+    # De-duplicate while preserving order: a repeated id would otherwise widen
+    # nothing but would show up in the header and the footer scope line.
+    scope = list(dict.fromkeys(scope))
+
     pool = get_datalake_gold_pool(request)
-    data = await build_team_perf_digest(request.app, pool, team_id)
+    data = await build_team_perf_digest(request.app, pool, scope)
     return {"success": True, "data": data}
