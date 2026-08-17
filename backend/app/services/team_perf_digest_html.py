@@ -36,7 +36,6 @@ GREEN_TX = "#166534"
 RED = "#DC2626"
 RED_BG = "#FEE2E2"
 RED_TX = "#991B1B"
-ORANGE = "#F97316"
 GREY = "#6B7280"
 GREY_BG = "#F3F4F6"
 INK = "#111827"
@@ -45,6 +44,52 @@ BORDER = "#E5E7EB"
 DASH = "&mdash;"
 
 QUICKCHART = "https://quickchart.io/chart"
+
+# ---------------------------------------------------------------------------
+# Chart palettes — one per trend chart (request 2026-08-17)
+# ---------------------------------------------------------------------------
+# The bars are UNFILLED: ``backgroundColor`` is transparent and the shape is
+# carried entirely by ``borderColor``. Two Chart.js defaults make that a
+# three-property change, not a one-property one:
+#
+#   * bar ``borderWidth`` defaults to **0** — a transparent bar with no border
+#     width is an INVISIBLE bar, and QuickChart renders it happily at HTTP 200;
+#   * bar ``borderSkipped`` defaults to ``"start"``, which omits the base edge
+#     and leaves the outline open at the bottom. ``False`` closes all four.
+#
+# ⚠ The data-label colours are deliberately NOT the series colours. The label
+# numbers sit on white (bar labels above the bar, line labels on a white chip),
+# and two of the three requested colours fail WCAG AA badly as text on white —
+# measured, not guessed:
+#
+#   | as label text on #FFFFFF        | ratio   |
+#   |---------------------------------|---------|
+#   | #ECC910 Profit line             | 1.49:1  ✗ -> #6B5800 (6.86:1)
+#   | #21BF6A Customers outline       | 2.41:1  ✗ -> GREEN_TX #166534 (7.12:1)
+#   | #14718A Margin line             | 5.51:1  ✓ used as-is
+#
+# So the bars and lines get the exact RGB values that were asked for, and only
+# the small numbers use a darkened companion of the same hue. Taking the
+# request literally here would render labels that are technically present and
+# practically invisible. ``tests/test_team_digest_chart_style.py`` re-computes
+# every ratio, so a future palette edit cannot quietly undo this.
+BAR_BORDER_WIDTH = 2
+
+CHART_LOADS_PROFIT = {
+    "bar_border": RED,                  # rgb(220,38,38) — same red, now an outline
+    "bar_label": RED_TX,
+    "line": "#ECC910",                  # rgb(236,201,16)
+    "line_label": "#6B5800",
+    "line_chip_border": "#FDE68A",
+}
+
+CHART_CUSTOMERS_MARGIN = {
+    "bar_border": "#21BF6A",            # rgb(33,191,106)
+    "bar_label": GREEN_TX,
+    "line": "#14718A",                  # rgb(20,113,138)
+    "line_label": "#14718A",
+    "line_chip_border": "#A5D4E2",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +403,12 @@ def _dual_axis_config(
     *,
     bar_axis_title: str,
     line_axis_title: str,
+    palette: dict,
 ) -> dict:
-    """Red bars + orange line, both with data labels ON.
+    """Unfilled outlined bars + a line, both with data labels ON.
+
+    ``palette`` is one of the CHART_* dicts above — the colours are per-chart,
+    everything else on this config is shared.
 
     Everything static: ``datalabels`` gets no ``formatter``/``display``
     callback (a function option would be JSON-escaped and silently dropped),
@@ -374,35 +423,44 @@ def _dual_axis_config(
                     "type": "bar",
                     "label": bar_label,
                     "data": bar_data,
-                    "backgroundColor": RED,
-                    "borderColor": RED,
+                    # Unfilled: the outline IS the bar. See the palette note —
+                    # borderWidth and borderSkipped are both load-bearing.
+                    "backgroundColor": "transparent",
+                    "borderColor": palette["bar_border"],
+                    "borderWidth": BAR_BORDER_WIDTH,
+                    "borderSkipped": False,
                     "yAxisID": "y",
                     "order": 2,
                     "datalabels": {
                         "anchor": "end", "align": "end", "offset": 2,
-                        "color": RED_TX, "font": {"size": 9, "weight": "bold"},
+                        "color": palette["bar_label"],
+                        "font": {"size": 9, "weight": "bold"},
                     },
                 },
                 {
                     "type": "line",
                     "label": line_label,
                     "data": line_data,
-                    "borderColor": ORANGE,
-                    "backgroundColor": ORANGE,
+                    "borderColor": palette["line"],
+                    "backgroundColor": palette["line"],
                     "borderWidth": 2,
                     "pointRadius": 3,
                     "fill": False,
                     "tension": 0.25,
                     "yAxisID": "y1",
                     "order": 1,
-                    # White chip behind the label: the line crosses the red
-                    # bars, and plain orange-on-red is unreadable (verified on
-                    # the rendered PNG — always look at the image).
+                    # White chip behind the label: the line crosses the bars
+                    # and the y gridlines, so a bare label sits on whatever
+                    # happens to be underneath it. Unfilling the bars reduced
+                    # that collision but did not remove it — the chip stays,
+                    # and its text uses the palette's dark companion, never the
+                    # line colour (verified on the rendered PNG — always look
+                    # at the image).
                     "datalabels": {
                         "anchor": "end", "align": "top", "offset": 4,
-                        "color": "#C2410C",
+                        "color": palette["line_label"],
                         "backgroundColor": "#FFFFFF",
-                        "borderColor": "#FDBA74",
+                        "borderColor": palette["line_chip_border"],
                         "borderWidth": 1,
                         "borderRadius": 3,
                         "padding": {"top": 1, "bottom": 1, "left": 3, "right": 3},
@@ -458,10 +516,12 @@ def build_chart_urls(series: list[dict]) -> dict[str, str]:
         "loads_profit": _chart_url(_dual_axis_config(
             labels, "Loads", loads, "Profit ($)", profit,
             bar_axis_title="Loads", line_axis_title="Profit ($)",
+            palette=CHART_LOADS_PROFIT,
         )),
         "customers_margin": _chart_url(_dual_axis_config(
             labels, "Customers", customers, "Margin %", margin,
             bar_axis_title="Customers", line_axis_title="Margin %",
+            palette=CHART_CUSTOMERS_MARGIN,
         )),
     }
 
