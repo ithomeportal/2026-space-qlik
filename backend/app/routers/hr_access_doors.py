@@ -11,17 +11,34 @@ Source tables:
   - `public.zk_gld_onlyfingerprint`   -- one row per ZKTeco fingerprint event
   - `public.timeoff_employee`         -- Graph-synced employee directory
 
-Business rules (mirrors Bruno's Qlik variables page):
-  * First punch-in per (event_date, display_name) is the scoring row — later
-    punches that day are ignored (in/out cycles).
-  * Expected arrival ("On Time Reference") is derived from normalized
-    department + job_title + name. See `_ON_TIME_REFERENCE_EXPR`.
-  * `check_minutes` = `(expected_h*60 + expected_m) - (actual_h*60 + actual_m)`.
+Source tables (cont.):
+  - `public.late_arrival_schedule`    -- HR-editable expected-arrival rules
+  - `public.app_auth_users`           -- team + shift roster, READ ONLY (owned
+                                         by another system)
+
+Business rules:
+  * Expected arrival ("On Time Reference") comes from `late_arrival_schedule`,
+    the same table the n8n workflow reads. Most specific rule wins:
+    email > full_name > job_title > department. See `_EXPECTED_TIME_LOOKUP`.
+    This used to be a hardcoded CASE here — a second copy of the same rules that
+    had already drifted (it never learned the Aranza Romero 07:00 override).
+  * SHIFT AWARENESS (Aug 2026). An expected_time at or after 12:00 marks an
+    overnight shift. Its punches straddle midnight, so they are grouped by the
+    EVENING the shift began, not by calendar date, and only a punch within
+    [expected-3h, expected+6h] counts as an arrival.
+    Before this, the first punch on a calendar date was a night worker's morning
+    EXIT badge and got scored as a late arrival — the report was telling five
+    recipients that the DFW night team was ~12 hours late every day.
+    "No entry badge for this shift" is now absent from the report rather than
+    being reported as lateness.
+  * The arrival row per (employee, shift date) is the scoring row — later
+    punches in that shift are ignored (in/out cycles).
+  * `check_minutes` = TRUNC(EXTRACT(EPOCH FROM (expected - actual)) / 60).
       + positive -> arrived at or before expected (ON TIME)
       + negative -> arrived late            (OUT OF TIME)
       + NULL     -> no rule matched         (NOT ON TIME REFERENCE bucket)
-    The minute math mirrors Qlik `floor(minute(x)+hour(x)*60)` exactly -- we
-    don't use `EXTRACT(EPOCH ...) / 60` because that includes seconds.
+    A true timestamp difference, so it stays correct across midnight. The old
+    hour*60+minute form scored a 00:30 arrival against 19:30 as "19h early".
 
 Department normalization:
   The source `timeoff_employee.department` has drift: `Pricin`/`Pricing`, `QA`/
@@ -31,8 +48,11 @@ Department normalization:
   scored correctly.
 
 Perf notes:
-  * Every query's CTE bounds `event_date BETWEEN $1 AND $2` FIRST so the 128K-
-    row table is narrowed before ROW_NUMBER() runs.
+  * Every query's CTE bounds `event_date BETWEEN $1-1 AND $2+1` FIRST so the
+    128K-row table is narrowed before ROW_NUMBER() runs. The one-day overscan is
+    deliberate — an overnight shift must be assembled whole before it can be
+    attributed to a shift date — and `_scored_cte` narrows back to the exact
+    range afterwards.
   * `/trend-30d` and `/by-department` have their own fixed windows so the main
     date filter doesn't change them (per the PDF annotations).
   * Indexes recommended on `zk_gld_onlyfingerprint (event_date)` and
@@ -84,82 +104,152 @@ _EXCLUDE_IT_SQL = """
 # row falls in the "Not On Time Reference" bucket. Order matters: the
 # `Operations (DFW) / Operations Intern` exception must come BEFORE the
 # general `Operations (DFW) -> 06:30` rule.
-_ON_TIME_REFERENCE_EXPR = """
+_EXPECTED_TIME_LOOKUP = """
+  (
+    SELECT s.expected_time
+      FROM public.late_arrival_schedule s
+     WHERE s.active
+       AND (s.email      IS NULL OR lower(btrim(s.email))      = p.em)
+       AND (s.full_name  IS NULL OR lower(btrim(s.full_name))  = lower(p.nm))
+       AND (s.job_title  IS NULL OR lower(btrim(s.job_title))  = lower(p.jt))
+       AND (s.department IS NULL OR lower(btrim(s.department)) = lower(p.dep))
+     ORDER BY (s.email      IS NOT NULL)::int * 1000
+            + (s.full_name  IS NOT NULL)::int * 100
+            + (s.job_title  IS NOT NULL)::int * 10
+            + (s.department IS NOT NULL)::int DESC,
+              s.id
+     LIMIT 1
+  )
+"""
+
+# A shift whose expected start is at or after noon runs overnight, so its punches
+# straddle midnight. Group them by the EVENING the shift began — otherwise the
+# first punch on a calendar date is the night worker's morning EXIT badge and it
+# gets scored as a late arrival. That is what produced
+# "Ruben Aguilera | 06:30 AM | 7:12 AM | 42 min" for a man whose shift had just
+# ended at 07:12, and -729 min for colleagues who arrived on time at 18:39.
+_SHIFT_DATE_EXPR = """
   CASE
-    WHEN dep = 'Operations (DFW)' AND jt = 'Operations Intern'
-      THEN event_date::timestamp + TIME '07:30'
-    WHEN dep IN ('Sales','Operations','Operations (DFW)','Pricing','Legal')
-      THEN event_date::timestamp + TIME '06:30'
-    WHEN dep = 'Admin'
-      THEN event_date::timestamp + TIME '07:00'
-    WHEN dep = 'Quality Assurance'
-      THEN event_date::timestamp + TIME '07:30'
-    WHEN dep = 'Finance' AND jt = 'Chief Financial Officer'
-      THEN event_date::timestamp + TIME '07:00'
-    WHEN dep = 'Finance' AND jt = 'Finance Manager'
-      THEN event_date::timestamp + TIME '08:00'
-    WHEN dep = 'Human Resources' AND jt = 'Sr. Corporate Recruiter'
-      THEN event_date::timestamp + TIME '07:00'
-    WHEN dep = 'Human Resources'
-         AND jt IN ('Human Resources Manager','Corporate Human Resources Director')
-      THEN event_date::timestamp + TIME '08:00'
-    WHEN dep = 'Executive' AND jt = 'Executive Assistant' AND nm = 'Ruth Garza'
-      THEN event_date::timestamp + TIME '06:30'
-    WHEN dep = 'Executive' AND jt = 'Executive Assistant' AND nm = 'Gabriela Murguia'
-      THEN event_date::timestamp + TIME '07:00'
-    ELSE NULL
+    WHEN a.expected_time >= TIME '12:00' AND a.event_time::time < TIME '12:00'
+      THEN a.event_time::date - 1
+    ELSE a.event_time::date
   END
 """
 
-# Integer-minute delta (expected - actual), matching Qlik's
-#   `floor(minute(x) + hour(x)*60)` exactly. Positive = on time, negative = late.
+# Only a punch near the expected start counts as an arrival. Two things follow:
+# a night worker badging OUT at 07:00 is no longer scored as a late arrival, and
+# "no entry badge recorded for this shift" stops being reported as lateness.
+_ARRIVAL_WINDOW = "INTERVAL '3 hours'", "INTERVAL '6 hours'"
+
+# Team label, derived from the datalake auth roster — the only directory whose
+# team + shift assignment matches the org's own DFW roster person for person, and
+# where "Team 5" is actually defined (TM5 = Ali Cisneros + Kraufeerg Derflingher).
+# Read-only: that table belongs to another system, so gaps surface as
+# "Unassigned" rather than being patched from here.
+_TEAM_LABEL_EXPR = """
+  CASE
+    WHEN u.shift = 'nightshift'     THEN 'Night'
+    WHEN u.shift = 'weekend'        THEN 'Weekend'
+    WHEN u.team_id ~ '^TM[0-9]+$'   THEN 'Team ' || substring(u.team_id from 3)
+    WHEN u.team_id ~ '^TEAM[0-9]+$' THEN 'Team ' || substring(u.team_id from 5)
+    ELSE 'Unassigned'
+  END
+"""
+
+# Integer-minute delta (expected - actual). Positive = on time, negative = late.
+#
+# A true timestamp difference, not hour*60+minute of each side. The old clock
+# arithmetic broke across midnight — a 00:30 arrival against a 19:30 expected
+# computed as "19 hours early" — and it disagreed with the n8n workflow by up to
+# a minute. Both now truncate the same epoch difference.
 _CHECK_MINUTES_EXPR = """
-  (
-    (EXTRACT(HOUR FROM expected)::int * 60 + EXTRACT(MINUTE FROM expected)::int)
-    - (EXTRACT(HOUR FROM event_time)::int * 60 + EXTRACT(MINUTE FROM event_time)::int)
-  )
+  TRUNC(EXTRACT(EPOCH FROM (expected - event_time)) / 60)::int
 """
 
 
 def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
-    """CTE body (no leading `WITH`) that yields first-of-day punches with
-    normalized department + job_title + name columns.
+    """CTE body (no leading `WITH`) yielding every punch in range, annotated with
+    normalized department + job_title + name + team, and the employee's expected
+    arrival time from `late_arrival_schedule`.
 
     The placeholders ($1, $2, ...) are passed in by the caller — they must
     line up with the corresponding values in the params list.
+
+    The scan is widened by a day either side of the requested range: a night
+    shift that began the evening before the window, or ends the morning after,
+    must be assembled whole before it can be attributed to the right shift date.
     """
+    before, after = _ARRIVAL_WINDOW
     return f"""
-    first_punch AS (
+    punches AS (
         SELECT
             TRIM(z.full_name)                                AS nm,
-            z.event_date,
+            lower(btrim(z.email))                            AS em,
             z.event_time,
             TRIM(e.job_title)                                AS jt,
             {_DEPARTMENT_NORMALIZED}                         AS dep,
-            ROW_NUMBER() OVER (
-                PARTITION BY z.event_date,
-                             COALESCE(e.display_name, z.full_name)
-                ORDER BY z.event_time ASC
-            ) AS rn
+            {_TEAM_LABEL_EXPR}                               AS team,
+            COALESCE(e.display_name, z.full_name)            AS ident
         FROM public.zk_gld_onlyfingerprint z
         JOIN public.timeoff_employee e
           ON TRIM(z.email) = TRIM(e.email)
          AND COALESCE(e.email, '') <> ''
+        -- LEFT, never INNER: two DFW people have no row in the auth roster and
+        -- an inner join would silently drop them from every KPI.
+        LEFT JOIN public.app_auth_users u
+          ON lower(btrim(u.email)) = lower(btrim(e.email))
          {_EXCLUDE_IT_SQL}
-        WHERE z.event_date BETWEEN {start_placeholder} AND {end_placeholder}
+        WHERE z.event_date BETWEEN ({start_placeholder}::date - 1)
+                               AND ({end_placeholder}::date + 1)
+    ),
+    scheduled AS (
+        SELECT p.*, {_EXPECTED_TIME_LOOKUP} AS expected_time
+        FROM punches p
+    ),
+    attributed AS (
+        SELECT a.*, {_SHIFT_DATE_EXPR} AS shift_date
+        FROM scheduled a
+    ),
+    first_punch AS (
+        SELECT
+            r.nm, r.em, r.jt, r.dep, r.team, r.event_time,
+            r.shift_date AS event_date,
+            CASE WHEN r.expected_time IS NULL THEN NULL
+                 ELSE r.shift_date + r.expected_time END AS expected,
+            ROW_NUMBER() OVER (
+                PARTITION BY r.shift_date, r.ident
+                ORDER BY r.event_time ASC
+            ) AS rn
+        FROM attributed r
+        WHERE r.expected_time IS NULL
+           OR (r.event_time >= r.shift_date + r.expected_time - {before}
+          AND  r.event_time <= r.shift_date + r.expected_time + {after})
     )
     """
 
 
-def _scored_cte(alias: str = "scored") -> str:
-    """CTE that keeps only first-of-day rows and attaches the expected-time
-    column. Input: `first_punch`. Output: one row per (employee, day)."""
+def _scored_cte(
+    start_placeholder: str,
+    end_placeholder: str,
+    alias: str = "scored",
+) -> str:
+    """CTE that keeps only the arrival row per (employee, shift date), then
+    narrows back to the requested range.
+
+    Input: `first_punch`. Output: one row per (employee, shift). The expected
+    timestamp is already attached upstream, because shift-date attribution needs
+    the expected time to know whether the shift crosses midnight.
+
+    The range filter belongs HERE, not in `first_punch`: that CTE deliberately
+    over-scans by a day either side so overnight shifts can be assembled whole.
+    Narrowing after `rn` is computed is safe — `rn` partitions by shift_date, so
+    dropping whole shift dates cannot renumber the ones that remain."""
     return f"""
     {alias} AS (
-        SELECT nm, jt, dep, event_date, event_time,
-               ({_ON_TIME_REFERENCE_EXPR}) AS expected
+        SELECT nm, jt, dep, team, event_date, event_time, expected
         FROM first_punch
         WHERE rn = 1
+          AND event_date BETWEEN {start_placeholder}::date AND {end_placeholder}::date
     )
     """
 
@@ -184,7 +274,7 @@ async def filters(
     rows = await pool.fetch(
         f"""
         WITH {_first_punch_cte('$1', 'CURRENT_DATE')},
-        {_scored_cte()}
+        {_scored_cte('$1', 'CURRENT_DATE')}
         SELECT DISTINCT dep AS department, jt AS job_title, nm AS full_name
         FROM scored
         """,
@@ -232,7 +322,7 @@ async def kpis(
     row = await pool.fetchrow(
         f"""
         WITH {_first_punch_cte('$1', '$2')},
-             {_scored_cte()}
+             {_scored_cte('$1', '$2')}
         SELECT
           COUNT(DISTINCT nm)                                           AS log_in_employees,
           COUNT(*) FILTER (WHERE expected IS NULL)                     AS not_on_time_ref,
@@ -299,7 +389,7 @@ async def rows(
     rows_out = await pool.fetch(
         f"""
         WITH {_first_punch_cte('$1', '$2')},
-             {_scored_cte()}
+             {_scored_cte('$1', '$2')}
         SELECT
           nm                    AS full_name,
           event_date::text      AS event_date,
@@ -319,7 +409,7 @@ async def rows(
     total = await pool.fetchval(
         f"""
         WITH {_first_punch_cte('$1', '$2')},
-             {_scored_cte()}
+             {_scored_cte('$1', '$2')}
         SELECT COUNT(*)
         FROM scored
         WHERE 1=1 {filters_sql}
@@ -378,7 +468,7 @@ async def trend_30d(
     rows_out = await pool.fetch(
         f"""
         WITH {_first_punch_cte('$1', '$2')},
-             {_scored_cte()}
+             {_scored_cte('$1', '$2')}
         SELECT
           event_date::text AS event_date,
           COUNT(*) FILTER (WHERE expected IS NOT NULL
@@ -425,7 +515,7 @@ async def by_department(
     rows_out = await pool.fetch(
         f"""
         WITH {_first_punch_cte('$1', '$2')},
-             {_scored_cte()}
+             {_scored_cte('$1', '$2')}
         SELECT
           COALESCE(dep, '—')                                              AS department,
           COUNT(*) FILTER (WHERE expected IS NOT NULL

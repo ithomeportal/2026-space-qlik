@@ -66,6 +66,7 @@ export interface ScopedAccessFilters {
   endDate: string // YYYY-MM-DD
   name?: string
   jobTitle?: string
+  team?: string
 }
 
 function scopedQs(
@@ -77,6 +78,7 @@ function scopedQs(
   if (f.endDate) q.set("end_date", f.endDate)
   if (f.name) q.set("name", f.name)
   if (f.jobTitle) q.set("job_title", f.jobTitle)
+  if (f.team) q.set("team", f.team)
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -89,6 +91,8 @@ function scopedQs(
 export interface ScopedAccessFilterOptions {
   job_titles: string[]
   names: string[]
+  /** "Team 1".."Team 5", plus Night / Weekend / Unassigned. */
+  teams: string[]
   today: string
 }
 
@@ -109,6 +113,7 @@ export interface ScopedAccessRow {
   event_time: string | null
   job_title: string | null
   department: string | null
+  team: string | null
   on_time_reference: string | null
   check_minutes: number | null
 }
@@ -178,7 +183,7 @@ export function useScopedAccessRows(
 // server-side scope gate.
 export function useScopedAccessTrend30d(
   slug: ScopedAccessSlug,
-  f: Pick<ScopedAccessFilters, "name" | "jobTitle">,
+  f: Pick<ScopedAccessFilters, "name" | "jobTitle" | "team">,
   enabled = true,
 ) {
   return useQuery({

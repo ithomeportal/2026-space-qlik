@@ -70,8 +70,9 @@ def _build_filters_sql(
     params: list,
     name: Optional[str],
     job_title: Optional[str],
+    team: Optional[str] = None,
 ) -> str:
-    """Append name/job_title filter values to `params` and return the AND
+    """Append name/job_title/team filter values to `params` and return the AND
     fragment. Department is intentionally NOT a parameter — it's gated by the
     router's fixed `gate_sql`."""
     parts: list[str] = []
@@ -81,6 +82,9 @@ def _build_filters_sql(
     if job_title:
         params.append(job_title)
         parts.append(f"jt = ${len(params)}")
+    if team:
+        params.append(team)
+        parts.append(f"team = ${len(params)}")
     return ("".join(f" AND {p}" for p in parts)) if parts else ""
 
 
@@ -118,18 +122,27 @@ def build_scoped_access_doors_router(
         rows = await pool.fetch(
             f"""
             WITH {_first_punch_cte('$1', 'CURRENT_DATE')},
-            {_scored_cte()}
-            SELECT DISTINCT jt AS job_title, nm AS full_name
+            {_scored_cte('$1', 'CURRENT_DATE')}
+            SELECT DISTINCT jt AS job_title, nm AS full_name, team
             FROM scored
             WHERE 1=1 {gate_sql}
             """,
             since,
         )
+
+        # "Team 1".."Team 5" ahead of Night / Weekend / Unassigned, rather than
+        # the lexical order that would put "Night" between them.
+        def team_sort(label: str) -> tuple:
+            if label.startswith("Team "):
+                return (0, int(label.split()[1]))
+            return ({"Night": 1, "Weekend": 2}.get(label, 3), 0)
+
         return {
             "success": True,
             "data": {
                 "job_titles": sorted({r["job_title"] for r in rows if r["job_title"]}),
                 "names": sorted({r["full_name"] for r in rows if r["full_name"]}),
+                "teams": sorted({r["team"] for r in rows if r["team"]}, key=team_sort),
                 "today": cst_today().isoformat(),
             },
         }
@@ -144,18 +157,19 @@ def build_scoped_access_doors_router(
         end_date: Optional[date] = Query(None, description="YYYY-MM-DD, default today"),
         name: Optional[str] = Query(None),
         job_title: Optional[str] = Query(None),
+        team: Optional[str] = Query(None),
         _user: dict = Depends(guard),
     ):
         pool = get_datalake_gold_pool(request)
         s, e = _resolve_window(start_date, end_date)
 
         params: list = [s, e]
-        filters_sql = _build_filters_sql(params, name, job_title)
+        filters_sql = _build_filters_sql(params, name, job_title, team)
 
         row = await pool.fetchrow(
             f"""
             WITH {_first_punch_cte('$1', '$2')},
-                 {_scored_cte()}
+                 {_scored_cte('$1', '$2')}
             SELECT
               COUNT(DISTINCT nm)                                           AS log_in_employees,
               COUNT(*) FILTER (WHERE expected IS NULL)                     AS not_on_time_ref,
@@ -189,6 +203,7 @@ def build_scoped_access_doors_router(
         end_date: Optional[date] = Query(None),
         name: Optional[str] = Query(None),
         job_title: Optional[str] = Query(None),
+        team: Optional[str] = Query(None),
         sort: str = Query("event_time_desc"),
         page: int = Query(1, ge=1),
         limit: int = Query(100, ge=1, le=500),
@@ -200,7 +215,7 @@ def build_scoped_access_doors_router(
 
         offset = (page - 1) * limit
         params: list = [s, e]
-        filters_sql = _build_filters_sql(params, name, job_title)
+        filters_sql = _build_filters_sql(params, name, job_title, team)
 
         count_params = list(params)
         params.extend([limit, offset])
@@ -208,13 +223,14 @@ def build_scoped_access_doors_router(
         rows_out = await pool.fetch(
             f"""
             WITH {_first_punch_cte('$1', '$2')},
-                 {_scored_cte()}
+                 {_scored_cte('$1', '$2')}
             SELECT
               nm                    AS full_name,
               event_date::text      AS event_date,
               event_time            AS event_time,
               jt                    AS job_title,
               dep                   AS department,
+              team                  AS team,
               expected              AS on_time_reference,
               CASE WHEN expected IS NULL THEN NULL ELSE {_CHECK_MINUTES_EXPR} END AS check_minutes
             FROM scored
@@ -228,7 +244,7 @@ def build_scoped_access_doors_router(
         total = await pool.fetchval(
             f"""
             WITH {_first_punch_cte('$1', '$2')},
-                 {_scored_cte()}
+                 {_scored_cte('$1', '$2')}
             SELECT COUNT(*)
             FROM scored
             WHERE 1=1 {gate_sql} {filters_sql}
@@ -243,6 +259,7 @@ def build_scoped_access_doors_router(
                 "event_time": r["event_time"].isoformat() if r["event_time"] else None,
                 "job_title": r["job_title"],
                 "department": r["department"],
+                "team": r["team"],
                 "on_time_reference": (
                     r["on_time_reference"].isoformat() if r["on_time_reference"] else None
                 ),
@@ -269,6 +286,7 @@ def build_scoped_access_doors_router(
         request: Request,
         name: Optional[str] = Query(None),
         job_title: Optional[str] = Query(None),
+        team: Optional[str] = Query(None),
         _user: dict = Depends(guard),
     ):
         """On-Time vs Out-of-Time per day, fixed-window last 30 days. Ignores the
@@ -279,12 +297,12 @@ def build_scoped_access_doors_router(
         start = end - timedelta(days=29)  # inclusive 30-day window
 
         params: list = [start, end]
-        filters_sql = _build_filters_sql(params, name, job_title)
+        filters_sql = _build_filters_sql(params, name, job_title, team)
 
         rows_out = await pool.fetch(
             f"""
             WITH {_first_punch_cte('$1', '$2')},
-                 {_scored_cte()}
+                 {_scored_cte('$1', '$2')}
             SELECT
               event_date::text AS event_date,
               COUNT(*) FILTER (WHERE expected IS NOT NULL
@@ -313,6 +331,7 @@ def build_scoped_access_doors_router(
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
         name: Optional[str] = Query(None),
+        team: Optional[str] = Query(None),
         _user: dict = Depends(guard),
     ):
         """On-Time vs Out-of-Time per job title inside the locked scope for the
@@ -323,13 +342,15 @@ def build_scoped_access_doors_router(
 
         params: list = [s, e]
         # job_title=None on purpose — the chart shows every title regardless of
-        # the filter pill so the breakdown stays visible.
-        filters_sql = _build_filters_sql(params, name, None)
+        # the filter pill so the breakdown stays visible. `team` IS honoured:
+        # narrowing to one team is the point of that filter, and a team spans
+        # several job titles so the chart keeps more than one bar.
+        filters_sql = _build_filters_sql(params, name, None, team)
 
         rows_out = await pool.fetch(
             f"""
             WITH {_first_punch_cte('$1', '$2')},
-                 {_scored_cte()}
+                 {_scored_cte('$1', '$2')}
             SELECT
               COALESCE(jt, '—')                                              AS job_title,
               COUNT(*) FILTER (WHERE expected IS NOT NULL

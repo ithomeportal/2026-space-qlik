@@ -62,6 +62,7 @@ export function ScopedAccessDoorsReport({
   const [endDate, setEndDate] = useState<string>(today)
   const [name, setName] = useState<string>("")
   const [jobTitle, setJobTitle] = useState<string>("")
+  const [team, setTeam] = useState<string>("")
   const [sort, setSort] = useState<string>("event_time_desc")
   const [page, setPage] = useState<number>(1)
   const PAGE_LIMIT = 100
@@ -79,8 +80,9 @@ export function ScopedAccessDoorsReport({
       endDate,
       name: name || undefined,
       jobTitle: activeJobTitle,
+      team: team || undefined,
     }),
-    [startDate, endDate, name, activeJobTitle],
+    [startDate, endDate, name, activeJobTitle, team],
   )
 
   const kpisQ = useScopedAccessKpis(slug, filters)
@@ -88,11 +90,16 @@ export function ScopedAccessDoorsReport({
   const trendQ = useScopedAccessTrend30d(slug, {
     name: filters.name,
     jobTitle: filters.jobTitle,
+    team: filters.team,
   })
+  // job title is deliberately omitted so the chart keeps more than one bar;
+  // team is not — narrowing to one team is the whole point of that filter, and
+  // a team spans several job titles.
   const jobTitleQ = useScopedAccessByJobTitle(slug, {
     startDate: filters.startDate,
     endDate: filters.endDate,
     name: filters.name,
+    team: filters.team,
   })
 
   const kpi = kpisQ.data?.data
@@ -105,12 +112,14 @@ export function ScopedAccessDoorsReport({
     setEndDate(today)
     setName("")
     setJobTitle("")
+    setTeam("")
     setPage(1)
   }
 
   const dirty =
     name !== "" ||
     (showJobTitleFilter && jobTitle !== "") ||
+    team !== "" ||
     startDate !== today ||
     endDate !== today
 
@@ -137,6 +146,7 @@ export function ScopedAccessDoorsReport({
           {startDate === endDate ? startDate : `${startDate} → ${endDate}`}
           {name ? ` · ${name}` : ""}
           {activeJobTitle ? ` · ${activeJobTitle}` : ""}
+          {team ? ` · ${team}` : ""}
         </div>
       </div>
 
@@ -190,6 +200,16 @@ export function ScopedAccessDoorsReport({
               placeholder={loadingFilters ? "Loading…" : "All"}
             />
           )}
+          <SelectFilter
+            label="Team"
+            value={team}
+            onChange={(v) => {
+              setTeam(v)
+              setPage(1)
+            }}
+            options={options?.teams}
+            placeholder={loadingFilters ? "Loading…" : "All"}
+          />
 
           {dirty && (
             <button
@@ -262,6 +282,12 @@ export function ScopedAccessDoorsReport({
               <span className="text-xs text-[#6B7280]">
                 {fmtCount(total)} row{total === 1 ? "" : "s"}
               </span>
+              <span
+                className="text-xs text-[#9CA3AF]"
+                title="An overnight shift is grouped by the evening it began, so a night worker's morning exit badge is not counted as an arrival."
+              >
+                · all times CST (America/Chicago)
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <label className="text-xs text-[#6B7280]">Sort</label>
@@ -288,23 +314,24 @@ export function ScopedAccessDoorsReport({
               <thead className="bg-[#F9FAFB] text-[#6B7280]">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold">Name</th>
-                  <th className="px-3 py-2 text-left font-semibold">Event Date</th>
-                  <th className="px-3 py-2 text-left font-semibold">Access Log Door</th>
+                  <th className="px-3 py-2 text-left font-semibold">Shift Date</th>
+                  <th className="px-3 py-2 text-left font-semibold">Access Log Door (CST)</th>
                   <th className="px-3 py-2 text-left font-semibold">Job Title</th>
+                  <th className="px-3 py-2 text-left font-semibold">Team</th>
                   <th className="px-3 py-2 text-right font-semibold">Check</th>
-                  <th className="px-3 py-2 text-left font-semibold">On Time Reference</th>
+                  <th className="px-3 py-2 text-left font-semibold">On Time Reference (CST)</th>
                 </tr>
               </thead>
               <tbody>
                 {rowsQ.isLoading && rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-[#9CA3AF]">
+                    <td colSpan={7} className="px-3 py-6 text-center text-[#9CA3AF]">
                       <Loader2 className="mx-auto h-4 w-4 animate-spin" />
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-[#9CA3AF]">
+                    <td colSpan={7} className="px-3 py-6 text-center text-[#9CA3AF]">
                       No access events in this window.
                     </td>
                   </tr>
@@ -320,6 +347,7 @@ export function ScopedAccessDoorsReport({
                         {fmtDate(r.event_date)} {fmtEventTime(r.event_time)}
                       </td>
                       <td className="px-3 py-2 text-[#374151]">{r.job_title || "—"}</td>
+                      <td className="px-3 py-2 text-[#374151]">{r.team || "—"}</td>
                       <td className={`px-3 py-2 text-right ${checkColorClass(r.check_minutes)}`}>
                         {fmtCheckMinutes(r.check_minutes)}
                       </td>
