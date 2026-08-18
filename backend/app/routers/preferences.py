@@ -53,7 +53,21 @@ async def update_preferences(
     await pool.execute(
         """
         INSERT INTO user_preferences (user_id, pinned_reports, recent_reports, theme)
-        VALUES ($1, $2, $3, $4)
+        VALUES (
+          $1,
+          COALESCE($2, '{}'::uuid[]),
+          COALESCE($3, '{}'::uuid[]),
+          -- An explicit NULL OVERRIDES a column DEFAULT; it does not fall back
+          -- to it. `theme` is NOT NULL DEFAULT 'light' in the live table (a
+          -- Prisma-era definition the startup `CREATE TABLE IF NOT EXISTS`
+          -- never revisited), so starring a report -- which PATCHes only
+          -- `pinned_reports` and leaves `theme` None -- bound NULL here and
+          -- raised NotNullViolationError. The COALESCEs on the DO UPDATE arm
+          -- below hid it: only a user with NO row yet took the INSERT arm, and
+          -- on 2026-08-18 that was ALL 147 of them (the table had 0 rows), so
+          -- every first star click 500'd. Defaults belong on both arms.
+          COALESCE($4, 'light')
+        )
         ON CONFLICT (user_id) DO UPDATE SET
           pinned_reports = COALESCE($2, user_preferences.pinned_reports),
           recent_reports = COALESCE($3, user_preferences.recent_reports),

@@ -413,7 +413,11 @@ async def lifespan(app: FastAPI):
                   user_id         UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                   pinned_reports  UUID[],
                   recent_reports  UUID[],
-                  theme           TEXT DEFAULT 'light'
+                  -- NOT NULL mirrors the live column (Prisma `String
+                  -- @default("light")`). Declaring it nullable here made a
+                  -- fresh dev database DISAGREE with production, so the
+                  -- 2026-08-18 star-click 500 could not reproduce locally.
+                  theme           TEXT NOT NULL DEFAULT 'light'
                 )
                 """
             )
