@@ -221,11 +221,13 @@ export function OrdersTable({ filters }: Props) {
                   <td className="px-3 py-1.5">{fmtPct(totals.otp_pct)}</td>
                   <td className="px-3 py-1.5">{fmtPct(totals.otd_pct)}</td>
                   <td className="px-3 py-1.5 text-right text-[10px] font-normal text-[#6B7280]">
+                    {/* Reads the SAME server-computed percentage as the KPI
+                        card, rather than dividing again here (§16/§69). */}
                     {totals.broken_threshold === null
                       ? "—"
-                      : `${fmtCount(totals.broken_threshold)} broken / ${fmtCount(
-                          totals.threshold_orders,
-                        )}`}
+                      : `${fmtPct(totals.broken_threshold_pct)} broken (${fmtCount(
+                          totals.broken_threshold,
+                        )}/${fmtCount(totals.threshold_orders)})`}
                   </td>
                 </tr>
               </tfoot>

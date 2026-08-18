@@ -85,7 +85,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.clock import cst_today
@@ -127,6 +127,14 @@ OTD_CODES = (
 )
 PU_STOPS = ("PU", "SH")
 DEL_STOPS = ("CO", "SO")
+
+# Scenario tab (Bruno PDF 2026-08-18 R1/R2): three fixed what-if steps.
+# A WHITELIST, not a free float: the tab exists to answer "what if we shaved a
+# fixed amount off carrier pay", and the three buttons are the question asked.
+# Accepting an arbitrary ?adjustment= would let a hand-crafted URL render a
+# fictional scenario that screenshots exactly like the real report.
+SCENARIO_STEPS = (15.0, 25.0, 50.0)
+ALLOWED_ADJUSTMENTS = (0.0,) + SCENARIO_STEPS
 
 # Table page size. KPIs and the Totals row are always full-universe (§44).
 MAX_PAGE = 500
@@ -380,17 +388,35 @@ async def _thresholds(request: Request, order_ids: list[str]) -> Optional[dict[s
 
 def _threshold_stats(
     rows, thresholds: Optional[dict[str, float]]
-) -> tuple[Optional[int], Optional[int]]:
-    """(broken, comparable) — orders whose carrier cost exceeds the threshold.
+) -> dict[str, Optional[float]]:
+    """Every threshold-derived figure, from ONE pass over ONE row set.
 
-    ``broken`` counts orders where ``carrier_cost > thresh`` (Bruno Request 3:
-    "If the Threshold is lower than the Carrier Cost"). ``comparable`` is the
-    honest denominator: only orders that actually have both numbers.
+    - ``broken_threshold``     orders where ``carrier_cost > thresh``
+    - ``threshold_orders``     the honest denominator: orders having BOTH numbers
+    - ``broken_threshold_pct`` broken / comparable, as a fraction
+    - ``cost_saving``          Σ (thresh − carrier_cost) where cost is UNDER it
+    - ``under_threshold``      how many orders contributed to that sum
+
+    Deliberately one function rather than two (§69): "broken" and "saving" are
+    the two sides of the same comparison, and computing them apart would let
+    them disagree about which orders were comparable at all. An order sitting
+    exactly ON its threshold is neither broken nor saving — it contributes 0.
+
+    Every value is ``None`` when the AP source is down, so the UI can render an
+    em-dash instead of a zero that reads as "nothing was over budget".
     """
     if thresholds is None:
-        return None, None
+        return {
+            "broken_threshold": None,
+            "threshold_orders": None,
+            "broken_threshold_pct": None,
+            "cost_saving": None,
+            "under_threshold": None,
+        }
     broken = 0
     comparable = 0
+    under = 0
+    saving = 0.0
     for r in rows:
         t = thresholds.get(r["order_id"])
         cc = _fl(r["carrier_cost"])
@@ -399,7 +425,63 @@ def _threshold_stats(
         comparable += 1
         if cc > t:
             broken += 1
-    return broken, comparable
+        elif cc < t:
+            under += 1
+            saving += t - cc
+    return {
+        "broken_threshold": broken,
+        "threshold_orders": comparable,
+        # Computed HERE, not in the browser, so the KPI card and the table's
+        # totals row cannot drift apart (§16/§69).
+        "broken_threshold_pct": (broken / comparable) if comparable else None,
+        "cost_saving": saving,
+        "under_threshold": under,
+    }
+
+
+def _resolve_adjustment(value: Optional[float]) -> float:
+    """Validate ?adjustment= against the whitelist. 0 means "no scenario"."""
+    if value is None:
+        return 0.0
+    for allowed in ALLOWED_ADJUSTMENTS:
+        if abs(value - allowed) < 1e-9:
+            return allowed
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "adjustment must be one of "
+            + ", ".join(str(int(a)) for a in ALLOWED_ADJUSTMENTS)
+        ),
+    )
+
+
+def _apply_scenario(rows, adjustment: float):
+    """Per-order what-if: profit +adjustment, carrier cost −adjustment.
+
+    **Revenue is invariant by construction.** ``carrier_cost`` is derived as
+    ``revenue − profit``, so adding the delta to one side and subtracting it
+    from the other leaves revenue untouched — which is the whole point: this
+    models negotiating carrier pay down, not charging the customer more.
+
+    Returns the rows UNTOUCHED at adjustment 0, so the Scenario tab at zero and
+    the Scorecard tab run byte-identical arithmetic rather than merely similar
+    arithmetic (§69). Both Records and dicts support ``r["col"]``, so every
+    caller downstream is indifferent to which it gets.
+
+    A NULL stays NULL: an order McLeod has no margin for must not be handed a
+    fabricated one just because a scenario was selected.
+    """
+    if not adjustment:
+        return rows
+    adjusted = []
+    for r in rows:
+        d = dict(r)
+        profit = _fl(d.get("profit"))
+        cost = _fl(d.get("carrier_cost"))
+        d["profit"] = None if profit is None else profit + adjustment
+        d["carrier_cost"] = None if cost is None else cost - adjustment
+        adjusted.append(d)
+    return adjusted
 
 
 # --------------------------------------------------------------------------
@@ -466,6 +548,7 @@ async def summary(
     contract_type: Optional[list[str]] = Query(None),
     customer_name: Optional[list[str]] = Query(None),
     posted_by: Optional[list[str]] = Query(None),
+    adjustment: Optional[float] = Query(None),
     _user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
     """Full-universe KPIs for the selected scope.
@@ -477,6 +560,7 @@ async def summary(
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
+    adj = _resolve_adjustment(adjustment)
     contracts = _parse_multi(contract_type)
     customers = _parse_multi(customer_name)
     posters = _parse_multi(posted_by)
@@ -508,6 +592,11 @@ async def summary(
         *params,
     )
 
+    # Scenario what-if, applied ONCE here so every figure below — margin, avg
+    # margin/load, broken threshold, cost saving — derives from the same
+    # adjusted rows. At adjustment 0 this is the identity function.
+    rows = _apply_scenario(rows, adj)
+
     orders = len(rows)
     profit = sum(_fl(r["profit"]) or 0.0 for r in rows)
     revenue = sum(_fl(r["revenue"]) or 0.0 for r in rows)
@@ -515,7 +604,7 @@ async def summary(
     otd_on_time = sum(1 for r in rows if r["otd_on_time"])
 
     thresholds = await _thresholds(request, [r["order_id"] for r in rows])
-    broken, comparable = _threshold_stats(rows, thresholds)
+    stats = _threshold_stats(rows, thresholds)
 
     return {
         "success": True,
@@ -527,11 +616,12 @@ async def summary(
             # of per-order ratios.
             "margin_pct": (profit / revenue) if revenue else None,
             "avg_margin_per_load": (profit / orders) if orders else None,
-            "broken_threshold": broken,
-            # The honest denominator: how many orders could be compared at all.
-            "threshold_orders": comparable,
+            # broken_threshold / threshold_orders / broken_threshold_pct /
+            # cost_saving / under_threshold — see _threshold_stats.
+            **stats,
             "otp_pct": (otp_on_time / orders) if orders else None,
             "otd_pct": (otd_on_time / orders) if orders else None,
+            "adjustment": adj,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
@@ -567,6 +657,7 @@ async def orders(
     sort: str = Query("posted_desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=MAX_PAGE),
+    adjustment: Optional[float] = Query(None),
     _user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
     """Paginated order rows + a full-universe Totals row.
@@ -577,9 +668,15 @@ async def orders(
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
+    adj = _resolve_adjustment(adjustment)
     contracts = _parse_multi(contract_type)
     customers = _parse_multi(customer_name)
     posters = _parse_multi(posted_by)
+    # Sorting stays in SQL even under a scenario: the adjustment is the SAME
+    # constant on every order, and a constant shift is monotonic, so ordering by
+    # the unadjusted profit / carrier_cost is identical to ordering by the
+    # adjusted ones. Revenue is invariant. Re-sorting in Python would only be
+    # able to sort the current page — i.e. wrongly.
     order_by = _ORDERS_SORT.get(sort, _ORDERS_SORT["posted_desc"])
 
     params: list = []
@@ -626,9 +723,15 @@ async def orders(
         *agg_params,
     )
 
+    # Same helper, same order, on BOTH row sets — the page the user reads and
+    # the full universe the Totals row sums. Applying it to only one of them is
+    # exactly how a totals row starts contradicting the rows above it (§16).
+    rows = _apply_scenario(rows, adj)
+    all_rows = _apply_scenario(all_rows, adj)
+
     total = len(all_rows)
     thresholds = await _thresholds(request, [r["order_id"] for r in all_rows])
-    broken, comparable = _threshold_stats(all_rows, thresholds)
+    stats = _threshold_stats(all_rows, thresholds)
 
     out_rows = [
         {
@@ -671,9 +774,9 @@ async def orders(
                 "margin_pct": (profit / revenue) if revenue else None,
                 "otp_pct": (otp_on_time / total) if total else None,
                 "otd_pct": (otd_on_time / total) if total else None,
-                "broken_threshold": broken,
-                "threshold_orders": comparable,
+                **stats,
             },
+            "adjustment": adj,
             "thresholds_available": thresholds is not None,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },

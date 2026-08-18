@@ -8,10 +8,13 @@ import {
   fmtUsd2,
   useBookerSummary,
   type BookerFilters,
+  type BookerSummary,
 } from "@/lib/booker-scorecard-api"
 
 interface Props {
   filters: BookerFilters
+  /** Baseline summary to diff against, supplied only by the Scenario tab. */
+  baseline?: BookerSummary | null
 }
 
 interface CardProps {
@@ -44,7 +47,20 @@ function Card({ label, value, sub, title, tone = "default" }: CardProps) {
   )
 }
 
-export function KpiCards({ filters }: Props) {
+/** Signed delta vs the baseline, e.g. "+$12,210" / "−4 orders". */
+function delta(
+  now: number | null | undefined,
+  before: number | null | undefined,
+  fmt: (v: number | null | undefined) => string,
+): string | undefined {
+  if (now === null || now === undefined) return undefined
+  if (before === null || before === undefined) return undefined
+  const d = now - before
+  if (Math.abs(d) < 0.005) return "no change vs actual"
+  return `${d > 0 ? "+" : "−"}${fmt(Math.abs(d))} vs actual`
+}
+
+export function KpiCards({ filters, baseline }: Props) {
   const { data, isLoading, error } = useBookerSummary(filters)
   const k = data?.data
 
@@ -71,28 +87,55 @@ export function KpiCards({ filters }: Props) {
   const brokenSub =
     k?.broken_threshold === null || k?.broken_threshold === undefined
       ? "threshold source unavailable"
-      : `of ${fmtCount(k.threshold_orders)} orders with a threshold`
+      : `${fmtCount(k.broken_threshold)} of ${fmtCount(k.threshold_orders)} with a threshold`
+
+  // Cost Saving is the mirror of Broken Threshold: the same comparison, the
+  // orders landing on the good side of it (Bruno R3).
+  const savingSub =
+    k?.cost_saving === null || k?.cost_saving === undefined
+      ? "threshold source unavailable"
+      : `over ${fmtCount(k.under_threshold)} orders under threshold`
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
       <Card label="# Orders" value={fmtCount(k?.orders)} />
-      <Card label="Profit" value={fmtUsd(k?.profit)} />
+      <Card
+        label="Profit"
+        value={fmtUsd(k?.profit)}
+        sub={baseline ? delta(k?.profit, baseline.profit, fmtUsd) : undefined}
+      />
       <Card
         label="Margin %"
         value={fmtPct(k?.margin_pct)}
-        sub="Σ profit ÷ Σ revenue"
+        sub={
+          baseline
+            ? delta(k?.margin_pct, baseline.margin_pct, (v) => fmtPct(v))
+            : "Σ profit ÷ Σ revenue"
+        }
       />
       <Card
         label="Avg Margin / Load"
         value={fmtUsd2(k?.avg_margin_per_load)}
-        sub="profit ÷ # orders"
+        sub={
+          baseline
+            ? delta(k?.avg_margin_per_load, baseline.avg_margin_per_load, fmtUsd2)
+            : "profit ÷ # orders"
+        }
       />
       <Card
         label="Broken Threshold"
-        value={fmtCount(k?.broken_threshold)}
+        // Bruno R4: the headline is the PERCENTAGE of comparable orders that
+        // broke their threshold; the raw count moves to the sub-line.
+        value={fmtPct(k?.broken_threshold_pct)}
         sub={brokenSub}
         tone={k?.broken_threshold ? "warn" : "default"}
-        title="Orders where Carrier Cost (Revenue − Profit) exceeds the threshold typed in Loads to Cover. Orders with no threshold are excluded from both numbers."
+        title="Share of orders whose Carrier Cost (Revenue − Profit) exceeds the threshold typed in Loads to Cover. Orders with no threshold are excluded from both the numerator and the denominator."
+      />
+      <Card
+        label="Cost Saving"
+        value={fmtUsd(k?.cost_saving)}
+        sub={savingSub}
+        title="Σ (threshold − Carrier Cost) across orders that came in UNDER their threshold. Orders at or above the threshold contribute nothing."
       />
       <Card
         label="OTP"

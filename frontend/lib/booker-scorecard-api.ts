@@ -51,6 +51,11 @@ const RETRY = {
 
 export type BookerRange = "today" | "wtd" | "mtd" | "custom"
 
+/** Scenario steps (Bruno PDF 2026-08-18 R2). Mirrors SCENARIO_STEPS on the
+ *  backend, which whitelists the value — anything else is a 400. */
+export const SCENARIO_STEPS = [15, 25, 50] as const
+export type ScenarioStep = (typeof SCENARIO_STEPS)[number]
+
 export interface BookerFilters {
   range: BookerRange
   startDate?: string
@@ -58,6 +63,9 @@ export interface BookerFilters {
   contractTypes?: string[]
   customers?: string[]
   postedBy?: string[]
+  /** Scenario what-if: profit +adjustment, carrier cost −adjustment per order.
+   *  Omitted / 0 = the real numbers. */
+  adjustment?: number
 }
 
 /** Only the non-date filters. The 10-week chart takes exactly these. */
@@ -80,6 +88,7 @@ function bookerQs(f: BookerFilters, extra?: Record<string, string>) {
   if (f.range === "custom" && f.startDate) q.set("start_date", f.startDate)
   if (f.range === "custom" && f.endDate) q.set("end_date", f.endDate)
   scopeParams(q, f)
+  if (f.adjustment) q.set("adjustment", String(f.adjustment))
   if (extra) for (const [k, v] of Object.entries(extra)) q.set(k, v)
   const s = q.toString()
   return s ? `?${s}` : ""
@@ -100,6 +109,9 @@ function bookerKey(f: BookerFilters) {
     f.range === "custom" ? f.startDate ?? "" : "",
     f.range === "custom" ? f.endDate ?? "" : "",
     ...scopeKey(f),
+    // §50 — without this the Scenario tab would serve the baseline's cached
+    // response, i.e. render "15" while showing unadjusted money.
+    f.adjustment ?? 0,
   ]
 }
 
@@ -126,8 +138,17 @@ export interface BookerSummary {
   broken_threshold: number | null
   /** The honest denominator: orders that actually carry a threshold. */
   threshold_orders: number | null
+  /** broken / threshold_orders. Computed server-side so the KPI card and the
+   *  table's totals row cannot drift apart (§69). */
+  broken_threshold_pct: number | null
+  /** Σ (threshold − carrier cost) over orders coming in UNDER threshold. */
+  cost_saving: number | null
+  /** How many orders contributed to cost_saving. */
+  under_threshold: number | null
   otp_pct: number | null
   otd_pct: number | null
+  /** Echo of the scenario step actually applied (0 = baseline). */
+  adjustment: number
   window: { start: string; end: string }
 }
 
@@ -159,7 +180,11 @@ export interface BookerOrders {
     otd_pct: number | null
     broken_threshold: number | null
     threshold_orders: number | null
+    broken_threshold_pct: number | null
+    cost_saving: number | null
+    under_threshold: number | null
   }
+  adjustment: number
   thresholds_available: boolean
   window: { start: string; end: string }
 }
