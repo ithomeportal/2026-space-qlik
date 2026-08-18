@@ -60,8 +60,12 @@ async def update_preferences(
           theme = COALESCE($4, user_preferences.theme)
         """,
         user_id,
-        [str(r) for r in body.pinned_reports] if body.pinned_reports else None,
-        [str(r) for r in body.recent_reports] if body.recent_reports else None,
+        # `is not None`, NOT truthiness: an empty list is falsy, so `if
+        # body.pinned_reports` sent NULL for "clear the list" and the COALESCE
+        # above then kept the OLD value. Un-favouriting your last report
+        # silently did nothing. Same trap for recent_reports.
+        [str(r) for r in body.pinned_reports] if body.pinned_reports is not None else None,
+        [str(r) for r in body.recent_reports] if body.recent_reports is not None else None,
         body.theme,
     )
 

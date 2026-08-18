@@ -48,7 +48,11 @@ async def list_reports(
         WHERE r.is_active = TRUE
           AND COALESCE(r.is_mobile, FALSE) = $2
           AND ($3::text IS NULL OR r.category = $3)
-        ORDER BY view_count DESC, r.title
+        -- Favourites first (Bruno PDF 2026-08-17 R3). This has to happen in SQL,
+        -- not only in the grid: there are 60 reports and the default page size
+        -- is 50, so a favourite sorted below the cut would never reach the
+        -- client to be re-sorted.
+        ORDER BY is_favorited DESC, view_count DESC, r.title
         LIMIT $4 OFFSET $5
         """,
         user_id,

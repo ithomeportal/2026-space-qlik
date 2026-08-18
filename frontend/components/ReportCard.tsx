@@ -2,14 +2,58 @@
 
 import { motion } from "framer-motion"
 import Link from "next/link"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Star } from "lucide-react"
 import type { Report, AppItem } from "@/lib/api"
+import { useToggleFavorite } from "@/lib/api"
 import { getReportIcon } from "./ReportIcons"
 
 
 interface ReportCardProps {
   report: Report
   view?: "tiles" | "list"
+}
+
+/**
+ * Favourite toggle (Bruno PDF 2026-08-17 R1: "a star to click, shown over each
+ * icon, visible").
+ *
+ * Two things this must get right:
+ *  - The whole card is a <Link>, so the click has to be stopped dead
+ *    (preventDefault + stopPropagation) or starring a report navigates to it.
+ *  - It renders OUTSIDE the icon box, which is `overflow-hidden` — a star
+ *    positioned on the box itself would be clipped at the corner.
+ *
+ * Shown at all times (outline when off) rather than on hover: hover-only
+ * controls are invisible on touch, and the home grid is used on tablets.
+ */
+function FavoriteStar({ report, size }: { report: Report; size: "tile" | "list" }) {
+  const toggle = useToggleFavorite()
+  const on = !!report.is_favorited
+  const box = size === "tile" ? "h-6 w-6 -right-1 -top-1" : "h-5 w-5"
+  const icon = size === "tile" ? "h-3.5 w-3.5" : "h-3 w-3"
+
+  return (
+    <button
+      type="button"
+      aria-label={on ? `Remove ${report.title} from favorites` : `Add ${report.title} to favorites`}
+      aria-pressed={on}
+      title={on ? "Remove from favorites" : "Add to favorites"}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        toggle.mutate(report.id)
+      }}
+      className={`${box} ${
+        size === "tile" ? "absolute z-10" : ""
+      } flex shrink-0 items-center justify-center rounded-full border border-[#E5E7EB] bg-white shadow-sm transition-colors hover:border-[#F59E0B]`}
+    >
+      <Star
+        className={`${icon} transition-colors ${
+          on ? "fill-[#F59E0B] text-[#F59E0B]" : "text-[#9CA3AF]"
+        }`}
+      />
+    </button>
+  )
 }
 
 /** Tile view — square app-icon style with 3-band family gradient + sibling tag */
@@ -23,6 +67,10 @@ function TileView({ report }: ReportCardProps) {
     >
       <Link href={`/reports/${report.id}`} className="block">
         <div className="group flex cursor-pointer flex-col items-center text-center">
+          {/* `relative` wrapper so the star can sit over the icon's corner
+              without being clipped by its `overflow-hidden`. */}
+          <div className="relative">
+          <FavoriteStar report={report} size="tile" />
           <div
             className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-[22px] shadow-md transition-shadow group-hover:shadow-xl"
             style={{ background: gradient }}
@@ -39,6 +87,7 @@ function TileView({ report }: ReportCardProps) {
                 {tag}
               </span>
             )}
+          </div>
           </div>
           <p className="mt-2 line-clamp-2 max-w-[100px] text-xs font-medium text-[#111827]">
             {report.title}
@@ -86,6 +135,7 @@ function ListView({ report }: ReportCardProps) {
         <div className="hidden min-w-0 flex-1 text-xs text-[#6B7280] sm:block">
           {report.note ?? ""}
         </div>
+        <FavoriteStar report={report} size="list" />
       </div>
     </Link>
   )

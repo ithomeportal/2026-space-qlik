@@ -401,6 +401,23 @@ async def lifespan(app: FastAPI):
                 "CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id, accessed_at DESC)"
             )
 
+            # Per-user preferences. This table predates the startup-DDL pattern
+            # and lived only in prisma/schema.prisma + SPEC-DATA, so a fresh
+            # database booted without it and every /user/preferences call 500'd.
+            # Favourites (Bruno PDF 2026-08-17) write here on every star click,
+            # so it is no longer an optional nicety. UUID[] to match the columns
+            # `reports.is_favorited` already probes with `= ANY(...)`.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                  user_id         UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                  pinned_reports  UUID[],
+                  recent_reports  UUID[],
+                  theme           TEXT DEFAULT 'light'
+                )
+                """
+            )
+
             # KAM Performance - DFW (2026-05-19): per-user scratchpad tables.
             # Bruno's PDF: Tabs 1/4/5 are editable, Tab 3 has a free-text note.
             # Tabs 2 & 3 read data through ops-customer-score / xray-dfw-mng.

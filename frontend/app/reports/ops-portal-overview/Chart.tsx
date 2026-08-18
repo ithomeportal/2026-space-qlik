@@ -52,12 +52,15 @@ const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
 // Bruno 2026-06-17: default the brush to the most recent 8 buckets for Week
 // (last 8 weeks) and Month (last 8 months) — was 13 each, which read as
 // "going back ~2 years" once the brush snapped to the full data range.
-// Bruno (PDF 2026-08-14) R5: the selected timeframe now decides how many
-// periods the chart CONTAINS, not just how wide the brush opens. Previously the
-// full backend window (120 days / 50 weeks / 26 months) stayed in the dataset
-// and only the brush narrowed it — so any path where the brush indices did not
-// take (a stale drag on the same grain, or a clamp instead of a reset) rendered
-// the whole history. Slicing the data makes the grain switch deterministic.
+//
+// Bruno (PDF 2026-08-14) R5 made the grain decide how many periods the chart
+// CONTAINS by slicing the dataset. Bruno (PDF 2026-08-17) R2 asks for both
+// halves at once: the grain decides the DEFAULT window, and the horizontal
+// scrollbar must still reach the previous year. Slicing cannot do that — it
+// deletes the history instead of hiding it — so these numbers now position the
+// brush over the full backend window (365 days / 50 weeks / 26 months) rather
+// than truncating it. R5's real requirement, that a grain switch deterministically
+// re-anchors to the most recent N, is kept by `userScrolledRef` below.
 const PERIODS_BY_GRAIN: Record<OppGrain, number> = {
   day: 52,
   week: 8,
@@ -164,17 +167,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const forecastKey = FORECAST_KEY[measure] ?? "cover_prof"
 
   // Two separate typed arrays (union data confuses Recharts' generic typing).
-  // R5: keep only the most recent N buckets for the active grain. `allBase` is
-  // retained for Avg-LQ, which is a "last 4 closed buckets" reference and must
-  // not be re-scoped by the display window.
+  // R2 (2026-08-17): the dataset stays WHOLE. `periods` only sizes the brush's
+  // default window; everything older stays in the array so dragging the brush
+  // left reveals it.
   const periods = PERIODS_BY_GRAIN[grain] ?? 13
-  const allBase = useMemo(
+  const baseData = useMemo(
     () => buckets.map((b) => ({ ...b, label: fmtBucket(b.bucket_start, grain) })),
     [buckets, grain],
-  )
-  const baseData = useMemo(
-    () => (allBase.length > periods ? allBase.slice(-periods) : allBase),
-    [allBase, periods],
   )
 
   // Merge the Cover buckets onto the Production ones.
@@ -236,25 +235,28 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
     }
     return merged
   }, [baseData, fcRes, forecastOn, measure, forecastKey, grain])
-  // R5: sliced to the same last-N window as the combo chart. Both share one
-  // `brush` state, so an unsliced service series would put the same indices
-  // over a different set of buckets and silently mis-align the two charts.
-  const serviceData = useMemo(() => {
-    const all = serviceBuckets.map((b) => ({
-      ...b,
-      label: fmtBucket(b.bucket_start, grain),
-    }))
-    return all.length > periods ? all.slice(-periods) : all
-  }, [serviceBuckets, grain, periods])
+  // Kept whole for the same reason as `baseData`. Both series share one `brush`
+  // state, so they must be windowed identically — /combo and /service both emit
+  // one dense bucket per anchor, so equal lengths keep the indices aligned.
+  const serviceData = useMemo(
+    () =>
+      serviceBuckets.map((b) => ({
+        ...b,
+        label: fmtBucket(b.bucket_start, grain),
+      })),
+    [serviceBuckets, grain],
+  )
 
-  // Brush position. R5 already slices the dataset to the grain's period count,
-  // so the default window is now the WHOLE series — the brush is a manual zoom,
-  // not the thing that decides how much history is on screen.
+  // Brush position. R2 (2026-08-17): the brush IS the windowing mechanism again
+  // — it opens on the most recent `periods` buckets and everything older sits
+  // to its left, one drag away. (R5 briefly made this the whole series because
+  // the dataset itself was sliced; that removed the scroll-back Bruno wants.)
   //
-  // This also fixes R4's second cause: the old default was "the last
-  // defaultVisible buckets", so switching Forecast on appended future buckets,
-  // grew maxIdx, and slid the window forward off the most recent actuals.
-  const defaultVisible = chartData.length || 1
+  // Anchoring on the RIGHT edge is what keeps R4 fixed: switching Forecast on
+  // appends future buckets and grows maxIdx, and because the window is defined
+  // as "the last N ending at maxIdx" it follows them instead of being left
+  // behind on stale indices.
+  const defaultVisible = Math.min(periods, chartData.length || 1)
   const [brush, setBrush] = useState<{ start: number; end: number }>({
     start: 0,
     end: 0,
@@ -348,7 +350,11 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
   const avgLq = useMemo(() => {
     if (baseData.length < 5) return 0
     const end = Math.min(brush.end, baseData.length - 1)
-    const closed = baseData.slice(end - 4, end)
+    // Clamp the start: a negative index makes Array.slice count from the END,
+    // which returns an empty range and silently drops the whole Avg-LQ line
+    // (its render guards on `avgLq !== 0`). Reachable whenever the user drags
+    // the brush to within 4 buckets of the left edge.
+    const closed = baseData.slice(Math.max(0, end - 4), Math.max(0, end))
     const vals = closed
       .map((d) => Number((d as Record<string, unknown>)[measure] ?? 0))
       .filter((v) => Number.isFinite(v))

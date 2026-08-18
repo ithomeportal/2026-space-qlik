@@ -133,11 +133,17 @@ def _resolve_grain_window(grain: str, today: date) -> tuple[date, date, list[dat
     """Build the bucket window and per-bucket anchor dates for a grain.
 
     Bruno round 3 (2026-05-19): chart adds Day / Week / Month grain pickers
-    with scroll-bar zoom. Backend fetches the maximum window per grain (120 d
+    with scroll-bar zoom. Backend fetches the maximum window per grain (365 d
     / 50 w / 26 m); frontend Brush positions the visible window.
+
+    Bruno (PDF 2026-08-17) R2: the brush must reach "the previous year" at every
+    grain, so Day went 120 -> 365. Week (50) and Month (26) already spanned a
+    year or more. The widening is cheap and was measured before shipping: 365
+    days scans ~35.5k rows of budget_report_v4 against the ~84.7k the Month
+    grain already scans on every default page load.
     """
     if grain == "day":
-        n = 120
+        n = 365
         end = today
         start = end - timedelta(days=n - 1)
         anchors = [start + timedelta(days=i) for i in range(n)]

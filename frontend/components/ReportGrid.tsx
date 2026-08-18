@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { LayoutGrid, List, ExternalLink, Tag } from "lucide-react"
+import { LayoutGrid, List, ExternalLink, Tag, Star } from "lucide-react"
 import { useReports, useApps } from "@/lib/api"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { ReportCard, AppCard } from "./ReportCard"
@@ -49,6 +49,16 @@ interface RoleFilter {
   count: number
 }
 
+/**
+ * Sentinel for the "Favorites" entry in the FILTERS panel (Bruno PDF
+ * 2026-08-17 R2). It shares `activeRole`'s single-selection state with the real
+ * TagRoles, so it must not collide with a role name — TagRoles are Title-Case
+ * division names, so the double-underscore form is unreachable. Kept out of
+ * `deriveRoleFilters` (which counts `report.tag_roles`) because Favorites is a
+ * per-user property, not an access role.
+ */
+const FAVORITES_FILTER = "__favorites__"
+
 /** Build the Filters list from the roles actually attached to the visible
  *  reports. This guarantees every button maps to ≥1 report and surfaces every
  *  role present on a report the user can see (e.g. Human Resources) — rather
@@ -70,10 +80,12 @@ function TagRoleSidebar({
   roles,
   activeRole,
   onSelect,
+  favoriteCount,
 }: {
   roles: RoleFilter[]
   activeRole: string | null
   onSelect: (role: string | null) => void
+  favoriteCount: number
 }) {
   if (roles.length === 0) return null
 
@@ -95,6 +107,32 @@ function TagRoleSidebar({
       >
         <span>All</span>
       </button>
+      {favoriteCount > 0 && (
+        <button
+          onClick={() =>
+            onSelect(activeRole === FAVORITES_FILTER ? null : FAVORITES_FILTER)
+          }
+          className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+            activeRole === FAVORITES_FILTER
+              ? "bg-[#1B3A5C] text-white"
+              : "text-[#374151] hover:bg-[#F3F4F6]"
+          }`}
+        >
+          <Star
+            className={`mr-1.5 h-3.5 w-3.5 shrink-0 fill-[#F59E0B] ${
+              activeRole === FAVORITES_FILTER ? "text-white" : "text-[#F59E0B]"
+            }`}
+          />
+          <span className="truncate">Favorites</span>
+          <span
+            className={`ml-1 shrink-0 text-xs ${
+              activeRole === FAVORITES_FILTER ? "text-white/70" : "text-[#9CA3AF]"
+            }`}
+          >
+            ({favoriteCount})
+          </span>
+        </button>
+      )}
       {roles.map((role) => (
         <button
           key={role.name}
@@ -158,11 +196,24 @@ export function ReportGrid() {
   // Filters derived from roles present on the visible reports (not the user's
   // assigned roles) — surfaces every role attached to a report the user can see.
   const roleFilters = deriveRoleFilters(allReports)
+  const favoriteCount = allReports.filter((r) => r.is_favorited).length
 
-  // Filter reports by selected TagRole
-  const reports = activeRole
-    ? allReports.filter((r) => (r.tag_roles ?? []).includes(activeRole))
-    : allReports
+  // Filter by the selected TagRole, or by Favorites (a per-user flag, so it is
+  // matched on is_favorited rather than tag_roles).
+  const filtered =
+    activeRole === FAVORITES_FILTER
+      ? allReports.filter((r) => r.is_favorited)
+      : activeRole
+        ? allReports.filter((r) => (r.tag_roles ?? []).includes(activeRole))
+        : allReports
+
+  // Favourites first (Bruno PDF 2026-08-17 R3), preserving the server's
+  // usage ordering within each group. `GET /reports` already sorts this way —
+  // re-doing it here keeps the grid correct during the optimistic window after
+  // a star click, before the refetch lands.
+  const reports = [...filtered].sort(
+    (a, b) => Number(!!b.is_favorited) - Number(!!a.is_favorited),
+  )
 
   if (view === "list") {
     return (
@@ -176,7 +227,12 @@ export function ReportGrid() {
         </div>
 
         {/* TagRole filter pills for list view */}
-        <TagRoleFilterPills roles={roleFilters} activeRole={activeRole} onSelect={setActiveRole} />
+        <TagRoleFilterPills
+          roles={roleFilters}
+          activeRole={activeRole}
+          onSelect={setActiveRole}
+          favoriteCount={favoriteCount}
+        />
 
         {/* Apps section */}
         {apps.length > 0 && (
@@ -250,7 +306,12 @@ export function ReportGrid() {
       <div className="flex gap-6">
         {/* Left column — TagRole filters */}
         <div className="w-[10%] shrink-0">
-          <TagRoleSidebar roles={roleFilters} activeRole={activeRole} onSelect={setActiveRole} />
+          <TagRoleSidebar
+            roles={roleFilters}
+            activeRole={activeRole}
+            onSelect={setActiveRole}
+            favoriteCount={favoriteCount}
+          />
         </div>
 
         {/* Center column — Reports matrix */}
@@ -271,9 +332,11 @@ export function ReportGrid() {
             </div>
           ) : (
             <div className="flex h-40 items-center justify-center text-sm text-[#6B7280]">
-              {activeRole
-                ? `No reports for "${activeRole}"`
-                : "No reports available"}
+              {activeRole === FAVORITES_FILTER
+                ? "No favorites yet — click the star on any report"
+                : activeRole
+                  ? `No reports for "${activeRole}"`
+                  : "No reports available"}
             </div>
           )}
         </div>
@@ -316,10 +379,12 @@ function TagRoleFilterPills({
   roles,
   activeRole,
   onSelect,
+  favoriteCount,
 }: {
   roles: RoleFilter[]
   activeRole: string | null
   onSelect: (role: string | null) => void
+  favoriteCount: number
 }) {
   if (roles.length === 0) return null
 
@@ -335,6 +400,26 @@ function TagRoleFilterPills({
       >
         All
       </button>
+      {favoriteCount > 0 && (
+        <button
+          onClick={() =>
+            onSelect(activeRole === FAVORITES_FILTER ? null : FAVORITES_FILTER)
+          }
+          className={`flex items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+            activeRole === FAVORITES_FILTER
+              ? "bg-[#1B3A5C] text-white"
+              : "bg-[#F3F4F6] text-[#374151] hover:bg-[#E5E7EB]"
+          }`}
+        >
+          <Star
+            className={`mr-1 h-3 w-3 fill-[#F59E0B] ${
+              activeRole === FAVORITES_FILTER ? "text-white" : "text-[#F59E0B]"
+            }`}
+          />
+          Favorites
+          <span className="ml-1 opacity-60">{favoriteCount}</span>
+        </button>
+      )}
       {roles.map((role) => (
         <button
           key={role.name}

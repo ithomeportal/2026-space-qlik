@@ -3,7 +3,6 @@
 import { useSession } from "next-auth/react"
 import { redirect } from "next/navigation"
 import { SearchBar } from "@/components/SearchBar"
-import { PinnedRow } from "@/components/PinnedRow"
 import { ReportGrid } from "@/components/ReportGrid"
 
 export default function HomePage() {
@@ -19,9 +18,6 @@ export default function HomePage() {
       <div className="mb-8 flex flex-col items-center pt-4 min-[1920px]:mb-12 min-[1920px]:pt-8">
         <SearchBar />
       </div>
-
-      {/* Pinned reports */}
-      <PinnedRow />
 
       {/* Categorized report grid */}
       <ReportGrid />

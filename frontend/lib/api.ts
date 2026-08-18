@@ -672,6 +672,15 @@ export function useBudgetByCustomerDetail(filters: BudgetFilters) {
   })
 }
 
+/**
+ * Star / un-star a report. Writes `user_preferences.pinned_reports`, which is
+ * what `GET /reports` reads back as `is_favorited` per row.
+ *
+ * Optimistic: the star and the favourites-first ordering are driven by cached
+ * query data, so without this the whole grid would visibly re-sort a round-trip
+ * after the click (and a Render cold start makes that seconds, not milliseconds).
+ * `onSettled` re-fetches so the server stays the authority.
+ */
 export function useToggleFavorite() {
   const queryClient = useQueryClient()
   const { data: prefs } = usePreferences()
@@ -688,10 +697,37 @@ export function useToggleFavorite() {
         body: JSON.stringify({ pinned_reports: updated }),
       })
     },
-    onSuccess: () => {
+    onMutate: async (reportId: string) => {
+      await queryClient.cancelQueries({ queryKey: ["reports"] })
+      await queryClient.cancelQueries({ queryKey: ["preferences"] })
+      const prevReports = queryClient.getQueriesData({ queryKey: ["reports"] })
+      const prevPrefs = queryClient.getQueryData(["preferences"])
+
+      queryClient.setQueriesData(
+        { queryKey: ["reports"] },
+        (old: ApiResponse<Report[]> | undefined) =>
+          !old?.data
+            ? old
+            : {
+                ...old,
+                data: old.data.map((r) =>
+                  r.id === reportId ? { ...r, is_favorited: !r.is_favorited } : r,
+                ),
+              },
+      )
+      return { prevReports, prevPrefs }
+    },
+    onError: (error, _reportId, context) => {
+      // Put the cache back exactly as it was before showing the toast.
+      context?.prevReports?.forEach(([key, data]) => queryClient.setQueryData(key, data))
+      if (context?.prevPrefs !== undefined) {
+        queryClient.setQueryData(["preferences"], context.prevPrefs)
+      }
+      mutationErrorToast("Update favorite")(error)
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["preferences"] })
       queryClient.invalidateQueries({ queryKey: ["reports"] })
     },
-    onError: mutationErrorToast("Update favorite"),
   })
 }
