@@ -147,6 +147,10 @@ export interface BookerSummary {
   under_threshold: number | null
   otp_pct: number | null
   otd_pct: number | null
+  /** Orders rate-confirmed MORE THAN ONCE as of the window end (rc_count > 1).
+   *  Deliberately unmoved by `adjustment` — a scenario shifts money, not
+   *  rate-conf postings. */
+  recoveries: number
   /** Echo of the scenario step actually applied (0 = baseline). */
   adjustment: number
   window: { start: string; end: string }
@@ -165,6 +169,8 @@ export interface BookerOrderRow {
   otp_on_time: boolean
   otd_on_time: boolean
   threshold: number | null
+  /** "RC" — Rate-Conf postings on this order as of the window end. */
+  rc_count: number
 }
 
 export interface BookerOrders {
@@ -183,6 +189,8 @@ export interface BookerOrders {
     broken_threshold_pct: number | null
     cost_saving: number | null
     under_threshold: number | null
+    /** Same server-side definition as the KPI card (§69). */
+    recoveries: number
   }
   adjustment: number
   thresholds_available: boolean

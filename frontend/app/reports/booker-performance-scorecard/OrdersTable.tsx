@@ -17,6 +17,13 @@ interface Props {
 
 const PAGE_SIZE = 200
 
+// Column arithmetic in ONE place. Adding a column used to mean hand-bumping
+// three separate literals, and missing one silently shifts the totals row (§61).
+/** Columns left of RC: Order, Team, Customer, Posted By, Posted. */
+const LEAD_COLS = 5
+/** LEAD_COLS + RC + Revenue, Carrier Cost, Profit, OTP, OTD, Threshold. */
+const COLUMN_COUNT = LEAD_COLS + 7
+
 /** Column key -> (asc sort, desc sort) understood by the backend whitelist. */
 const SORTS: Record<string, [BookerOrdersSort, BookerOrdersSort]> = {
   order_id: ["order_asc", "order_desc"],
@@ -134,6 +141,8 @@ export function OrdersTable({ filters }: Props) {
                 <Th label="Customer" sort={sort} setSort={setSort} />
                 <Th label="Posted By" sort={sort} setSort={setSort} />
                 <Th label="Posted" columnKey="posted_date" sort={sort} setSort={setSort} />
+                {/* Bruno PDF 2026-08-19 R2 — Rate Confs received on this order. */}
+                <Th label="RC" sort={sort} setSort={setSort} align="right" />
                 <Th label="Revenue" columnKey="revenue" sort={sort} setSort={setSort} align="right" />
                 <Th label="Carrier Cost" columnKey="carrier_cost" sort={sort} setSort={setSort} align="right" />
                 <Th label="Profit" columnKey="profit" sort={sort} setSort={setSort} align="right" />
@@ -145,13 +154,13 @@ export function OrdersTable({ filters }: Props) {
             <tbody>
               {isLoading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center">
+                  <td colSpan={COLUMN_COUNT} className="py-8 text-center">
                     <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-[#9CA3AF]">
+                  <td colSpan={COLUMN_COUNT} className="py-8 text-center text-[#9CA3AF]">
                     No orders in this window.
                   </td>
                 </tr>
@@ -174,6 +183,20 @@ export function OrdersTable({ filters }: Props) {
                       <td className="px-3 py-1.5">{r.posted_by ?? "—"}</td>
                       <td className="px-3 py-1.5 text-[#6B7280]">
                         {r.posted_date ? r.posted_date.slice(0, 10) : "—"}
+                      </td>
+                      {/* > 1 is exactly what the Recoveries KPI counts, so the
+                          card stays traceable to the rows below it. */}
+                      <td
+                        className={`px-3 py-1.5 text-right tabular-nums ${
+                          r.rc_count > 1 ? "font-semibold text-[#B45309]" : ""
+                        }`}
+                        title={
+                          r.rc_count > 1
+                            ? `Re-covered — ${r.rc_count} Rate Conf Received postings`
+                            : undefined
+                        }
+                      >
+                        {fmtCount(r.rc_count)}
                       </td>
                       <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                       <td className="px-3 py-1.5 text-right">
@@ -210,8 +233,14 @@ export function OrdersTable({ filters }: Props) {
                 {/* Server-side aggregate over EVERY matching order, not a sum of
                     the visible page (§44). */}
                 <tr className="border-t-2 border-[#E5E7EB] bg-[#F9FAFB] font-semibold">
-                  <td className="px-3 py-1.5" colSpan={5}>
+                  <td className="px-3 py-1.5" colSpan={LEAD_COLS}>
                     Totals — all {fmtCount(totals.orders)} orders
+                  </td>
+                  <td
+                    className="px-3 py-1.5 text-right tabular-nums text-[#B45309]"
+                    title="Orders with more than one Rate Conf Received posting — the Recoveries KPI, over every matching order (not just this page)."
+                  >
+                    {fmtCount(totals.recoveries)}
                   </td>
                   <td className="px-3 py-1.5 text-right">{fmtUsd(totals.revenue)}</td>
                   <td className="px-3 py-1.5 text-right">

@@ -284,10 +284,40 @@ def _base_sql(
             br.contract_type_descr   AS contract_type,
             TRIM(br.company_id)      AS company_key,
             br.margin_amt::float     AS profit,
-            br.total_charge::float   AS revenue
+            br.total_charge::float   AS revenue,
+            rp.rc_count              AS rc_count
         FROM (
             SELECT id, posted_date, posted_by_name,
-                   ROW_NUMBER() OVER (PARTITION BY id ORDER BY posted_date DESC) AS rn
+                   -- Still EXACTLY ONE row per order, and still the latest
+                   -- posting *inside* [start, end]: in-window rows sort first,
+                   -- so rn = 1 lands on the newest of them whenever the order
+                   -- has any. Paired with `in_window > 0` below, this
+                   -- reproduces the previous windowed ROW_NUMBER exactly
+                   -- (replayed against live gold 2026-08-19: 855 orders /
+                   -- USD 132,673.00 profit, identical to the old shape).
+                   -- NB: no '$' in these comments — a literal $1 in prose reads
+                   -- as a placeholder to any tool that substitutes params.
+                   --
+                   -- ROW_NUMBER, never `posted_date = MAX(...)`: 14 orders
+                   -- carry two Rate-Conf postings sharing one timestamp, and
+                   -- matching on the value would emit both and double-count.
+                   ROW_NUMBER() OVER (
+                       PARTITION BY id
+                       ORDER BY (posted_date >= ${p_start}::timestamp) DESC,
+                                posted_date DESC
+                   ) AS rn,
+                   -- Bruno PDF 2026-08-19 — "RC" column + "Recoveries" KPI.
+                   -- Rate-Conf postings on this order AS OF THE WINDOW END. For
+                   -- today / WTD / MTD that is identical to all-time; for a past
+                   -- Custom window it is STABLE — a re-confirmation next month
+                   -- can never retroactively change a closed month, which is the
+                   -- same self-contained-window guarantee the rn choice above
+                   -- makes. Counting only inside the window instead would miss
+                   -- every recovery that straddles a month boundary (measured
+                   -- MTD 2026-08: 206 recoveries as-of vs 165 in-window).
+                   COUNT(*) OVER (PARTITION BY id)::int AS rc_count,
+                   COUNT(*) FILTER (WHERE posted_date >= ${p_start}::timestamp)
+                            OVER (PARTITION BY id)::int AS in_window
             FROM public.mcleod_gld_order_post_hist
             WHERE TRIM(posted_type) = 'C'
               AND TRIM(comments)    = 'Rate Conf Received'
@@ -299,12 +329,22 @@ def _base_sql(
               -- un-cast (§43) so it stays sargable if an index on posted_date
               -- is ever added, but the real mitigation is running this CTE as
               -- FEW TIMES AS POSSIBLE: one pass per endpoint, folded in Python.
-              AND posted_date >= ${p_start}::timestamp
+              --
+              -- ⚠ The LOWER bound is deliberately absent: rc_count must see
+              -- postings from BEFORE the window. All three window functions
+              -- share `PARTITION BY id`, so they collapse into one WindowAgg
+              -- over the SAME single scan — the count is free. Do NOT "fix"
+              -- this by adding a second CTE that re-counts: a materialised
+              -- two-pass variant was measured and timed out past 30s.
               AND posted_date <= ${p_end}::timestamp
         ) rp
         LEFT JOIN public.mcleod_gld_budget_report_v4 br
                ON TRIM(rp.id) = TRIM(br.id)
         WHERE rp.rn = 1
+          -- Keeps the universe exactly as before: orders with at least one
+          -- Rate-Conf posting inside the window. Without this the widened scan
+          -- would drag in every order ever confirmed before `start`.
+          AND rp.in_window > 0
           AND br.team_id = ANY(${p_teams}::text[])
           AND br.status <> 'V'{extra_sql}
     ),
@@ -384,6 +424,22 @@ async def _thresholds(request: Request, order_ids: list[str]) -> Optional[dict[s
         if v is not None:
             out[r["mcleod_order_id"]] = v
     return out
+
+
+def _recoveries(rows) -> int:
+    """Orders that were rate-confirmed MORE THAN ONCE — the "Recoveries" KPI.
+
+    Bruno PDF 2026-08-19 R1: "count the number of orders that have more than one
+    'Rate Conf Received' comment". One order = one recovery no matter how many
+    times it was re-confirmed (the observed maximum is 5), so this is a count of
+    orders, never a sum of comments.
+
+    ONE named definition, folded by BOTH ``/summary`` and ``/orders`` (§69), so
+    the KPI card and the table's Totals row cannot drift apart — and both read
+    the very same ``rc_count`` the RC column renders, which makes KPI == detail
+    true by construction rather than by coincidence (§16).
+    """
+    return sum(1 for r in rows if (r["rc_count"] or 0) > 1)
 
 
 def _threshold_stats(
@@ -586,7 +642,8 @@ async def summary(
     rows = await pool.fetch(
         f"""
         WITH {cte}
-        SELECT order_id, carrier_cost, profit, revenue, otp_on_time, otd_on_time
+        SELECT order_id, carrier_cost, profit, revenue, otp_on_time, otd_on_time,
+               rc_count
         FROM base
         """,
         *params,
@@ -621,6 +678,9 @@ async def summary(
             **stats,
             "otp_pct": (otp_on_time / orders) if orders else None,
             "otd_pct": (otd_on_time / orders) if orders else None,
+            # Unaffected by `adjustment` on purpose: a scenario shifts money
+            # between profit and carrier cost, it does not un-post a rate conf.
+            "recoveries": _recoveries(rows),
             "adjustment": adj,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
@@ -700,7 +760,7 @@ async def orders(
         WITH {cte}
         SELECT order_id, team, customer, posted_by, posted_date,
                revenue, carrier_cost, profit, otp_on_time, otd_on_time,
-               contract_type
+               contract_type, rc_count
         FROM base
         ORDER BY {order_by}, order_id DESC
         LIMIT ${p_limit} OFFSET ${p_offset}
@@ -717,7 +777,8 @@ async def orders(
     all_rows = await pool.fetch(
         f"""
         WITH {cte}
-        SELECT order_id, carrier_cost, profit, revenue, otp_on_time, otd_on_time
+        SELECT order_id, carrier_cost, profit, revenue, otp_on_time, otd_on_time,
+               rc_count
         FROM base
         """,
         *agg_params,
@@ -746,6 +807,9 @@ async def orders(
             "profit": _fl(r["profit"]),
             "otp_on_time": r["otp_on_time"],
             "otd_on_time": r["otd_on_time"],
+            # "RC" (Bruno PDF 2026-08-19 R2) — Rate-Conf postings on this order
+            # as of the window end. > 1 is what the Recoveries KPI counts.
+            "rc_count": r["rc_count"],
             # None when the AP source is unavailable OR this order never had a
             # threshold typed — both render as an em-dash.
             "threshold": None if thresholds is None else thresholds.get(r["order_id"]),
@@ -774,6 +838,8 @@ async def orders(
                 "margin_pct": (profit / revenue) if revenue else None,
                 "otp_pct": (otp_on_time / total) if total else None,
                 "otd_pct": (otd_on_time / total) if total else None,
+                # Same helper, same full-universe rows as /summary (§69).
+                "recoveries": _recoveries(all_rows),
                 **stats,
             },
             "adjustment": adj,

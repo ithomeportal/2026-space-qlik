@@ -183,3 +183,98 @@ def test_summary_and_orders_share_one_threshold_definition() -> None:
         "expected one definition + three call sites (/summary rows, /orders "
         "page rows, /orders full universe)"
     )
+
+
+# --------------------------------------------------------------------------
+# Recoveries / RC (Bruno PDF 2026-08-19)
+# --------------------------------------------------------------------------
+
+
+def _rc_row(order_id: str, rc_count):
+    """A base-CTE row carrying only what the Recoveries KPI reads."""
+    return {"order_id": order_id, "rc_count": rc_count}
+
+
+def test_recoveries_counts_orders_not_comments() -> None:
+    """"More than one Rate Conf" is a property of the ORDER.
+
+    An order re-confirmed five times is ONE recovery, not five. Summing
+    rc_count instead would report 8 here.
+    """
+    rows = [_rc_row("A", 1), _rc_row("B", 2), _rc_row("C", 5)]
+    assert bs._recoveries(rows) == 2
+
+
+def test_a_single_rate_conf_is_not_a_recovery() -> None:
+    """The strictly-greater-than boundary: exactly one posting is the norm."""
+    assert bs._recoveries([_rc_row("A", 1) for _ in range(50)]) == 0
+
+
+def test_recoveries_survives_a_null_rc_count() -> None:
+    """A NULL must not raise — the LEFT JOIN to v4 can leave columns empty."""
+    assert bs._recoveries([_rc_row("A", None), _rc_row("B", 2)]) == 1
+
+
+def test_recoveries_is_untouched_by_a_scenario() -> None:
+    """Shaving carrier pay cannot un-post a rate conf.
+
+    ``_apply_scenario`` rebuilds each row as a dict; if it ever dropped or
+    rewrote rc_count, the Scenario tab would quietly report a different
+    Recoveries figure from the Scorecard tab for the same window.
+    """
+    rows = [
+        {"order_id": "A", "revenue": 1000.0, "profit": 100.0,
+         "carrier_cost": 900.0, "rc_count": 3},
+    ]
+    for step in bs.SCENARIO_STEPS:
+        adjusted = bs._apply_scenario(rows, step)
+        assert adjusted[0]["rc_count"] == 3
+        assert bs._recoveries(adjusted) == bs._recoveries(rows)
+
+
+def test_summary_and_orders_share_one_recoveries_definition() -> None:
+    """One named definition, two call sites (§69) — never a re-derivation."""
+    src = open(bs.__file__).read()
+    assert src.count("_recoveries(") == 3, (
+        "expected one definition + exactly two call sites (/summary, /orders); "
+        "a third caller means Recoveries is being recomputed somewhere else"
+    )
+
+
+def test_rc_count_is_selected_by_every_endpoint_that_reports_it() -> None:
+    """The KPI and the RC column must read the SAME column off the SAME CTE.
+
+    /orders runs the base CTE twice — once for the page, once for the
+    full-universe totals — so rc_count has to appear in BOTH select lists or
+    the Totals row would raise a KeyError on the first request.
+    """
+    src = open(bs.__file__).read()
+    assert src.count("rc_count") >= 5
+
+
+def test_base_cte_keeps_the_window_universe_while_widening_the_scan() -> None:
+    """The scan drops its lower bound so rc_count can see earlier postings.
+
+    ``in_window > 0`` is the guard that keeps the report's universe identical
+    to the pre-2026-08-19 shape (proven on live gold: 1,002 winner rows, zero
+    symmetric difference). Losing it would silently drag in every order ever
+    rate-confirmed before the window started.
+    """
+    params: list = []
+    import datetime
+
+    cte = bs._base_sql(
+        params,
+        start=datetime.date(2026, 8, 1),
+        end=datetime.date(2026, 8, 19),
+        contract_types=[],
+        customers=[],
+        posted_by=[],
+    )
+    assert "rp.in_window > 0" in cte
+    assert "COUNT(*) OVER (PARTITION BY id)" in cte
+    # Exactly one date bound on the scan itself: a resurrected `posted_date >=`
+    # in the WHERE would make rc_count window-scoped again.
+    scan = cte.split(") rp")[0]
+    assert scan.count("posted_date <=") == 1
+    assert "AND posted_date >=" not in scan

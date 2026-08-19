@@ -97,7 +97,7 @@ export function KpiCards({ filters, baseline }: Props) {
       : `over ${fmtCount(k.under_threshold)} orders under threshold`
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9">
       <Card label="# Orders" value={fmtCount(k?.orders)} />
       <Card
         label="Profit"
@@ -148,6 +148,19 @@ export function KpiCards({ filters, baseline }: Props) {
         value={fmtPct(k?.otd_pct)}
         sub="on-time delivery"
         title="1 − late deliveries ÷ orders. An order with no service incident counts as on time, so loads not yet delivered read as on-time — expect ~100% on a Today window."
+      />
+      {/* Bruno PDF 2026-08-19 R1. No scenario delta: shaving carrier pay cannot
+          un-post a rate conf, so the figure is identical on both tabs. */}
+      <Card
+        label="Recoveries"
+        value={fmtCount(k?.recoveries)}
+        sub={
+          k?.recoveries === null || k?.recoveries === undefined || !k?.orders
+            ? ""
+            : `${fmtPct(k.recoveries / k.orders)} of orders re-covered`
+        }
+        tone={k?.recoveries ? "warn" : "default"}
+        title="Orders with more than one 'Rate Conf Received' posting — i.e. the load had to be covered again. Counted as of the end of the selected window, so a re-confirmation next month never changes a closed month. One order counts once no matter how many times it was re-confirmed."
       />
     </div>
   )
