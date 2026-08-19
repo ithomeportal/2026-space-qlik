@@ -48,6 +48,7 @@ EXPECTED_PATHS = {
     "/custom/ops-portal-overview/actuals-by-lane",
     "/custom/ops-portal-overview/service",
     "/custom/ops-portal-overview/by-order",
+    "/custom/ops-portal-overview/hold",
     "/custom/ops-portal-overview/pending-to-cover",
     "/custom/ops-portal-overview/cover",
     "/custom/ops-portal-overview/cover-forecast",

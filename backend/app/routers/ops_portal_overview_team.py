@@ -385,6 +385,27 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_lanes=exclude_lanes, limit=limit, _user=_user,
         )
 
+    # ---- /hold (Bruno PDF 2026-08-19 R1) ---------------------------------
+    # MANDATORY, not optional: all five portals render the SAME
+    # `OpsPortalOverviewContent`, so a missing delegator here 404s the Hold
+    # board on every CORP team page while the main portal looks fine.
+    # `team` is PINNED from the closure and EVERY other param is forwarded —
+    # a dropped param silently widens a scope-locked clone (§40).
+    @r.get("/hold")
+    async def hold(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        sort: str = Query("departure_desc"),
+        limit: int = Query(500, ge=1, le=2000),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.hold_board(
+            request=request, team=team, customer=customer, lanes=lanes,
+            exclude_lanes=exclude_lanes, sort=sort, limit=limit, _user=_user,
+        )
+
     # ---- /cover-forecast (Bruno PDF 2026-07-30 R4) -----------------------
     @r.get("/cover-forecast")
     async def cover_forecast(

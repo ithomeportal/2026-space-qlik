@@ -456,6 +456,48 @@ export interface OppCoverForecastBucket {
 }
 
 /** §44 pinned Totals for the Cover board — server-side, full-universe. */
+/**
+ * A row on the **Hold** board (Bruno PDF 2026-08-19 R1).
+ *
+ * NOT date-windowed: `on_hold='Y' AND status NOT IN ('V','A')` matches ~18 rows
+ * in the whole table, stuck for months at a time, so a date filter would hide
+ * exactly the stale rows the board exists to surface. Scoped to CORP teams like
+ * every other panel here.
+ */
+export interface OppHoldRow {
+  order_id: string
+  team_id: string
+  /** 'D' or 'P' today; the endpoint excludes 'V'/'A' rather than allow-listing. */
+  status: string
+  departure: string
+  customer_name: string
+  carrier: string
+  lane: string
+  revenue: number
+  /** `total_carrier_pay`, same source as the Cover board — NOT revenue − profit. */
+  carrier_cost: number
+  profit: number
+  margin_pct: number
+  /** Always true given the filter; rendered from the data, not assumed. */
+  on_hold: boolean
+  /** Free text, varchar(20), mixed case ('CLAIM', 'accident'). Shown verbatim. */
+  hold_reason: string
+  pod: boolean
+  pod_age_hours: number | null
+  days_to_bill: number | null
+  /** null when unbilled — McLeod's 1900-01-01 sentinel is stripped server-side. */
+  bill_date: string | null
+  billed: boolean
+}
+
+export interface OppHoldTotals {
+  n_orders: number
+  revenue: number
+  carrier_cost: number
+  profit: number
+  margin_pct: number
+}
+
 export interface OppCoverTotals {
   n_orders: number
   revenue: number
@@ -807,6 +849,20 @@ export function useOppPendingToCover(f: OppFilters, enabled: boolean) {
 // Bruno (PDF 2026-07-20) R1: "Cover" — every status='A' load, with carrier +
 // carrier phone and the orig scheduled pickup window. Same scope contract as
 // Pending to Cover: not date-windowed, `enabled` so it only fires on that view.
+// Bruno PDF 2026-08-19 R1 — the Hold board. `scopeQs`/`scopeKey` (NOT `qs`):
+// the endpoint declares no date params, and serialising fields it ignores is
+// what previously collapsed two different requests onto one cache entry.
+export function useOppHold(f: OppFilters, opts?: { sort?: string }) {
+  const prefix = useApiPrefix()
+  const sort = opts?.sort ?? "departure_desc"
+  return useQuery({
+    queryKey: [prefix, "opp-hold", ...scopeKey(f), sort],
+    queryFn: () =>
+      apiFetch<OppHoldRow[]>(`${prefix}/hold${scopeQs(f, { sort })}`),
+    ...RETRY,
+  })
+}
+
 export function useOppCover(f: OppFilters, enabled: boolean) {
   const prefix = useApiPrefix()
   return useQuery({

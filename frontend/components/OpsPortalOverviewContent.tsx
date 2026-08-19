@@ -19,6 +19,7 @@ import { ServiceIncidentTables } from "@/app/reports/ops-portal-overview/Service
 import { MarginDistribution } from "@/app/reports/ops-portal-overview/MarginDistribution"
 import { Actuals } from "@/app/reports/ops-portal-overview/Actuals"
 import { ActualsByLane } from "@/app/reports/ops-portal-overview/ActualsByLane"
+import { HoldTable } from "@/app/reports/ops-portal-overview/HoldTable"
 import { ByOrder } from "@/app/reports/ops-portal-overview/ByOrder"
 import { DataFreshness } from "@/app/reports/ops-portal-overview/DataFreshness"
 
@@ -504,6 +505,9 @@ function Body({
         <Actuals filters={filters} onPickCustomer={setCustomer} />
         <ActualsByLane filters={filters} onPickLane={pickLane} />
         <ByOrder filters={filters} onPickCustomer={setCustomer} />
+        {/* Bruno (PDF 2026-08-19) R1 — directly below By Order, as specified.
+            Not date-windowed on purpose; see HoldTable.tsx. */}
+        <HoldTable filters={filters} />
       </div>
     </div>
   )

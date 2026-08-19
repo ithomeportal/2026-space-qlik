@@ -149,6 +149,9 @@ from .orders import (  # noqa: F401
     cover,
     pending_to_cover,
 )
+# Bruno PDF 2026-08-19 R1 — the Hold board. Its own module rather than more
+# lines in orders.py, which is already 595 of the package's 800-line cap.
+from .hold import hold_board  # noqa: F401
 from .incidents import (  # noqa: F401
     service_by_carrier,
     service_incident_by_customer,
@@ -199,6 +202,7 @@ __all__ = [
     "actuals",
     "actuals_by_lane",
     "by_order",
+    "hold_board",
     "combo",
     "cover",
     "cover_forecast",
