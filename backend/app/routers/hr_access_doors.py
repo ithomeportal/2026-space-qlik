@@ -166,6 +166,33 @@ _CHECK_MINUTES_EXPR = """
   TRUNC(EXTRACT(EPOCH FROM (expected - event_time)) / 60)::int
 """
 
+# The three mutually-exclusive buckets a `scored` row falls into. Written ONCE,
+# here, and reused by every endpoint in this module, by every scope-locked clone
+# in `scoped_access_doors.py`, and by the DFW delays digest. Before this, the
+# pair was re-typed at nine call sites; a report that re-types the definition of
+# its own headline metric is a report that will one day disagree with itself
+# (SPEC-CODE-RULES §69 — one metric, one named definition).
+#
+# ⚠ "Not on time reference" is NOT "on time". A row with no matching rule in
+# `late_arrival_schedule` cannot be scored at all, so it must be counted in
+# neither bucket — folding it into ON_TIME would flatter every rate, and folding
+# it into OUT_OF_TIME would accuse people the report has no expectation for.
+_NOT_ON_TIME_REF_PREDICATE = "expected IS NULL"
+_ON_TIME_PREDICATE = f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} >= 0)"
+
+# OUT OF TIME. `<= -1`, not `< 0`: check_minutes is already TRUNCated to whole
+# minutes, so there is no grace period — one minute late is Out of Time.
+_OUT_OF_TIME_PREDICATE = f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} <= -1)"
+
+# Plain-language wording for the same rule, so an e-mail/tooltip explaining
+# "Out of Time" cannot drift from the SQL that computes it.
+OUT_OF_TIME_DEFINITION = (
+    "A day is counted Out of Time when the employee's first badge-in for that "
+    "shift is later than their scheduled start time by one minute or more. "
+    "There is no grace period. Days with no scheduled start on file are not "
+    "scored at all \u2014 they count as neither on time nor out of time."
+)
+
 
 def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
     """CTE body (no leading `WITH`) yielding every punch in range, annotated with
@@ -325,11 +352,9 @@ async def kpis(
              {_scored_cte('$1', '$2')}
         SELECT
           COUNT(DISTINCT nm)                                           AS log_in_employees,
-          COUNT(*) FILTER (WHERE expected IS NULL)                     AS not_on_time_ref,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} >= 0)           AS on_time,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} <= -1)          AS out_of_time,
+          COUNT(*) FILTER (WHERE {_NOT_ON_TIME_REF_PREDICATE})                     AS not_on_time_ref,
+          COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})           AS on_time,
+          COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})          AS out_of_time,
           COUNT(*)                                                     AS total_rows
         FROM scored
         WHERE 1=1 {filters_sql}
@@ -471,10 +496,8 @@ async def trend_30d(
              {_scored_cte('$1', '$2')}
         SELECT
           event_date::text AS event_date,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} >= 0)  AS on_time,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} <= -1) AS out_of_time
+          COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})  AS on_time,
+          COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE}) AS out_of_time
         FROM scored
         WHERE 1=1 {filters_sql}
         GROUP BY event_date
@@ -518,19 +541,15 @@ async def by_department(
              {_scored_cte('$1', '$2')}
         SELECT
           COALESCE(dep, '—')                                              AS department,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} >= 0)              AS on_time,
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} <= -1)             AS out_of_time,
-          COUNT(*) FILTER (WHERE expected IS NULL)                        AS unscored
+          COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})              AS on_time,
+          COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})             AS out_of_time,
+          COUNT(*) FILTER (WHERE {_NOT_ON_TIME_REF_PREDICATE})                        AS unscored
         FROM scored
         WHERE 1=1 {filters_sql}
         GROUP BY COALESCE(dep, '—')
         ORDER BY (
-          COUNT(*) FILTER (WHERE expected IS NOT NULL
-                             AND {_CHECK_MINUTES_EXPR} >= 0)
-          + COUNT(*) FILTER (WHERE expected IS NOT NULL
-                               AND {_CHECK_MINUTES_EXPR} <= -1)
+          COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})
+          + COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})
         ) DESC
         """,
         *params,

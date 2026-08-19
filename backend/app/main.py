@@ -30,6 +30,7 @@ from app.routers import (
     carriers_savings,
     ceo_cockpit,
     ceo_executive,
+    dfw_access_doors_digest,
     dfw_losses,
     division_payment,
     exec_meeting_recruitment,
@@ -1311,6 +1312,10 @@ app.include_router(scoped_access_doors.admin_router, prefix="/api")
 app.include_router(scoped_access_doors.ops_router, prefix="/api")
 app.include_router(scoped_access_doors.pricing_router, prefix="/api")
 app.include_router(scoped_access_doors.carrier_procurement_router, prefix="/api")
+# n8n-pulled "repeat Out of Time" e-mail for the DFW scope. Same prefix as
+# dfw_router above, but its own file: it adds a machine-bearer auth path the
+# on-screen report must not have.
+app.include_router(dfw_access_doors_digest.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(hd_spot.router, prefix="/api")

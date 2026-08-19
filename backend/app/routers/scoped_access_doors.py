@@ -49,6 +49,9 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.hr_access_doors import (
     _CHECK_MINUTES_EXPR,
+    _NOT_ON_TIME_REF_PREDICATE,
+    _ON_TIME_PREDICATE,
+    _OUT_OF_TIME_PREDICATE,
     _first_punch_cte,
     _resolve_window,
     _scored_cte,
@@ -172,11 +175,9 @@ def build_scoped_access_doors_router(
                  {_scored_cte('$1', '$2')}
             SELECT
               COUNT(DISTINCT nm)                                           AS log_in_employees,
-              COUNT(*) FILTER (WHERE expected IS NULL)                     AS not_on_time_ref,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} >= 0)           AS on_time,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} <= -1)          AS out_of_time,
+              COUNT(*) FILTER (WHERE {_NOT_ON_TIME_REF_PREDICATE})                     AS not_on_time_ref,
+              COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})           AS on_time,
+              COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})          AS out_of_time,
               COUNT(*)                                                     AS total_rows
             FROM scored
             WHERE 1=1 {gate_sql} {filters_sql}
@@ -305,10 +306,8 @@ def build_scoped_access_doors_router(
                  {_scored_cte('$1', '$2')}
             SELECT
               event_date::text AS event_date,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} >= 0)  AS on_time,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} <= -1) AS out_of_time
+              COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})  AS on_time,
+              COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE}) AS out_of_time
             FROM scored
             WHERE 1=1 {gate_sql} {filters_sql}
             GROUP BY event_date
@@ -353,19 +352,15 @@ def build_scoped_access_doors_router(
                  {_scored_cte('$1', '$2')}
             SELECT
               COALESCE(jt, '—')                                              AS job_title,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} >= 0)              AS on_time,
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} <= -1)             AS out_of_time,
-              COUNT(*) FILTER (WHERE expected IS NULL)                        AS unscored
+              COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})              AS on_time,
+              COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})             AS out_of_time,
+              COUNT(*) FILTER (WHERE {_NOT_ON_TIME_REF_PREDICATE})                        AS unscored
             FROM scored
             WHERE 1=1 {gate_sql} {filters_sql}
             GROUP BY COALESCE(jt, '—')
             ORDER BY (
-              COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                 AND {_CHECK_MINUTES_EXPR} >= 0)
-              + COUNT(*) FILTER (WHERE expected IS NOT NULL
-                                   AND {_CHECK_MINUTES_EXPR} <= -1)
+              COUNT(*) FILTER (WHERE {_ON_TIME_PREDICATE})
+              + COUNT(*) FILTER (WHERE {_OUT_OF_TIME_PREDICATE})
             ) DESC
             """,
             *params,
@@ -389,10 +384,16 @@ def build_scoped_access_doors_router(
 # DFW + Admin: migrated here 2026-08-12 from `dfw_access_doors.py` /
 # `admin_access_doors.py`, both deleted in the same commit (see the module
 # docstring for how equivalence was proven before the swap).
+# Exported: the DFW delays digest e-mail (`routers/dfw_access_doors_digest.py`)
+# must be scoped by the SAME literal the on-screen report is locked to, or the
+# nightly mail and the report a recipient opens to check it would disagree.
+DFW_GATE_SQL = "AND dep = 'Operations (DFW)'"
+DFW_SCOPE_LABEL = "Operations (DFW)"
+
 dfw_router = build_scoped_access_doors_router(
     report_key="dfw-access-doors",
-    gate_sql="AND dep = 'Operations (DFW)'",
-    scope_label="Operations (DFW)",
+    gate_sql=DFW_GATE_SQL,
+    scope_label=DFW_SCOPE_LABEL,
 )
 
 admin_router = build_scoped_access_doors_router(
