@@ -49,6 +49,7 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.hr_access_doors import (
     _CHECK_MINUTES_EXPR,
+    _as_cst,
     _NOT_ON_TIME_REF_PREDICATE,
     _ON_TIME_PREDICATE,
     _OUT_OF_TIME_PREDICATE,
@@ -228,11 +229,11 @@ def build_scoped_access_doors_router(
             SELECT
               nm                    AS full_name,
               event_date::text      AS event_date,
-              event_time            AS event_time,
+              {_as_cst('event_time')} AS event_time,
               jt                    AS job_title,
               dep                   AS department,
               team                  AS team,
-              expected              AS on_time_reference,
+              {_as_cst('expected')} AS on_time_reference,
               CASE WHEN expected IS NULL THEN NULL ELSE {_CHECK_MINUTES_EXPR} END AS check_minutes
             FROM scored
             WHERE 1=1 {gate_sql} {filters_sql}

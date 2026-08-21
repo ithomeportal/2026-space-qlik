@@ -177,6 +177,27 @@ _CHECK_MINUTES_EXPR = """
   TRUNC(EXTRACT(EPOCH FROM (expected - event_time)) / 60)::int
 """
 
+# ⚠ DISPLAY ONLY. Monterrey -> Chicago, for the two timestamps a user reads.
+#
+# The scanner is one building in Monterrey, Nuevo Leon, and writes naive
+# America/Monterrey wall clock; `late_arrival_schedule.expected_time` is stored on
+# that same clock. So SCORING stays raw-vs-raw — `_CHECK_MINUTES_EXPR` above must
+# keep reading the unconverted `expected` and `event_time`, or the five scope
+# clones and the DFW digest would each need re-verifying.
+#
+# ⚠ Mexico dropped DST in 2022 and Monterrey is not a border municipality, so it
+# is UTC-6 all year while Chicago is UTC-5 for ~7.5 months. The gap is +1 h until
+# the first Sunday in November and 0 h after — NEVER a constant. `AT TIME ZONE`
+# twice is the only correct form; `+ INTERVAL '1 hour'` is right today and
+# silently wrong from 2026-11-01.
+#
+# Converting both sides equally leaves punctuality untouched; converting one side
+# would make every arrival an hour later than its expected time. Mirrors
+# /BOT/n8n-mcp sql/late-arrival-shift-aware.sql — change both together.
+def _as_cst(column: str) -> str:
+    return f"({column} AT TIME ZONE 'America/Monterrey' AT TIME ZONE 'America/Chicago')"
+
+
 # The three mutually-exclusive buckets a `scored` row falls into. Written ONCE,
 # here, and reused by every endpoint in this module, by every scope-locked clone
 # in `scoped_access_doors.py`, and by the DFW delays digest. Before this, the
@@ -451,10 +472,10 @@ async def rows(
         SELECT
           nm                    AS full_name,
           event_date::text      AS event_date,
-          event_time            AS event_time,
+          {_as_cst('event_time')} AS event_time,
           jt                    AS job_title,
           dep                   AS department,
-          expected              AS on_time_reference,
+          {_as_cst('expected')} AS on_time_reference,
           CASE WHEN expected IS NULL THEN NULL ELSE {_CHECK_MINUTES_EXPR} END AS check_minutes
         FROM scored
         WHERE 1=1 {filters_sql}

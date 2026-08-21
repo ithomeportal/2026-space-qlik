@@ -25,6 +25,7 @@ import re
 
 from app.routers.hr_access_doors import (
     _CHECK_MINUTES_EXPR,
+    _as_cst,
     _first_punch_cte,
     _scored_cte,
 )
@@ -89,6 +90,28 @@ class TestOvernightAttribution:
         sql = _squash(FIRST)
         assert "a.event_time <= (a.event_time::date - 1) + a.expected_time" in sql
         assert "INTERVAL '6 hours'" in sql
+
+    def test_display_converts_monterrey_to_chicago_with_no_hardcoded_hour(self):
+        """The scanner writes Monterrey wall clock; the UI shows CST.
+
+        Monterrey has no DST and Chicago does, so the gap is +1 h until the first
+        Sunday in November and 0 h after. A literal hour is correct today and
+        silently wrong for ~4.5 months of every year.
+        """
+        sql = _as_cst("event_time")
+        assert "AT TIME ZONE 'America/Monterrey'" in sql
+        assert "AT TIME ZONE 'America/Chicago'" in sql
+        assert "INTERVAL" not in sql
+
+    def test_scoring_stays_on_the_raw_monterrey_clock(self):
+        """Convert both sides or neither — never one.
+
+        `_CHECK_MINUTES_EXPR` must keep reading the unconverted columns. If it
+        converted only `event_time`, every arrival would land an hour after its
+        expected time and the whole company would read as late.
+        """
+        assert "AT TIME ZONE" not in _CHECK_MINUTES_EXPR
+        assert "expected - event_time" in _squash(_CHECK_MINUTES_EXPR)
 
     def test_scan_overshoots_the_window_so_a_shift_is_assembled_whole(self):
         sql = _squash(FIRST)
