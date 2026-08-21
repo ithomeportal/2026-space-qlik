@@ -614,6 +614,61 @@ async def build_bonus_report_data(
     return report_data
 
 
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+# ⚠ MODULE level, not inside the factory — see RosterRow.validate_domain.
+
+
+class RosterRow(BaseModel):
+    team_id: str
+    name: str = Field(min_length=1, max_length=120)
+    role: str
+    salary_mxn: float = Field(ge=0, le=10_000_000)
+
+    def validate_domain(self, scope: "BonusScope") -> None:
+        """⚠ Validated against the CALLER'S scope, not a class-level list.
+
+        A corporate team id POSTed to the DFW roster must be REJECTED, not
+        stored — stored, it would be invisible (the report only reads
+        `scope.teams`) rather than wrong, which is harder to notice.
+
+        The scope arrives as an argument rather than being closed over because
+        these models must live at MODULE level: FastAPI resolves a body
+        annotation through a TypeAdapter, and under
+        `from __future__ import annotations` a class defined inside a function
+        is an unresolvable ForwardRef — which 500s /openapi.json and /docs
+        while the endpoints themselves still appear to work.
+        """
+        if self.team_id not in scope.teams:
+            raise HTTPException(status_code=422, detail=f"team_id must be one of {scope.teams}")
+        if self.role not in VALID_ROLES:
+            raise HTTPException(status_code=422, detail=f"role must be one of {VALID_ROLES}")
+
+
+class AfterhoursRow(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    salary_mxn: float = Field(ge=0, le=10_000_000)
+    receives_bonus: bool = True
+
+
+class AfterhoursCreate(AfterhoursRow):
+    # Bruno Bonus R6 (PDF 2026-07-15): adding an Afterhours worker also needs the
+    # shift group (the "Group" column, e.g. "Night Shift" / "Weekend Shift").
+    shift_group: str = Field(min_length=1, max_length=60)
+
+
+class FxSettings(BaseModel):
+    period_key: str
+    team_fx: float = Field(gt=0, le=1000)
+    night_fx: float = Field(gt=0, le=1000)
+
+
+class LockBody(BaseModel):
+    period_key: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoint factory — one router per scope
 # ---------------------------------------------------------------------------
@@ -757,17 +812,6 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
     # ---------------------------------------------------------------------------
 
 
-    class RosterRow(BaseModel):
-        team_id: str
-        name: str = Field(min_length=1, max_length=120)
-        role: str
-        salary_mxn: float = Field(ge=0, le=10_000_000)
-
-        def validate_domain(self) -> None:
-            if self.team_id not in scope.teams:
-                raise HTTPException(status_code=422, detail=f"team_id must be one of {scope.teams}")
-            if self.role not in VALID_ROLES:
-                raise HTTPException(status_code=422, detail=f"role must be one of {VALID_ROLES}")
 
 
     @r.post("/roster")
@@ -776,7 +820,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         body: RosterRow,
         user: dict = Depends(gate),
     ):
-        body.validate_domain()
+        body.validate_domain(scope)
         primary = get_pool(request)
         next_sort = await primary.fetchval(
             f"SELECT COALESCE(MAX(sort_order), -1) + 1 FROM {scope.tbl_roster} WHERE team_id = $1", body.team_id
@@ -803,7 +847,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         body: RosterRow,
         user: dict = Depends(gate),
     ):
-        body.validate_domain()
+        body.validate_domain(scope)
         primary = get_pool(request)
         result = await primary.execute(
             f"""
@@ -835,16 +879,8 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         return {"success": True}
 
 
-    class AfterhoursRow(BaseModel):
-        name: str = Field(min_length=1, max_length=120)
-        salary_mxn: float = Field(ge=0, le=10_000_000)
-        receives_bonus: bool = True
 
 
-    class AfterhoursCreate(AfterhoursRow):
-        # Bruno Bonus R6 (PDF 2026-07-15): adding an Afterhours worker also needs the
-        # shift group (the "Group" column, e.g. "Night Shift" / "Weekend Shift").
-        shift_group: str = Field(min_length=1, max_length=60)
 
 
     @r.post("/afterhours")
@@ -911,10 +947,6 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         return {"success": True}
 
 
-    class FxSettings(BaseModel):
-        period_key: str
-        team_fx: float = Field(gt=0, le=1000)
-        night_fx: float = Field(gt=0, le=1000)
 
 
     @r.put("/settings")
@@ -944,8 +976,6 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         return {"success": True}
 
 
-    class LockBody(BaseModel):
-        period_key: str
 
 
     @r.post("/lock")

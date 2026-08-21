@@ -263,15 +263,46 @@ def test_both_routers_are_registered_and_gated_separately() -> None:
 
 @pytest.mark.parametrize("scope_key", ["corp", "dfw"])
 def test_a_roster_row_cannot_carry_the_other_scopes_team_id(scope_key: str) -> None:
-    """`RosterRow` validates against its OWN scope's team list.
+    """`RosterRow` validates against the CALLER'S scope, not a fixed list.
 
-    The models live inside the factory precisely so this holds; a shared model
-    would accept 'team-1' into the DFW roster, where it would then be invisible
-    (the report only reads `scope.teams`) rather than rejected.
+    A corporate team id accepted into the DFW roster would be invisible (the
+    report only reads `scope.teams`) rather than wrong — harder to notice than
+    a rejection.
     """
+    from fastapi import HTTPException
+
     scope = bc.BONUS_SCOPES[scope_key]
     other = bc.BONUS_SCOPES["dfw" if scope_key == "corp" else "corp"]
     assert set(scope.teams) & set(other.teams) == set()
+
+    ok = bc.RosterRow(team_id=scope.teams[0], name="X", role="kam", salary_mxn=1)
+    ok.validate_domain(scope)  # must not raise
+
+    crossed = bc.RosterRow(team_id=other.teams[0], name="X", role="kam", salary_mxn=1)
+    with pytest.raises(HTTPException) as exc:
+        crossed.validate_domain(scope)
+    assert exc.value.status_code == 422
+
+
+def test_the_app_schema_still_builds() -> None:
+    """⚠ /openapi.json and /docs 500 while every endpoint still answers.
+
+    Caught in production, not by this suite: moving the Pydantic request models
+    inside the router factory made them local-scope classes, and under
+    `from __future__ import annotations` FastAPI resolves a body annotation
+    through a TypeAdapter that cannot see them — `PydanticUserError: not fully
+    defined`. The endpoints kept returning their normal 422, so nothing looked
+    wrong from the outside.
+
+    Any request model must therefore stay at MODULE level. This asserts the
+    property rather than the placement, so it also covers the next one.
+    """
+    from app.main import app
+
+    schema = app.openapi()
+    assert "paths" in schema
+    assert any("bonus-calculator-dfw" in p for p in schema["paths"])
+    assert any("ops-portal-overview-dfw" in p for p in schema["paths"])
 
 
 def test_dfw_reads_the_dfw_division_not_corp_teams() -> None:
