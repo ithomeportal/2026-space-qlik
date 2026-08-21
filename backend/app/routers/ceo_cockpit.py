@@ -382,6 +382,11 @@ LINK_TILES: list[dict[str, Any]] = [
      "note": "Top-3 leaderboards — open to explore"},
     {"key": "bonus-calculator", "title": "Bonus Calculator", "category": "HR",
      "note": "Per-team monthly bonus engine — open to explore"},
+    # Bruno PDF 2026-08-20. ⚠ This catalog is a FIFTH mirror the new-report
+    # checklist in docs/SPEC-BONUS-CALCULATOR.md does not list — a clone that
+    # follows the 4-place checklist literally goes missing from the Cockpit.
+    {"key": "bonus-calculator-dfw", "title": "Bonus Calculator – DFW", "category": "HR",
+     "note": "DFW monthly bonus engine (15/16/17/18/19% margin ladder) — open to explore"},
 ]
 
 _CATEGORY_ORDER = ["Executive", "Operations", "DFW", "Finance", "Sales", "HR", "IT", "Admin"]

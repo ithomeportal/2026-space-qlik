@@ -699,6 +699,27 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "DFW", "Operations", "Sales",
                   "DFW KAM1", "DFW KAM2", "DFW KAM3", "DFW KAM4"],
     },
+    # DFW copy of the Bonus Calculator (Bruno PDF "space --Bonus HR",
+    # 2026-08-20). Same engine and same rules; only the MARGIN ladder differs
+    # (15/16/17/18/19% -> 70/90/100/110/120%) and it computes over TEAM-DFW's
+    # TM1-TM4 instead of TEAM1-TEAM4.
+    # ⚠ Its roster/afterhours/FX/lock/history live in SEPARATE `bonus_dfw_*`
+    # tables — bonus_settings and bonus_period_lock are PK'd on period_key
+    # alone, so sharing them would let this report overwrite corporate payroll.
+    # ⚠ The roster starts EMPTY: HR must add DFW employees and salaries before
+    # this report shows a payout.
+    {
+        "key": "bonus-calculator-dfw",  # -> /reports/bonus-calculator-dfw
+        "title": "Bonus Calculator – DFW",
+        "description": "DFW operations bonus payouts by team & employee — KAM/Freight-Match/Tracking&Tracing brackets, wildcard, monthly profit add-ons and Afterhours averaging, on the DFW margin ladder (15/16/17/18/19%)",
+        "note": "CEO + HR Manager + OPs Manager only (mirrors the corporate calculator) · scope team_id=TEAM-DFW, sub-teams TM1-TM4 · MARGIN bracket 15%/70 · 16%/90 · 17%/100 · 18%/110 · 19%/120 (corporate is 18.5/20/21/22/23 -> 70/100/110/120/130) · load, service and profit ladders and the $2.00/$1.60 per-load rates are UNCHANGED · own bonus_dfw_* tables · Bruno 2026-08-20",
+        "category": "Executive",
+        "tags": ["bonus", "hr", "payroll", "dfw", "kam", "freight-match", "tracking-tracing", "wildcard"],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0); live access is
+        # managed in /admin/reports. Mirrors the corporate calculator's grant.
+        "roles": ["CEO", "HR Manager", "OPs Manager"],
+    },
     {
         "key": "bonus-calculator",  # -> /reports/bonus-calculator
         "title": "Bonus Calculator",

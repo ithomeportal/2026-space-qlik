@@ -120,8 +120,15 @@ async def _scheduled_bonus_history_finalize():
     try:
         from app.services.bonus_history import finalize_due_periods
 
-        result = await finalize_due_periods(app)
-        logger.info(f"Scheduled bonus history finalize complete: {result}")
+        from app.routers.bonus_calculator import BONUS_SCOPES
+
+        # Every scope in one job: they share a cutoff and a cadence, and one
+        # job that reports both is easier to read in the roster log than two.
+        # ⚠ Each scope writes its OWN table — a shared one would make the
+        # first snapshot suppress the second for that month.
+        for _scope in BONUS_SCOPES.values():
+            result = await finalize_due_periods(app, _scope)
+            logger.info(f"Scheduled bonus history finalize complete: {result}")
     except Exception as e:
         logger.error(f"Scheduled bonus history finalize failed: {e}")
 
@@ -663,6 +670,70 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            # ---- Bonus Calculator – DFW (Bruno PDF 2026-08-20) ----------
+            # SEPARATE tables, not a discriminator column on the ones above.
+            # `bonus_settings` / `bonus_period_lock` are PK'd on `period_key`
+            # alone with ON CONFLICT DO UPDATE, so a shared table would let the
+            # DFW page silently overwrite the corporate FX rate and month
+            # approval for that period. This is live payroll: a new table
+            # cannot corrupt an existing row.
+            for _bonus_ddl in (
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_roster (
+                  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  team_id       TEXT NOT NULL,
+                  employee_name TEXT NOT NULL,
+                  role          TEXT NOT NULL,
+                  salary_mxn    NUMERIC NOT NULL DEFAULT 0,
+                  sort_order    INTEGER NOT NULL DEFAULT 0,
+                  created_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_bonus_dfw_roster_team"
+                " ON bonus_dfw_roster(team_id, sort_order)",
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_afterhours (
+                  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  shift_group    TEXT NOT NULL,
+                  employee_name  TEXT NOT NULL,
+                  salary_mxn     NUMERIC NOT NULL DEFAULT 0,
+                  receives_bonus BOOLEAN NOT NULL DEFAULT TRUE,
+                  sort_order     INTEGER NOT NULL DEFAULT 0,
+                  created_at     TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_settings (
+                  period_key TEXT PRIMARY KEY,
+                  team_fx    NUMERIC NOT NULL,
+                  night_fx   NUMERIC NOT NULL,
+                  updated_by TEXT,
+                  updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_period_lock (
+                  period_key  TEXT PRIMARY KEY,
+                  status      TEXT NOT NULL DEFAULT 'open',
+                  approved_by TEXT,
+                  approved_at TIMESTAMPTZ
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_history (
+                  period_key      TEXT NOT NULL,
+                  team_id         TEXT NOT NULL,
+                  team_name       TEXT NOT NULL,
+                  profit_usd      NUMERIC NOT NULL,
+                  total_bonus_usd NUMERIC NOT NULL,
+                  pct_bonus       NUMERIC,
+                  finalized_at    TIMESTAMPTZ DEFAULT NOW(),
+                  PRIMARY KEY (period_key, team_id)
+                )
+                """,
+            ):
+                await app.state.pool.execute(_bonus_ddl)
+
             try:
                 from app.services.bonus_defaults import seed_bonus_data
 
@@ -1356,7 +1427,8 @@ app.include_router(carrier_sms.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")
-app.include_router(bonus_calculator.router, prefix="/api")
+for _bonus_router in bonus_calculator.BONUS_ROUTERS:
+    app.include_router(_bonus_router, prefix="/api")
 # Login-code issue/verify — replaces the frontend's direct Prisma access so
 # Vercel no longer needs DATABASE_URL (Aiven ip_filter remediation).
 app.include_router(auth_email.router, prefix="/api")

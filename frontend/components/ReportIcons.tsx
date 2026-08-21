@@ -178,6 +178,9 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Admin Aging Cashflow":           { icon: Banknote,       family: "finance" },
   "KAM Performance - DFW":          { icon: Stethoscope,    family: "dfw", tag: "KAM" },
   "Bonus Calculator":               { icon: Calculator,     family: "hr" },
+  // Bruno PDF 2026-08-20 — DFW copy on its own margin ladder. Keyed by the
+  // EXACT seed.py title (en dash); a byte of drift loses the icon.
+  "Bonus Calculator – DFW":         { icon: Calculator,     family: "hr", tag: "DFW" },
   "Division Payment Calculator":    { icon: Wallet,         family: "finance" },
   "Reports Index":                  { icon: Library,        family: "executive" },
   // Title carries an EN DASH (U+2013) — it must stay byte-identical to the

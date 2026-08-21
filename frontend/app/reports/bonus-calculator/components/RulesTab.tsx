@@ -30,6 +30,10 @@ function RuleCard({
 }
 
 export function RulesTab({ report }: { report: BonusReport }) {
+  // ⚠ 18.5% corporate, 15.0% on DFW — read off the ladder the server sent, so
+  // the prose can never contradict the bracket table it sits next to.
+  const mb = report.criteria?.marginBrackets
+  const entryMarginLabel = mb?.length ? `${(mb[0].threshold * 100).toFixed(1)}%` : "the entry"
   return (
     <div className="space-y-4">
       <RuleCard Icon={BookOpen} title="Regular Bonus">
@@ -38,8 +42,8 @@ export function RulesTab({ report }: { report: BonusReport }) {
             <strong>KAM:</strong> reach a minimum of 100 loads in the week.
           </li>
           <li>
-            <strong>Freight Match:</strong> needs a minimum of 100 loads in the week and an
-            18.5% margin; the margin bracket pays only once the 100-load minimum is met.
+            <strong>Freight Match:</strong> needs a minimum of 100 loads in the week and an{" "}
+            {entryMarginLabel} margin; the margin bracket pays only once the 100-load minimum is met.
           </li>
           <li>
             <strong>Tracking &amp; Tracing:</strong> needs a minimum of 100 loads in the week
@@ -52,7 +56,8 @@ export function RulesTab({ report }: { report: BonusReport }) {
       <RuleCard Icon={Trophy} title="Wildcard">
         <p>
           Applies when team monthly profit is greater than $100,000 USD and On time P&amp;D is
-          at or above 95%. A 95% service result maps to the first bracket: 100 loads and 18.5%
+          at or above 95%. A 95% service result maps to the first bracket: 100 loads and{" "}
+          {entryMarginLabel}
           margin. If the regular load bonus is lower, the wildcard minimum is respected.
         </p>
         <p className="text-[#64748B]">

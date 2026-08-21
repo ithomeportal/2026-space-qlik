@@ -32,6 +32,7 @@ Rules (do NOT simplify without HR sign-off — see docs/SPEC-BONUS-CALCULATOR.md
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 BonusRole = Literal["kam", "freight_match", "tracking_tracing"]
@@ -78,6 +79,79 @@ MONTHLY_PROFIT_BRACKETS = [
 DEFAULT_NIGHT_FX_RATE = 16.89
 
 
+# ---------------------------------------------------------------------------
+# Bracket SETS — the only thing that differs between the corporate calculator
+# and the DFW one (Bruno PDF "space --Bonus HR", 2026-08-20, Request 3).
+# ---------------------------------------------------------------------------
+#
+# Every rule, gate and payout formula below is shared; a scope only swaps which
+# ladders they read. The module-level constants above ARE the corporate set and
+# stay exported by name — `criteria` on the wire, the pytest port fixtures and
+# `docs/SPEC-BONUS-CALCULATOR.md` all reference them.
+#
+# ⚠ `cfg` defaults to CORP_BONUS on every function. That default is what keeps
+# the live corporate payouts byte-identical through this refactor, and it is
+# asserted by tests/test_bonus_scope.py against a captured full-report baseline
+# — this module computes real payroll, so "looks the same" is not enough.
+
+
+@dataclass(frozen=True)
+class BonusConfig:
+    """One calculator's bracket ladders.
+
+    ``key`` also namespaces the Postgres tables and the report key, so two
+    calculators can never write each other's roster, FX or month lock.
+    """
+
+    key: str
+    label: str
+    load_count_brackets: List[Dict[str, float]]
+    margin_brackets: List[Dict[str, float]]
+    service_brackets: List[Dict[str, float]]
+    pay_per_load: Dict[str, float]
+    monthly_profit_brackets: List[Dict[str, Any]]
+
+
+CORP_BONUS = BonusConfig(
+    key="corp",
+    label="Corporate",
+    load_count_brackets=LOAD_COUNT_BRACKETS,
+    margin_brackets=MARGIN_BRACKETS,
+    service_brackets=SERVICE_BRACKETS,
+    pay_per_load=PAY_PER_LOAD,
+    monthly_profit_brackets=MONTHLY_PROFIT_BRACKETS,
+)
+
+# DFW margin ladder — Bruno PDF 2026-08-20 Request 3, verbatim:
+#   15.0% -> 70% · 16.0% -> 90% · 17.0% -> 100% · 18.0% -> 110% · 19.0% -> 120%
+#
+# ⚠ Lower thresholds AND a different shape from corporate: it starts at 15%
+# (corporate starts at 18.5%) and tops out at 120% (corporate 130%). Both
+# matter beyond the table itself — `bracket_pct_at_or_below` maps the wildcard
+# into this ladder, so a Freight Match wildcard that lands on 130% corporate
+# now falls to 120% here. The PDF changes only the margin ladder; the load,
+# service and profit ladders and the per-load rates are unchanged.
+DFW_MARGIN_BRACKETS: List[Dict[str, float]] = [
+    {"threshold": 0.15, "bonusPct": 0.7},
+    {"threshold": 0.16, "bonusPct": 0.9},
+    {"threshold": 0.17, "bonusPct": 1.0},
+    {"threshold": 0.18, "bonusPct": 1.1},
+    {"threshold": 0.19, "bonusPct": 1.2},
+]
+
+DFW_BONUS = BonusConfig(
+    key="dfw",
+    label="DFW",
+    load_count_brackets=LOAD_COUNT_BRACKETS,
+    margin_brackets=DFW_MARGIN_BRACKETS,
+    service_brackets=SERVICE_BRACKETS,
+    pay_per_load=PAY_PER_LOAD,
+    monthly_profit_brackets=MONTHLY_PROFIT_BRACKETS,
+)
+
+BONUS_CONFIGS: Dict[str, BonusConfig] = {c.key: c for c in (CORP_BONUS, DFW_BONUS)}
+
+
 def normalize_percent(value: float) -> float:
     """Accepts 95.5 or 0.955 and returns 0.955."""
     return value / 100 if value > 1 else value
@@ -108,9 +182,11 @@ def bracket_pct_at_or_below(target_pct: float, brackets: List[Dict[str, float]])
     return result
 
 
-def calculate_profit_bracket_bonuses(monthly_profit_usd: float) -> List[Dict[str, Any]]:
+def calculate_profit_bracket_bonuses(
+    monthly_profit_usd: float, cfg: BonusConfig = CORP_BONUS
+) -> List[Dict[str, Any]]:
     results = []
-    for bracket in MONTHLY_PROFIT_BRACKETS:
+    for bracket in cfg.monthly_profit_brackets:
         threshold = float(bracket["threshold"])
         achieved = monthly_profit_usd >= threshold if threshold == 170000 else monthly_profit_usd > threshold
         results.append(
@@ -123,15 +199,19 @@ def calculate_profit_bracket_bonuses(monthly_profit_usd: float) -> List[Dict[str
     return results
 
 
-def get_wildcard_bracket_index(normalized_service_average: float) -> int:
+def get_wildcard_bracket_index(
+    normalized_service_average: float, cfg: BonusConfig = CORP_BONUS
+) -> int:
     matched_index = -1
-    for index, bracket in enumerate(SERVICE_BRACKETS):
+    for index, bracket in enumerate(cfg.service_brackets):
         if normalized_service_average >= bracket["threshold"]:
             matched_index = index
     return matched_index
 
 
-def get_wildcard_load_count(service_bracket: Dict[str, float]) -> float:
+def get_wildcard_load_count(
+    service_bracket: Dict[str, float], cfg: BonusConfig = CORP_BONUS
+) -> float:
     """The wildcard's synthetic weekly load count (Bruno R10, 2026-07-13).
 
     The load count is the LOAD_COUNT bracket whose bonus% equals the *service*
@@ -145,13 +225,15 @@ def get_wildcard_load_count(service_bracket: Dict[str, float]) -> float:
     it falls to the first (100-load) bracket — the wildcard's 100-load minimum.
     """
     target = round(float(service_bracket["bonusPct"]), 4)
-    for bracket in LOAD_COUNT_BRACKETS:
+    for bracket in cfg.load_count_brackets:
         if round(float(bracket["bonusPct"]), 4) == target:
             return float(bracket["threshold"])
-    return float(LOAD_COUNT_BRACKETS[0]["threshold"])
+    return float(cfg.load_count_brackets[0]["threshold"])
 
 
-def get_wildcard_margin_threshold(service_bracket: Dict[str, float]) -> float:
+def get_wildcard_margin_threshold(
+    service_bracket: Dict[str, float], cfg: BonusConfig = CORP_BONUS
+) -> float:
     """Margin bracket threshold the wildcard maps to (Bruno R11, 2026-07-13).
 
     Freight Match's wildcard % is the LOAD COUNT bracket % for the synthetic
@@ -159,19 +241,22 @@ def get_wildcard_margin_threshold(service_bracket: Dict[str, float]) -> float:
     Returns that margin bracket's threshold (the margin ratio) for the wire —
     not displayed, but kept consistent with the role % in calculate_wildcard_bonus.
     """
-    load_count_pct = get_bracket_bonus(get_wildcard_load_count(service_bracket), LOAD_COUNT_BRACKETS)
-    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, MARGIN_BRACKETS)
+    load_count_pct = get_bracket_bonus(
+        get_wildcard_load_count(service_bracket, cfg), cfg.load_count_brackets
+    )
+    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, cfg.margin_brackets)
     bracket = next(
-        (b for b in MARGIN_BRACKETS if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
-        MARGIN_BRACKETS[0],
+        (b for b in cfg.margin_brackets if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
+        cfg.margin_brackets[0],
     )
     return float(bracket["threshold"])
 
 
 def calculate_wildcard_bonus(
-    employee: Dict[str, Any], total_profit: float, normalized_service_average: float
+    employee: Dict[str, Any], total_profit: float, normalized_service_average: float,
+    cfg: BonusConfig = CORP_BONUS,
 ) -> Dict[str, Any]:
-    wildcard_index = get_wildcard_bracket_index(normalized_service_average)
+    wildcard_index = get_wildcard_bracket_index(normalized_service_average, cfg)
     is_eligible = total_profit > 100000 and wildcard_index >= 0
     role = employee["role"]
 
@@ -183,12 +268,12 @@ def calculate_wildcard_bonus(
             "wildcardEquivalentLoads": 0.0,
             "wildcardEquivalentMarginPct": 0.0,
             "wildcardRoleBonusPct": 0.0,
-            "wildcardBasePayUsd": PAY_PER_LOAD[role],
+            "wildcardBasePayUsd": cfg.pay_per_load[role],
             "wildcardRuleLabel": None,
         }
 
-    service_bracket = SERVICE_BRACKETS[wildcard_index]
-    base_pay = PAY_PER_LOAD[role]
+    service_bracket = cfg.service_brackets[wildcard_index]
+    base_pay = cfg.pay_per_load[role]
 
     # R10 (Bruno 2026-07-13): the wildcard's synthetic weekly load count is the
     # LOAD_COUNT row whose bonus% == the SERVICE bracket's bonus% (96% → 80% →
@@ -203,11 +288,11 @@ def calculate_wildcard_bonus(
     #               the next lower available % when there's no exact match
     #               (80% is absent from the MARGIN bracket → 70%).
     #   • T&T     → its own SERVICE bracket % (unchanged — Bruno: "correct").
-    load_count_pct = get_bracket_bonus(wildcard_loads, LOAD_COUNT_BRACKETS)
-    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, MARGIN_BRACKETS)
+    load_count_pct = get_bracket_bonus(wildcard_loads, cfg.load_count_brackets)
+    mapped_margin_pct = bracket_pct_at_or_below(load_count_pct, cfg.margin_brackets)
     margin_bracket = next(
-        (b for b in MARGIN_BRACKETS if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
-        MARGIN_BRACKETS[0],
+        (b for b in cfg.margin_brackets if round(float(b["bonusPct"]), 4) == round(mapped_margin_pct, 4)),
+        cfg.margin_brackets[0],
     )
 
     if role == "kam":
@@ -236,7 +321,10 @@ def calculate_wildcard_bonus(
     }
 
 
-def calculate_team1_kam_bonus(team: Dict[str, Any], employee: Dict[str, Any], total_profit: float) -> Dict[str, Any]:
+def calculate_team1_kam_bonus(
+    team: Dict[str, Any], employee: Dict[str, Any], total_profit: float,
+    cfg: BonusConfig = CORP_BONUS,
+) -> Dict[str, Any]:
     is_team1_kam = team.get("id") == "team-1" and employee.get("role") == "kam"
     if not is_team1_kam or total_profit <= 150000:
         manual_bonus = float(employee.get("kamBonusUsd", 0) or 0)
@@ -257,7 +345,7 @@ def calculate_team1_kam_bonus(team: Dict[str, Any], employee: Dict[str, Any], to
     }
 
 
-def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_team_bonus(team: Dict[str, Any], cfg: BonusConfig = CORP_BONUS) -> Dict[str, Any]:
     # R8 (Bruno 2026-06-03): ONE service number per team — the calendar-month
     # On time P&D (`monthlyServicePct`, what the header SERVICE KPI shows).
     # It drives the weekly display rows, the T&T bracket AND the wildcard gate,
@@ -291,12 +379,12 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 "grossProfit": gross_profit,
                 "marginPct": margin_pct,
                 "meetsLoadMinimum": meets_load_minimum,
-                "loadBonusPct": get_bracket_bonus(loads, LOAD_COUNT_BRACKETS),
-                "marginBonusPct": get_bracket_bonus(margin_pct, MARGIN_BRACKETS) if meets_load_minimum else 0.0,
+                "loadBonusPct": get_bracket_bonus(loads, cfg.load_count_brackets),
+                "marginBonusPct": get_bracket_bonus(margin_pct, cfg.margin_brackets) if meets_load_minimum else 0.0,
                 # Monthly service bracket, gated by the week's 100-load minimum —
                 # the Tracking & Tracing payout driver again as of R8 (Bruno
                 # 2026-06-03), which REMOVED the R4-R7 per-week service calc.
-                "serviceBonusPct": get_bracket_bonus(normalized_service, SERVICE_BRACKETS) if meets_load_minimum else 0.0,
+                "serviceBonusPct": get_bracket_bonus(normalized_service, cfg.service_brackets) if meets_load_minimum else 0.0,
                 # R8: every week displays the SAME calendar-month On time P&D —
                 # Bruno's mock literally repeats 94.67% across Week 1-4. The wire
                 # fields keep their per-week names so the frontend table shape is
@@ -305,7 +393,7 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 # Green "Actual Bonus %" On time P&D row: monthly bracket, UNGATED
                 # display (row != money convention from R7 stands — a sub-100-load
                 # week shows the bracket % while the payout above gates to $0).
-                "serviceBonusPctWeekly": get_bracket_bonus(normalized_service, SERVICE_BRACKETS),
+                "serviceBonusPctWeekly": get_bracket_bonus(normalized_service, cfg.service_brackets),
             }
         )
 
@@ -323,7 +411,7 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         float(team["monthlyProfit"]) if team.get("monthlyProfit") is not None else total_profit
     )
     profit_brackets = calculate_profit_bracket_bonuses(bracket_profit_basis)
-    wildcard_index = get_wildcard_bracket_index(normalized_service)
+    wildcard_index = get_wildcard_bracket_index(normalized_service, cfg)
     wildcard_eligible = total_profit > 100000 and wildcard_index >= 0
 
     employees = []
@@ -345,9 +433,9 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
                 multiplier = rule["marginBonusPct"]
             else:
                 multiplier = rule["serviceBonusPct"]
-            regular_weekly_usd.append(multiplier * rule["loads"] * PAY_PER_LOAD[role])
+            regular_weekly_usd.append(multiplier * rule["loads"] * cfg.pay_per_load[role])
 
-        wildcard = calculate_wildcard_bonus(employee, total_profit, normalized_service)
+        wildcard = calculate_wildcard_bonus(employee, total_profit, normalized_service, cfg)
         wildcard_weekly_usd = wildcard["wildcardBonusUsd"]
         weekly_usd = [max(value, wildcard_weekly_usd) if wildcard_eligible else value for value in regular_weekly_usd]
         bonus_usd = sum(weekly_usd)
@@ -355,7 +443,7 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         wildcard_applied_usd = sum(
             max(0, weekly_usd[index] - regular_weekly_usd[index]) for index in range(len(weekly_usd))
         )
-        kam_bonus = calculate_team1_kam_bonus(team, employee, total_profit)
+        kam_bonus = calculate_team1_kam_bonus(team, employee, total_profit, cfg)
         legacy_addons = sum(float(value) for value in employee.get("addOnsUsd", []) or [])
         profit_bracket_bonus_usd = sum(float(bracket["payoutUsd"]) for bracket in profit_brackets)
         add_on_bonus_usd = kam_bonus["kamBonusUsd"] + legacy_addons + profit_bracket_bonus_usd
@@ -389,13 +477,13 @@ def calculate_team_bonus(team: Dict[str, Any]) -> Dict[str, Any]:
         **team,
         "serviceAveragePct": service_average_pct,
         "wildcardEligible": wildcard_eligible,
-        "wildcardServiceBracketPct": SERVICE_BRACKETS[wildcard_index]["threshold"] if wildcard_eligible else 0,
-        "wildcardEquivalentLoads": get_wildcard_load_count(SERVICE_BRACKETS[wildcard_index]) if wildcard_eligible else 0,
+        "wildcardServiceBracketPct": cfg.service_brackets[wildcard_index]["threshold"] if wildcard_eligible else 0,
+        "wildcardEquivalentLoads": get_wildcard_load_count(cfg.service_brackets[wildcard_index], cfg) if wildcard_eligible else 0,
         # R11: the wildcard's mapped margin bracket follows the load-count % (the
         # Freight Match target), matching calculate_wildcard_bonus — not the
         # positional service-index margin row.
         "wildcardEquivalentMarginPct": (
-            get_wildcard_margin_threshold(SERVICE_BRACKETS[wildcard_index]) if wildcard_eligible else 0
+            get_wildcard_margin_threshold(cfg.service_brackets[wildcard_index], cfg) if wildcard_eligible else 0
         ),
         "totalLoads": sum(float(week.get("loads", 0) or 0) for week in team["weeks"]),
         "totalRevenue": total_revenue,
@@ -417,8 +505,9 @@ def build_bonus_report(
     night_fx_rate: float = DEFAULT_NIGHT_FX_RATE,
     last_sync_label: Optional[str] = None,
     status_label: Optional[str] = None,
+    cfg: BonusConfig = CORP_BONUS,
 ) -> Dict[str, Any]:
-    calculated_teams = [calculate_team_bonus(team) for team in teams]
+    calculated_teams = [calculate_team_bonus(team, cfg) for team in teams]
 
     tracking_tracing_team_bonuses = []
     for team in calculated_teams:
@@ -481,10 +570,10 @@ def build_bonus_report(
             "lastSyncLabel": last_sync_label or "Not connected yet",
         },
         "criteria": {
-            "loadCountBrackets": LOAD_COUNT_BRACKETS,
-            "marginBrackets": MARGIN_BRACKETS,
-            "serviceBrackets": SERVICE_BRACKETS,
-            "payPerLoad": PAY_PER_LOAD,
+            "loadCountBrackets": cfg.load_count_brackets,
+            "marginBrackets": cfg.margin_brackets,
+            "serviceBrackets": cfg.service_brackets,
+            "payPerLoad": cfg.pay_per_load,
         },
         "teams": calculated_teams,
         "nightShift": {

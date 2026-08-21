@@ -59,6 +59,12 @@ const TEAM_STRUCTURE = [
 
 export function CriteriaGuide({ report }: { report: BonusReport }) {
   const { loadCountBrackets, marginBrackets, serviceBrackets, payPerLoad } = report.criteria
+  // ⚠ The entry margin is 18.5% corporate but 15.0% on DFW (Bruno PDF
+  // 2026-08-20). Read it off the ladder the server sent rather than typing it:
+  // prose that contradicts the table right above it is worse than no prose.
+  const entryMarginLabel = marginBrackets?.length
+    ? `${(marginBrackets[0].threshold * 100).toFixed(1)}%`
+    : "the entry"
   return (
     <section className="rounded-2xl border border-[#EDE9FE] bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
@@ -99,7 +105,7 @@ export function CriteriaGuide({ report }: { report: BonusReport }) {
         <InfoCard title="KAM Load Count" body="KAM has one requirement: reach a minimum of 100 loads in the week, then the load-count bracket sets the bonus." bg={COLORS.cardBg} titleColor={COLORS.cardTitle} />
         <InfoCard
           title="Freight Match Margin"
-          body="Freight Match needs a minimum of 100 loads in the week and an 18.5% margin; the margin bracket pays only once the 100-load minimum is met. Wildcard is the only alternate payout path."
+          body={`Freight Match needs a minimum of 100 loads in the week and an ${entryMarginLabel} margin; the margin bracket pays only once the 100-load minimum is met. Wildcard is the only alternate payout path.`}
           bg={COLORS.cardBg}
           titleColor={COLORS.cardTitle}
         />
@@ -111,7 +117,7 @@ export function CriteriaGuide({ report }: { report: BonusReport }) {
         />
         <InfoCard
           title="Wildcard"
-          body="Wildcard applies when team monthly profit is greater than $100,000 USD and On time P&D is at or above 95%. A 95% service result maps to the first bracket: 100 loads and 18.5% margin. If the regular load bonus is lower, the wildcard minimum is respected."
+          body={`Wildcard applies when team monthly profit is greater than $100,000 USD and On time P&D is at or above 95%. A 95% service result maps to the first bracket: 100 loads and ${entryMarginLabel} margin. If the regular load bonus is lower, the wildcard minimum is respected.`}
           bg={COLORS.wildcardBg}
           titleColor={COLORS.wildcardTitle}
         />

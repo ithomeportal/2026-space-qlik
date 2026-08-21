@@ -1,5 +1,6 @@
 "use client"
 
+import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { mutationErrorToast, mutationSuccessToast } from "@/lib/mutation-error"
 
@@ -9,18 +10,50 @@ interface ApiResponse<T> {
   error?: string
 }
 
-const PROXY = "/api/proxy/custom/bonus-calculator"
+// ---------------------------------------------------------------------------
+// Which calculator (Bruno PDF "space --Bonus HR", 2026-08-20)
+// ---------------------------------------------------------------------------
+//
+// The DFW page wraps its content in <BonusApiProvider prefix="custom/bonus-
+// calculator-dfw">, exactly as the CORP-T Ops portals do. The prefix is also
+// element 0 of EVERY queryKey below: without that the two calculators share
+// React Query cache entries, and opening one after the other would show the
+// wrong roster and the wrong FX — a payroll number, from the wrong division,
+// with no error.
 
-async function apiGet<T>(path: string): Promise<ApiResponse<T>> {
-  const res = await fetch(`${PROXY}${path}`, {
+const DEFAULT_PREFIX = "custom/bonus-calculator"
+
+const BonusPrefixContext = createContext<string>(DEFAULT_PREFIX)
+
+export function BonusApiProvider({
+  prefix,
+  children,
+}: {
+  prefix: string
+  children: ReactNode
+}) {
+  return createElement(BonusPrefixContext.Provider, { value: prefix }, children)
+}
+
+function useBonusPrefix() {
+  return useContext(BonusPrefixContext)
+}
+
+async function apiGet<T>(prefix: string, path: string): Promise<ApiResponse<T>> {
+  const res = await fetch(`/api/proxy/${prefix}${path}`, {
     headers: { "Content-Type": "application/json" },
   })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
-async function apiSend<T>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
-  const res = await fetch(`${PROXY}${path}`, {
+async function apiSend<T>(
+  prefix: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<ApiResponse<T>> {
+  const res = await fetch(`/api/proxy/${prefix}${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -207,17 +240,19 @@ export interface RosterData {
 // ---------------------------------------------------------------------------
 
 export function useBonusFilters() {
+  const prefix = useBonusPrefix()
   return useQuery({
-    queryKey: ["bonus", "filters"],
-    queryFn: () => apiGet<BonusFilters>("/filters"),
+    queryKey: [prefix, "bonus", "filters"],
+    queryFn: () => apiGet<BonusFilters>(prefix, "/filters"),
     ...BONUS_RETRY,
   })
 }
 
 export function useBonusReport(period: string | undefined) {
+  const prefix = useBonusPrefix()
   return useQuery({
-    queryKey: ["bonus", "report", period ?? "current"],
-    queryFn: () => apiGet<BonusReport>(`/report${period ? `?period=${period}` : ""}`),
+    queryKey: [prefix, "bonus", "report", period ?? "current"],
+    queryFn: () => apiGet<BonusReport>(prefix, `/report${period ? `?period=${period}` : ""}`),
     ...BONUS_RETRY,
   })
 }
@@ -245,17 +280,19 @@ export interface BonusHistory {
 }
 
 export function useBonusHistory() {
+  const prefix = useBonusPrefix()
   return useQuery({
-    queryKey: ["bonus", "history"],
-    queryFn: () => apiGet<BonusHistory>("/history"),
+    queryKey: [prefix, "bonus", "history"],
+    queryFn: () => apiGet<BonusHistory>(prefix, "/history"),
     ...BONUS_RETRY,
   })
 }
 
 export function useBonusRoster(period: string | undefined, enabled: boolean) {
+  const prefix = useBonusPrefix()
   return useQuery({
-    queryKey: ["bonus", "roster", period ?? "current"],
-    queryFn: () => apiGet<RosterData>(`/roster${period ? `?period=${period}` : ""}`),
+    queryKey: [prefix, "bonus", "roster", period ?? "current"],
+    queryFn: () => apiGet<RosterData>(prefix, `/roster${period ? `?period=${period}` : ""}`),
     enabled,
     ...BONUS_RETRY,
   })
@@ -266,10 +303,11 @@ export function useBonusRoster(period: string | undefined, enabled: boolean) {
 // ---------------------------------------------------------------------------
 
 export function useBonusMutations() {
+  const prefix = useBonusPrefix()
   const qc = useQueryClient()
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["bonus", "report"] })
-    qc.invalidateQueries({ queryKey: ["bonus", "roster"] })
+    qc.invalidateQueries({ queryKey: [prefix, "bonus", "report"] })
+    qc.invalidateQueries({ queryKey: [prefix, "bonus", "roster"] })
   }
   // Invalidate caches AND confirm with a green toast (positive feedback that
   // the write persisted — not just a button that quietly disables).
@@ -280,52 +318,52 @@ export function useBonusMutations() {
 
   const createRoster = useMutation({
     mutationFn: (b: { team_id: string; name: string; role: string; salary_mxn: number }) =>
-      apiSend("POST", "/roster", b),
+      apiSend(prefix, "POST", "/roster", b),
     onSuccess: ok("Employee added"),
     onError: mutationErrorToast("Add employee"),
   })
   const updateRoster = useMutation({
     mutationFn: ({ id, ...b }: { id: string; team_id: string; name: string; role: string; salary_mxn: number }) =>
-      apiSend("PUT", `/roster/${id}`, b),
+      apiSend(prefix, "PUT", `/roster/${id}`, b),
     onSuccess: ok("Employee saved"),
     onError: mutationErrorToast("Save employee"),
   })
   const deleteRoster = useMutation({
-    mutationFn: (id: string) => apiSend("DELETE", `/roster/${id}`),
+    mutationFn: (id: string) => apiSend(prefix, "DELETE", `/roster/${id}`),
     onSuccess: ok("Employee removed"),
     onError: mutationErrorToast("Delete employee"),
   })
   const updateAfterhours = useMutation({
     mutationFn: ({ id, ...b }: { id: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
-      apiSend("PUT", `/afterhours/${id}`, b),
+      apiSend(prefix, "PUT", `/afterhours/${id}`, b),
     onSuccess: ok("Afterhours saved"),
     onError: mutationErrorToast("Save afterhours"),
   })
   // Bruno Bonus R6 (2026-07-15): add an Afterhours (Night/Weekend) worker.
   const createAfterhours = useMutation({
     mutationFn: (b: { shift_group: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
-      apiSend("POST", "/afterhours", b),
+      apiSend(prefix, "POST", "/afterhours", b),
     onSuccess: ok("Afterhours member added"),
     onError: mutationErrorToast("Add afterhours member"),
   })
   // Bruno Bonus R7 (2026-07-15): remove an Afterhours (Night/Weekend) worker.
   const deleteAfterhours = useMutation({
-    mutationFn: (id: string) => apiSend("DELETE", `/afterhours/${id}`),
+    mutationFn: (id: string) => apiSend(prefix, "DELETE", `/afterhours/${id}`),
     onSuccess: ok("Afterhours member removed"),
     onError: mutationErrorToast("Delete afterhours member"),
   })
   const saveFx = useMutation({
-    mutationFn: (b: { period_key: string; team_fx: number; night_fx: number }) => apiSend("PUT", "/settings", b),
+    mutationFn: (b: { period_key: string; team_fx: number; night_fx: number }) => apiSend(prefix, "PUT", "/settings", b),
     onSuccess: ok("FX rates saved"),
     onError: mutationErrorToast("Save FX"),
   })
   const lock = useMutation({
-    mutationFn: (period_key: string) => apiSend("POST", "/lock", { period_key }),
+    mutationFn: (period_key: string) => apiSend(prefix, "POST", "/lock", { period_key }),
     onSuccess: ok("Period locked"),
     onError: mutationErrorToast("Lock period"),
   })
   const unlock = useMutation({
-    mutationFn: (period_key: string) => apiSend("DELETE", `/lock/${period_key}`),
+    mutationFn: (period_key: string) => apiSend(prefix, "DELETE", `/lock/${period_key}`),
     onSuccess: ok("Period unlocked"),
     onError: mutationErrorToast("Unlock period"),
   })

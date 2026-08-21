@@ -40,8 +40,16 @@ def _snapshot_rows(period_key: str, report: dict) -> list[tuple]:
     return rows
 
 
-async def finalize_due_periods(app) -> dict:
-    """Snapshot every closed-and-due period that is not yet in ``bonus_history``."""
+async def finalize_due_periods(app, scope=None) -> dict:
+    """Snapshot every closed-and-due period not yet in this scope's history.
+
+    ⚠ ``scope`` selects BOTH the tables and the bracket ladders. It defaults to
+    corporate, but the caller must pass DFW explicitly for the DFW calculator:
+    the two share the `(period_key, team_id)` shape, so a single shared table
+    would let one scope's snapshot make the scheduler skip the other's for that
+    month entirely (the `already` short-circuit below).
+    """
+    scope = scope or bc.CORP_SCOPE
     gold = getattr(app.state, "savings_pool", None)
     primary = getattr(app.state, "pool", None)
     financial = getattr(app.state, "financial_pool", None)
@@ -54,19 +62,21 @@ async def finalize_due_periods(app) -> dict:
         if _cutoff_for(period_key) > now:
             continue  # month still finalizing — leave it to the live "open" row
         already = await primary.fetchval(
-            "SELECT 1 FROM bonus_history WHERE period_key = $1 LIMIT 1", period_key
+            f"SELECT 1 FROM {scope.tbl_history} WHERE period_key = $1 LIMIT 1", period_key
         )
         if already:
             continue
         try:
-            report = await bc.build_bonus_report_data(gold, primary, financial, period_key)
+            report = await bc.build_bonus_report_data(
+                gold, primary, financial, period_key, scope
+            )
         except Exception as exc:  # noqa: BLE001 — one bad period must not block others
             logger.warning("History finalize for %s failed: %s", period_key, exc)
             continue
         rows = _snapshot_rows(period_key, report)
         await primary.executemany(
-            """
-            INSERT INTO bonus_history
+            f"""
+            INSERT INTO {scope.tbl_history}
               (period_key, team_id, team_name, profit_usd, total_bonus_usd, pct_bonus)
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (period_key, team_id) DO NOTHING
@@ -74,17 +84,20 @@ async def finalize_due_periods(app) -> dict:
             rows,
         )
         finalized += 1
-        logger.info("Finalized bonus history for %s (%d teams)", period_key, len(rows))
-    return {"finalized": finalized}
+        logger.info(
+            "Finalized %s bonus history for %s (%d teams)", scope.key, period_key, len(rows)
+        )
+    return {"finalized": finalized, "scope": scope.key}
 
 
-async def get_history(pool) -> list[dict]:
-    """All persisted snapshots, newest period first."""
+async def get_history(pool, scope=None) -> list[dict]:
+    """All persisted snapshots for one scope, newest period first."""
+    scope = scope or bc.CORP_SCOPE
     rows = await pool.fetch(
-        """
+        f"""
         SELECT period_key, team_id, team_name, profit_usd, total_bonus_usd,
                pct_bonus, finalized_at
-        FROM bonus_history
+        FROM {scope.tbl_history}
         ORDER BY period_key DESC, team_id
         """
     )
