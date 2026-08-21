@@ -276,7 +276,7 @@ def test_the_route_is_registered_once() -> None:
 
 
 def test_the_team_clones_delegate_hold_with_every_param() -> None:
-    """All five portals render the SAME OpsPortalOverviewContent.
+    """All six portals render the SAME OpsPortalOverviewContent.
 
     Without a delegator the Hold board 404s on the four CORP team pages while
     the main portal looks perfectly healthy. And a dropped param would widen a
@@ -295,6 +295,35 @@ def test_the_team_clones_delegate_hold_with_every_param() -> None:
     # team is pinned from the closure, never taken from the query string.
     hold_call = src.split("opo.hold_board(")[1].split(")")[0]
     assert "team=team" in hold_call
+
+
+def test_every_delegator_advertises_a_sort_key_that_exists() -> None:
+    """The 5 clone shims must track hold.py's own default.
+
+    Found during close-out: the shims still declared `departure_desc` after the
+    Departure column was removed. It "worked" — `_HOLD_SORTS.get(sort, default)`
+    falls back — so no request failed, while every clone's OpenAPI schema
+    advertised a sort key that no longer existed and the fallback quietly did
+    the work. A whitelist with a default hides exactly this.
+    """
+    import inspect
+
+    from app.routers import ops_portal_overview_dfw as dfw_mod
+    from app.routers import ops_portal_overview_team as team_mod
+
+    default = inspect.signature(hold_mod.hold_board).parameters["sort"].default.default
+    assert default in hold_mod._HOLD_SORTS
+
+    for mod in (team_mod, dfw_mod):
+        src = inspect.getsource(mod)
+        shim = src.split('@r.get("/hold")')[1].split("return await")[0]
+        declared = shim.split('sort: str = Query("')[1].split('"')[0]
+        assert declared in hold_mod._HOLD_SORTS, (
+            f"{mod.__name__} advertises sort={declared!r}, which is not whitelisted"
+        )
+        assert declared == default, (
+            f"{mod.__name__} default {declared!r} != hold.py default {default!r}"
+        )
 
 
 def test_the_module_name_is_not_shadowed_by_its_endpoint() -> None:

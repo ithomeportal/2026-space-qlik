@@ -566,7 +566,7 @@ async def cover(
     )
 
 # ---- /hold (Bruno PDF 2026-08-19 R1) ---------------------------------
-# MANDATORY, not optional: all five portals render the SAME
+# MANDATORY, not optional: all six portals render the SAME
 # `OpsPortalOverviewContent`, so a missing delegator here 404s the Hold
 # board on every CORP team page while the main portal looks fine.
 # `team` is PINNED from the closure and EVERY other param is forwarded —
@@ -578,7 +578,8 @@ async def hold(
     customer: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
-    sort: str = Query("departure_desc"),
+    # Must track hold.py's default — see the CORP factory.
+    sort: str = Query("date_asc"),
     limit: int = Query(500, ge=1, le=2000),
     _user: dict = Depends(gate),
 ):

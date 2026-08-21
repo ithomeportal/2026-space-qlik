@@ -206,7 +206,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
 
     # ---- /customer-not-billed ---------------------------------------------
     # MANDATORY, not optional (2026-08-21): `SidePanels` renders the "Not
-    # Billed" panel unconditionally on all five portals, so the absence of this
+    # Billed" panel unconditionally on all six portals, so the absence of this
     # shim was a live 404 on every CORP-T page while the main portal looked
     # healthy — the exact failure the /hold comment below was written to
     # prevent. `team` is PINNED; every other param is forwarded (§40).
@@ -414,7 +414,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         )
 
     # ---- /hold (Bruno PDF 2026-08-19 R1) ---------------------------------
-    # MANDATORY, not optional: all five portals render the SAME
+    # MANDATORY, not optional: all six portals render the SAME
     # `OpsPortalOverviewContent`, so a missing delegator here 404s the Hold
     # board on every CORP team page while the main portal looks fine.
     # `team` is PINNED from the closure and EVERY other param is forwarded —
@@ -425,7 +425,10 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         customer: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
-        sort: str = Query("departure_desc"),
+        # Must track hold.py's default. `departure_desc` was removed with the
+        # Departure column (PDF 2026-08-20 R2); the whitelist would have
+        # silently fallen back, advertising a sort key that no longer exists.
+        sort: str = Query("date_asc"),
         limit: int = Query(500, ge=1, le=2000),
         _user: dict = Depends(gate),
     ):

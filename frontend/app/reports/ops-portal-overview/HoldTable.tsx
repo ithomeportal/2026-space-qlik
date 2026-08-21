@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 // Bruno (PDF 2026-08-19) R1 — the "Hold" board, below By Order.
 //
-// `on_hold='Y' AND status NOT IN ('V','A')`, CORP-scoped like every other panel
+// `bill_date < sentinel AND status NOT IN ('V','A')` since PDF 2026-08-20 R2
+// (`on_hold` is a displayed column now, not the filter), division-scoped
 // on this page. Deliberately NOT date-windowed: holds sit for months (the
 // oldest open one measured 8 months), so a date filter would hide exactly the
 // stale rows this board exists to surface. It therefore ignores the page's
