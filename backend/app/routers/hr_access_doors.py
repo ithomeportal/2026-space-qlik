@@ -128,9 +128,20 @@ _EXPECTED_TIME_LOOKUP = """
 # gets scored as a late arrival. That is what produced
 # "Ruben Aguilera | 06:30 AM | 7:12 AM | 42 min" for a man whose shift had just
 # ended at 07:12, and -729 min for colleagues who arrived on time at 18:39.
+# ⚠ ONLY back-date a punch that could actually belong to that shift (2026-08-21).
+# Back-dating every pre-noon punch was one of two ways a STALE rule deleted a
+# person from this report. Jorge De Leon moved to days but kept a 19:30 rule, so
+# his 06:27 punch was attributed to YESTERDAY's shift — outside whatever date
+# range the user was looking at. His manager reported "he badged, the door
+# opened, but the records do not show". Both mechanisms had to go; fixing only
+# the window below would have left the row on the wrong day.
+# The bound is the shift's own window, not a new number. Mirrors
+# /BOT/n8n-mcp sql/late-arrival-shift-aware.sql — change both together.
 _SHIFT_DATE_EXPR = """
   CASE
-    WHEN a.expected_time >= TIME '12:00' AND a.event_time::time < TIME '12:00'
+    WHEN a.expected_time >= TIME '12:00'
+     AND a.event_time::time < TIME '12:00'
+     AND a.event_time <= (a.event_time::date - 1) + a.expected_time + INTERVAL '6 hours'
       THEN a.event_time::date - 1
     ELSE a.event_time::date
   END
@@ -237,20 +248,42 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
         SELECT a.*, {_SHIFT_DATE_EXPR} AS shift_date
         FROM scheduled a
     ),
+    windowed AS (
+        -- A person with no rule counts as in-window by definition: there is no
+        -- expected start to be near, and they already have a bucket
+        -- ("Not On Time Reference"). Keeping them TRUE preserves their ranking.
+        SELECT w.*,
+               (w.expected_time IS NULL
+                OR (w.event_time >= w.shift_date + w.expected_time - {before}
+               AND  w.event_time <= w.shift_date + w.expected_time + {after})
+               ) AS in_window
+        FROM attributed w
+    ),
     first_punch AS (
+        -- ⚠ The window ORDERS; it must never filter (2026-08-21).
+        --
+        -- As a WHERE it deleted anyone whose rule matched none of their punches:
+        -- the row never reached any endpoint, so the person was absent from the
+        -- portal entirely rather than merely unscored. Jorge De Leon was
+        -- invisible that way for 17 of 21 days, and two colleagues with the same
+        -- stale rule were never noticed at all.
+        --
+        -- An in-window punch still wins and is scored exactly as before. When a
+        -- person has none, their earliest punch survives with `expected = NULL`,
+        -- which puts them in the existing "Not On Time Reference" bucket — seen,
+        -- and correctly excluded from both percentages. Scoring them instead
+        -- would read a 06:27 punch against a 19:30 rule as 13 hours EARLY and
+        -- silently inflate the on-time rate.
         SELECT
             r.nm, r.em, r.jt, r.dep, r.team, r.event_time,
             r.shift_date AS event_date,
-            CASE WHEN r.expected_time IS NULL THEN NULL
+            CASE WHEN r.expected_time IS NULL OR NOT r.in_window THEN NULL
                  ELSE r.shift_date + r.expected_time END AS expected,
             ROW_NUMBER() OVER (
                 PARTITION BY r.shift_date, r.ident
-                ORDER BY r.event_time ASC
+                ORDER BY r.in_window DESC, r.event_time ASC
             ) AS rn
-        FROM attributed r
-        WHERE r.expected_time IS NULL
-           OR (r.event_time >= r.shift_date + r.expected_time - {before}
-          AND  r.event_time <= r.shift_date + r.expected_time + {after})
+        FROM windowed r
     )
     """
 

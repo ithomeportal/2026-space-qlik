@@ -63,6 +63,33 @@ class TestOvernightAttribution:
         # "Not On Time Reference" bucket rather than being dropped.
         assert "r.expected_time IS NULL" in sql
 
+    def test_the_arrival_window_orders_it_never_filters(self):
+        """2026-08-21: as a WHERE, the window DELETED people from the portal.
+
+        A rule matching none of a person's punches made them absent entirely —
+        Jaime Anaya reported "he badged, the door opened, but the records do not
+        show" for Jorge De Leon, who had been invisible for 17 of 21 days. The
+        window must rank, so the row survives unscored instead of disappearing.
+        """
+        sql = _squash(FIRST)
+        assert "ORDER BY r.in_window DESC" in sql
+        # The killer: any WHERE that drops out-of-window rows brings the bug back.
+        assert "WHERE r.expected_time IS NULL" not in sql
+        assert "WHERE r.in_window" not in sql
+        # ...and an off-window row must be UNSCORED, not scored as hours early.
+        assert "r.expected_time IS NULL OR NOT r.in_window THEN NULL" in sql
+
+    def test_overnight_backdating_is_bounded_by_the_shift_window(self):
+        """The second way a stale rule hid someone, and the one that hid the first.
+
+        Back-dating every pre-noon punch put a day worker's 06:27 punch on
+        YESTERDAY's shift. Fixing only the arrival window would not have helped:
+        the row was on the wrong date before the window was ever consulted.
+        """
+        sql = _squash(FIRST)
+        assert "a.event_time <= (a.event_time::date - 1) + a.expected_time" in sql
+        assert "INTERVAL '6 hours'" in sql
+
     def test_scan_overshoots_the_window_so_a_shift_is_assembled_whole(self):
         sql = _squash(FIRST)
         assert "$1::date - 1" in sql
