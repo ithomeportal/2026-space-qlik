@@ -239,8 +239,35 @@ function Body({
 
   const headerBadge = badge ?? lockedTeam ?? "CORP"
 
+  /* Bruno (PDF 2026-08-20 "Ops Portal Updates") R1 — the dead space under a
+        SHORT page.
+
+        This root used to carry `min-h-[calc(100vh-64px)]` as well, on top of
+        the identical min-height `app/reports/layout.tsx` already applies to
+        every report route. Both start at the same y (just under the 64px
+        sticky header), so the second one bought nothing visually — but it DID
+        force this flex column to a full viewport, and the body below carries
+        `flex-1`. On a page whose content is shorter than the viewport the body
+        therefore STRETCHED, opening blank space between the last card and the
+        end of the scroll.
+
+        That is mode-dependent in exactly the way reported: Production is
+        date-filtered and paginated to 50 rows, while Cover and Pending to
+        Cover are not date-windowed and render the whole open board — so
+        Production is routinely the only view short enough for the stretch to
+        show. Dropping the duplicate lets the column end at its content; the
+        grey backdrop still fills the viewport, from the layout above.
+
+        ⚠ Stated as the best-supported explanation, not a confirmed repro. Two
+        prior rounds measured all three views (identical markup, identical
+        16px gap at four viewport sizes) and could not reproduce the report, so
+        this is reasoning from the layout rather than from a measurement — it
+        still needs Bruno's browser, OS, zoom and a full-page-vs-viewport
+        screenshot to confirm. It is safe regardless: no ByOrder.tsx change (six
+        reports share it), and nothing here can paint white.
+   */
   return (
-    <div className="flex min-h-[calc(100vh-64px)] flex-col bg-[#F9FAFB]">
+    <div className="flex flex-col bg-[#F9FAFB]">
       {/* Top bar */}
       <div className="flex items-center gap-3 border-b border-[#E5E7EB] bg-white px-4 py-2">
         <Link href="/" className="flex items-center gap-1 text-sm text-[#6B7280] hover:text-[#111827]">
