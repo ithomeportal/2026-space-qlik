@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 from ._constants import CORP_TEAMS
 from ._dates import _count_workdays, _last_n_business_days_start, _month_bounds
+from ._scope import CORP_SCOPE, DivisionScope
 from ._sql import _team_list, _v4_scope_where
 
 
@@ -52,6 +53,7 @@ def _projection_sums_sql(
     where: str,
     p_ws: int, p_we: int, p_ms1: int, p_we2: int, p_ms2: int, p_me: int,
     group_col: str | None = None,
+    scope: DivisionScope = CORP_SCOPE,
 ) -> str:
     """The six sums every Projected number is built from.
 
@@ -81,7 +83,7 @@ def _projection_sums_sql(
                             THEN br4.total_charge END), 0)::numeric AS rev_mtd,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
                             THEN br4.margin_amt END), 0)::numeric AS prof_mtd,
-          COUNT(DISTINCT br4.team_id) AS team_count
+          COUNT(DISTINCT br4.{scope.v4_team_col}) AS team_count
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
         {grp}
@@ -90,14 +92,14 @@ def _projection_sums_sql(
 
 def _projection_params(
     team, customer, load_type, lanes, exclude_lanes, carriers, exclude_carriers,
-    today: date,
+    today: date, scope: DivisionScope = CORP_SCOPE,
 ) -> tuple[str, list, tuple[int, int, int, int, int, int], int]:
     """Scope predicate + bound params for ``_projection_sums_sql``."""
     win_start, win_end, m_start, m_end, pending = _projection_bounds(today)
     params: list = []
     where = _v4_scope_where(
         "br4", team, customer, load_type, params,
-        lanes, exclude_lanes, carriers, exclude_carriers,
+        lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
     )
     params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
     n = len(params)
@@ -106,20 +108,20 @@ def _projection_params(
 
 async def _team_projection_core(
     pool, *, team, customer, load_type, lanes, exclude_lanes,
-    carriers, exclude_carriers, today: date,
+    carriers, exclude_carriers, today: date, scope: DivisionScope = CORP_SCOPE,
 ) -> dict:
     """The report-wide Team Monthly Projection object — the source of truth."""
     where, params, idx, pending = _projection_params(
         team, customer, load_type, lanes, exclude_lanes,
-        carriers, exclude_carriers, today,
+        carriers, exclude_carriers, today, scope=scope,
     )
-    row = await pool.fetchrow(_projection_sums_sql(where, *idx), *params)
+    row = await pool.fetchrow(_projection_sums_sql(where, *idx, scope=scope), *params)
     team_count = int(row["team_count"] or 0) if row else 0
     # Fallback only when the scan returned no rows at all. `team` may be a
     # single id or a list of them (PERFORMANCE CORP passes four), so count the
     # scope rather than testing its truthiness — `1 if team else …` would
     # charge a four-team scope one team's worth of capacity.
-    team_count = team_count or len(_team_list(team)) or len(CORP_TEAMS)
+    team_count = team_count or len(_team_list(team)) or len(scope.sub_teams)
     if not row:
         return _projection_from_sums(0, 0, 0, 0, 0, 0, pending, team_count)
     return _projection_from_sums(
@@ -187,3 +189,24 @@ def _projection_from_sums(vol_12, rev_12, prof_12, vol_mtd, rev_mtd, prof_mtd,
         "proj_prof_x_l": _safe_float((proj_prof / proj_vol) if proj_vol else 0.0),
         "proj_team_ut":  _safe_float((proj_vol / cap * 100.0) if cap else 0.0),
     }
+
+
+# ---------------------------------------------------------------------------
+# Budget short-circuit — Bruno PDF 2026-08-21 (DFW portal).
+# ---------------------------------------------------------------------------
+# `daily_production_budget_report` is CORP-only: 0 of DFW's 15 customers appear
+# in it (measured 2026-08-21; CORP is 66/66). Under a scope with
+# `has_budget=False` the budget statement is not merely empty, it is not RUN —
+# `CUSTOMER_TEAM_CTE` is itself CORP-restricted, so executing it would scan v4
+# for TEAM1..TEAM5 on behalf of a DFW page. These keep the `asyncio.gather`
+# shape identical so the call sites stay one expression.
+
+
+async def _empty_rows() -> list:
+    """Stand-in for a budget `pool.fetch` that a scope has no budget for."""
+    return []
+
+
+async def _zero_val() -> int:
+    """Stand-in for a budget `pool.fetchval`."""
+    return 0

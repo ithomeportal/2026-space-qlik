@@ -619,6 +619,25 @@ CUSTOM_REPORTS = [
         "owner_name": "admin",
         "roles": ["CEO", "Executive", "CORP", "Operations"],
     },
+    # The DFW DIVISION copy of Ops Portal Overview (Bruno PDF 2026-08-20).
+    # Not a scope-LOCKED clone like the four CORP-T entries below: it covers
+    # the whole DFW division, with TM1..TM5 as its team dimension (they live in
+    # `v4.team`, since `team_id` is the constant 'TEAM-DFW' there).
+    # ⚠ `title` must stay byte-identical to the REPORT_MAP key in
+    # ReportIcons.tsx — the icon lookup is by title, not by key. The dash is an
+    # EN DASH (–), matching the PDF.
+    {
+        "key": "ops-managers-portal-dfw",  # -> /reports/ops-managers-portal-dfw
+        "title": "Ops Managers Portal – DFW",
+        "description": "Ops Portal Overview for the DFW division — KPI combo, customer month-over-month variance, losses, performance, projection, actuals, by-lane, by-order and the unbilled board, with TM1–TM5 as the team dimension",
+        "note": "Scope: team_id=TEAM-DFW (server-pinned); team column = v4.team (TM1–TM5) · same engine as Ops Portal - Overview · NO budget panels: 0 of DFW's 15 YTD customers exist in daily_production_budget_report, so BDGT, Team Budget Monthly Variance and the All/Budget/Variance-per-Cell modes are removed and Customer Monthly Variance is last-month minus this-month · Bruno 2026-08-20",
+        "category": "Operations",
+        "tags": ["ops", "overview", "dfw", "tm1", "tm2", "tm3", "tm4", "kpi", "division"],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0); live access is
+        # managed in /admin/reports. Mirrors the DFW grants on XRay DFW Mng.
+        "roles": ["DFW", "Executive", "CEO", "Operations"],
+    },
     # Per-team private copies of Ops Portal Overview (Bruno 2026-06-26, PDF
     # Request 1). Same engine as ops-portal-overview but server-locked to one
     # CORP team so a team's KAMs can't see other teams' work or customers.

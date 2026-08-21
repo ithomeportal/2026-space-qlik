@@ -13,8 +13,9 @@ from fastapi import Depends, Query, Request
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_TEAMS, CUSTOMER_TEAM_CTE, router
+from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _last_5_weeks, _resolve_range, _week_label
+from ._scope import scope_of
 from ._sql import _v4_scope_where
 from ._metrics import _safe_float, _variance_from_sums
 
@@ -44,6 +45,7 @@ async def team_variance(
     active count, so display that.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = [s, e]
     extra = ""
@@ -56,7 +58,7 @@ async def team_variance(
 
     row = await pool.fetchrow(
         f"""
-        WITH {CUSTOMER_TEAM_CTE},
+        WITH {customer_team_cte(scope)},
         per_customer AS (
           SELECT
             budget."Customer Name" AS customer_name,
@@ -130,6 +132,7 @@ async def customer_variance(
 ):
     """§3 Customer Monthly Variance — one row per customer."""
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = [s, e]
     extra = ""
@@ -144,7 +147,7 @@ async def customer_variance(
     # Bruno round-2 (2026-05-13): actual − budget direction (positive = over-budget).
     rows = await pool.fetch(
         f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           budget."Customer Name" AS customer_name,
           COALESCE(SUM(budget."Loads Actual"),    0)
@@ -202,9 +205,10 @@ async def customer_losses(
 ):
     """§4 Customer Monthly Losses — one row per customer."""
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([s, e, limit])
     p_s = len(params) - 2
     p_e = len(params) - 1
@@ -274,9 +278,10 @@ async def customer_not_billed(
     Customer Monthly Losses table. Totals in ``meta`` are the full-universe
     window aggregate (never a client reduce over the LIMIT slice — §44)."""
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([s, e, limit])
     p_s = len(params) - 2
     p_e = len(params) - 1
@@ -343,6 +348,7 @@ async def team_variance_weekly(
     filters apply, the page date filter is intentionally ignored.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     week_starts, weeks_start, weeks_end = _last_5_weeks(today)
     params: list = [weeks_start, weeks_end]
@@ -355,7 +361,7 @@ async def team_variance_weekly(
         extra += f' AND budget."Customer Name" = ${len(params)}'
     rows = await pool.fetch(
         f"""
-        WITH {CUSTOMER_TEAM_CTE},
+        WITH {customer_team_cte(scope)},
         per_cw AS (
           SELECT
             DATE_TRUNC('week', budget."Date")::date AS wk,
@@ -412,6 +418,7 @@ async def team_variance_by_team(
     returns every CORP team; ``customer`` / date filters still apply.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = [s, e]
     extra = ""
@@ -420,7 +427,7 @@ async def team_variance_by_team(
         extra += f' AND budget."Customer Name" = ${len(params)}'
     rows = await pool.fetch(
         f"""
-        WITH {CUSTOMER_TEAM_CTE},
+        WITH {customer_team_cte(scope)},
         per_ct AS (
           SELECT
             ct.team_id AS team_id,
@@ -448,7 +455,7 @@ async def team_variance_by_team(
     by_team = {r["team_id"]: r for r in rows}
     acc = {"cust": 0, "la": 0.0, "lb": 0.0, "ra": 0.0, "rb": 0.0, "pa": 0.0, "pb": 0.0}
     teams_out = []
-    for t in CORP_TEAMS:
+    for t in scope.sub_teams:
         r = by_team.get(t)
         obj = _variance_from_sums(
             r["active_customers"] if r else 0,

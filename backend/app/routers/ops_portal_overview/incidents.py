@@ -16,7 +16,8 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES, router
 from ._dates import _resolve_range
-from ._sql import _scorecard_cte, _v4_scope_where
+from ._scope import scope_of
+from ._sql import _sub_team_param, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
 
@@ -64,6 +65,7 @@ async def service_incident_by_customer(
     budget-only panels). Team / customer / date filters are honored.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     side = "del" if (stop_type or "").lower() == "del" else "pu"
     date_col = "orig_actual_departure" if side == "pu" else "dest_actual_departure"
     stops_lit = _PU_STOP_LIT if side == "pu" else _DEL_STOP_LIT
@@ -71,7 +73,7 @@ async def service_incident_by_customer(
 
     s, e = _resolve_range(range, start_date, end_date)
 
-    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    teams_param = _pad_variants(scope.base_teams, width=8)
     companies_param = _pad_variants(CORP_COMPANIES, width=4)
     statuses_param = _pad_variants(OPEN_STATUSES, width=1)
     params: list = [teams_param, companies_param, statuses_param, s, e]
@@ -84,8 +86,8 @@ async def service_incident_by_customer(
         f"sc.{date_col} < ($5::date + INTERVAL '1 day')",
     ]
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"sc.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, [team]))
+        parts.append(f"sc.{scope.sc_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"sc.customer_name = ${len(params)}")
@@ -185,20 +187,21 @@ async def service_by_carrier(
     no carrier assigned are excluded (they belong to Pending-to-Cover).
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
 
     p_params: list = []
     where = _v4_scope_where(
         "br4", team, customer, load_type, p_params,
-        lanes, exclude_lanes, carriers, exclude_carriers,
+        lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
     )
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
 
     sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
                 SELECT
                     NULLIF(TRIM(mov.payee_name), '') AS carrier,

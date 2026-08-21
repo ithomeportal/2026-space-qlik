@@ -13,7 +13,8 @@ from fastapi import Depends, Request
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, YEAR_END, YEAR_START, router
+from ._constants import CORP_COMPANIES, OPEN_STATUSES, YEAR_END, YEAR_START, router
+from ._scope import scope_of
 from ._dates import _count_workdays, _month_bounds
 from ._sql import _lane_expr
 from ._metrics import _safe_float
@@ -32,8 +33,9 @@ async def filters(
     """Teams (TEAM1..TEAM5), distinct customers and distinct lanes (Bruno R7)
     across the YTD window."""
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     scope_args = [
-        list(CORP_TEAMS),
+        list(scope.base_teams),
         list(CORP_COMPANIES),
         list(OPEN_STATUSES),
         YEAR_START,
@@ -85,7 +87,7 @@ async def filters(
     return {
         "success": True,
         "data": {
-            "teams": list(CORP_TEAMS),
+            "teams": list(scope.sub_teams),
             "customers": [r["customer_name"] for r in cust_rows],
             "lanes": [r["lane"] for r in lane_rows],
             "carriers": [r["carrier"] for r in carrier_rows],
@@ -182,6 +184,7 @@ async def data_freshness(
         return {"success": True, "data": _freshness_cache["payload"]}
 
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     sql = """
         SELECT
           (SELECT MAX(updated_dt) FROM public.mcleod_gld_budget_report_v4

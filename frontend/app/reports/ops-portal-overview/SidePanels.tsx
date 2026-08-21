@@ -41,14 +41,35 @@ interface Props {
    * cross-team "Team" breakdown button in Team Monthly Performance is hidden.
    */
   lockedTeam?: string
+  /**
+   * Bruno (PDF 2026-08-20) DFW R6: drops the Team Budget Monthly Variance
+   * panel. DFW has no budget rows at all, so it would render zeros.
+   */
+  hideBudget?: boolean
+  /**
+   * Bruno (PDF 2026-08-20) DFW R7: how Customer Monthly Variance is computed.
+   * "budget" = actual − budget · "mom" = last month − this month. The sign
+   * convention is opposite between them, so the panel says which it is.
+   */
+  customerVarianceBasis?: "budget" | "mom"
 }
 
-export function SidePanels({ filters, onPickCustomer, lockedTeam }: Props) {
+export function SidePanels({
+  filters,
+  onPickCustomer,
+  lockedTeam,
+  hideBudget = false,
+  customerVarianceBasis = "budget",
+}: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <div className="space-y-4">
-        <TeamBudgetVariance filters={filters} lockedTeam={lockedTeam} />
-        <CustomerVariance filters={filters} onPickCustomer={onPickCustomer} />
+        {!hideBudget && <TeamBudgetVariance filters={filters} lockedTeam={lockedTeam} />}
+        <CustomerVariance
+          filters={filters}
+          onPickCustomer={onPickCustomer}
+          basis={customerVarianceBasis}
+        />
         <CustomerLosses filters={filters} onPickCustomer={onPickCustomer} />
         <CustomerNotBilled filters={filters} />
       </div>
@@ -105,7 +126,21 @@ function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilters; lock
 // §3 — Customer Monthly Variance
 // ---------------------------------------------------------------------------
 
-function CustomerVariance({ filters, onPickCustomer }: { filters: OppFilters; onPickCustomer?: (c: string) => void }) {
+function CustomerVariance({
+  filters,
+  onPickCustomer,
+  basis = "budget",
+}: {
+  filters: OppFilters
+  onPickCustomer?: (c: string) => void
+  basis?: "budget" | "mom"
+}) {
+  // ⚠ Same wire fields, OPPOSITE sign convention (§69 — one metric, one named
+  // definition). CORP: actual − budget, so positive = ahead of plan. DFW:
+  // last month − this month, so positive = the customer is DOWN this month.
+  // The reader cannot infer which from the numbers, so the panel says it.
+  const isMom = basis === "mom"
+  const subtitle = isMom ? "Last month − this month" : "Actual − budget"
   const { data, isLoading, error } = useOppCustomerVariance(filters)
   const raw = useMemo(() => data?.data ?? [], [data])
   const [expanded, setExpanded] = useState(false)
@@ -115,7 +150,7 @@ function CustomerVariance({ filters, onPickCustomer }: { filters: OppFilters; on
     name: (r) => (r.customer_name || "").toUpperCase(),
     vol: (r) => r.volume_var,
     profit: (r) => r.profit_var,
-  }, "profit", "asc")
+  }, "profit", isMom ? "desc" : "asc")
   const renderTable = () => (
     <table className="w-full table-fixed text-xs">
       <colgroup>
@@ -138,10 +173,14 @@ function CustomerVariance({ filters, onPickCustomer }: { filters: OppFilters; on
             <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
               <CustomerNameCell name={r.customer_name} onPick={onPickCustomer} />
             </td>
-            <td className={`px-2 py-1 text-right tabular-nums ${r.volume_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+            {/* Red = the bad direction, which FLIPS with the basis: under
+                actual−budget that is negative, under last−this it is positive
+                (the customer shrank). Colouring off a fixed sign would paint
+                every declining DFW customer green. */}
+            <td className={`px-2 py-1 text-right tabular-nums ${(isMom ? r.volume_var > 0 : r.volume_var < 0) ? "text-[#DC2626]" : "text-[#374151]"}`}>
               {fmtCount(r.volume_var)}
             </td>
-            <td className={`px-2 py-1 text-right tabular-nums ${r.profit_var < 0 ? "text-[#DC2626]" : "text-[#374151]"}`}>
+            <td className={`px-2 py-1 text-right tabular-nums ${(isMom ? r.profit_var > 0 : r.profit_var < 0) ? "text-[#DC2626]" : "text-[#374151]"}`}>
               {fmtUsdSigned(r.profit_var)}
             </td>
           </tr>
@@ -155,7 +194,14 @@ function CustomerVariance({ filters, onPickCustomer }: { filters: OppFilters; on
       icon=""
       loading={isLoading}
       error={error}
-      leadingAction={<ExpandButton label="Customer Monthly Variance" onClick={() => setExpanded(true)} />}
+      leadingAction={
+        <span className="flex items-center gap-2">
+          <span className="rounded-full border border-[#E5E7EB] bg-[#F9FAFB] px-2 py-0.5 text-[9px] uppercase tracking-wide text-[#6B7280]">
+            {subtitle}
+          </span>
+          <ExpandButton label="Customer Monthly Variance" onClick={() => setExpanded(true)} />
+        </span>
+      }
     >
       <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
       {expanded && (

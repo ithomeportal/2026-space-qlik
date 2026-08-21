@@ -14,10 +14,11 @@ from fastapi import Depends, Query, Request
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CUSTOMER_TEAM_CTE, router
+from ._constants import customer_team_cte, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _month_bounds, _resolve_range
+from ._scope import scope_of
 from ._sql import _parse_team_scope, _scorecard_cte, _v4_scope_where
-from ._metrics import _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
+from ._metrics import _empty_rows, _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ async def actuals(
     come from daily_production_budget_report joined per customer.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
@@ -72,13 +74,13 @@ async def actuals(
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
     team_scope = _parse_team_scope(team, teams)
     p_params: list = []
-    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
     prod_sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
                 SELECT br4.customer_name,
                        br4.id, br4.company_id, br4.total_charge, br4.margin_amt,
@@ -115,7 +117,7 @@ async def actuals(
         b_params.append(customer)
         b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
     bud_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           budget."Customer Name" AS customer_name,
           COALESCE(SUM(budget."Loads Budget"),    0)::numeric AS vol_budget,
@@ -135,20 +137,20 @@ async def actuals(
     # makes the TOTAL row equal the Team Monthly Projection panel.
     proj_where, proj_params_l, proj_idx, _pending = _projection_params(
         team_scope, customer, load_type, lanes, exclude_lanes,
-        carriers, exclude_carriers, today,
+        carriers, exclude_carriers, today, scope=scope,
     )
     proj_by_cust_sql = _projection_sums_sql(
-        proj_where, *proj_idx, group_col="br4.customer_name",
+        proj_where, *proj_idx, group_col="br4.customer_name", scope=scope,
     )
 
     prod_rows, bud_rows, proj_rows, proj_all = await asyncio.gather(
         pool.fetch(prod_sql, *p_params),
-        pool.fetch(bud_sql, *b_params),
+        pool.fetch(bud_sql, *b_params) if scope.has_budget else _empty_rows(),
         pool.fetch(proj_by_cust_sql, *proj_params_l),
         _team_projection_core(
             pool, team=team_scope, customer=customer, load_type=load_type,
             lanes=lanes, exclude_lanes=exclude_lanes,
-            carriers=carriers, exclude_carriers=exclude_carriers, today=today,
+            carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
         ),
     )
 
@@ -323,6 +325,7 @@ async def actuals_by_lane(
     No Budget join — Bruno's spec: "second table … just with Production Data".
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     # Bruno R5 (2026-06-01): "Losses" button → restrict to margin_amt < 0 rows.
     # Bruno (PDF 2026-07-13): "Unbilled" button → bill_date < sentinel.
@@ -330,14 +333,14 @@ async def actuals_by_lane(
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     p_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     p_params.extend([s, e])
     p_s = len(p_params) - 1
     p_e = len(p_params)
 
     sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
                 SELECT
                     TRIM(br4.origin_name) AS origin,
@@ -493,9 +496,10 @@ async def margin_distribution(
     ORDERS — the intended difference per Bruno R18.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([s, e])
     p_s = len(params) - 1
     p_e = len(params)

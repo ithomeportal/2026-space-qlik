@@ -15,6 +15,10 @@ import {
 import AttritionPivotModal from "./AttritionPivotModal"
 
 interface Props {
+  /** Drops the All / Budget / Variance-per-Cell modes and forces Production
+   *  (Bruno PDF 2026-08-20, DFW R8). All three read
+   *  `daily_production_budget_report`, which holds no DFW rows. */
+  hideBudget?: boolean
   filters: OppFilters
   // R9: when provided, customer-name / lane cells become clickable drill links.
   onPickCustomer?: (customer: string) => void
@@ -62,9 +66,13 @@ const COLUMNS: {
   { k: "proj_eom_prof", label: "Proj. EOM Profit", align: "center", numeric: true, accessor: (r) => r.proj_eom_prof },
 ]
 
-export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
+export function Actuals({ filters, onPickCustomer, onPickLane, hideBudget = false }: Props) {
   // Bruno R6 (2026-06-02): default the Actuals table to the "All" filter view.
-  const [mode, setMode] = useState<Mode>("all")
+  // ⚠ ...but "all" stacks Production/Budget/Variance in each cell, so with
+  // hideBudget the only surviving mode is Production and it MUST also become
+  // the default — otherwise the DFW table opens on a mode whose pill has been
+  // removed and renders two empty sub-rows per cell (Bruno PDF 2026-08-20 R8).
+  const [mode, setMode] = useState<Mode>(hideBudget ? "production" : "all")
   const [sortKey, setSortKey] = useState<ColumnKey>("rev")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
   // Bruno R11 (2026-06-24): expand the table into an uncapped modal.
@@ -139,7 +147,7 @@ export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
         <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
           Actuals
         </span>
-        <ModePills mode={mode} setMode={setMode} />
+        <ModePills mode={mode} setMode={setMode} hideBudget={hideBudget} />
         <div className="ml-auto flex items-center gap-2 text-[10px] text-[#6B7280]">
           {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
           <span>Click any column header to sort</span>
@@ -180,7 +188,7 @@ export function Actuals({ filters, onPickCustomer, onPickLane }: Props) {
               <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
                 Actuals
               </span>
-              <ModePills mode={mode} setMode={setMode} />
+              <ModePills mode={mode} setMode={setMode} hideBudget={hideBudget} />
               <button
                 type="button"
                 onClick={() => setExpanded(false)}
@@ -310,13 +318,26 @@ function ActualsTable({
   )
 }
 
-function ModePills({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
-  const opts: { k: Mode; label: string }[] = [
+function ModePills({
+  mode,
+  setMode,
+  hideBudget = false,
+}: {
+  mode: Mode
+  setMode: (m: Mode) => void
+  hideBudget?: boolean
+}) {
+  const ALL_OPTS: { k: Mode; label: string }[] = [
     { k: "all",        label: "All" },
     { k: "production", label: "Production" },
     { k: "budget",     label: "Budget" },
     { k: "variance",   label: "Variance per Cell" },
   ]
+  // Bruno PDF 2026-08-20 DFW R8 removes All / Budget / Variance per Cell.
+  // All three are budget-derived; on DFW they would render empty sub-rows.
+  const opts = ALL_OPTS.filter((o) => !(hideBudget && o.k !== "production"))
+  // One pill left is a label, not a control — hide the whole strip.
+  if (opts.length <= 1) return null
   return (
     <div className="flex rounded-lg border border-[#E5E7EB] bg-white text-xs">
       {opts.map((o) => (

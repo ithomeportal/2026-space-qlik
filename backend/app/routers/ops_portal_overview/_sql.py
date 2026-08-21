@@ -11,6 +11,7 @@ from typing import List, Optional, Sequence, Union
 from app.datalake import pad_variants as _pad_variants
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES
+from ._scope import CORP_SCOPE, DivisionScope, case_variants
 
 # A scope is one team, several teams, or none (= the whole CORP base scope).
 TeamScope = Union[str, Sequence[str], None]
@@ -91,6 +92,31 @@ def _carrier_first_expr(alias: str) -> str:
     )
 
 
+
+def _sub_team_param(scope: DivisionScope, team_ids: Sequence[str]) -> List[str]:
+    """Bound array for narrowing to specific sub-teams under ``scope``.
+
+    Padded variants for the narrow ``varchar(8)`` ``team_id``; case variants for
+    the wide unpadded ``team`` / ``team_dfw``. Pair it with
+    ``scope.v4_team_col`` (v4) or ``scope.sc_team_col`` (scorecard) — using the
+    wrong column silently returns zero rows rather than erroring.
+    """
+    if scope.padded_sub_teams:
+        return _pad_variants(list(team_ids), width=8)
+    return case_variants(list(team_ids))
+
+
+def _team_id_select(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
+    """The scope's team column, always surfacing as ``team_id``.
+
+    CORP renders bare ``br4.team_id`` — no redundant alias — so the emitted SQL
+    stays byte-identical to the pre-scope version and the equivalence harness in
+    ``tests/test_ops_portal_scope.py`` keeps its teeth.
+    """
+    col = f"{alias}.{scope.v4_team_col}"
+    return col if scope.v4_team_col == "team_id" else f"{col} AS team_id"
+
+
 def _v4_scope_where(
     alias: str,
     team: TeamScope,
@@ -101,8 +127,9 @@ def _v4_scope_where(
     exclude_lanes: Optional[List[str]] = None,
     carriers: Optional[List[str]] = None,
     exclude_carriers: Optional[List[str]] = None,
+    scope: DivisionScope = CORP_SCOPE,
 ) -> str:
-    """CORP-scope WHERE for ``mcleod_gld_budget_report_v4``.
+    """Division-scope WHERE for ``mcleod_gld_budget_report_v4``.
 
     Sargable (no TRIM()): pushes padded+unpadded literal variants per the
     width=8 / width=4 / width=1 declared schema on team_id / company_id /
@@ -110,8 +137,13 @@ def _v4_scope_where(
     "contract" or "spot" — falls back to no filter when None/empty.
     ``lanes`` / ``exclude_lanes`` (Bruno R7) are multi-select lane keys —
     empty/None means no filter.
+
+    ``scope`` selects the division (see ``_scope.py``). With the default
+    ``CORP_SCOPE`` the emitted SQL is byte-identical to the pre-2026-08-21
+    version — asserted against a captured baseline in
+    ``tests/test_ops_portal_scope.py``, since five live portals share this.
     """
-    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    teams_param = _pad_variants(scope.base_teams, width=8)
     companies_param = _pad_variants(CORP_COMPANIES, width=4)
     statuses_param = _pad_variants(OPEN_STATUSES, width=1)
 
@@ -134,10 +166,16 @@ def _v4_scope_where(
     # budget_report_v4) and right-padded to varchar(8) ('TEAM1   ', in the
     # scorecard tables), so a literal IN ('TEAM1',...) matches ZERO scorecard
     # rows and would silently zero OTP/OTD rather than fail.
+    #
+    # Under DFW the narrowing column is `team` (TM1..TM5), not `team_id` —
+    # `team_id` is constant there. `team` is varchar(512) and stored unpadded,
+    # so pad_variants would be a no-op; what it DOES carry is mixed case
+    # ('tm4' on 2 rows vs 16,312 'TM4', measured 2026-08-21), so both spellings
+    # go into the bound array. UPPER() on the column would drop sargability.
     team_ids = _team_list(team)
     if team_ids:
-        params.append(_pad_variants(team_ids, width=8))
-        parts.append(f"{alias}.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, team_ids))
+        parts.append(f"{alias}.{scope.v4_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"{alias}.customer_name = ${len(params)}")
@@ -164,12 +202,15 @@ def _v4_scope_where(
     return " AND ".join(parts)
 
 
-def _scorecard_cte(kind: str) -> str:
+def _scorecard_cte(kind: str, scope: DivisionScope = CORP_SCOPE) -> str:
     """OTP/OTD per-order roll-up — same shape as xray_corp._scorecard_cte.
 
     Reads ``mcleod_gld_scorecard_incidents_portal`` (incident grain) since
     2026-06-15 — real stop types only (no '' bucket); ``COUNT(DISTINCT id)`` keeps
     it fan-out-safe. See SPEC-CODE-RULES §43.
+
+    ``scope`` only swaps the ``team_id`` division literal; the CTE never narrows
+    to a sub-team, because the join back to v4 already restricts each order.
     """
     if kind == "otp":
         codes = OTP_CODES
@@ -185,7 +226,7 @@ def _scorecard_cte(kind: str) -> str:
 
     codes_sql = _lit(codes, width=40)
     stops_sql = _lit(stops, width=2)
-    teams_sql = _lit(CORP_TEAMS, width=8)
+    teams_sql = _lit(scope.base_teams, width=8)
     companies_sql = _lit(CORP_COMPANIES, width=4)
     statuses_sql = _lit(OPEN_STATUSES, width=1)
     return f"""
@@ -204,7 +245,10 @@ def _scorecard_cte(kind: str) -> str:
     """
 
 
-def _bill_metrics_sql(where: str, p_s: int, p_e: int, *, group_by_team: bool) -> str:
+def _bill_metrics_sql(
+    where: str, p_s: int, p_e: int, *, group_by_team: bool,
+    scope: DivisionScope = CORP_SCOPE,
+) -> str:
     """Per-order billing metrics — Bruno round (2026-07-01) R12.
 
       avg_days_billed     = AVG(bill_date − dest_actual_departure) over billed orders
@@ -216,7 +260,10 @@ def _bill_metrics_sql(where: str, p_s: int, p_e: int, *, group_by_team: bool) ->
     Order R11, so the panel reconciles with the Days-to-Bill column). When
     ``group_by_team`` the result carries one row per ``team_id``.
     """
-    team_sel = "TRIM(br4.team_id) AS team_id," if group_by_team else ""
+    # The output column stays `team_id` whatever it is read from — the wire
+    # contract and every by-team panel key off that name (§69: one name, one
+    # definition). Under DFW the VALUES become TM1..TM5.
+    team_sel = f"TRIM(br4.{scope.v4_team_col}) AS team_id," if group_by_team else ""
     team_out = "team_id," if group_by_team else ""
     group_clause = "GROUP BY team_id" if group_by_team else ""
     return f"""

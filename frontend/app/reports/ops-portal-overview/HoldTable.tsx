@@ -32,7 +32,9 @@ const HOLD_COLUMNS: {
 }[] = [
   { label: "Order", key: "order_id", align: "left" },
   { label: "Team", key: "team_id", align: "left" },
-  { label: "Departure", key: "departure", align: "left" },
+  // Bruno PDF 2026-08-20 R2: Departure out, Date in. Right-aligned
+  // because it is a signed day count, not a date string.
+  { label: "Date", key: "date_days", align: "right" },
   { label: "Carrier", key: "carrier", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
   { label: "Revenue", key: "revenue", align: "right" },
@@ -74,13 +76,14 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
   const { data, isLoading, error } = useOppHold(filters)
   const rows: OppHoldRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppHoldTotals | undefined
+  const unbilledFrom = (data?.meta as { unbilled_from?: string } | undefined)?.unbilled_from
 
-  // Oldest departure first would bury the newest holds; the backend already
-  // orders newest-first, and this mirrors it so the first paint doesn't jump.
+  // Most-overdue first (the most negative Date). Mirrors the backend's
+  // `date_asc` default so the first paint does not jump.
   const { sorted, ...sortState } = useSortable<OppHoldRow>(
     rows,
-    "departure",
-    "desc",
+    "date_days",
+    "asc",
     holdDirForKey,
   )
 
@@ -91,14 +94,26 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
           Hold
         </span>
         <span className="text-[11px] text-[#6B7280]">
-          Loads flagged on hold in McLeod (excludes voided and pending-cover)
+          Orders not yet billed in McLeod (excludes voided and pending-cover)
         </span>
         <span
           className="text-[10px] text-[#9CA3AF]"
-          title="Holds routinely sit for months, so this board reads the whole table rather than the selected date range. Team, Customer and Lane filters still apply."
+          title="Unbilled orders routinely sit for months, so this board reads the whole table rather than the selected date range. Team, Customer and Lane filters still apply."
         >
           all dates
         </span>
+        {/* ⚠ Never silent: the board excludes pre-2022 orders because McLeod's
+            2021 feed never wrote bill_date at all (99.4% sentinel that year vs
+            ~0.0% in 2022-2025), and without the floor ~58,500 phantom rows
+            bury the real backlog. A worklist that drops rows must say so. */}
+        {unbilledFrom && (
+          <span
+            className="rounded-full border border-[#E5E7EB] bg-white px-2 py-0.5 text-[10px] text-[#6B7280]"
+            title={`Orders placed before ${unbilledFrom} are excluded: McLeod's 2021 feed never populated bill_date, so they are not genuinely unbilled.`}
+          >
+            from {unbilledFrom}
+          </span>
+        )}
         {isLoading && <Loader2 className="h-3 w-3 animate-spin text-[#6B7280]" />}
       </div>
 
@@ -159,8 +174,27 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                   <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
                     <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
                     <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>
-                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
-                      {r.departure || <span className="text-[#9CA3AF]">—</span>}
+                    {/* Days. Negative = overdue against the scheduled
+                        delivery (status P) — never a date, and never a value
+                        when the source carried McLeod's 1900-01-01 sentinel,
+                        which the backend maps to null. */}
+                    <td
+                      className={`px-2 py-1.5 text-right tabular-nums ${
+                        r.date_days !== null && r.date_days < 0
+                          ? "text-[#DC2626]"
+                          : "text-[#374151]"
+                      }`}
+                      title={
+                        r.status === "P"
+                          ? "Scheduled delivery minus today. Negative = overdue."
+                          : r.status === "D"
+                            ? "Transit days: destination departure minus origin departure."
+                            : ""
+                      }
+                    >
+                      {r.date_days !== null && r.date_days !== undefined
+                        ? r.date_days
+                        : <span className="text-[#9CA3AF]">—</span>}
                     </td>
                     <td className="px-2 py-1.5 text-[#374151]">
                       {r.carrier || <span className="text-[#9CA3AF]">—</span>}

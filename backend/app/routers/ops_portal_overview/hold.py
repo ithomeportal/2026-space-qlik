@@ -1,28 +1,79 @@
-"""Ops Portal - Overview: the "Hold" board (Bruno PDF 2026-08-19 R1).
+"""Ops Portal - Overview: the "Hold" board.
 
-Loads McLeod has flagged ``on_hold = 'Y'`` that are not voided/pending-cover —
-a billing-blocker worklist sitting below the By Order table.
+Bruno PDF 2026-08-19 R1 (original: ``on_hold='Y'``) · PDF 2026-08-20 R2 (this
+version: the UNBILLED backlog).
 
-⚠ NOT DATE-WINDOWED — and that is the point
--------------------------------------------
-Measured on live gold 2026-08-19, ``on_hold='Y' AND status NOT IN ('V','A')``
-matches **18 rows in the entire table**, with departures spanning 2025-12-13 →
-2026-08-18. Holds sit for *months*: the oldest open one had been stuck 8 months.
-Applying the page's date window would have shown 2 of them and silently hidden
-the very rows the board exists to surface — the stale ones. So the board reads
-the whole table and is refreshed by the page's other filters only.
+Orders McLeod has not billed, that are not voided/pending-cover — a billing
+worklist sitting below the By Order table. ``on_hold`` is still SHOWN (the
+✓ column and the free-text reason), it is simply no longer the filter.
 
-That also matches the PDF, which lists exactly two filters and no date range,
-and it matches the sibling ``/cover`` and ``/pending-to-cover`` boards in the
-same panel, which are likewise live rather than windowed.
+⚠ ``bill_date < 2000-01-01`` means "not billed", and it needs a floor
+-------------------------------------------------------------------
+``1900-01-01`` is McLeod's not-billed sentinel; there are no NULLs. Applied
+bare, the PDF's filter matches **59,139 rows** table-wide against the 730 that
+``on_hold='Y'`` matched — because **2021 is an ETL artifact**. Measured on live
+gold 2026-08-21:
 
-Scope (decision: Diego, 2026-08-19)
------------------------------------
-CORP only — ``CORP_TEAMS`` / ``CORP_COMPANIES`` / no OILTEX — exactly like every
-other panel on this page. This is a real narrowing: **12 of the 18 hold rows are
-TEAM-DFW**, which ``_constants.py`` deliberately excludes from this report, so
-the board shows 4 rows today. Showing them would have put a non-CORP team on a
-CORP portal and made the Team filter lie.
+    year   sentinel bill_date / rows      %
+    2020        178 /    178          100.0
+    2021     58,371 / 58,718           99.4   <- the feed never wrote bill_date
+    2022          5 / 47,849            0.0
+    2023          2 / 44,031            0.0
+    2024          4 / 43,552            0.0
+    2025          4 / 38,655            0.0
+    2026        563 / 23,303            2.4   <- the real backlog
+
+So a bare filter buries the ~570 genuinely-unbilled orders under ~58,500
+phantom 2021 ones. ``UNBILLED_FROM`` is the floor that excludes the artifact;
+with it the board is 350 rows CORP / 221 DFW, split ~50/50 between status P and
+D — which is exactly the split the PDF's own P/D branching assumes.
+
+⚠ The exclusion is NOT silent: the endpoint returns ``meta.unbilled_from`` and
+the UI prints it in the header chip. A worklist that quietly drops rows reads
+as "covered everything" when it did not.
+
+⚠ STILL NOT DATE-WINDOWED beyond that floor — and that is the point
+-------------------------------------------------------------------
+Holds and unbilled orders sit for *months*; the oldest open one measured on
+2026-08-19 had been stuck 8 months. Applying the page's date window would have
+shown 2 of the then-18 rows and silently hidden the very rows the board exists
+to surface (§74). ``UNBILLED_FROM`` is a fixed data-quality floor, not the
+page's window — it never moves when the user changes the date filter.
+
+The "Date" column (PDF 2026-08-20 R2)
+-------------------------------------
+One column, two rules, both in days:
+
+  * ``status = 'P'`` → ``dest_sched_late − today``. Negative = overdue.
+    Measured range −234 … +13 days, mean −5.
+  * ``status = 'D'`` → ``dest_actual_departure − origin_actual_departure``,
+    i.e. transit days. Measured 0 … 33, mean 2.
+
+⚠ The PDF writes the D rule as "Orig Actual Departure - Dest Actual Departure",
+which is the same magnitude with the sign flipped (0 … −33). It is emitted
+Dest−Orig so that BOTH branches read as days on one scale with "negative =
+late"; a column that flips meaning between two rows of the same table is
+unreadable. Flagged to Bruno 2026-08-21.
+
+⚠ BOTH operands are sentinel-guarded, on BOTH branches. ``1900-01-01`` is used
+instead of NULL here too: 110 of the 273 status='P' rows carry a sentinel
+``dest_sched_late``, which unguarded renders as ≈ −46,000 days. Guarded, they
+come back NULL and the UI shows "—" (§ calendar-sentinel guard).
+
+⚠ "Dest Sched Late" is read from ``mcleod_gld_customer_windows``
+(``dest_sched_arrive_late``), NOT ``mcleod_gld_orders_pu_del_windows``
+(``dest_sched_late``). The names point the other way, but coverage does not:
+on the status='P' rows that need it, customer_windows resolves **269 of 272**
+against pu_del_windows' 164, and the two agree exactly where both are present.
+customer_windows is also already joined here, so this needs no third table —
+and ``orders_pu_del_windows`` is NOT unique on ``id`` (259,572 rows /
+216,688 ids), so joining it would have fanned the board out.
+
+Scope
+-----
+Division-scoped via ``_scope.py`` — CORP (``TEAM1..TEAM5``) on the main portal
+and the four CORP-T clones, ``TEAM-DFW`` on the DFW portal, which is why the
+12 DFW rows the CORP board excludes are not lost, just filed elsewhere.
 
 ⚠ Why this cannot reuse ``_v4_scope_where``
 -------------------------------------------
@@ -36,9 +87,10 @@ Sources
 -------
 ``mcleod_gld_budget_report_v4`` (money, hold flags, bill date — refreshed every
 15 min; **never `_v5`**, which is dead), ``mcleod_gld_customer_windows`` for the
-delivery timestamps behind POD Age / Days to Bill, ``mcleod_gld_movement`` for
-the carrier, and AP_module's ``pod_tracker_loads`` for the POD tick. The POD
-lookup degrades to "no POD" rather than 503ing the board (§5).
+delivery timestamps behind the Date column / POD Age / Days to Bill,
+``mcleod_gld_movement`` for the carrier, and AP_module's ``pod_tracker_loads``
+for the POD tick. The POD lookup degrades to "no POD" rather than 503ing the
+board (§5).
 """
 
 from __future__ import annotations
@@ -50,21 +102,34 @@ from fastapi import Depends, Query, Request
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_COMPANIES, CORP_TEAMS, router
+from ._constants import CORP_COMPANIES, router
+from ._scope import scope_of
 from ._metrics import _safe_float
-from ._sql import _lane_expr
+from ._sql import _lane_expr, _sub_team_param, _team_id_select
 
 # Statuses the PDF excludes: 'V' voided, 'A' available/pending cover.
 EXCLUDED_HOLD_STATUSES = ("V", "A")
+
+# McLeod's not-billed sentinel. Compared against, never rendered.
+BILL_SENTINEL = "2000-01-01"
+
+# Floor for the unbilled worklist — see the module docstring. Orders ordered
+# before this are excluded because the 2021 feed never wrote `bill_date` at all
+# (99.4% sentinel that year vs ~0.0% in 2022-2025), not because they are billed.
+# Surfaced to the UI as `meta.unbilled_from`; never silently applied.
+UNBILLED_FROM = "2022-01-01"
 
 # Column -> ORDER BY. Whitelisted: `sort` reaches SQL as text.
 _HOLD_SORTS: dict[str, str] = {
     "order_asc": "TRIM(br4.id) ASC",
     "order_desc": "TRIM(br4.id) DESC",
-    "team_asc": "TRIM(br4.team_id) ASC",
-    "team_desc": "TRIM(br4.team_id) DESC",
-    "departure_asc": "br4.origin_actual_departure ASC NULLS LAST",
-    "departure_desc": "br4.origin_actual_departure DESC NULLS LAST",
+    "team_asc": "team_id ASC",
+    "team_desc": "team_id DESC",
+    # Sorts the rendered Date column. It is an expression, not a stored
+    # column, so the ORDER BY repeats it rather than referencing the alias —
+    # a bare alias would be ambiguous against `bill_date`.
+    "date_asc": "date_days ASC NULLS LAST",
+    "date_desc": "date_days DESC NULLS LAST",
     "revenue_asc": "COALESCE(br4.total_charge,0) ASC",
     "revenue_desc": "COALESCE(br4.total_charge,0) DESC",
     "carrier_cost_asc": "COALESCE(br4.total_carrier_pay,0) ASC",
@@ -87,7 +152,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     customer: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
-    sort: str = Query("departure_desc"),
+    sort: str = Query("date_asc"),
     limit: int = Query(500, ge=1, le=2000),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -99,28 +164,33 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     collapsed two different requests onto one cache entry.
     """
     pool = get_datalake_gold_pool(request)
-    order_by = _HOLD_SORTS.get(sort, _HOLD_SORTS["departure_desc"])
+    scope = scope_of(request)
+    order_by = _HOLD_SORTS.get(sort, _HOLD_SORTS["date_asc"])
 
     # Sargable padded variants — McLeod stores these both padded and unpadded,
     # and TRIM() on the column would block the index (see app/datalake.py).
     params: list = [
-        _pad_variants(CORP_TEAMS, width=8),
+        _pad_variants(scope.base_teams, width=8),
         _pad_variants(CORP_COMPANIES, width=4),
-        _pad_variants(("Y",), width=1),
         _pad_variants(EXCLUDED_HOLD_STATUSES, width=1),
     ]
     parts = [
         "br4.team_id    = ANY($1)",
         "br4.company_id = ANY($2)",
-        "br4.on_hold    = ANY($3)",
         # PDF: status NOT IN ('V','A'). `<> ALL` rather than `= ANY(D,P)` so a
         # future McLeod status stays visible instead of silently vanishing.
-        "br4.status    <> ALL($4)",
+        "br4.status    <> ALL($3)",
+        # PDF 2026-08-20 R2: the board is the UNBILLED backlog, not `on_hold`.
+        # `on_hold` is still selected and rendered, just no longer a filter.
+        f"br4.bill_date < '{BILL_SENTINEL}'::date",
+        # The 2021 ETL-gap floor — see the module docstring. Reported as
+        # meta.unbilled_from so the drop is visible, never silent.
+        f"br4.ordered_date >= '{UNBILLED_FROM}'::date",
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"br4.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, [team]))
+        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"br4.customer_name = ${len(params)}")
@@ -138,9 +208,23 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     sql = f"""
         SELECT
           TRIM(br4.id)        AS order_id,
-          TRIM(br4.team_id)   AS team_id,
+          TRIM({_team_id_select('br4', scope)}) AS team_id,
           TRIM(br4.status)    AS status,
-          to_char(br4.origin_actual_departure, 'YYYY-MM-DD') AS departure,
+          -- PDF 2026-08-20 R2 — one column, two rules, both in DAYS:
+          --   status 'P' -> dest_sched_late - today   (negative = overdue)
+          --   status 'D' -> dest_actual_departure - origin_actual_departure
+          --                 (transit days; the PDF writes the operands the
+          --                  other way round — see the module docstring)
+          -- Every operand is sentinel-guarded in the LATERAL / here: McLeod
+          -- writes 1900-01-01 rather than NULL, and 110 of 273 status='P'
+          -- rows carry one. Unguarded that renders as ~-46,000 days.
+          CASE
+            WHEN TRIM(br4.status) = 'P' AND win.dest_sched_late_ts IS NOT NULL
+              THEN (win.dest_sched_late_ts::date - CURRENT_DATE)
+            WHEN TRIM(br4.status) = 'D' AND win.dest_dep_ts IS NOT NULL
+                 AND br4.origin_actual_departure > '{BILL_SENTINEL}'::date
+              THEN (win.dest_dep_ts::date - br4.origin_actual_departure::date)
+          END AS date_days,
           br4.customer_name   AS customer_name,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
@@ -153,8 +237,9 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
           COALESCE(br4.margin_amt, 0)::numeric        AS profit,
           CASE WHEN br4.total_charge IS NOT NULL AND br4.total_charge <> 0
                THEN br4.margin_amt / br4.total_charge * 100.0 ELSE 0 END AS margin,
-          -- Always TRUE given the WHERE, but selected so the column renders off
-          -- the DATA rather than off an assumption about the filter.
+          -- Was always TRUE while `on_hold='Y'` was the filter; since PDF
+          -- 2026-08-20 R2 it is genuinely informative — it marks which of the
+          -- unbilled orders are ALSO flagged on hold. Selected, never assumed.
           (TRIM(COALESCE(br4.on_hold,'')) = 'Y') AS on_hold,
           -- Free text, varchar(20), mixed case in the wild ('CLAIM', 'accident',
           -- 'compesation'). Passed through verbatim — normalising it would edit
@@ -181,8 +266,15 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
           COALESCE(SUM(COALESCE(br4.margin_amt,0))        OVER (), 0)::numeric AS t_profit
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
-            SELECT MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS arr_ts,
-                   MAX(CASE WHEN cw.dest_actual_departure > '2000-01-01' THEN cw.dest_actual_departure END) AS dest_dep_ts
+            SELECT MAX(CASE WHEN cw.dest_actual_arrival    > '2000-01-01' THEN cw.dest_actual_arrival    END) AS arr_ts,
+                   MAX(CASE WHEN cw.dest_actual_departure  > '2000-01-01' THEN cw.dest_actual_departure  END) AS dest_dep_ts,
+                   -- "Dest Sched Late" for the R2 Date column. Read here and
+                   -- not from mcleod_gld_orders_pu_del_windows.dest_sched_late:
+                   -- on the status='P' rows that need it this resolves 269 of
+                   -- 272 against that table's 164, the two agree where both
+                   -- exist, and that table is not unique on `id` (259,572 rows
+                   -- / 216,688 ids) so joining it would fan the board out.
+                   MAX(CASE WHEN cw.dest_sched_arrive_late > '2000-01-01' THEN cw.dest_sched_arrive_late END) AS dest_sched_late_ts
             FROM public.mcleod_gld_customer_windows cw
             WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
         ) win ON TRUE
@@ -207,7 +299,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
             "order_id":      r["order_id"],
             "team_id":       r["team_id"],
             "status":        (r["status"] or "").strip().upper(),
-            "departure":     r["departure"] or "",
+            "date_days":     int(r["date_days"]) if r["date_days"] is not None else None,
             "customer_name": r["customer_name"] or "",
             "carrier":       r["carrier"] or "",
             "lane":          r["lane"] or "",
@@ -267,5 +359,9 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
             "returned": len(out),
             "limit": limit,
             "totals": totals,
+            # The UI prints this in the header chip. A worklist that drops rows
+            # must SAY it dropped them — silent truncation reads as "covered
+            # everything" when it did not. See the module docstring.
+            "unbilled_from": UNBILLED_FROM,
         },
     }

@@ -14,10 +14,11 @@ from fastapi import Depends, Query, Request
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_TEAMS, CUSTOMER_TEAM_CTE, router
+from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _last_5_weeks, _last_n_business_days_start, _month_bounds, _week_label
+from ._scope import scope_of
 from ._sql import _parse_team_scope, _v4_scope_where
-from ._metrics import _projection_from_sums, _safe_float, _team_projection_core
+from ._metrics import _zero_val, _projection_from_sums, _safe_float, _team_projection_core
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ async def team_projection(
     business-day window). Team + Customer apply.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
 
@@ -61,7 +63,7 @@ async def team_projection(
     proj = await _team_projection_core(
         pool, team=_parse_team_scope(team, teams), customer=customer, load_type=load_type,
         lanes=lanes, exclude_lanes=exclude_lanes,
-        carriers=carriers, exclude_carriers=exclude_carriers, today=today,
+        carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
     )
 
     return {
@@ -98,13 +100,14 @@ async def profit_tm_gauge(
 ):
     """Horizontal gauge under the chart. Always current month MTD."""
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
     team_scope = _parse_team_scope(team, teams)
 
     # Production MTD profit
     p_params: list = []
-    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, p_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     p_params.extend([m_start, today])
     p_s = len(p_params) - 1
     p_e = len(p_params)
@@ -127,7 +130,7 @@ async def profit_tm_gauge(
         b_params.append(customer)
         b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
     bud_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT COALESCE(SUM(budget."Profit Budget"), 0)::numeric AS profit_budget
         FROM public.daily_production_budget_report budget
         JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
@@ -137,7 +140,7 @@ async def profit_tm_gauge(
 
     prod_val, bud_val = await asyncio.gather(
         pool.fetchval(prod_sql, *p_params),
-        pool.fetchval(bud_sql, *b_params),
+        pool.fetchval(bud_sql, *b_params) if scope.has_budget else _zero_val(),
     )
     profit_mtd = _safe_float(prod_val)
     profit_budget = _safe_float(bud_val)
@@ -172,6 +175,7 @@ async def team_projection_by_team(
     number of teams with data. The single ``team`` filter is dropped.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     m_start, m_end = _month_bounds(today)
     win_start = _last_n_business_days_start(today, 12)
@@ -179,7 +183,7 @@ async def team_projection_by_team(
     pending_workdays = _count_workdays(today, m_end)
 
     params: list = []
-    where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
     p_ws = len(params) - 5
     p_we = len(params) - 4
@@ -215,7 +219,7 @@ async def team_projection_by_team(
     by_team = {r["team_id"]: r for r in rows}
     acc = {"v12": 0.0, "r12": 0.0, "p12": 0.0, "vm": 0.0, "rm": 0.0, "pm": 0.0}
     teams_out = []
-    for t in CORP_TEAMS:
+    for t in scope.sub_teams:
         r = by_team.get(t)
         obj = _projection_from_sums(
             r["vol_12"] if r else 0, r["rev_12"] if r else 0, r["prof_12"] if r else 0,
@@ -229,7 +233,7 @@ async def team_projection_by_team(
             acc["vm"] += _safe_float(r["vol_mtd"]); acc["rm"] += _safe_float(r["rev_mtd"]); acc["pm"] += _safe_float(r["prof_mtd"])
     total = _projection_from_sums(
         acc["v12"], acc["r12"], acc["p12"], acc["vm"], acc["rm"], acc["pm"],
-        pending_workdays, len(rows) or len(CORP_TEAMS),
+        pending_workdays, len(rows) or len(scope.sub_teams),
     )
     return {
         "success": True,
@@ -265,10 +269,11 @@ async def team_projection_weekly(
     window; team/customer/lane filters apply, the page date filter is ignored.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     week_starts, weeks_start, weeks_end = _last_5_weeks(today)
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([weeks_start, weeks_end])
     p_s = len(params) - 1
     p_e = len(params)
@@ -298,7 +303,7 @@ async def team_projection_weekly(
         prof = _safe_float(r["prof"]) if r else 0.0
         # Workdays elapsed in this week (cap the current, partial week at today).
         wk_workdays = _count_workdays(ws, min(we, today)) or 1
-        team_count = (int(r["team_count"] or 0) if r else 0) or (1 if team else len(CORP_TEAMS))
+        team_count = (int(r["team_count"] or 0) if r else 0) or (1 if team else len(scope.sub_teams))
         cap = 500.0 * team_count
         weeks_out.append({
             "start": ws.isoformat(),

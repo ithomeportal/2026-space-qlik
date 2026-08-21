@@ -35,6 +35,15 @@ interface Props {
   filters: OppFilters
   loadType: LoadType
   setLoadType: (v: LoadType) => void
+  /** Drops every budget-derived element (Bruno PDF 2026-08-20, DFW R5).
+   *
+   *  The PDF names the BDGT chip and series. Variance and the Profit-TM gauge
+   *  go with them because both are DEFINED against budget: with no budget rows
+   *  Variance renders as Actual − 0 (a duplicate of the bars, mislabelled) and
+   *  the gauge shows a $0 target at infinite attainment. Removing a number
+   *  that would be wrong is not the same as removing one Bruno wants — flagged
+   *  in the round notes. */
+  hideBudget?: boolean
 }
 
 // Bruno R5 (2026-06-01) #2: "Service" is now a 5th measure button. It swaps the
@@ -113,7 +122,7 @@ function labelFmt(measure: Measure, v: number): string {
   return usdCompact.format(v)
 }
 
-export function ComboChart({ filters, loadType, setLoadType }: Props) {
+export function ComboChart({ filters, loadType, setLoadType, hideBudget = false }: Props) {
   const cf = {
     team: filters.team,
     customer: filters.customer,
@@ -467,19 +476,23 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                 active={!isHidden("bars")}
                 onClick={() => toggle("bars")}
               />
-              <LegendChip
-                label="BDGT"
-                color="#16A34A"
-                active={!isHidden("budget")}
-                onClick={() => toggle("budget")}
-              />
+              {!hideBudget && (
+                <LegendChip
+                  label="BDGT"
+                  color="#16A34A"
+                  active={!isHidden("budget")}
+                  onClick={() => toggle("budget")}
+                />
+              )}
               {/* Bruno R5 #3: Variance = Actual − Budget, after Budget. */}
-              <LegendChip
-                label="Variance"
-                color="#F59E0B"
-                active={!isHidden("variance")}
-                onClick={() => toggle("variance")}
-              />
+              {!hideBudget && (
+                <LegendChip
+                  label="Variance"
+                  color="#F59E0B"
+                  active={!isHidden("variance")}
+                  onClick={() => toggle("variance")}
+                />
+              )}
               <LegendChip
                 label="Avg. LQ"
                 color="#9333EA"
@@ -591,8 +604,12 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   const budgetVal = Number(row[budgetKey] ?? 0)
                   const items = [
                     { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: actualVal },
-                    { key: "budget" as SeriesKey,    label: "Budget",    color: "#16A34A", value: budgetVal },
-                    { key: "variance" as SeriesKey,  label: "Variance",  color: "#F59E0B", value: actualVal - budgetVal },
+                    // Budget + Variance leave the tooltip too when hidden —
+                    // a tooltip row is as much a rendered number as a line is.
+                    ...(hideBudget ? [] : [
+                      { key: "budget" as SeriesKey,   label: "Budget",   color: "#16A34A", value: budgetVal },
+                      { key: "variance" as SeriesKey, label: "Variance", color: "#F59E0B", value: actualVal - budgetVal },
+                    ]),
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
                     // Bruno 2026-07-01 R10: Losses row (hidden in Rev. view).
@@ -663,7 +680,7 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
                   />
                 </Bar>
               )}
-              {!isHidden("budget") && (
+              {!hideBudget && !isHidden("budget") && (
                 <Line
                   type="monotone"
                   dataKey={budgetKey}
@@ -728,10 +745,13 @@ export function ComboChart({ filters, loadType, setLoadType }: Props) {
             <KpiBox label="Past Days"          value={wd?.past_workdays ?? 0}  tone="neutral" />
             <KpiBox label="Pending Days"       value={wd?.pending_workdays ?? 0} tone="accent" />
           </div>
-          <ProfitTmGauge
-            mtd={gauge?.profit_mtd ?? 0}
-            target={gauge?.profit_budget ?? 0}
-          />
+          {/* Budget-defined: a $0 target reads as infinite attainment. */}
+          {!hideBudget && (
+            <ProfitTmGauge
+              mtd={gauge?.profit_mtd ?? 0}
+              target={gauge?.profit_budget ?? 0}
+            />
+          )}
         </div>
       </div>
     </section>

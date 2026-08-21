@@ -45,6 +45,7 @@ from app.routers import (
     ops_direct_compare_team,
     ops_margins,
     ops_portal_overview,
+    ops_portal_overview_dfw,
     ops_portal_overview_team,
     ops_team_perf_digest,
     podium_dfw,
@@ -1340,6 +1341,9 @@ for _ocs_team_router in ops_customer_score_team.team_routers:
 app.include_router(ops_portal_overview.router, prefix="/api")
 for _opo_team_router in ops_portal_overview_team.team_routers:
     app.include_router(_opo_team_router, prefix="/api")
+# Ops Managers Portal – DFW (Bruno PDF 2026-08-20). Same engine, DFW division
+# scope — see app/routers/ops_portal_overview_dfw.py.
+app.include_router(ops_portal_overview_dfw.r, prefix="/api")
 # "Performance for Team N" e-mail digest — same /custom/ops-portal-overview
 # prefix, own module so the 3.9k-line UI router stays untouched. Pulled by n8n.
 app.include_router(ops_team_perf_digest.router, prefix="/api")

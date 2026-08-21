@@ -18,28 +18,50 @@ CORP_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5")
 CORP_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
+# The DFW division (Bruno PDF 2026-08-21). One `team_id` value; the team a row
+# belongs to lives in `v4.team` / `scorecard.team_dfw` instead — see _scope.py.
+# TM5 is included per the PDF although it is nearly dormant (28 orders in 2026,
+# none since 31-Jul); omitting it would delete those rows rather than show an
+# empty pill (§75).
+DFW_TEAM = "TEAM-DFW"
+DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4", "TM5")
+
 # Mirrors xray_corp.OTP_CODES / OTD_CODES (Bruno's Qlik load script).
 OTP_CODES = ("T4", "T3", "D1", "D2", "BO", "BE", "AL", "AI", "AH", "AF", "A5", "A2")
 OTD_CODES = ("AL", "D2", "AZ", "AH", "BE", "D1", "A5", "AI", "AF", "A2", "A1", "AU", "U3")
 
 # Per-customer canonical team — same pattern budget_followup uses (the team
-# with the most loads in v4, alphabetical tiebreak), restricted to CORP teams.
-CUSTOMER_TEAM_CTE = f"""
+# with the most loads in v4, alphabetical tiebreak), restricted to the division.
+#
+# ⚠ Under DFW the ranked column is `team` (TM1..TM5), because `team_id` is the
+# constant 'TEAM-DFW' there and ranking it would map every customer to one
+# bucket. The OUTPUT alias stays `team_id` so every `JOIN customer_team ct ON …
+# ct.team_id` call site is unchanged (§69: one name, one definition).
+def customer_team_cte(scope=None) -> str:
+    from ._scope import CORP_SCOPE
+
+    sc = scope or CORP_SCOPE
+    return f"""
 customer_team AS (
     SELECT customer_name, team_id FROM (
         SELECT
             TRIM(customer_name) AS customer_name,
-            TRIM(team_id)       AS team_id,
+            TRIM({sc.v4_team_col})       AS team_id,
             ROW_NUMBER() OVER (
                 PARTITION BY TRIM(customer_name)
-                ORDER BY COUNT(*) DESC, TRIM(team_id)
+                ORDER BY COUNT(*) DESC, TRIM({sc.v4_team_col})
             ) AS rn
         FROM public.mcleod_gld_budget_report_v4
-        WHERE TRIM(team_id) IN {CORP_TEAMS!r}
-        GROUP BY TRIM(customer_name), TRIM(team_id)
+        WHERE TRIM(team_id) IN {sc.base_teams!r}
+        GROUP BY TRIM(customer_name), TRIM({sc.v4_team_col})
     ) ranked
     WHERE rn = 1
 )
 """
+
+
+# Back-compat: the CORP rendering, re-exported by the package façade and read
+# by name from ops_team_perf_digest / services.team_perf_digest.
+CUSTOMER_TEAM_CTE = customer_team_cte()
 
 router = APIRouter(tags=["ops-portal-overview"], prefix="/custom/ops-portal-overview")

@@ -14,10 +14,11 @@ from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
+from ._constants import customer_team_cte, CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _month_bounds, _resolve_grain_window
-from ._sql import _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
-from ._metrics import _safe_float, _team_projection_core
+from ._scope import scope_of
+from ._sql import _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._metrics import _empty_rows, _safe_float, _team_projection_core
 
 
 @router.get("/combo")
@@ -55,6 +56,7 @@ async def combo(
     if grain not in ("day", "week", "month"):
         grain = "month"
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     win_start, win_end, anchors = _resolve_grain_window(grain, today)
 
@@ -71,7 +73,7 @@ async def combo(
 
     # ---- Production query (bars + losses) -------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     prod_params.extend([win_start, win_end])
     p_ws = len(prod_params) - 1
     p_we = len(prod_params)
@@ -103,7 +105,7 @@ async def combo(
         bud_params.append(customer)
         bud_extra += f' AND budget."Customer Name" = ${len(bud_params)}'
     bud_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           {trunc_bud} AS bucket_start,
           COALESCE(SUM(budget."Revenue Budget"), 0)::numeric AS budget_revenue,
@@ -126,11 +128,11 @@ async def combo(
 
     prod_rows, bud_rows, proj = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
-        pool.fetch(bud_sql, *bud_params),
+        pool.fetch(bud_sql, *bud_params) if scope.has_budget else _empty_rows(),
         _team_projection_core(
             pool, team=team, customer=customer, load_type=load_type,
             lanes=lanes, exclude_lanes=exclude_lanes,
-            carriers=carriers, exclude_carriers=exclude_carriers, today=today,
+            carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
         ),
     )
 
@@ -215,6 +217,7 @@ async def service(
     if grain not in ("day", "week", "month"):
         grain = "month"
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     win_start, win_end, anchors = _resolve_grain_window(grain, today)
 
@@ -225,13 +228,13 @@ async def service(
     }[grain]
 
     params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([win_start, win_end])
     p_ws = len(params) - 1
     p_we = len(params)
     sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
                 SELECT {trunc_v4} AS bucket_start,
                        br4.total_charge,
@@ -327,8 +330,9 @@ async def cover_forecast(
     if grain not in ("day", "week", "month"):
         grain = "month"
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
 
-    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    teams_param = _pad_variants(scope.base_teams, width=8)
     companies_param = _pad_variants(CORP_COMPANIES, width=4)
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
@@ -339,8 +343,8 @@ async def cover_forecast(
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"br4.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, [team]))
+        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"br4.customer_name = ${len(params)}")

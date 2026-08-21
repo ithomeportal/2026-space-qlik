@@ -168,6 +168,9 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Carrier SMS Score":              { icon: ShieldCheck,    family: "procurement" },
   "IT Tickets Mgmt":                { icon: Headphones,     family: "it" },
   "Ops Portal - Overview":          { icon: LayoutGrid,     family: "operations" },
+  // Bruno PDF 2026-08-20 — the DFW division copy. Keyed by the EXACT title
+  // string in seed.py; a byte of drift falls through to the generic icon.
+  "Ops Managers Portal – DFW":     { icon: LayoutGrid,     family: "operations", tag: "DFW" },
   "CORP T1 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T1" },
   "CORP T2 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T2" },
   "CORP T3 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T3" },

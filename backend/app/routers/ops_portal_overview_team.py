@@ -204,6 +204,34 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, limit=limit, _user=_user,
         )
 
+    # ---- /customer-not-billed ---------------------------------------------
+    # MANDATORY, not optional (2026-08-21): `SidePanels` renders the "Not
+    # Billed" panel unconditionally on all five portals, so the absence of this
+    # shim was a live 404 on every CORP-T page while the main portal looked
+    # healthy — the exact failure the /hold comment below was written to
+    # prevent. `team` is PINNED; every other param is forwarded (§40).
+    @r.get("/customer-not-billed")
+    async def customer_not_billed(
+        request: Request,
+        range: Optional[str] = Query("mtd"),
+        start_date: Optional[date] = Query(None),
+        end_date: Optional[date] = Query(None),
+        customer: Optional[str] = Query(None),
+        load_type: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.customer_not_billed(
+            request=request, range=range, start_date=start_date, end_date=end_date,
+            team=team, customer=customer, load_type=load_type, lanes=lanes,
+            exclude_lanes=exclude_lanes, carriers=carriers,
+            exclude_carriers=exclude_carriers, limit=limit, _user=_user,
+        )
+
     # ---- /team-performance ------------------------------------------------
     @r.get("/team-performance")
     async def team_performance(

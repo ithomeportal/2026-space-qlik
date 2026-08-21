@@ -14,12 +14,14 @@ from fastapi import Depends, Query, Request
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import CORP_TEAMS, CUSTOMER_TEAM_CTE, YEAR_START, router
+from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, YEAR_START, router
 from ._dates import _resolve_range
+from ._scope import scope_of
 from ._sql import (
     _bill_metrics_sql,
     _parse_team_scope,
     _scorecard_cte,
+    _team_id_select,
     _v4_scope_where,
 )
 from ._metrics import _safe_float
@@ -73,12 +75,13 @@ async def team_performance(
     responses together.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_scope = _parse_team_scope(team, teams)
 
     # ---- Production query ------------------------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team_scope, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team_scope, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     prod_params.extend([s, e])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
@@ -86,10 +89,10 @@ async def team_performance(
     # Distinct team count for Team Ut. — when a single team is filtered,
     # capacity = 1 × 500. Otherwise = (number of CORP teams that appear in scope).
     prod_sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
-                SELECT br4.id, br4.company_id, br4.team_id, br4.customer_name,
+                SELECT br4.id, br4.company_id, {_team_id_select('br4', scope)}, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
                        br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
@@ -133,7 +136,7 @@ async def team_performance(
         sav_params.append(team_scope)
         sav_extra += f" AND ct.team_id = ANY(${len(sav_params)})"
     sav_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           COALESCE(SUM(CASE WHEN cs.variance > 0 THEN cs.variance ELSE 0 END), 0)::numeric AS total_savings,
           COALESCE(SUM(CASE WHEN cs.variance < 0 THEN cs.variance ELSE 0 END), 0)::numeric AS total_overpay,
@@ -148,7 +151,7 @@ async def team_performance(
     # Customer attrition % = customers with last_load > 30d / customers total
     # Lane attrition % = lanes with last_load > 30d / lanes total
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", team_scope, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_attr = _v4_scope_where("br4", team_scope, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -181,11 +184,11 @@ async def team_performance(
     # departure/arrival from customer_windows (same sources as By Order R11, so
     # the panel reconciles with the Days-to-Bill column). See _bill_sql().
     bill_params: list = []
-    where_bill = _v4_scope_where("br4", team_scope, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_bill = _v4_scope_where("br4", team_scope, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     bill_params.extend([s, e])
     b_s = len(bill_params) - 1
     b_e = len(bill_params)
-    bill_sql = _bill_metrics_sql(where_bill, b_s, b_e, group_by_team=False)
+    bill_sql = _bill_metrics_sql(where_bill, b_s, b_e, group_by_team=False, scope=scope)
 
     prod_row, sav_row, attr_row, bill_row = await asyncio.gather(
         pool.fetchrow(prod_sql, *prod_params),
@@ -197,7 +200,7 @@ async def team_performance(
     revenue = _safe_float(prod_row["revenue"])
     profit  = _safe_float(prod_row["profit"])
     volume  = int(prod_row["volume"] or 0)
-    team_count = int(prod_row["team_count"] or 0) or (len(team_scope) or len(CORP_TEAMS))
+    team_count = int(prod_row["team_count"] or 0) or (len(team_scope) or len(scope.sub_teams))
     capacity = 500 * team_count
     otp_late = int(prod_row["otp_late_sum"] or 0)
     otd_late = int(prod_row["otd_late_sum"] or 0)
@@ -267,6 +270,7 @@ async def team_weekly_performance(
     (289 / 2000 = 14.45%).
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     today = cst_today()
     this_mon = today - timedelta(days=today.weekday())
     week_starts = [this_mon - timedelta(weeks=k) for k in range(4, -1, -1)]
@@ -282,16 +286,16 @@ async def team_weekly_performance(
 
     # ---- Production grouped by ISO week ---------------------------------
     prod_params: list = []
-    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     prod_params.extend([weeks_start, weeks_end])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
     prod_sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
                 SELECT DATE_TRUNC('week', br4.origin_actual_departure)::date AS wk,
-                       br4.id, br4.team_id, br4.customer_name,
+                       br4.id, {_team_id_select('br4', scope)}, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
                        br4.total_charge, br4.margin_amt, br4.total_carrier_pay,
@@ -334,7 +338,7 @@ async def team_weekly_performance(
         sav_params.append(team)
         sav_extra += f" AND ct.team_id = ${len(sav_params)}"
     sav_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           DATE_TRUNC('week', cs.month_date)::date AS wk,
           COALESCE(SUM(CASE WHEN cs.variance > 0 THEN cs.variance ELSE 0 END), 0)::numeric AS savings,
@@ -349,7 +353,7 @@ async def team_weekly_performance(
 
     # ---- Attrition (window-independent, identical across weeks) ----------
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
@@ -399,7 +403,7 @@ async def team_weekly_performance(
         profit = _safe_float(p["profit"]) if p else 0.0
         otp_late = int(p["otp_late"] or 0) if p else 0
         otd_late = int(p["otd_late"] or 0) if p else 0
-        team_count = (int(p["team_count"] or 0) if p else 0) or (1 if team else len(CORP_TEAMS))
+        team_count = (int(p["team_count"] or 0) if p else 0) or (1 if team else len(scope.sub_teams))
         capacity = 500 * team_count
         weeks.append({
             "start": ws.isoformat(),
@@ -518,19 +522,20 @@ async def team_performance_by_team(
     CORP teams; ``customer`` / date / lane filters still apply.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
 
     # ---- Production grouped by team_id (team filter intentionally dropped) --
     prod_params: list = []
-    where = _v4_scope_where("br4", None, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where = _v4_scope_where("br4", None, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     prod_params.extend([s, e])
     p_s = len(prod_params) - 1
     p_e = len(prod_params)
     prod_sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")}),
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
-                SELECT TRIM(br4.team_id) AS team_id,
+                SELECT TRIM(br4.{scope.v4_team_col}) AS team_id,
                        br4.id, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
@@ -570,7 +575,7 @@ async def team_performance_by_team(
         sav_params.append(customer)
         sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
     sav_sql = f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(scope)}
         SELECT
           ct.team_id AS team_id,
           COALESCE(SUM(CASE WHEN cs.variance > 0 THEN cs.variance ELSE 0 END), 0)::numeric AS savings,
@@ -585,12 +590,12 @@ async def team_performance_by_team(
 
     # ---- Attrition grouped by team_id (and rolled up for Total) ----------
     attr_params: list = []
-    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     attr_params.append(YEAR_START)
     p_ys = len(attr_params)
     attr_sql = f"""
         WITH lane_last AS (
-            SELECT TRIM(br4.team_id) AS team_id,
+            SELECT TRIM(br4.{scope.v4_team_col}) AS team_id,
                    br4.customer_name,
                    TRIM(br4.origin_name) AS origin,
                    TRIM(br4.dest_name)   AS dest,
@@ -601,7 +606,7 @@ async def team_performance_by_team(
               AND br4.customer_name IS NOT NULL
               AND TRIM(br4.origin_name) <> ''
               AND TRIM(br4.dest_name)   <> ''
-            GROUP BY TRIM(br4.team_id), br4.customer_name,
+            GROUP BY TRIM(br4.{scope.v4_team_col}), br4.customer_name,
                      TRIM(br4.origin_name), TRIM(br4.dest_name)
         ),
         cust_last AS (
@@ -619,11 +624,11 @@ async def team_performance_by_team(
 
     # ---- Billing grouped by team_id (Bruno round 2026-07-01 R12) ---------
     bill_params: list = []
-    where_bill = _v4_scope_where("br4", None, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_bill = _v4_scope_where("br4", None, customer, load_type, bill_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     bill_params.extend([s, e])
     bt_s = len(bill_params) - 1
     bt_e = len(bill_params)
-    bill_sql = _bill_metrics_sql(where_bill, bt_s, bt_e, group_by_team=True)
+    bill_sql = _bill_metrics_sql(where_bill, bt_s, bt_e, group_by_team=True, scope=scope)
 
     prod_rows, sav_rows, attr_rows, bill_rows = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
@@ -645,7 +650,7 @@ async def team_performance_by_team(
         "over_pay": 0.0, "net_savings": 0.0, "cust_total": 0, "cust_attr": 0,
         "lane_total": 0, "lane_attr": 0,
     }
-    for tid in CORP_TEAMS:
+    for tid in scope.sub_teams:
         p = prod_map.get(tid)
         sv = sav_map.get(tid)
         at = attr_map.get(tid)
@@ -696,7 +701,7 @@ async def team_performance_by_team(
     # Total: distinct customers / lanes can't be summed across teams (a customer
     # may ship on two teams), so re-read the universe-wide distinct counts.
     uni_params: list = []
-    uni_where = _v4_scope_where("br4", None, customer, load_type, uni_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    uni_where = _v4_scope_where("br4", None, customer, load_type, uni_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     uni_params.extend([s, e])
     u_s = len(uni_params) - 1
     u_e = len(uni_params)
@@ -704,11 +709,11 @@ async def team_performance_by_team(
     # across teams, so re-read them over the whole scope (same treatment as the
     # distinct customer/lane counts above).
     ubill_params: list = []
-    ubill_where = _v4_scope_where("br4", None, customer, load_type, ubill_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    ubill_where = _v4_scope_where("br4", None, customer, load_type, ubill_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     ubill_params.extend([s, e])
     ub_s = len(ubill_params) - 1
     ub_e = len(ubill_params)
-    ubill_sql = _bill_metrics_sql(ubill_where, ub_s, ub_e, group_by_team=False)
+    ubill_sql = _bill_metrics_sql(ubill_where, ub_s, ub_e, group_by_team=False, scope=scope)
 
     uni_row, ubill_row = await asyncio.gather(
         pool.fetchrow(
@@ -738,7 +743,7 @@ async def team_performance_by_team(
         profit_loss=tot["profit_loss"],
         otp_late=tot["otp_late"],
         otd_late=tot["otd_late"],
-        team_count=len(tot["teams"]) or len(CORP_TEAMS),
+        team_count=len(tot["teams"]) or len(scope.sub_teams),
         savings=tot["savings"],
         over_pay=tot["over_pay"],
         net_savings=tot["net_savings"],

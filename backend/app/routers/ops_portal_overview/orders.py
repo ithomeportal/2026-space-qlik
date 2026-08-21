@@ -16,7 +16,8 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, router
 from ._dates import _resolve_range
-from ._sql import _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._scope import scope_of
+from ._sql import _sub_team_param, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
 
@@ -110,6 +111,7 @@ async def by_order(
     Sentinel 1900/1899 placeholder dates are guarded to NULL.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     order_by = _BY_ORDER_SORTS.get(sort, _BY_ORDER_SORTS["revenue_desc"])
     losses_clause = " AND br4.margin_amt < 0" if losses_only else ""
@@ -117,14 +119,14 @@ async def by_order(
     unbilled_clause = " AND br4.bill_date < '2000-01-01'::date" if unbilled_only else ""
 
     rows_params: list = []
-    where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_rows = _v4_scope_where("br4", team, customer, load_type, rows_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     rows_params.extend([s, e, limit])
     p_s = len(rows_params) - 2
     p_e = len(rows_params) - 1
     p_lim = len(rows_params)
     rows_sql = f"""
-        WITH otp AS ({_scorecard_cte("otp")}),
-             otd AS ({_scorecard_cte("otd")})
+        WITH otp AS ({_scorecard_cte("otp", scope)}),
+             otd AS ({_scorecard_cte("otd", scope)})
         SELECT
           TRIM(br4.id)        AS order_id,
           TRIM(br4.team_id)   AS team_id,
@@ -184,7 +186,7 @@ async def by_order(
     """
 
     tot_params: list = []
-    where_tot = _v4_scope_where("br4", team, customer, load_type, tot_params, lanes, exclude_lanes, carriers, exclude_carriers)
+    where_tot = _v4_scope_where("br4", team, customer, load_type, tot_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     tot_params.extend([s, e])
     t_s = len(tot_params) - 1
     t_e = len(tot_params)
@@ -321,8 +323,9 @@ async def pending_to_cover(
     built inline here.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
 
-    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    teams_param = _pad_variants(scope.base_teams, width=8)
     companies_param = _pad_variants(CORP_COMPANIES, width=4)
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
@@ -333,8 +336,8 @@ async def pending_to_cover(
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"br4.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, [team]))
+        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"br4.customer_name = ${len(params)}")
@@ -469,8 +472,9 @@ async def cover(
       scope is built inline here — same as /pending-to-cover.
     """
     pool = get_datalake_gold_pool(request)
+    scope = scope_of(request)
 
-    teams_param = _pad_variants(CORP_TEAMS, width=8)
+    teams_param = _pad_variants(scope.base_teams, width=8)
     companies_param = _pad_variants(CORP_COMPANIES, width=4)
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
@@ -481,8 +485,8 @@ async def cover(
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
-        params.append(_pad_variants([team], width=8))
-        parts.append(f"br4.team_id = ANY(${len(params)})")
+        params.append(_sub_team_param(scope, [team]))
+        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
     if customer:
         params.append(customer)
         parts.append(f"br4.customer_name = ${len(params)}")

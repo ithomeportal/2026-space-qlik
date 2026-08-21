@@ -461,15 +461,25 @@ export interface OppCoverForecastBucket {
  *
  * NOT date-windowed: `on_hold='Y' AND status NOT IN ('V','A')` matches ~18 rows
  * in the whole table, stuck for months at a time, so a date filter would hide
- * exactly the stale rows the board exists to surface. Scoped to CORP teams like
- * every other panel here.
+ * exactly the stale rows the board exists to surface.
+ *
+ * Bruno PDF 2026-08-20 R2 changed the rule from `on_hold='Y'` to "not billed"
+ * (`bill_date` below McLeod's 1900-01-01 sentinel), with a hard floor at
+ * `meta.unbilled_from` — the 2021 feed never wrote bill_date, so without the
+ * floor ~58,500 phantom rows bury the ~570 real ones. `on_hold` survives as a
+ * displayed column. Division-scoped: CORP on the five CORP portals, TEAM-DFW
+ * on Ops Managers Portal – DFW.
  */
 export interface OppHoldRow {
   order_id: string
   team_id: string
   /** 'D' or 'P' today; the endpoint excludes 'V'/'A' rather than allow-listing. */
   status: string
-  departure: string
+  /** Bruno PDF 2026-08-20 R2 — replaces `departure`. DAYS, not a date:
+   *  status 'P' -> scheduled delivery minus today (negative = overdue);
+   *  status 'D' -> transit days (destination departure minus origin).
+   *  null when either operand was McLeod's 1900-01-01 sentinel. */
+  date_days: number | null
   customer_name: string
   carrier: string
   lane: string
@@ -854,7 +864,7 @@ export function useOppPendingToCover(f: OppFilters, enabled: boolean) {
 // what previously collapsed two different requests onto one cache entry.
 export function useOppHold(f: OppFilters, opts?: { sort?: string }) {
   const prefix = useApiPrefix()
-  const sort = opts?.sort ?? "departure_desc"
+  const sort = opts?.sort ?? "date_asc"
   return useQuery({
     queryKey: [prefix, "opp-hold", ...scopeKey(f), sort],
     queryFn: () =>

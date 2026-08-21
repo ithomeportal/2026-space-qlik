@@ -79,6 +79,26 @@ interface Props {
    *  per-team CORP KAM portals so their KAMs don't reach the calculator from
    *  here (access is managed separately). */
   hideBonusNav?: boolean
+  /** Hides the whole "Go to" quick-nav row (Bruno PDF 2026-08-20, DFW R4).
+   *  Every destination in it is a CORP report. */
+  hideGoTo?: boolean
+  /** Drops every budget-derived control and panel: the BDGT chart series and
+   *  its chip (DFW R5), the Team Budget Monthly Variance panel (R6) and the
+   *  All / Budget / Variance-per-Cell modes in Actuals (R8).
+   *
+   *  Set on the DFW portal because DFW has no budget at all — 0 of its 15 YTD
+   *  customers appear in `daily_production_budget_report` (measured
+   *  2026-08-21), so those panels would render zeros rather than data. The
+   *  backend enforces the same thing (`DivisionScope.has_budget`); this is the
+   *  UI half. */
+  hideBudget?: boolean
+  /** How the Customer Monthly Variance panel computes its columns.
+   *
+   *  "budget" (default, CORP) = actual − budget; positive means over budget.
+   *  "mom" (DFW R7) = last month − this month; positive means the customer is
+   *  DOWN this month. The sign convention is OPPOSITE, so the panel labels it
+   *  rather than leaving the reader to infer it (§69). */
+  customerVarianceBasis?: "budget" | "mom"
 }
 
 /**
@@ -94,10 +114,21 @@ export function OpsPortalOverviewContent({
   lockedTeam,
   badge,
   hideBonusNav = false,
+  hideGoTo = false,
+  hideBudget = false,
+  customerVarianceBasis = "budget",
 }: Props) {
   return (
     <OppApiProvider prefix={apiPrefix}>
-      <Body title={title} lockedTeam={lockedTeam} badge={badge} hideBonusNav={hideBonusNav} />
+      <Body
+        title={title}
+        lockedTeam={lockedTeam}
+        badge={badge}
+        hideBonusNav={hideBonusNav}
+        hideGoTo={hideGoTo}
+        hideBudget={hideBudget}
+        customerVarianceBasis={customerVarianceBasis}
+      />
     </OppApiProvider>
   )
 }
@@ -107,11 +138,17 @@ function Body({
   lockedTeam,
   badge,
   hideBonusNav,
+  hideGoTo,
+  hideBudget,
+  customerVarianceBasis,
 }: {
   title: string
   lockedTeam?: string
   badge?: string
   hideBonusNav?: boolean
+  hideGoTo?: boolean
+  hideBudget?: boolean
+  customerVarianceBasis?: "budget" | "mom"
 }) {
   const qc = useQueryClient()
   // Default = current month (Bruno: "Date: dafault value (this month)")
@@ -453,7 +490,10 @@ function Body({
             Unbilled
           </button>
 
-          {/* Bruno R1: quick-nav pills to sibling CORP reports. */}
+          {/* Bruno R1: quick-nav pills to sibling CORP reports. Hidden whole
+              on the DFW portal (PDF 2026-08-20 R4) — every destination is a
+              CORP report. */}
+          {!hideGoTo && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] uppercase tracking-wide text-[#9CA3AF]">Go to</span>
             {[
@@ -485,24 +525,34 @@ function Body({
               </Link>
             ))}
           </div>
+          )}
 
           {loadingFilters && <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />}
         </div>
       </div>
 
       {/* Body */}
-      <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
+      {/* Bruno (PDF 2026-08-20 "Ops Portal Updates") R1: "leaving only a
+          10-pixel gap between the last table and the small blank space at the
+          bottom". `pt-4` keeps the top spacing; only the bottom changes. */}
+      <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 pt-4 pb-[10px]">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
           <div className="space-y-4">
-            <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} />
+            <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} hideBudget={hideBudget} />
             <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} onPickCarrier={pickCarrier} />
           </div>
-          <SidePanels filters={filters} onPickCustomer={setCustomer} lockedTeam={lockedTeam} />
+          <SidePanels
+            filters={filters}
+            onPickCustomer={setCustomer}
+            lockedTeam={lockedTeam}
+            hideBudget={hideBudget}
+            customerVarianceBasis={customerVarianceBasis}
+          />
         </div>
 
         <MarginDistribution filters={filters} />
 
-        <Actuals filters={filters} onPickCustomer={setCustomer} />
+        <Actuals filters={filters} onPickCustomer={setCustomer} hideBudget={hideBudget} />
         <ActualsByLane filters={filters} onPickLane={pickLane} />
         <ByOrder filters={filters} onPickCustomer={setCustomer} />
         {/* Bruno (PDF 2026-08-19) R1 — directly below By Order, as specified.
