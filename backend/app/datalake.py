@@ -53,3 +53,35 @@ def pad_variants(values, *, width: int) -> list[str]:
                 seen.add(cand)
                 out.append(cand)
     return out
+
+
+def sql_str_list(values) -> str:
+    """Render string constants as a SQL parenthesised list: ``('A', 'B')``.
+
+    ⚠ This exists because ``f"... IN {some_tuple!r}"`` is NOT a SQL list — it is
+    a Python repr that only *looks* like one. A one-element tuple reprs with a
+    trailing comma, ``('TEAM-DFW',)``, which Postgres rejects with
+    ``42601 syntax error at or near ")"``.
+
+    The trap is that the bug is invisible until a scope happens to have exactly
+    one value. Rendering CORP's five team ids gave valid SQL for months; the DFW
+    division added on 2026-08-21 is a single ``team_id``, and every statement
+    built on the ``customer_team`` CTE started 500ing on that page alone — while
+    CORP, sharing the same code, stayed green. See SPEC-CODE-RULES §81.
+
+    Output is byte-identical to ``repr(tuple_of_str)`` for two or more values,
+    so swapping this in cannot move an existing rendering:
+
+    >>> sql_str_list(("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"))
+    "('TEAM1', 'TEAM2', 'TEAM3', 'TEAM4', 'TEAM5')"
+    >>> sql_str_list(("TEAM-DFW",))
+    "('TEAM-DFW')"
+
+    For code-owned constants only — quotes are doubled, but a bound ``$n``
+    parameter is still the right answer for anything a user can influence.
+    """
+    vals = list(values)
+    if not vals:
+        raise ValueError("sql_str_list() needs at least one value: "
+                         "`IN ()` is a syntax error, and an empty scope is a bug")
+    return "(" + ", ".join("'" + str(v).replace("'", "''") + "'" for v in vals) + ")"

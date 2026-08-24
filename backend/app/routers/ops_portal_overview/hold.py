@@ -83,6 +83,15 @@ v4 only ever contains D/V/A/P — but they are not the same *rule*, and a new
 McLeod status code would silently drop out of one and not the other. The scope
 is therefore built inline here, the way ``/cover`` builds its own ``status='A'``.
 
+⚠ The team column is read through ``_team_id_col``, never ``_team_id_select``
+-----------------------------------------------------------------------------
+``_team_id_select`` returns a SELECT ITEM — under DFW that is
+``br4.team AS team_id`` — so wrapping it renders ``TRIM(br4.team AS team_id)``,
+which Postgres rejects with ``42601``. It shipped that way on 2026-08-21 and
+took this board down on the DFW page for every one of the 14 sort keys, while
+the five CORP portals ran the same line unharmed because there the helper
+returns a bare column. ``_team_id_col`` is the expression-safe form (§81).
+
 Sources
 -------
 ``mcleod_gld_budget_report_v4`` (money, hold flags, bill date — refreshed every
@@ -105,7 +114,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import CORP_COMPANIES, router
 from ._scope import scope_of
 from ._metrics import _safe_float
-from ._sql import _lane_expr, _sub_team_param, _team_id_select
+from ._sql import _lane_expr, _sub_team_param, _team_id_col
 
 # Statuses the PDF excludes: 'V' voided, 'A' available/pending cover.
 EXCLUDED_HOLD_STATUSES = ("V", "A")
@@ -208,7 +217,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     sql = f"""
         SELECT
           TRIM(br4.id)        AS order_id,
-          TRIM({_team_id_select('br4', scope)}) AS team_id,
+          TRIM({_team_id_col('br4', scope)}) AS team_id,
           TRIM(br4.status)    AS status,
           -- PDF 2026-08-20 R2 — one column, two rules, both in DAYS:
           --   status 'P' -> dest_sched_late - today   (negative = overdue)

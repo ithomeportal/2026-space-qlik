@@ -9,6 +9,8 @@ from datetime import date
 
 from fastapi import APIRouter
 
+from app.datalake import sql_str_list
+
 
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
@@ -37,6 +39,12 @@ OTD_CODES = ("AL", "D2", "AZ", "AH", "BE", "D1", "A5", "AI", "AF", "A2", "A1", "
 # constant 'TEAM-DFW' there and ranking it would map every customer to one
 # bucket. The OUTPUT alias stays `team_id` so every `JOIN customer_team ct ON …
 # ct.team_id` call site is unchanged (§69: one name, one definition).
+#
+# ⚠ The IN-list is rendered by `sql_str_list`, NOT by `{...!r}`. A Python tuple
+# repr is not a SQL list: CORP's five ids happened to repr as valid SQL, but the
+# DFW division is a SINGLE team_id and reprs as `('TEAM-DFW',)` — a trailing
+# comma Postgres rejects with 42601. Every panel built on this CTE 500'd on the
+# DFW page for three days while CORP, running the same line, stayed green (§81).
 def customer_team_cte(scope=None) -> str:
     from ._scope import CORP_SCOPE
 
@@ -52,7 +60,7 @@ customer_team AS (
                 ORDER BY COUNT(*) DESC, TRIM({sc.v4_team_col})
             ) AS rn
         FROM public.mcleod_gld_budget_report_v4
-        WHERE TRIM(team_id) IN {sc.base_teams!r}
+        WHERE TRIM(team_id) IN {sql_str_list(sc.base_teams)}
         GROUP BY TRIM(customer_name), TRIM({sc.v4_team_col})
     ) ranked
     WHERE rn = 1

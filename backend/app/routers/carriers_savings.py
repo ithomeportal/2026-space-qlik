@@ -33,6 +33,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.datalake import sql_str_list
 from app.routers.deps import get_savings_pool, require_report_access
 from app.services.lane_rates import (
     Lane,
@@ -65,7 +66,7 @@ customer_team AS (
                 ORDER BY COUNT(*) DESC, TRIM(team_id)
             ) AS rn
         FROM public.mcleod_gld_budget_report_v4
-        WHERE TRIM(team_id) IN {ALL_ALLOWED_TEAMS!r}
+        WHERE TRIM(team_id) IN {sql_str_list(ALL_ALLOWED_TEAMS)}
         GROUP BY TRIM(customer_name), TRIM(team_id)
     ) ranked
     WHERE rn = 1

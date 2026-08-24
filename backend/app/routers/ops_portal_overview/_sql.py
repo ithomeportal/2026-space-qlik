@@ -106,14 +106,33 @@ def _sub_team_param(scope: DivisionScope, team_ids: Sequence[str]) -> List[str]:
     return case_variants(list(team_ids))
 
 
+def _team_id_col(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
+    """The scope's team COLUMN — a bare reference, no alias, safe to wrap.
+
+    Use this anywhere the column feeds an expression: ``TRIM(...)``, a
+    ``GROUP BY``, a predicate. Use ``_team_id_select`` only for a bare SELECT
+    item, where the ``AS team_id`` it appends is legal.
+    """
+    return f"{alias}.{scope.v4_team_col}"
+
+
 def _team_id_select(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
-    """The scope's team column, always surfacing as ``team_id``.
+    """The scope's team column as a SELECT ITEM, always surfacing as ``team_id``.
 
     CORP renders bare ``br4.team_id`` — no redundant alias — so the emitted SQL
     stays byte-identical to the pre-scope version and the equivalence harness in
     ``tests/test_ops_portal_scope.py`` keeps its teeth.
+
+    ⚠ Under any non-CORP scope this returns ``br4.<col> AS team_id`` — an alias,
+    not an expression — so it can NEVER be wrapped in a function call.
+    ``TRIM({_team_id_select(...)})`` renders ``TRIM(br4.team AS team_id)``, which
+    Postgres rejects with ``42601 syntax error at or near "AS"``. It shipped that
+    way in ``hold.py`` and took the DFW Hold board down on every sort key while
+    CORP — where the helper returns a bare column — stayed green. Wrap
+    ``_team_id_col`` instead; a test scans this package's source for the
+    mistake (§81).
     """
-    col = f"{alias}.{scope.v4_team_col}"
+    col = _team_id_col(alias, scope)
     return col if scope.v4_team_col == "team_id" else f"{col} AS team_id"
 
 
