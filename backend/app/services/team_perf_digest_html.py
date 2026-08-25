@@ -43,6 +43,24 @@ BORDER = "#E5E7EB"
 
 DASH = "&mdash;"
 
+# Customer Actual Performance (TM) panel — how many customers are listed and on
+# what basis. Request 2026-08-25: rank by PROFIT, not revenue. The caption used
+# to hardcode the literal "top 15 by revenue" while the limit lived in
+# team_perf_digest.py, so changing one silently made the other lie; both now
+# read these, and a test asserts the rendered caption against the value actually
+# requested. `_SORT` is the /actuals sort key, not prose — see
+# routers/ops_portal_overview/actuals.py::sort_key.
+CUSTOMER_PANEL_LIMIT = 15
+# /actuals applies its sort and its LIMIT server-side, and it appends
+# budget-only customers with zero production. Under `revenue_desc` those
+# rows sorted to the very bottom and never reached a top-15 slot; under
+# `profit_desc` a zero sorts ABOVE every loss-making customer, so they would
+# occupy slots and then be dropped by the display filter — silently showing
+# fewer than 15 real customers. So we fetch wide, filter, THEN slice.
+CUSTOMER_PANEL_FETCH = 500  # == the /actuals `limit` ceiling (ge=1, le=500)
+CUSTOMER_PANEL_SORT = "profit_desc"
+CUSTOMER_PANEL_BASIS = "profit"
+
 QUICKCHART = "https://quickchart.io/chart"
 
 # ---------------------------------------------------------------------------
@@ -340,7 +358,14 @@ def _cust_row(
     return "<tr>" + "".join(cells) + "</tr>"
 
 
-def _customer_panel(rows: list[dict], totals: dict, *, total_scope: str = "team") -> str:
+def _customer_panel(
+    rows: list[dict],
+    totals: dict,
+    *,
+    total_scope: str = "team",
+    limit: int = CUSTOMER_PANEL_LIMIT,
+    basis: str = CUSTOMER_PANEL_BASIS,
+) -> str:
     body = [
         _cust_row(
             "TOTAL",
@@ -375,8 +400,8 @@ def _customer_panel(rows: list[dict], totals: dict, *, total_scope: str = "team"
         + "</tbody></table>"
         + f'<div style="font-family:{FONT_STACK};font-size:10px;color:{GREY};'
           f'margin-top:6px;">{len(rows)} customer(s) with MTD activity '
-          f'&middot; top 15 by revenue &middot; TOTAL is the full {total_scope}, not '
-          f'the listed rows</div>'
+          f'&middot; top {limit} by {escape(basis)} &middot; TOTAL is the full '
+          f'{total_scope}, not the listed rows</div>'
     )
     return _card_shell(inner)
 
@@ -565,6 +590,8 @@ def render_html(
     card5: dict,
     customer_rows: list[dict],
     customer_totals: dict,
+    customer_limit: int = CUSTOMER_PANEL_LIMIT,
+    customer_basis: str = CUSTOMER_PANEL_BASIS,
     series: list[dict],
 ) -> tuple[str, dict[str, str]]:
     charts = build_chart_urls(series)
@@ -589,6 +616,8 @@ def render_html(
         customer_rows,
         customer_totals,
         total_scope="CORP scope" if scope_is_multi_team else "team",
+        limit=customer_limit,
+        basis=customer_basis,
     )
 
     return (

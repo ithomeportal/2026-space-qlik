@@ -55,7 +55,13 @@ from app.routers.ops_portal_overview import (
     _team_list,
     _v4_scope_where,
 )
-from app.services.team_perf_digest_html import render_html
+from app.services.team_perf_digest_html import (
+    CUSTOMER_PANEL_BASIS,
+    CUSTOMER_PANEL_FETCH,
+    CUSTOMER_PANEL_LIMIT,
+    CUSTOMER_PANEL_SORT,
+    render_html,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -407,7 +413,17 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
     calls_b: list[tuple[str, dict]] = [
         ("/profit-tm-gauge", dict(scope_query)),
         ("/team-projection", dict(scope_query)),
-        ("/actuals", {**scope_query, "range": "mtd", "sort": "revenue_desc", "limit": 15}),
+        # Request 2026-08-25: the customer panel ranks by PROFIT, not revenue.
+        # `profit_desc` already existed in the /actuals sort map, so this is a
+        # parameter change, not new ordering code. The sort key, the limit and
+        # the caption's wording all come from ONE place so the rendered footer
+        # cannot disagree with what was actually requested.
+        ("/actuals", {
+            **scope_query,
+            "range": "mtd",
+            "sort": CUSTOMER_PANEL_SORT,
+            "limit": CUSTOMER_PANEL_FETCH,
+        }),
     ]
     batch_b, series, ytd_profit, budgets = await asyncio.gather(
         _get_many(app, calls_b),
@@ -431,12 +447,25 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
     # those rows are all-zero noise — drop them for display. The TOTAL row stays
     # the server-side full-universe total (§44), so it still ties to the ACTUAL
     # PROFIT card regardless of what is filtered out here.
-    customer_rows = [
+    producing_rows = [
         r for r in all_customer_rows
         if int(r.get("vol") or 0) > 0
         or _safe_float(r.get("rev"))
         or _safe_float(r.get("prof"))
     ]
+    # /actuals already returned these sorted by CUSTOMER_PANEL_SORT, so the
+    # slice is the top N of the PRODUCING customers — not the top N of a list
+    # padded with budget-only zeros. Slicing here rather than server-side is
+    # what makes "top 15" mean fifteen real rows.
+    customer_rows = producing_rows[:CUSTOMER_PANEL_LIMIT]
+    if len(all_customer_rows) >= CUSTOMER_PANEL_FETCH:
+        # Hitting the fetch ceiling means the ranking may be truncated upstream
+        # and the panel could be missing a customer that belongs in the top N.
+        logger.warning(
+            "team digest: /actuals returned %s rows, at the %s fetch ceiling — "
+            "the customer ranking may be incomplete",
+            len(all_customer_rows), CUSTOMER_PANEL_FETCH,
+        )
     customer_totals = (actuals_payload.get("meta") or {}).get("totals") or {}
 
     # --- Card 1 — ACTUAL PROFIT (MTD) --------------------------------------
@@ -588,6 +617,8 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
         card5=card5,
         customer_rows=customer_rows,
         customer_totals=customer_totals,
+        customer_limit=CUSTOMER_PANEL_LIMIT,
+        customer_basis=CUSTOMER_PANEL_BASIS,
         series=series,
     )
 
@@ -650,6 +681,11 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
             "on_track": card5["on_track"],
             "customer_rows": len(customer_rows),
             "customer_rows_before_zero_filter": len(all_customer_rows),
+            "customer_rows_producing": len(producing_rows),
+            # Published so a consumer can assert the ranking basis instead of
+            # reading it out of the rendered footer prose.
+            "customer_sort": CUSTOMER_PANEL_SORT,
+            "customer_limit": CUSTOMER_PANEL_LIMIT,
             "customer_totals": customer_totals,
             "charts": chart_urls,
             "sources": [
