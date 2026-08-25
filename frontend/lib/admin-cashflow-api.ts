@@ -14,6 +14,11 @@ interface ApiResponse<T> {
     le_threshold_count?: number
     gt_threshold_count?: number
     threshold?: number
+    returned?: number
+    truncated?: boolean
+    late_days?: number
+    min_avg_days?: number
+    buckets?: TopDelayedBucket[]
   }
 }
 
@@ -240,6 +245,37 @@ export interface TopDelayedCustomerRow {
   n_late: number
   late_revenue: number
   avg_days: number
+}
+
+// Bruno Aging (PDF 2026-08-24) R2 — the "Table" pop-up: the same customers,
+// broken out across four DISCRETE months. `tm` is the current (partial) month,
+// then one column per preceding month. The month each key stands for is not
+// inferred client-side — the endpoint returns it in `meta.buckets`, so the
+// header and the numbers can never disagree.
+export type TopDelayedBucketKey = "tm" | "lm" | "l2m" | "l3m"
+
+export interface TopDelayedBucket {
+  key: TopDelayedBucketKey
+  month: string
+}
+
+export interface TopDelayedMonthlyRow {
+  customer_name: string
+  n_late_total: number
+  late_revenue_total: number
+  avg_days_total: number
+  late_tm: number | null
+  late_lm: number | null
+  late_l2m: number | null
+  late_l3m: number | null
+  rev_tm: number | null
+  rev_lm: number | null
+  rev_l2m: number | null
+  rev_l3m: number | null
+  avg_days_tm: number | null
+  avg_days_lm: number | null
+  avg_days_l2m: number | null
+  avg_days_l3m: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +532,51 @@ export function adminCashflowCsvUrl(
     e.customer_q = extra.customerQ.trim()
   const qs = buildQs(f, Object.keys(e).length ? e : undefined)
   return `/api/proxy/custom/admin-cashflow/${endpoint}.csv${qs}`
+}
+
+/**
+ * The "Table" pop-up behind the delays card — lazy, and scope-only.
+ *
+ * The page's date range is deliberately absent from both the query string and
+ * the cache key: the endpoint ignores it (four fixed months), so carrying it
+ * would only refetch identical data every time someone touches a range pill.
+ */
+export function useTopDelayedCustomersMonthly(
+  f: AdminCashflowFilters,
+  enabled: boolean,
+  limit = 200,
+) {
+  const scopeKey = [
+    (f.teams ?? []).slice().sort().join(","),
+    (f.companies ?? []).slice().sort().join(","),
+    f.customer ?? "",
+    (f.customers ?? []).slice().sort().join(","),
+    f.customerMode ?? "include",
+    f.contractType ?? "",
+    limit,
+  ]
+  return useQuery({
+    queryKey: ["admin-cashflow", "top-delayed-monthly", ...scopeKey],
+    queryFn: () => {
+      const q = new URLSearchParams()
+      q.set("limit", String(limit))
+      if (f.teams?.length) q.set("teams", f.teams.join(","))
+      if (f.companies?.length) q.set("companies", f.companies.join(","))
+      if (f.customers && f.customers.length) {
+        q.set("customers", f.customers.join(","))
+        q.set("customer_mode", f.customerMode ?? "include")
+      } else if (f.customer) {
+        q.set("customer", f.customer)
+      }
+      if (f.contractType) q.set("contract_type", f.contractType)
+      return apiFetch<TopDelayedMonthlyRow[]>(
+        `custom/admin-cashflow/top-delayed-customers/monthly?${q.toString()}`,
+      )
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled,
+    ...RETRY,
+  })
 }
 
 export function useTopDelayedCustomers(f: AdminCashflowFilters, limit = 10) {

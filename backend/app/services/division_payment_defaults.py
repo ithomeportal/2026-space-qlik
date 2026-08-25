@@ -24,6 +24,14 @@ the prototype were corrected on the way in — see ``docs/SPEC-DIVISION-PAYMENT.
      are all computed with the same arithmetic the router serves at runtime, so
      every seeded recalc lands on exactly 25 % / 75 %.
 
+⚠ **Every GL amount in the payload is 0.00** (Bruno PDF 2026-08-24 R1). The
+prototype shipped its own figures on all 366 rows; they were demo data, not
+A&O's accounting, and the round that made the Amount cell editable made the
+sheet start blank instead. Revenue / carrier cost / profit are untouched — only
+``gl_accounts[*].amount``. The already-seeded months were zeroed by a one-off
+UPDATE at the same time, because the GL block below only fires for a month that
+has NO rows: re-seeding cannot reach a live month, by design.
+
 ⚠ Every INSERT is ``ON CONFLICT DO NOTHING``, **never DO UPDATE**. Seeding runs
 on every startup (see ``main.py`` lifespan); a ``DO UPDATE`` would silently
 revert the user's include/exclude toggles, edited amounts and custom expense

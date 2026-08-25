@@ -475,16 +475,25 @@ export interface OppHoldRow {
   team_id: string
   /** 'D' or 'P' today; the endpoint excludes 'V'/'A' rather than allow-listing. */
   status: string
-  /** Bruno PDF 2026-08-20 R2 — replaces `departure`. DAYS, not a date:
-   *  status 'P' -> scheduled delivery minus today (negative = overdue);
-   *  status 'D' -> transit days (destination departure minus origin).
-   *  null when either operand was McLeod's 1900-01-01 sentinel. */
-  date_days: number | null
+  /** `origin_actual_departure`, YYYY-MM-DD. Back since PDF 2026-08-24 R1;
+   *  null when McLeod held its 1900-01-01 sentinel. */
+  departure: string | null
+  /** Bruno PDF 2026-08-24 R1 — "Delay Time", replacing `date_days`. DAYS, and
+   *  NEGATIVE = overdue. Non-null only on status 'P' rows whose scheduled
+   *  delivery has already passed, so most rows are legitimately null. */
+  delay_days: number | null
+  /** `dest_sched_arrive_late`, CST wall-clock ISO. Null when absent. */
+  sched_dest_late: string | null
+  /** `dest_actual_departure`, CST wall-clock ISO. Null on virtually every
+   *  in-progress row — the load has not delivered yet. */
+  actual_delivery: string | null
   customer_name: string
   carrier: string
   lane: string
   revenue: number
-  /** `total_carrier_pay`, same source as the Cover board — NOT revenue − profit. */
+  /** `total_carrier_pay`, same source as the Cover board — NOT revenue − profit.
+   *  Still served; the TABLE dropped the column on PDF 2026-08-24 R1, but the
+   *  totals row still sums it. */
   carrier_cost: number
   profit: number
   margin_pct: number
@@ -864,7 +873,9 @@ export function useOppPendingToCover(f: OppFilters, enabled: boolean) {
 // what previously collapsed two different requests onto one cache entry.
 export function useOppHold(f: OppFilters, opts?: { sort?: string }) {
   const prefix = useApiPrefix()
-  const sort = opts?.sort ?? "date_asc"
+  // Must track hold.py's default — a key the whitelist no longer holds would
+  // silently fall back to it instead of erroring (§ dead sort key).
+  const sort = opts?.sort ?? "delay_asc"
   return useQuery({
     queryKey: [prefix, "opp-hold", ...scopeKey(f), sort],
     queryFn: () =>

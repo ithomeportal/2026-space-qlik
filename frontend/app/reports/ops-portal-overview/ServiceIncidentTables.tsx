@@ -100,7 +100,7 @@ function IncidentPanel({
       {error ? (
         <div className="px-3 py-3 text-xs text-[#DC2626]">Failed to load</div>
       ) : (
-        <div className="max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
+        <div className="[contain:paint] max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
           <IncidentTable
             rows={rows}
             failHeader={failHeader}
@@ -298,7 +298,7 @@ function CarrierPanel({
       {error ? (
         <div className="px-3 py-3 text-xs text-[#DC2626]">Failed to load</div>
       ) : (
-        <div className="max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
+        <div className="[contain:paint] max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
           <CarrierTable rows={rows} onPickCarrier={onPickCarrier} />
         </div>
       )}

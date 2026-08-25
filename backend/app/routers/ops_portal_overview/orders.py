@@ -153,11 +153,23 @@ async def by_order(
                  THEN (br4.bill_date::date - win.dest_dep_ts::date)
             ELSE (CURRENT_DATE - win.dest_dep_ts::date)
           END AS days_to_bill,
-          -- Bruno (PDF 2026-07-15) R14: POD Age — hours since delivery (dest
-          -- arrival, falling back to dest departure). Frontend shows it only for
-          -- orders lacking a POD; <24h green, >24h red. CST session → CST now.
-          CASE WHEN COALESCE(win.arr_ts, win.dest_dep_ts) IS NOT NULL
-               THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(win.arr_ts, win.dest_dep_ts))) / 3600.0
+          -- Bruno (PDF 2026-07-15) R14: POD Age — hours since delivery.
+          -- Frontend shows it only for orders lacking a POD; <24h green, >24h
+          -- red. CST session → CST now, and gold timestamps are CST wall
+          -- clocks, so both operands share one space.
+          --
+          -- PDF 2026-08-24 R1 aligned this with the POD Tracker's own method
+          -- (AP_module `lib/pod-tracker-age.ts`): the anchor falls back to the
+          -- SCHEDULED late delivery, not to dest departure, and the clock only
+          -- runs once that anchor has passed (or the load is delivered) — an
+          -- anchor in the future would brand a load "POD overdue" before it has
+          -- arrived. Changed here as well as on the Hold board on purpose: the
+          -- two tables sit on the same page and must not read differently for
+          -- the same order (§69).
+          CASE WHEN COALESCE(win.arr_ts, win.dest_sched_late_ts) IS NOT NULL
+                AND (COALESCE(win.arr_ts, win.dest_sched_late_ts) <= CURRENT_TIMESTAMP
+                     OR TRIM(br4.status) = 'D')
+               THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(win.arr_ts, win.dest_sched_late_ts))) / 3600.0
           END AS pod_age_hours
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
@@ -165,7 +177,9 @@ async def by_order(
         LEFT JOIN LATERAL (
             SELECT MAX(CASE WHEN cw.orig_actual_departure > '2000-01-01' THEN cw.orig_actual_departure END) AS dep_ts,
                    MAX(CASE WHEN cw.dest_actual_arrival   > '2000-01-01' THEN cw.dest_actual_arrival   END) AS arr_ts,
-                   MAX(CASE WHEN cw.dest_actual_departure > '2000-01-01' THEN cw.dest_actual_departure END) AS dest_dep_ts
+                   MAX(CASE WHEN cw.dest_actual_departure > '2000-01-01' THEN cw.dest_actual_departure END) AS dest_dep_ts,
+                   -- The POD Age fallback anchor — see the CASE above.
+                   MAX(CASE WHEN cw.dest_sched_arrive_late > '2000-01-01' THEN cw.dest_sched_arrive_late END) AS dest_sched_late_ts
             FROM public.mcleod_gld_customer_windows cw
             WHERE TRIM(UPPER(cw.id)) = TRIM(UPPER(br4.id))
         ) win ON TRUE

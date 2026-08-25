@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChevronDown, ChevronRight, Info, Plus, Trash2, X } from "lucide-react"
 
 import {
@@ -19,6 +19,12 @@ import { DPC, MONO } from "./theme"
  *
  * Grouped by category, expand/collapse per group, an Include toggle at both the
  * category and the row level, and an Add Expense form.
+ *
+ * Amounts are typed here, not fed from any system: A&O's GL lines live in the
+ * accounting system. Every GL Code therefore starts at $0.00 (Bruno PDF
+ * 2026-08-24 R1) and the Amount cell is an input (R2). Negatives are refused on
+ * both sides — the cell reverts, and `GLPatch.amount` is `ge=0` so a hand-rolled
+ * request gets a 422 rather than a credit hiding in a deductions column.
  *
  * ⚠ Excluding a row raises the net payment by exactly that row's amount and
  * touches nothing else — profit, margin and the tariff are functions of revenue
@@ -106,6 +112,7 @@ export function GlDeductionsTable({ summary }: { summary: Summary }) {
                     toggleCat.mutate({ category: cat.category, included })
                   }
                   onToggleRow={(id, included) => patch.mutate({ id, included })}
+                  onSaveAmount={(id, amount) => patch.mutate({ id, amount })}
                   onDelete={(id) => del.mutate(id)}
                 />
               )
@@ -137,7 +144,7 @@ export function GlDeductionsTable({ summary }: { summary: Summary }) {
 }
 
 function CategoryGroup({
-  cat, rows, open, onToggleExpanded, onToggleAll, onToggleRow, onDelete,
+  cat, rows, open, onToggleExpanded, onToggleAll, onToggleRow, onSaveAmount, onDelete,
 }: {
   cat: GLCategory
   rows: Summary["gl_accounts"]
@@ -145,6 +152,7 @@ function CategoryGroup({
   onToggleExpanded: () => void
   onToggleAll: (included: boolean) => void
   onToggleRow: (id: string, included: boolean) => void
+  onSaveAmount: (id: string, amount: number) => void
   onDelete: (id: string) => void
 }) {
   return (
@@ -209,8 +217,12 @@ function CategoryGroup({
                   </span>
                 ) : null}
               </td>
-              <td className={`px-3 py-2 text-right ${MONO}`} style={{ color: DPC.secondary }}>
-                {formatCurrency(r.amount)}
+              <td className="px-3 py-2 text-right">
+                <AmountInput
+                  value={r.amount}
+                  label={`Amount for ${r.description}`}
+                  onSave={(amount) => onSaveAmount(r.id, amount)}
+                />
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center justify-end gap-1.5">
@@ -235,6 +247,67 @@ function CategoryGroup({
           ))
         : null}
     </>
+  )
+}
+
+/**
+ * The editable Amount (USD) cell — Bruno PDF 2026-08-24 R2.
+ *
+ * String state rather than a number so a half-typed value ("12.", "") survives
+ * keystrokes, re-seeded from the server whenever the row's amount changes (a
+ * month switch would otherwise leave the previous month's typed value sitting
+ * over the new month's row — the bug `CalculatorCard` documents at its own
+ * `useEffect`).
+ *
+ * Commits on blur and on Enter, and ONLY when the parsed value actually differs
+ * from what the server holds — otherwise merely tabbing across the table would
+ * fire a PATCH per row. Anything not a finite number ≥ 0 reverts to the server
+ * value and is never sent: "only positive values are permitted" is enforced
+ * here for the typist and again by `GLPatch.amount` (`ge=0`) for everyone else.
+ */
+function AmountInput({
+  value, label, onSave,
+}: {
+  value: number
+  label: string
+  onSave: (amount: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+
+  useEffect(() => {
+    setDraft(String(value))
+  }, [value])
+
+  const commit = () => {
+    const n = Number(draft)
+    if (!Number.isFinite(n) || n < 0 || draft.trim() === "") {
+      setDraft(String(value))
+      return
+    }
+    const rounded = Math.round(n * 100) / 100
+    if (rounded === value) {
+      setDraft(String(value))
+      return
+    }
+    onSave(rounded)
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      step="0.01"
+      value={draft}
+      aria-label={label}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur()
+        if (e.key === "Escape") setDraft(String(value))
+      }}
+      className={`w-32 rounded-md border px-2 py-1 text-right ${MONO} focus:outline-none focus:ring-1`}
+      style={{ borderColor: DPC.border, color: DPC.secondary }}
+    />
   )
 }
 

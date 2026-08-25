@@ -1,13 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, ChevronUp, Loader2, Users } from "lucide-react"
+import { ChevronDown, ChevronUp, Loader2, Table2, Users } from "lucide-react"
 import {
   useTopDelayedCustomers,
   type AdminCashflowFilters,
   type TopDelayedCustomerRow,
 } from "@/lib/admin-cashflow-api"
 import { fmtCount, fmtNum1, fmtUsd } from "./format"
+import { TopDelayedMonthlyModal } from "./TopDelayedMonthlyModal"
 
 interface Props {
   filters: AdminCashflowFilters
@@ -22,6 +23,9 @@ export function TopDelayedCustomers({ filters }: Props) {
   const { data, isLoading } = useTopDelayedCustomers(filters, 10)
   const [sortKey, setSortKey] = useState<SortKey>("late_revenue")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
+  // Bruno PDF 2026-08-24 R2. Mounted only while open so the four-month query
+  // never runs for someone who does not click the button.
+  const [showTable, setShowTable] = useState(false)
 
   const onSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -48,15 +52,25 @@ export function TopDelayedCustomers({ filters }: Props) {
 
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-      <div className="mb-2 flex items-center gap-2">
-        <Users className="h-4 w-4 text-[#1B3A5C]" />
-        <div className="text-sm font-semibold text-[#1B3A5C]">
-          Top customers contributing to delays
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-[#1B3A5C]" />
+          <div className="text-sm font-semibold text-[#1B3A5C]">
+            Top customers contributing to delays
+          </div>
         </div>
+        <button
+          onClick={() => setShowTable(true)}
+          title="Open the four-month table"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-[11px] text-[#374151] hover:bg-[#F9FAFB] hover:text-[#1B3A5C]"
+        >
+          <Table2 className="h-3 w-3" />
+          Table
+        </button>
       </div>
       <div className="text-[11px] text-[#6B7280]">
-        Late = bill_date − dest_actual_departure &gt; 2 days · ranked by $
-        revenue at risk
+        Late = bill_date − dest_actual_departure &gt; 2 days · Avg d ≥ 2 ·
+        ranked by $ revenue at risk
       </div>
       <div className="mt-3 max-h-52 overflow-auto">
         {isLoading ? (
@@ -65,7 +79,7 @@ export function TopDelayedCustomers({ filters }: Props) {
           </div>
         ) : rows.length === 0 ? (
           <div className="py-8 text-center text-xs text-[#9CA3AF]">
-            No customers with &gt;2-day delays in current filters
+            No customers averaging ≥2 days with &gt;2-day delays in current filters
           </div>
         ) : (
           <table className="w-full text-xs">
@@ -101,6 +115,9 @@ export function TopDelayedCustomers({ filters }: Props) {
           </table>
         )}
       </div>
+      {showTable ? (
+        <TopDelayedMonthlyModal filters={filters} onClose={() => setShowTable(false)} />
+      ) : null}
     </div>
   )
 }

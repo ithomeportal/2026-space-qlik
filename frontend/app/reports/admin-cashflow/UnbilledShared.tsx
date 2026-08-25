@@ -16,11 +16,15 @@ export function UnbilledExpandModal({
   subtitle,
   onClose,
   children,
+  // Opt-in only: the 13-column delays-by-month table needs the room, every
+  // other pop-up keeps the width it shipped with.
+  wide = false,
 }: {
   title: string
   subtitle?: string
   onClose: () => void
   children: React.ReactNode
+  wide?: boolean
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -36,7 +40,7 @@ export function UnbilledExpandModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-xl"
+        className={`flex max-h-[90vh] w-full ${wide ? "max-w-7xl" : "max-w-5xl"} flex-col overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-[#E5E7EB] px-4 py-3">

@@ -10,6 +10,11 @@
 // stale rows this board exists to surface. It therefore ignores the page's
 // range pills and reacts only to Team / Customer / Lane.
 //
+// PDF 2026-08-24 R1 reshaped the columns: Departure and Customer added back,
+// Sched Dest Late / Actual Delivery / Delay Time added, Carrier Cost and
+// Margin % removed, and the whole list reordered to Bruno's sequence. Carrier
+// Cost is still SERVED — the totals row sums it — it is only not a column.
+//
 // Modelled on CoverTable (shared SortableTable + a DERIVED totals colSpan)
 // rather than ByOrder's hand-rolled header with hardcoded literals (§61).
 // ---------------------------------------------------------------------------
@@ -17,7 +22,6 @@
 import { Loader2 } from "lucide-react"
 
 import {
-  fmtPct,
   fmtUsd,
   useOppHold,
   type OppFilters,
@@ -26,6 +30,8 @@ import {
 } from "@/lib/ops-portal-overview-api"
 import { SortableTh, useSortable, type SortDir } from "@/components/SortableTable"
 
+import { fmtSchedTs } from "./schedTime"
+
 const HOLD_COLUMNS: {
   label: string
   key: keyof OppHoldRow
@@ -33,28 +39,31 @@ const HOLD_COLUMNS: {
 }[] = [
   { label: "Order", key: "order_id", align: "left" },
   { label: "Team", key: "team_id", align: "left" },
-  // Bruno PDF 2026-08-20 R2: Departure out, Date in. Right-aligned
-  // because it is a signed day count, not a date string.
-  { label: "Date", key: "date_days", align: "right" },
+  { label: "Departure", key: "departure", align: "left" },
+  { label: "Customer", key: "customer_name", align: "left" },
   { label: "Carrier", key: "carrier", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
+  // ⚠ The money block must stay CONTIGUOUS and start at `revenue` — the
+  // totals row's colSpans are derived from exactly that (§61).
   { label: "Revenue", key: "revenue", align: "right" },
-  { label: "Carrier Cost", key: "carrier_cost", align: "right" },
   { label: "Profit", key: "profit", align: "right" },
-  { label: "Margin %", key: "margin_pct", align: "right" },
   { label: "Status", key: "status", align: "left" },
+  { label: "Sched Dest Late", key: "sched_dest_late", align: "left" },
+  { label: "Actual Delivery", key: "actual_delivery", align: "left" },
+  // Right-aligned: a signed day count, not a date string.
+  { label: "Delay Time", key: "delay_days", align: "right" },
   { label: "Hold", key: "on_hold", align: "right" },
   { label: "Hold Reason", key: "hold_reason", align: "left" },
-  { label: "POD", key: "pod", align: "right" },
-  { label: "POD Age", key: "pod_age_hours", align: "right" },
   { label: "Days to Bill", key: "days_to_bill", align: "right" },
   { label: "Bill Date", key: "bill_date", align: "left" },
+  { label: "POD", key: "pod", align: "right" },
+  { label: "POD Age", key: "pod_age_hours", align: "right" },
 ]
 
 // Money columns lead with desc (biggest first); text columns asc.
-const MONEY_KEYS = new Set<keyof OppHoldRow>([
-  "revenue", "carrier_cost", "profit", "margin_pct",
-])
+// ⚠ This set is also the COUNT of money cells the totals row renders — keep it
+// in step with the money block in HOLD_COLUMNS above.
+const MONEY_KEYS = new Set<keyof OppHoldRow>(["revenue", "profit"])
 function holdDirForKey(key: string): SortDir {
   return MONEY_KEYS.has(key as keyof OppHoldRow) ? "desc" : "asc"
 }
@@ -79,11 +88,11 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
   const totals = data?.meta?.totals as OppHoldTotals | undefined
   const unbilledFrom = (data?.meta as { unbilled_from?: string } | undefined)?.unbilled_from
 
-  // Most-overdue first (the most negative Date). Mirrors the backend's
-  // `date_asc` default so the first paint does not jump.
+  // Most-overdue first (the most negative Delay Time; blanks sort last).
+  // Mirrors the backend's `delay_asc` default so the first paint does not jump.
   const { sorted, ...sortState } = useSortable<OppHoldRow>(
     rows,
-    "date_days",
+    "delay_days",
     "asc",
     holdDirForKey,
   )
@@ -124,7 +133,26 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
           {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <div className="max-h-[420px] overflow-auto">
+        /* ⚠ `[contain:paint]` is load-bearing, not decoration (Bruno PDF
+           2026-08-24 R2 — the third report of "a white section at the end of
+           the report", and the first round to reproduce it).
+
+           MEASURED on the real page with the network stubbed, 2026-08-24: with
+           rows in this table the document scrolled 772px PAST the bottom of
+           `app/reports/layout.tsx`'s grey backdrop, so that band painted the
+           <body>'s white — 782px of it at 1600x900, 2078px at 1280x720, and it
+           grew with every populated capped table (By Order added 569 on its
+           own). `overflow-auto` clips the PAINT but the box still contributed
+           its full 1218px scrollable overflow upward; `contain: paint` is what
+           stops that, and it took the gap to exactly the 10px `pb-[10px]`
+           intends. Verified: overflow:hidden on the box, overflow:clip on the
+           section, and un-stickying the header all changed NOTHING.
+
+           Safe here because nothing positioned lives inside these boxes (only
+           `sr-only` spans) — containment would otherwise become the containing
+           block for a `fixed` modal. Do not move it onto the <section>: the
+           modals ARE rendered there. */
+        <div className="[contain:paint] max-h-[420px] overflow-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
               <tr className="border-b border-[#E5E7EB]">
@@ -145,13 +173,11 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                   <td className="px-2 py-1.5" colSpan={TOTAL_LABEL_COLSPAN}>
                     TOTAL · {totals.n_orders.toLocaleString()} on hold
                   </td>
+                  {/* Carrier Cost and Margin % left the table on PDF
+                      2026-08-24 R1; the endpoint still returns both. */}
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.carrier_cost)}</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums ${totals.profit < 0 ? "text-[#DC2626]" : ""}`}>
                     {fmtUsd(totals.profit)}
-                  </td>
-                  <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
-                    {fmtPct(totals.margin_pct)}
                   </td>
                   <td className="px-2 py-1.5" colSpan={TRAILING_COLSPAN} />
                 </tr>
@@ -175,27 +201,11 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                   <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
                     <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
                     <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>
-                    {/* Days. Negative = overdue against the scheduled
-                        delivery (status P) — never a date, and never a value
-                        when the source carried McLeod's 1900-01-01 sentinel,
-                        which the backend maps to null. */}
-                    <td
-                      className={`px-2 py-1.5 text-right tabular-nums ${
-                        r.date_days !== null && r.date_days < 0
-                          ? "text-[#DC2626]"
-                          : "text-[#374151]"
-                      }`}
-                      title={
-                        r.status === "P"
-                          ? "Scheduled delivery minus today. Negative = overdue."
-                          : r.status === "D"
-                            ? "Transit days: destination departure minus origin departure."
-                            : ""
-                      }
-                    >
-                      {r.date_days !== null && r.date_days !== undefined
-                        ? r.date_days
-                        : <span className="text-[#9CA3AF]">—</span>}
+                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
+                      {r.departure ?? <span className="text-[#9CA3AF]">—</span>}
+                    </td>
+                    <td className="max-w-[220px] truncate px-2 py-1.5 text-[#374151]" title={r.customer_name}>
+                      {r.customer_name || <span className="text-[#9CA3AF]">—</span>}
                     </td>
                     <td className="px-2 py-1.5 text-[#374151]">
                       {r.carrier || <span className="text-[#9CA3AF]">—</span>}
@@ -204,9 +214,6 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                       {r.lane || <span className="text-[#9CA3AF]">—</span>}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.revenue)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
-                      {fmtUsd(r.carrier_cost)}
-                    </td>
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${
                         r.profit < 0 ? "font-medium text-[#DC2626]" : "text-[#374151]"
@@ -214,14 +221,31 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                     >
                       {fmtUsd(r.profit)}
                     </td>
+                    <td className="px-2 py-1.5 text-[#374151]">{r.status}</td>
+                    {/* Scheduled late delivery, then the actual — CST wall
+                        clocks, formatted exactly like By Order's windows. */}
+                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
+                      {r.sched_dest_late ? fmtSchedTs(r.sched_dest_late) : <span className="text-[#9CA3AF]">—</span>}
+                    </td>
+                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
+                      {r.actual_delivery ? fmtSchedTs(r.actual_delivery) : <span className="text-[#9CA3AF]">—</span>}
+                    </td>
+                    {/* Delay Time — days, negative = overdue. Populated only
+                        on status 'P' rows already past their scheduled
+                        delivery, so a blank here is the normal case, not a
+                        missing value. */}
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${
-                        r.margin_pct < 0 ? "font-medium text-[#DC2626]" : "text-[#374151]"
+                        r.delay_days !== null && r.delay_days < 0
+                          ? "font-medium text-[#DC2626]"
+                          : "text-[#374151]"
                       }`}
+                      title="Scheduled delivery minus today, for in-progress orders already past it. Negative = overdue."
                     >
-                      {fmtPct(r.margin_pct)}
+                      {r.delay_days !== null && r.delay_days !== undefined
+                        ? r.delay_days
+                        : <span className="text-[#9CA3AF]">—</span>}
                     </td>
-                    <td className="px-2 py-1.5 text-[#374151]">{r.status}</td>
                     {/* Bruno R1: "displayed as a checkmark". */}
                     <td className="px-2 py-1.5 text-right">
                       {r.on_hold ? (
@@ -233,6 +257,16 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                     {/* Free text typed by ops — shown verbatim, never normalised. */}
                     <td className="px-2 py-1.5 text-[#374151]">
                       {r.hold_reason || <span className="text-[#9CA3AF]">—</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
+                      {r.days_to_bill == null ? (
+                        <span className="text-[#9CA3AF]">—</span>
+                      ) : (
+                        r.days_to_bill
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
+                      {r.bill_date ?? <span className="text-[#9CA3AF]">—</span>}
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       {r.pod ? (
@@ -250,16 +284,6 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                           {fmtPodAge(r.pod_age_hours)}
                         </span>
                       )}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
-                      {r.days_to_bill == null ? (
-                        <span className="text-[#9CA3AF]">—</span>
-                      ) : (
-                        r.days_to_bill
-                      )}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
-                      {r.bill_date ?? <span className="text-[#9CA3AF]">—</span>}
                     </td>
                   </tr>
                 ))

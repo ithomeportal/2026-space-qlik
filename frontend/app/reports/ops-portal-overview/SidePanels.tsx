@@ -203,7 +203,7 @@ function CustomerVariance({
         </span>
       }
     >
-      <div className="max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
+      <div className="[contain:paint] max-h-[260px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
       {expanded && (
         <ExpandModal title="Customer Monthly Variance" onClose={() => setExpanded(false)}>
           {renderTable()}
@@ -265,7 +265,7 @@ function CustomerLosses({ filters, onPickCustomer }: { filters: OppFilters; onPi
       error={error}
       leadingAction={<ExpandButton label="Customer Monthly Losses" onClick={() => setExpanded(true)} />}
     >
-      <div className="max-h-[180px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
+      <div className="[contain:paint] max-h-[180px] overflow-x-hidden overflow-y-auto">{renderTable()}</div>
       {expanded && (
         <ExpandModal title="Customer Monthly Losses" onClose={() => setExpanded(false)}>
           {renderTable()}
@@ -291,7 +291,7 @@ function CustomerNotBilled({ filters }: { filters: OppFilters }) {
   }, "revenue", "desc")
   return (
     <PanelCard title="Not Billed" icon="🧾" loading={q.isLoading} error={q.error}>
-      <div className="max-h-[180px] overflow-x-hidden overflow-y-auto">
+      <div className="[contain:paint] max-h-[180px] overflow-x-hidden overflow-y-auto">
         <table className="w-full table-fixed text-xs">
           <colgroup>
             <col className="w-[60%]" />

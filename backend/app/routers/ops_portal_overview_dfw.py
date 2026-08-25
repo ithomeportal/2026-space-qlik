@@ -579,7 +579,7 @@ async def hold(
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
     # Must track hold.py's default — see the CORP factory.
-    sort: str = Query("date_asc"),
+    sort: str = Query("delay_asc"),
     limit: int = Query(500, ge=1, le=2000),
     _user: dict = Depends(gate),
 ):

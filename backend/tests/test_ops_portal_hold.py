@@ -15,9 +15,14 @@ The properties worth pinning are the ones that were *decisions*, not mechanics:
     `on_hold='Y'` — with a hard floor at `UNBILLED_FROM`, because 2021 is an
     ETL artifact (99.4% sentinel that year) and without the floor the board is
     59,139 rows of which ~58,500 are phantom;
-  * the Date column's every operand is sentinel-guarded on BOTH branches.
+  * the Delay Time column (PDF 2026-08-24 R1, replacing "Date") is guarded on
+    both halves of its rule: the sentinel AND the "already passed" filter.
     110 of 273 status='P' rows carry a 1900-01-01 `dest_sched_late`; unguarded
-    they render as ~-46,000 days, which no row-count test would catch.
+    they render as ~-46,000 days, which no row-count test would catch;
+  * POD Age follows the POD Tracker's anchor (actual delivery, falling back to
+    the SCHEDULED late delivery) and only runs once that anchor has passed.
+    The same expression lives in By Order, and the two must not diverge — they
+    sit on one page and describe the same orders (§69).
 
 ⚠ Several assertions read the SQL TEXT rather than the data, deliberately: with
 correct data, reverting these rules still returns plausible rows. They are
@@ -59,7 +64,7 @@ def _run(**kwargs):
         )
         params = dict(
             request=request, team=None, customer=None, lanes=None,
-            exclude_lanes=None, sort="date_asc", limit=500, _user={},
+            exclude_lanes=None, sort="delay_asc", limit=500, _user={},
         )
         params.update(kwargs)
         resp = asyncio.run(hold_mod.hold_board(**params))
@@ -166,7 +171,7 @@ def test_unknown_sort_falls_back_instead_of_reaching_sql() -> None:
     """`sort` is user input and is interpolated, so it must be whitelisted."""
     pool, _ = _run(sort="1; DROP TABLE mcleod_gld_budget_report_v4; --")
     assert "DROP TABLE" not in pool.sql
-    assert "ORDER BY date_days ASC NULLS LAST" in pool.sql
+    assert "ORDER BY delay_days ASC NULLS LAST" in pool.sql
 
 
 @pytest.mark.parametrize("key", sorted(hold_mod._HOLD_SORTS))
@@ -187,55 +192,127 @@ def test_bill_date_strips_the_mcleod_sentinel() -> None:
     assert "to_char(br4.bill_date, 'YYYY-MM-DD')" in pool.sql
 
 
-def test_every_date_operand_is_sentinel_guarded_on_both_branches() -> None:
-    """The Date column must never do arithmetic on 1900-01-01.
+def test_the_delay_column_is_guarded_by_the_sentinel_and_by_today() -> None:
+    """Delay Time must never do arithmetic on 1900-01-01, and never on a
+    delivery still in the future.
 
     McLeod writes the sentinel instead of NULL here too, and it is NOT rare:
     110 of the 273 status='P' rows carry a sentinel `dest_sched_late`
     (measured 2026-08-21). Unguarded, `sentinel - CURRENT_DATE` renders as
-    about -46,000 days and sorts to the top of an ascending Date column — so
+    about -46,000 days and sorts to the top of an ascending Delay column — so
     the failure mode is a board whose first page is entirely garbage.
 
     Asserted structurally rather than on data: with clean rows a missing guard
     changes nothing, which is exactly why this needs reading the statement.
     """
     pool, _ = _run()
-    expr = pool.sql.split("END AS date_days")[0].rsplit("CASE", 1)[1]
+    expr = pool.sql.split("END AS delay_days")[0].rsplit("CASE", 1)[1]
 
-    # status='P' branch — dest_sched_late must be NULL-checked, and the LATERAL
-    # that produces it must itself have filtered the sentinel out.
+    assert "TRIM(br4.status) = 'P'" in expr, "Delay Time is in-progress only"
     assert "win.dest_sched_late_ts IS NOT NULL" in expr
+    assert "win.dest_sched_late_ts::date < CURRENT_DATE" in expr, (
+        "the PDF says 'already passed' — without this every future delivery "
+        "reads as a positive 'delay'"
+    )
+    # …and the LATERAL that produces the operand filtered the sentinel out.
     assert (
         "MAX(CASE WHEN cw.dest_sched_arrive_late > '2000-01-01' "
         "THEN cw.dest_sched_arrive_late END) AS dest_sched_late_ts"
     ) in pool.sql
 
-    # status='D' branch — BOTH operands, and origin_actual_departure comes
-    # straight off v4 so it needs its own explicit comparison.
-    assert "win.dest_dep_ts IS NOT NULL" in expr
-    assert "br4.origin_actual_departure > '2000-01-01'::date" in expr
-    assert (
-        "MAX(CASE WHEN cw.dest_actual_departure  > '2000-01-01' "
-        "THEN cw.dest_actual_departure  END) AS dest_dep_ts"
-    ) in pool.sql
-
-    # No CASE arm may reach the subtraction without a guard: every WHEN in the
-    # expression must mention IS NOT NULL or the sentinel comparison.
-    arms = [a for a in expr.split("WHEN")[1:]]
-    for arm in arms:
+    # No CASE arm may reach the subtraction without a guard.
+    for arm in expr.split("WHEN")[1:]:
         cond = arm.split("THEN")[0]
-        assert "IS NOT NULL" in cond or "'2000-01-01'" in cond, (
-            f"unguarded Date arm: {cond.strip()!r}"
+        assert "IS NOT NULL" in cond or "'2000-01-01'" in cond or "CURRENT_DATE" in cond, (
+            f"unguarded Delay arm: {cond.strip()!r}"
         )
 
+    # The transit-days branch the "Date" column carried is GONE — one column,
+    # one meaning (PDF 2026-08-24 R1).
+    assert "AS date_days" not in pool.sql
+    assert "win.dest_dep_ts::date)" not in expr
 
-def test_the_date_column_replaced_departure() -> None:
-    """PDF 2026-08-20 R2 removed Departure and added Date."""
+
+def test_delay_time_replaced_the_date_column_and_departure_came_back() -> None:
+    """PDF 2026-08-24 R1 reverses 08-20 R2: Departure returns, Date becomes
+    Delay Time, and Customer / Sched Dest Late / Actual Delivery join it.
+
+    Bruno's rounds reverse each other — what matters is that the sort keys move
+    WITH the column. A stale `date_asc` would not error; `_HOLD_SORTS.get()`
+    would hand back the default and the board would silently ignore the click.
+    """
     pool, resp = _run()
-    assert "AS date_days" in pool.sql
-    assert "AS departure" not in pool.sql
-    assert "departure_asc" not in hold_mod._HOLD_SORTS
-    assert "date_asc" in hold_mod._HOLD_SORTS and "date_desc" in hold_mod._HOLD_SORTS
+    for frag in (
+        "AS departure",
+        "AS delay_days",
+        "AS sched_dest_late",
+        "AS actual_delivery",
+        "br4.customer_name   AS customer_name",
+    ):
+        assert frag in pool.sql, frag
+
+    assert "date_asc" not in hold_mod._HOLD_SORTS
+    assert "date_desc" not in hold_mod._HOLD_SORTS
+    for key in ("delay_asc", "delay_desc", "departure_asc", "customer_asc"):
+        assert key in hold_mod._HOLD_SORTS, key
+
+    # Departure is a v4 column, so it carries its own sentinel comparison.
+    assert (
+        "CASE WHEN br4.origin_actual_departure > '2000-01-01'::date\n"
+        "               THEN to_char(br4.origin_actual_departure, 'YYYY-MM-DD') END AS departure"
+    ) in pool.sql
+
+
+def test_the_removed_columns_are_still_served() -> None:
+    """Carrier Cost and Margin % left the TABLE, not the endpoint.
+
+    The pinned totals row still sums carrier cost, so dropping them from the
+    payload would blank a number nobody asked to remove.
+    """
+    pool, resp = _run()
+    assert "AS carrier_cost" in pool.sql
+    assert "AS margin" in pool.sql
+    assert "t_carrier_cost" in pool.sql
+
+
+def test_pod_age_uses_the_pod_tracker_anchor() -> None:
+    """PDF 2026-08-24 R1: "the same calculation method as the POD Tracker".
+
+    Two rules from AP_module's `lib/pod-tracker-age.ts`:
+      * anchor = actual delivery, falling back to the SCHEDULED late delivery
+        (NOT to dest_actual_departure — on an in-progress load only the
+        schedule exists: 13 of 178 CORP rows had an actual arrival on
+        2026-08-24, all 178 had a schedule);
+      * the clock runs only once that anchor has passed, or status is 'D' —
+        otherwise a load is "POD overdue" before it has arrived.
+    """
+    pool, _ = _run()
+    anchor = "COALESCE(win.arr_ts, win.dest_sched_late_ts)"
+    assert f"CASE WHEN {anchor} IS NOT NULL" in pool.sql
+    assert f"{anchor} <= CURRENT_TIMESTAMP" in pool.sql
+    assert "OR TRIM(br4.status) = 'D'" in pool.sql
+    assert f"EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - {anchor})) / 3600.0" in pool.sql
+    # The old fallback must be gone, or the two anchors coexist and the column
+    # means whichever one the row happens to hit.
+    assert "COALESCE(win.arr_ts, win.dest_dep_ts)" not in pool.sql
+
+
+def test_by_order_pod_age_matches_the_hold_boards() -> None:
+    """One metric, one definition — the two tables share a page (§69)."""
+    import inspect
+
+    from app.routers.ops_portal_overview import orders as orders_mod
+
+    src = inspect.getsource(orders_mod)
+    anchor = "COALESCE(win.arr_ts, win.dest_sched_late_ts)"
+    assert f"EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - {anchor})) / 3600.0" in src
+    assert f"{anchor} <= CURRENT_TIMESTAMP" in src
+    assert "COALESCE(win.arr_ts, win.dest_dep_ts)" not in src
+    # …and its LATERAL must actually produce the fallback it now reads.
+    assert (
+        "MAX(CASE WHEN cw.dest_sched_arrive_late > '2000-01-01' "
+        "THEN cw.dest_sched_arrive_late END) AS dest_sched_late_ts"
+    ) in src
 
 
 def test_carrier_cost_uses_total_carrier_pay_not_revenue_minus_profit() -> None:

@@ -74,6 +74,15 @@ UNBILLED_ALARM_USD = 3_000_000.0
 # ``origin_actual_arrival = 1900-01-01`` that are noise.
 YEAR_FLOOR = date(2024, 1, 1)
 
+# "Top customers contributing to delays" — one definition, two endpoints.
+# A load is LATE when bill_date - dest_actual_departure exceeds LATE_DAYS
+# (Bruno lowered it from 10 to 2 on 2026-07-13), and a customer is only listed
+# when its average day count reaches MIN_AVG_DAYS (Bruno PDF 2026-08-24 R1).
+# The card and its "Table" pop-up read these same two constants, so the pop-up
+# cannot quietly describe a different universe from the card that opened it.
+LATE_DAYS = 2
+MIN_AVG_DAYS = 2
+
 
 router = APIRouter(tags=["admin-cashflow"], prefix="/custom/admin-cashflow")
 
@@ -1611,12 +1620,21 @@ async def top_delayed_customers(
     Bruno Aging R (PDF 2026-07-13): the "late" threshold was lowered from
     >10 days to >2 days. Kept as a single constant so the three FILTER sites
     (n_late / late_revenue / HAVING) can never drift apart.
+
+    Bruno Aging (PDF 2026-08-24) R1: customers whose **Avg d** is under 2 are
+    dropped. Filtered in the HAVING rather than in the UI on purpose — the
+    ORDER BY / LIMIT cut runs after it, so the card still shows a full ten
+    names instead of however many of the top ten happened to survive.
+    ⚠ `avg_days` averages ALL of the customer's loads, late or not (that is
+    what the column has always meant), while n_late / late_revenue count only
+    the late ones. Two denominators, deliberately.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
     team_list = _parse_teams(teams)
     company_list = _parse_companies(companies)
-    late_days = 2  # Bruno Aging R (PDF 2026-07-13): was 10
+    late_days = LATE_DAYS      # Bruno Aging R (PDF 2026-07-13): was 10
+    min_avg_days = MIN_AVG_DAYS  # Bruno Aging (PDF 2026-08-24) R1
 
     params: list = []
     where = _scope_where(
@@ -1651,6 +1669,7 @@ async def top_delayed_customers(
     FROM base
     GROUP BY customer_name
     HAVING COUNT(*) FILTER (WHERE days > {late_days}) > 0
+       AND COALESCE(AVG(days), 0) >= {min_avg_days}
     ORDER BY late_revenue DESC
     LIMIT ${p_lim}
     """
@@ -1668,6 +1687,148 @@ async def top_delayed_customers(
             }
             for r in rows
         ],
+    }
+
+
+@router.get("/top-delayed-customers/monthly")
+async def top_delayed_customers_monthly(
+    request: Request,
+    teams: Optional[str] = Query(None),
+    companies: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    customers: Optional[str] = Query(None),
+    customer_mode: str = Query("include"),
+    contract_type: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+    _user: dict = Depends(require_report_access("admin-cashflow")),
+):
+    """The "Table" pop-up behind the delays card — four months, side by side.
+
+    Bruno PDF 2026-08-24 R2: Late / Revenue / AVG Days for **this month, last
+    month, two months ago and three months ago**. Four DISCRETE months, not
+    widening trailing windows — each column is that month alone, so a row reads
+    as a trend rather than as four nested totals.
+
+    Scope-only, exactly like ``/timing-monthly``: teams, companies, customer and
+    contract type apply; the page's date range does NOT. An MTD range would
+    collapse the pop-up to a single populated column, which is the one thing a
+    four-month comparison must not do.
+
+    Bucketed on ``origin_actual_arrival`` — the same date every other panel on
+    this page filters by — so the **TM** column reconciles with the card sitting
+    behind the pop-up when the page is on MTD (§16). Lateness itself is still
+    measured on ``bill_date - dest_actual_departure``; those are two different
+    dates on purpose, and the card has always worked that way.
+
+    Late / Revenue / AVG Days carry the card's definitions verbatim, including
+    the asymmetry: revenue and the count are late-loads-only, the average is
+    over every load. The customer list is the card's too — at least one late
+    load and an overall average of at least ``MIN_AVG_DAYS`` across the four
+    months.
+    """
+    pool = get_datalake_gold_pool(request)
+    today = _today_clamped()
+    team_list = _parse_teams(teams)
+    company_list = _parse_companies(companies)
+    late_days = LATE_DAYS
+    min_avg_days = MIN_AVG_DAYS
+
+    # Four month starts, newest first: TM, LM, L2M, L3M.
+    buckets: list[date] = [date(today.year, today.month, 1)]
+    for _ in range(3):
+        prev = buckets[-1] - timedelta(days=1)
+        buckets.append(date(prev.year, prev.month, 1))
+    keys = ["tm", "lm", "l2m", "l3m"]
+
+    params: list = []
+    where = _scope_where(
+        "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
+        customers=_parse_customers(customers), customer_mode=customer_mode,
+    )
+    # The window is the four buckets, never the page range — see the docstring.
+    date_frag = _date_fragment("c", buckets[-1], today, params)
+
+    sql = f"""
+    WITH base AS (
+      SELECT
+        TRIM(c.customer_name)                               AS customer_name,
+        date_trunc('month', c.origin_actual_arrival)::date  AS bucket,
+        c.total_charge,
+        (c.bill_date::date - c.dest_actual_departure::date) AS days
+      FROM public.mcleod_gld_cashflow c
+      WHERE {where} AND {date_frag}
+        AND c.bill_date              > '2000-01-01'::date
+        AND c.dest_actual_arrival    > '2000-01-01'::date
+        AND c.dest_actual_departure  > '2000-01-01'::date
+        AND c.customer_name IS NOT NULL
+        AND TRIM(c.customer_name) <> ''
+    )
+    SELECT
+      customer_name,
+      bucket,
+      COUNT(*)                                                                 AS n_loads,
+      COUNT(*) FILTER (WHERE days > {late_days})                               AS n_late,
+      COALESCE(SUM(total_charge) FILTER (WHERE days > {late_days}), 0)::numeric AS late_revenue,
+      COALESCE(AVG(days), 0)::numeric                                          AS avg_days
+    FROM base
+    GROUP BY customer_name, bucket
+    """
+    rows = await pool.fetch(sql, *params)
+
+    by_customer: dict[str, dict] = {}
+    index = {b: k for b, k in zip(buckets, keys)}
+    for r in rows:
+        key = index.get(r["bucket"])
+        if key is None:          # a bucket outside the four (clamped range edge)
+            continue
+        rec = by_customer.setdefault(
+            r["customer_name"],
+            {
+                "customer_name": r["customer_name"],
+                "n_late_total": 0,
+                "late_revenue_total": 0.0,
+                "_days_sum": 0.0,
+                "_loads": 0,
+                **{f"{m}_{k}": None for m in ("late", "rev", "avg_days") for k in keys},
+            },
+        )
+        n_late = int(r["n_late"] or 0)
+        late_revenue = float(r["late_revenue"] or 0)
+        rec[f"late_{key}"] = n_late
+        rec[f"rev_{key}"] = late_revenue
+        rec[f"avg_days_{key}"] = float(r["avg_days"] or 0)
+        rec["n_late_total"] += n_late
+        rec["late_revenue_total"] += late_revenue
+        # Weighted so the overall average is over loads, not over months — a
+        # mean of monthly means would let a 2-load month outvote a 200-load one.
+        rec["_days_sum"] += float(r["avg_days"] or 0) * int(r["n_loads"] or 0)
+        rec["_loads"] += int(r["n_loads"] or 0)
+
+    out = []
+    for rec in by_customer.values():
+        loads = rec.pop("_loads")
+        days_sum = rec.pop("_days_sum")
+        rec["avg_days_total"] = (days_sum / loads) if loads else 0.0
+        if rec["n_late_total"] > 0 and rec["avg_days_total"] >= min_avg_days:
+            out.append(rec)
+    out.sort(key=lambda r: r["late_revenue_total"], reverse=True)
+    truncated = len(out) > limit
+
+    return {
+        "success": True,
+        "data": out[:limit],
+        "meta": {
+            "total": len(out),
+            "returned": min(len(out), limit),
+            "truncated": truncated,
+            "late_days": late_days,
+            "min_avg_days": min_avg_days,
+            # The UI labels its columns from these, so "TM" can never mean a
+            # different month in the header than it does in the numbers.
+            "buckets": [
+                {"key": k, "month": b.isoformat()} for k, b in zip(keys, buckets)
+            ],
+        },
     }
 
 

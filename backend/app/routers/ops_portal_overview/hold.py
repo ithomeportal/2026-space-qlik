@@ -40,25 +40,44 @@ shown 2 of the then-18 rows and silently hidden the very rows the board exists
 to surface (§74). ``UNBILLED_FROM`` is a fixed data-quality floor, not the
 page's window — it never moves when the user changes the date filter.
 
-The "Date" column (PDF 2026-08-20 R2)
--------------------------------------
-One column, two rules, both in days:
+The "Delay Time" column (PDF 2026-08-24 R1, replacing "Date")
+-------------------------------------------------------------
+``dest_sched_late − today``, in days, and **only** where ``status = 'P'`` and
+that scheduled date has already passed. Negative = overdue, the sign Bruno's
+formula literally produces and the one the "Date" column it replaces already
+used, so nobody has to re-learn the column.
 
-  * ``status = 'P'`` → ``dest_sched_late − today``. Negative = overdue.
-    Measured range −234 … +13 days, mean −5.
-  * ``status = 'D'`` → ``dest_actual_departure − origin_actual_departure``,
-    i.e. transit days. Measured 0 … 33, mean 2.
+The 2026-08-20 R2 "Date" column had a second rule — transit days on ``status =
+'D'`` — and R1 drops it: a column that means two different things on two rows
+of the same table is unreadable, and Bruno now wants the in-progress half only.
 
-⚠ The PDF writes the D rule as "Orig Actual Departure - Dest Actual Departure",
-which is the same magnitude with the sign flipped (0 … −33). It is emitted
-Dest−Orig so that BOTH branches read as days on one scale with "negative =
-late"; a column that flips meaning between two rows of the same table is
-unreadable. Flagged to Bruno 2026-08-21.
+⚠ Most rows are therefore BLANK, by design. Measured on live gold 2026-08-24:
+53 of 373 CORP rows and 10 of 150 DFW rows carry a value; the rest are either
+delivered (no delay to run) or in progress but not yet late. A future round
+reading that as "the column is broken" would be re-adding the D branch.
 
-⚠ BOTH operands are sentinel-guarded, on BOTH branches. ``1900-01-01`` is used
-instead of NULL here too: 110 of the 273 status='P' rows carry a sentinel
-``dest_sched_late``, which unguarded renders as ≈ −46,000 days. Guarded, they
-come back NULL and the UI shows "—" (§ calendar-sentinel guard).
+⚠ The operand is sentinel-guarded. ``1900-01-01`` is used instead of NULL here:
+110 of the 273 status='P' rows carried a sentinel ``dest_sched_late`` when this
+was written, and unguarded that renders as ≈ −46,000 days. Guarded, they come
+back NULL and the UI shows "—" (§ calendar-sentinel guard). The ``< CURRENT_DATE``
+half of the rule then removes the not-yet-late ones on top of that.
+
+Departure / Customer / Sched Dest Late / Actual Delivery (PDF 2026-08-24 R1)
+---------------------------------------------------------------------------
+``Departure`` is ``origin_actual_departure`` — it shipped on 2026-08-19, was
+dropped for "Date" on 08-20, and R1 brings it back (Bruno's rounds reverse each
+other; keep the plumbing). ``Customer`` was already on the wire and simply was
+not rendered. ``Sched Dest Late`` and ``Actual Delivery`` are the LATERAL's
+``dest_sched_arrive_late`` / ``dest_actual_departure``, emitted as CST
+wall-clock ISO text like every other window timestamp in this package.
+
+⚠ ``Actual Delivery`` is empty on virtually every ``status='P'`` row — 1 of 178
+CORP, 0 of 63 DFW on 2026-08-24 — because an in-progress load has not delivered
+yet. That is the data telling the truth, not a broken join.
+
+Carrier Cost and Margin % were removed from the TABLE by the same request, but
+are still SELECTed and still returned: the pinned totals row sums carrier cost,
+and ``/hold``'s consumers are not only this table.
 
 ⚠ "Dest Sched Late" is read from ``mcleod_gld_customer_windows``
 (``dest_sched_arrive_late``), NOT ``mcleod_gld_orders_pu_del_windows``
@@ -96,7 +115,8 @@ Sources
 -------
 ``mcleod_gld_budget_report_v4`` (money, hold flags, bill date — refreshed every
 15 min; **never `_v5`**, which is dead), ``mcleod_gld_customer_windows`` for the
-delivery timestamps behind the Date column / POD Age / Days to Bill,
+delivery timestamps behind Delay Time / Sched Dest Late / Actual Delivery /
+POD Age / Days to Bill,
 ``mcleod_gld_movement`` for the carrier, and AP_module's ``pod_tracker_loads``
 for the POD tick. The POD lookup degrades to "no POD" rather than 503ing the
 board (§5).
@@ -134,11 +154,17 @@ _HOLD_SORTS: dict[str, str] = {
     "order_desc": "TRIM(br4.id) DESC",
     "team_asc": "team_id ASC",
     "team_desc": "team_id DESC",
-    # Sorts the rendered Date column. It is an expression, not a stored
-    # column, so the ORDER BY repeats it rather than referencing the alias —
-    # a bare alias would be ambiguous against `bill_date`.
-    "date_asc": "date_days ASC NULLS LAST",
-    "date_desc": "date_days DESC NULLS LAST",
+    # Sorts the rendered Delay Time column (PDF 2026-08-24 R1 — it replaced
+    # "Date", and the keys were renamed with it so a stale `date_asc` cannot
+    # silently fall back to the default). It is an expression, not a stored
+    # column, so the ORDER BY repeats the alias rather than the expression —
+    # `delay_days` is unambiguous, unlike a bare `bill_date` would be.
+    "delay_asc": "delay_days ASC NULLS LAST",
+    "delay_desc": "delay_days DESC NULLS LAST",
+    "departure_asc": "br4.origin_actual_departure ASC NULLS LAST",
+    "departure_desc": "br4.origin_actual_departure DESC NULLS LAST",
+    "customer_asc": "br4.customer_name ASC NULLS LAST",
+    "customer_desc": "br4.customer_name DESC NULLS LAST",
     "revenue_asc": "COALESCE(br4.total_charge,0) ASC",
     "revenue_desc": "COALESCE(br4.total_charge,0) DESC",
     "carrier_cost_asc": "COALESCE(br4.total_carrier_pay,0) ASC",
@@ -161,7 +187,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     customer: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
-    sort: str = Query("date_asc"),
+    sort: str = Query("delay_asc"),
     limit: int = Query(500, ge=1, le=2000),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -174,7 +200,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     """
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
-    order_by = _HOLD_SORTS.get(sort, _HOLD_SORTS["date_asc"])
+    order_by = _HOLD_SORTS.get(sort, _HOLD_SORTS["delay_asc"])
 
     # Sargable padded variants — McLeod stores these both padded and unpadded,
     # and TRIM() on the column would block the index (see app/datalake.py).
@@ -219,21 +245,28 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
           TRIM(br4.id)        AS order_id,
           TRIM({_team_id_col('br4', scope)}) AS team_id,
           TRIM(br4.status)    AS status,
-          -- PDF 2026-08-20 R2 — one column, two rules, both in DAYS:
-          --   status 'P' -> dest_sched_late - today   (negative = overdue)
-          --   status 'D' -> dest_actual_departure - origin_actual_departure
-          --                 (transit days; the PDF writes the operands the
-          --                  other way round — see the module docstring)
-          -- Every operand is sentinel-guarded in the LATERAL / here: McLeod
-          -- writes 1900-01-01 rather than NULL, and 110 of 273 status='P'
-          -- rows carry one. Unguarded that renders as ~-46,000 days.
+          -- Back since PDF 2026-08-24 R1 (it was dropped for "Date" on 08-20).
+          -- Guarded: McLeod writes 1900-01-01, not NULL, and a sentinel would
+          -- render as a real-looking 1900 date rather than an em-dash.
+          CASE WHEN br4.origin_actual_departure > '{BILL_SENTINEL}'::date
+               THEN to_char(br4.origin_actual_departure, 'YYYY-MM-DD') END AS departure,
+          -- PDF 2026-08-24 R1 — "Delay Time", in DAYS, replacing "Date":
+          --   dest_sched_late - today, for status 'P' whose scheduled date has
+          --   ALREADY PASSED. Negative = overdue (Bruno's literal formula, and
+          --   the convention the column it replaces already used).
+          -- The operand is sentinel-guarded in the LATERAL: McLeod writes
+          -- 1900-01-01 rather than NULL, and 110 of 273 status='P' rows carried
+          -- one. Unguarded that renders as ~-46,000 days.
           CASE
             WHEN TRIM(br4.status) = 'P' AND win.dest_sched_late_ts IS NOT NULL
+                 AND win.dest_sched_late_ts::date < CURRENT_DATE
               THEN (win.dest_sched_late_ts::date - CURRENT_DATE)
-            WHEN TRIM(br4.status) = 'D' AND win.dest_dep_ts IS NOT NULL
-                 AND br4.origin_actual_departure > '{BILL_SENTINEL}'::date
-              THEN (win.dest_dep_ts::date - br4.origin_actual_departure::date)
-          END AS date_days,
+          END AS delay_days,
+          -- Both already sentinel-guarded inside the LATERAL, so a NULL here
+          -- means "no such timestamp", never 1900-01-01. Emitted as CST
+          -- wall-clock ISO text, the same shape By Order's window columns use.
+          to_char(win.dest_sched_late_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS sched_dest_late,
+          to_char(win.dest_dep_ts,        'YYYY-MM-DD"T"HH24:MI:SS') AS actual_delivery,
           br4.customer_name   AS customer_name,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
@@ -264,8 +297,24 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
                  THEN (br4.bill_date::date - win.dest_dep_ts::date)
             ELSE (CURRENT_DATE - win.dest_dep_ts::date)
           END AS days_to_bill,
-          CASE WHEN COALESCE(win.arr_ts, win.dest_dep_ts) IS NOT NULL
-               THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(win.arr_ts, win.dest_dep_ts))) / 3600.0
+          -- POD Age, PDF 2026-08-24 R1: "the same calculation method as the
+          -- POD Tracker" (AP_module `lib/pod-tracker-age.ts`). Two rules there,
+          -- and both moved here:
+          --   * the anchor is ACTUAL delivery, falling back to the SCHEDULED
+          --     late delivery — not, as before, to dest_actual_departure. The
+          --     obligation to produce a POD starts when the truck delivers, and
+          --     on an in-progress load only the schedule exists (13 of 178 CORP
+          --     rows have an actual arrival; 178 of 178 have a schedule).
+          --   * the clock only RUNS once that anchor has passed, or the load is
+          --     delivered. Anchoring on a future schedule would brand a load
+          --     "POD overdue" before it has even arrived.
+          -- CURRENT_TIMESTAMP is CST here (the pool sets the session), and gold
+          -- timestamps are CST wall clocks, so both operands share one space —
+          -- the mixed-space bug that module exists to prevent cannot occur.
+          CASE WHEN COALESCE(win.arr_ts, win.dest_sched_late_ts) IS NOT NULL
+                AND (COALESCE(win.arr_ts, win.dest_sched_late_ts) <= CURRENT_TIMESTAMP
+                     OR TRIM(br4.status) = 'D')
+               THEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(win.arr_ts, win.dest_sched_late_ts))) / 3600.0
           END AS pod_age_hours,
           -- §44: window aggregates run after WHERE but BEFORE LIMIT, so the
           -- pinned Totals row describes the FULL universe even when capped.
@@ -308,7 +357,11 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
             "order_id":      r["order_id"],
             "team_id":       r["team_id"],
             "status":        (r["status"] or "").strip().upper(),
-            "date_days":     int(r["date_days"]) if r["date_days"] is not None else None,
+            "departure":     r["departure"],
+            "delay_days":    int(r["delay_days"]) if r["delay_days"] is not None else None,
+            # None (not "") when absent, so the UI renders an em-dash.
+            "sched_dest_late": r["sched_dest_late"],
+            "actual_delivery": r["actual_delivery"],
             "customer_name": r["customer_name"] or "",
             "carrier":       r["carrier"] or "",
             "lane":          r["lane"] or "",

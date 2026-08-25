@@ -168,7 +168,7 @@ export function Actuals({ filters, onPickCustomer, onPickLane, hideBudget = fals
       {error ? (
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load Actuals</div>
       ) : (
-        <div className="max-h-[420px] overflow-auto">{table}</div>
+        <div className="[contain:paint] max-h-[420px] overflow-auto">{table}</div>
       )}
 
       {attritionOpen && (

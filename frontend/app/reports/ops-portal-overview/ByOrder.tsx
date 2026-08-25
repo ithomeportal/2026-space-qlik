@@ -294,7 +294,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
         coverQ.error ? (
           <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load open loads</div>
         ) : (
-          <div className="max-h-[480px] overflow-auto">
+          <div className="[contain:paint] max-h-[480px] overflow-auto">
             <CoverTable rows={coverRows} totals={coverTotals} />
           </div>
         )
@@ -302,14 +302,14 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
         pending.error ? (
           <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load pending loads</div>
         ) : (
-          <div className="max-h-[480px] overflow-auto">
+          <div className="[contain:paint] max-h-[480px] overflow-auto">
             <PendingTable rows={pending.data?.data ?? []} />
           </div>
         )
       ) : error ? (
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load orders</div>
       ) : (
-        <div className="max-h-[480px] overflow-auto">{renderTable(pageRows)}</div>
+        <div className="[contain:paint] max-h-[480px] overflow-auto">{renderTable(pageRows)}</div>
       )}
 
       {expanded && (

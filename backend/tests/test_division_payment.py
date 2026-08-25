@@ -21,6 +21,14 @@ a test here, so a future round cannot quietly reintroduce them:
   turning a +$29,470 month into a −$47,120 loss; audit loads summed to none of
   the five records. Both are asserted below.
 
+⚠ Since Bruno's PDF 2026-08-24 the seed carries **no GL amounts at all** — every
+one of the 366 rows ships at 0.00 and A&O types the real figures into the now
+editable Amount cell. The truth table below therefore feeds ``compute_summary``
+the GL total from its OWN column rather than from the seed: the arithmetic
+contract is unchanged, only the starting data is. ``test_the_seed_ships_no_gl_
+amounts`` pins the new rule so a re-import of the prototype's figures fails
+loudly instead of quietly refilling the sheet.
+
 The truth table is the vendor prototype's own output, derived twice
 independently (once by reading ``calculateMonthSummary`` and once by replaying
 the extracted data through it). It is the contract the port must not drift from.
@@ -78,9 +86,12 @@ def test_truth_table(row):
     m = MONTHS[(year, month)]
     assert m["revenue"] == pytest.approx(revenue), "seed revenue drifted"
     assert m["profit"] == pytest.approx(profit), "seed profit drifted"
-    assert _gl_total(year, month) == pytest.approx(gl), "seed GL rows drifted"
+    # The GL total is the truth table's own column, NOT the seed's: the seed
+    # ships zeros now (see the module docstring). Revenue and profit still come
+    # from the seed because those are still seeded figures.
+    assert _gl_total(year, month) == 0, "the seed refilled its GL amounts"
 
-    s = dp.compute_summary(m["revenue"], m["carrier_cost"], m["profit"], _gl_total(year, month))
+    s = dp.compute_summary(m["revenue"], m["carrier_cost"], m["profit"], gl)
     assert s["margin_pct"] == pytest.approx(margin, abs=1e-4)
     assert s["gl_deductions"] == pytest.approx(gl)
     assert s["penalty_fee"] == pytest.approx(tariff)
@@ -95,9 +106,8 @@ def test_tariff_charged_exactly_once(row):
     Mutation check: the vendor README's ``− penaltyFee − corporateGain`` would
     fail this for every month that carries a tariff, which is 16 of the 19.
     """
-    year, month = row[0], row[1]
+    year, month, gl = row[0], row[1], row[5]
     m = MONTHS[(year, month)]
-    gl = _gl_total(year, month)
     s = dp.compute_summary(m["revenue"], m["carrier_cost"], m["profit"], gl)
 
     assert s["net_payment"] == pytest.approx(s["profit"] - gl - s["corporate_gain"])
@@ -232,6 +242,22 @@ def test_seed_has_every_month_and_no_duplicates():
         assert SEED["gl_accounts"][f"{m['year']}-{m['month']}"], "month has no GL rows"
 
 
+def test_the_seed_ships_no_gl_amounts():
+    """Bruno PDF 2026-08-24 R1 — every GL Code defaults to $0.00.
+
+    A&O's GL lines live in the accounting system; the 366 figures the vendor
+    prototype shipped were demo data. Re-importing them would refill 19 months
+    with numbers nobody entered, and because seeding skips a month that already
+    has rows, the refill would only reach a FRESH database — i.e. it would pass
+    unnoticed here and surface on a restore. Hence the pin.
+    """
+    rows = [r for rows in SEED["gl_accounts"].values() for r in rows]
+    assert len(rows) == 366
+    assert all(r["amount"] == 0 for r in rows), "the seed refilled its GL amounts"
+    # The structure is untouched — this is a blanked sheet, not a deleted one.
+    assert all(r["description"].strip() for r in rows)
+
+
 def test_every_gl_row_uses_a_known_category():
     """An unknown category would silently vanish from the PDF's KPI strip."""
     for key, rows in SEED["gl_accounts"].items():
@@ -253,11 +279,19 @@ def test_archive_dates_are_valid_and_in_the_right_year():
 
 
 @pytest.mark.parametrize("snap", SEED["snapshots"], ids=[f"{s['year']}-{s['month']}" for s in SEED["snapshots"]])
-def test_archive_matches_a_live_recomputation(snap):
-    """An approved archive must equal what the calculator would produce today."""
+def test_archive_is_internally_consistent(snap):
+    """An approved archive must be exactly what the formula produces from its
+    OWN inputs — the defect this catches is ``rec-mar`` carrying May's GL total,
+    which turned a +$29,470 month into a −$47,120 loss.
+
+    The GL total is read from the archive rather than from the seed: an archive
+    is a frozen record of what was approved, and since 2026-08-24 the live sheet
+    starts at 0.00 for every GL Code, so the two are no longer the same number
+    by construction (that is the point of the change, not a drift).
+    """
     m = MONTHS[(snap["year"], snap["month"])]
     s = dp.compute_summary(m["revenue"], m["carrier_cost"], m["profit"],
-                           _gl_total(snap["year"], snap["month"]))
+                           snap["gl_deductions"])
     for k in ("revenue", "carrier_cost", "profit", "gl_deductions",
               "penalty_fee", "corporate_gain", "net_payment"):
         assert snap[k] == pytest.approx(s[k]), k
@@ -419,45 +453,56 @@ async def test_live_replay_ddl_seed_and_every_query():
         assert len((await dp.archives(_Req, user))["data"]) == 19
         assert len((await dp.recalcs(_Req, user))["data"]) == 5
 
-        # Every month must serve, and agree with the archive it was seeded from.
+        # Every month must serve, and its served numbers must be exactly what
+        # `compute_summary` produces from the month's OWN stored inputs.
+        #
+        # Deliberately NOT compared against the seeded archive: this table is
+        # live and Finance edits it — July 2026 already carries real figures
+        # ($3.84M revenue, not the prototype's $6.1M). An assertion pinned to
+        # the seed would fail on a correct edit, which is the fastest way to
+        # get a test deleted. What must hold forever is the arithmetic and,
+        # since 2026-08-24, the blank GL sheet.
         for m in SEED["months"]:
             d = (await dp.summary(_Req, m["year"], m["month"], user))["data"]
-            snap = next(
-                s for s in SEED["snapshots"]
-                if s["year"] == m["year"] and s["month"] == m["month"]
+            assert d["gl_deductions"] == pytest.approx(0.0, abs=0.01), (
+                f"{m['year']}-{m['month']} carries a seeded GL amount"
             )
-            assert d["net_payment"] == pytest.approx(snap["net_payment"], abs=0.01)
+            expect = dp.compute_summary(d["revenue"], d["carrier_cost"], d["profit"], 0)
+            for k in ("margin_pct", "penalty_fee", "corporate_gain", "net_payment"):
+                assert d[k] == pytest.approx(expect[k], abs=0.01), f"{m['month']}.{k}"
 
-        # The PDF's own figures, end to end through the SQL.
-        jul = (await dp.summary(_Req, 2026, "july", user))["data"]
-        assert jul["net_payment"] == 382_610.00
-        assert jul["corporate_gain"] == 183_000.00
-        assert jul["gl_deductions"] == 166_390.00
-
-        # February carries rec-jan (+$6,000 profit delta). The PDF's Dashboard
-        # KPI card reads $94,280.00 — i.e. 75 % of the delta to A&O, which is
-        # the rule this report implements. (Its Calculator screenshot shows
-        # $92,780.00, the prototype's 50 % variant. The PDF disagrees with
-        # itself; the Dashboard side is the one whose spec text defines the
-        # formula, so it wins.)
+        # February carries rec-jan (+$6,000 profit delta → 75 % to A&O).
         feb = (await dp.summary(_Req, 2026, "february", user))["data"]
-        assert feb["net_payment"] == 89_780.00
         assert feb["recalc_ao_adjustment"] == 4_500.00
-        assert feb["net_payment_adjusted"] == 94_280.00
+        assert feb["net_payment_adjusted"] == pytest.approx(
+            feb["net_payment"] + 4_500.00, abs=0.01
+        )
 
-        # Excluding a GL row moves the net payment by exactly that amount and
-        # touches nothing else.
+        # Typing an amount into the (now editable) cell moves the net payment
+        # down by exactly that amount, and excluding the row puts it back —
+        # neither touches profit, margin or the tariff. Written as a PATCH
+        # rather than by reading the biggest seeded row, because every seeded
+        # row is 0.00 now and that comparison would be vacuously true.
+        jul = (await dp.summary(_Req, 2026, "july", user))["data"]
         gl_id = await conn.fetchval(
             "SELECT g.id FROM dpc_gl_accounts g JOIN dpc_months m ON m.id = g.month_id "
             "WHERE m.year = 2026 AND m.month = 'july' AND g.included "
-            "ORDER BY g.amount DESC LIMIT 1"
+            "ORDER BY g.sort_order LIMIT 1"
         )
-        amount = float(
-            await conn.fetchval("SELECT amount FROM dpc_gl_accounts WHERE id = $1", gl_id)
-        )
+        amount = 12_345.67
+        await dp.patch_expense(gl_id, dp.GLPatch(amount=amount), _Req, user)
+        typed = (await dp.summary(_Req, 2026, "july", user))["data"]
+        assert typed["gl_deductions"] == pytest.approx(amount, abs=0.01)
+        assert jul["net_payment"] - typed["net_payment"] == pytest.approx(amount, abs=0.01)
+
+        # A negative amount is refused before it can reach SQL.
+        with pytest.raises(Exception):
+            dp.GLPatch(amount=-0.01)
+
         await dp.patch_expense(gl_id, dp.GLPatch(included=False), _Req, user)
         after = (await dp.summary(_Req, 2026, "july", user))["data"]
-        assert after["net_payment"] - jul["net_payment"] == pytest.approx(amount, abs=0.01)
+        assert after["net_payment"] - typed["net_payment"] == pytest.approx(amount, abs=0.01)
+        assert after["net_payment"] == pytest.approx(jul["net_payment"], abs=0.01)
         assert after["profit"] == jul["profit"]
         assert after["penalty_fee"] == jul["penalty_fee"]
 
@@ -465,10 +510,14 @@ async def test_live_replay_ddl_seed_and_every_query():
         await dp.save_inputs(
             2026, "july", dp.MonthInputs(revenue=6_100_000, carrier_cost=5_368_000), _Req, user
         )
-        assert (await dp.summary(_Req, 2026, "july", user))["data"]["profit"] == 732_000.00
+        edited = (await dp.summary(_Req, 2026, "july", user))["data"]
+        assert edited["profit"] == 732_000.00
 
+        # Approving archives exactly what the Calculator was showing — compared
+        # against the summary taken AFTER the edit above, not before it.
         approved = (await dp.approve(2026, "july", _Req, user))["data"]
-        assert approved["net_payment"] == pytest.approx(after["net_payment"], abs=0.01)
+        assert approved["net_payment"] == pytest.approx(edited["net_payment"], abs=0.01)
+        assert approved["gl_deductions"] == pytest.approx(0.0, abs=0.01)
     finally:
         await tx.rollback()
         await conn.close()

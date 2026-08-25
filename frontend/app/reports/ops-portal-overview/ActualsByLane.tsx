@@ -113,7 +113,7 @@ export function ActualsByLane({ filters, onPickLane }: Props) {
       {error ? (
         <div className="px-3 py-4 text-sm text-[#DC2626]">Failed to load lane roll-up</div>
       ) : (
-        <div className="max-h-[420px] overflow-auto">
+        <div className="[contain:paint] max-h-[420px] overflow-auto">
           <LaneTable
             rows={rows}
             totals={totals}

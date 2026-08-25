@@ -428,7 +428,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         # Must track hold.py's default. `departure_desc` was removed with the
         # Departure column (PDF 2026-08-20 R2); the whitelist would have
         # silently fallen back, advertising a sort key that no longer exists.
-        sort: str = Query("date_asc"),
+        sort: str = Query("delay_asc"),
         limit: int = Query(500, ge=1, le=2000),
         _user: dict = Depends(gate),
     ):

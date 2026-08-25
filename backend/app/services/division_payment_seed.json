@@ -204,7 +204,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — January 2026",
-    "amount": 3800,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -212,7 +212,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -220,7 +220,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -228,7 +228,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jan",
-    "amount": 1250,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -236,7 +236,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 150,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -244,7 +244,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -252,7 +252,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -260,7 +260,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 01/26",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -268,7 +268,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 480,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -276,7 +276,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -284,7 +284,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -292,7 +292,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -300,7 +300,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -308,7 +308,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O January 2026",
-    "amount": 16500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -316,7 +316,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O January 2026",
-    "amount": 2800,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -324,7 +324,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O January 2026",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -332,7 +332,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O January 2026",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -340,7 +340,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O January 2026",
-    "amount": 22500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -348,7 +348,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O January 2026",
-    "amount": 340,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -358,7 +358,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — February 2026",
-    "amount": 4000,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -366,7 +366,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -374,7 +374,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -382,7 +382,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Feb",
-    "amount": 1250,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -390,7 +390,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 220,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -398,7 +398,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -406,7 +406,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -414,7 +414,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 02/26",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -422,7 +422,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 480,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -430,7 +430,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -438,7 +438,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -446,7 +446,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -454,7 +454,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -462,7 +462,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O February 2026",
-    "amount": 17500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -470,7 +470,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O February 2026",
-    "amount": 3000,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -478,7 +478,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O February 2026",
-    "amount": 2500,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -486,7 +486,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O February 2026",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -494,7 +494,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O February 2026",
-    "amount": 23500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -502,7 +502,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O February 2026",
-    "amount": 340,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -512,7 +512,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — April 2026",
-    "amount": 4200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -520,7 +520,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -528,7 +528,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -536,7 +536,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises May",
-    "amount": 1250,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -544,7 +544,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -552,7 +552,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -560,7 +560,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -568,7 +568,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 04/25",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -576,7 +576,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 480,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -584,7 +584,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -592,7 +592,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -600,7 +600,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -608,7 +608,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1500,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -616,7 +616,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O May 2026",
-    "amount": 18500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -624,7 +624,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O May 2026",
-    "amount": 3200,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -632,7 +632,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O May 2026",
-    "amount": 2800,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -640,7 +640,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O May 2026 (2nd entry)",
-    "amount": 1500,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -648,7 +648,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O April 2026",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -656,7 +656,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O May 2026",
-    "amount": 24500,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    },
@@ -664,7 +664,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O May 2026",
-    "amount": 340,
+    "amount": 0,
     "included": true,
     "sort_order": 19
    }
@@ -674,7 +674,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — April 2026",
-    "amount": 5200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -682,7 +682,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -690,7 +690,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -698,7 +698,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Apr",
-    "amount": 2350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -706,7 +706,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 520,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -714,7 +714,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -722,7 +722,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -730,7 +730,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 04/26",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -738,7 +738,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 720,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -746,7 +746,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -754,7 +754,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -762,7 +762,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -770,7 +770,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 4800,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -778,7 +778,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O April 2026",
-    "amount": 38000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -786,7 +786,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O April 2026",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -794,7 +794,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O April 2026",
-    "amount": 5500,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -802,7 +802,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O April 2026",
-    "amount": 4500,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -810,7 +810,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O April 2026",
-    "amount": 48000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -818,7 +818,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O April 2026",
-    "amount": 520,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    },
@@ -826,7 +826,7 @@
     "code": "6140-15",
     "category": "facilities",
     "description": "Office Rent — Los Soles Building April 2026",
-    "amount": 5500,
+    "amount": 0,
     "included": true,
     "sort_order": 19
    }
@@ -836,7 +836,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — May 2026",
-    "amount": 5800,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -844,7 +844,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -852,7 +852,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -860,7 +860,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises May",
-    "amount": 2350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -868,7 +868,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 680,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -876,7 +876,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -884,7 +884,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -892,7 +892,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 05/26",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -900,7 +900,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 720,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -908,7 +908,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -916,7 +916,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -924,7 +924,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -932,7 +932,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 5200,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -940,7 +940,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O May 2026",
-    "amount": 42000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -948,7 +948,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O May 2026",
-    "amount": 7200,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -956,7 +956,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O May 2026",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -964,7 +964,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O May 2026",
-    "amount": 5200,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -972,7 +972,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O May 2026",
-    "amount": 52000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -980,7 +980,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O May 2026",
-    "amount": 580,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    },
@@ -988,7 +988,7 @@
     "code": "6140-15",
     "category": "facilities",
     "description": "Office Rent — Los Soles Building May 2026",
-    "amount": 6000,
+    "amount": 0,
     "included": true,
     "sort_order": 19
    }
@@ -998,7 +998,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — June 2026",
-    "amount": 6200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1006,7 +1006,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1014,7 +1014,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1022,7 +1022,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jun",
-    "amount": 2350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1030,7 +1030,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 720,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1038,7 +1038,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1046,7 +1046,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1054,7 +1054,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 06/26",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1062,7 +1062,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 720,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1070,7 +1070,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1078,7 +1078,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1086,7 +1086,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1094,7 +1094,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 5800,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1102,7 +1102,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O June 2026",
-    "amount": 46000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1110,7 +1110,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O June 2026",
-    "amount": 7800,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1118,7 +1118,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O June 2026",
-    "amount": 7200,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1126,7 +1126,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O June 2026",
-    "amount": 5800,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1134,7 +1134,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O June 2026",
-    "amount": 56000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1142,7 +1142,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O June 2026",
-    "amount": 620,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    },
@@ -1150,7 +1150,7 @@
     "code": "6140-15",
     "category": "facilities",
     "description": "Office Rent — Los Soles Building June 2026",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 19
    }
@@ -1160,7 +1160,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — July 2026",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1168,7 +1168,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1176,7 +1176,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1184,7 +1184,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jul",
-    "amount": 2350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1192,7 +1192,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 780,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1200,7 +1200,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1208,7 +1208,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1216,7 +1216,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 07/26",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1224,7 +1224,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 720,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1232,7 +1232,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1240,7 +1240,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1248,7 +1248,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1256,7 +1256,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1264,7 +1264,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O July 2026",
-    "amount": 50000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1272,7 +1272,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O July 2026",
-    "amount": 8500,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1280,7 +1280,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O July 2026",
-    "amount": 8000,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1288,7 +1288,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O July 2026",
-    "amount": 6500,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1296,7 +1296,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O July 2026",
-    "amount": 61000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1304,7 +1304,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O July 2026",
-    "amount": 650,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    },
@@ -1312,7 +1312,7 @@
     "code": "6140-15",
     "category": "facilities",
     "description": "Office Rent — Los Soles Building July 2026",
-    "amount": 7000,
+    "amount": 0,
     "included": true,
     "sort_order": 19
    }
@@ -1322,7 +1322,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — January 2025",
-    "amount": 3200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1330,7 +1330,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1338,7 +1338,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 280,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1346,7 +1346,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jan",
-    "amount": 1100,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1354,7 +1354,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1362,7 +1362,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 400,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1370,7 +1370,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1378,7 +1378,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 01/25",
-    "amount": 600,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1386,7 +1386,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 400,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1394,7 +1394,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1402,7 +1402,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1410,7 +1410,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1418,7 +1418,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 900,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1426,7 +1426,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O January 2025",
-    "amount": 12500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1434,7 +1434,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O January 2025",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1442,7 +1442,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O January 2025",
-    "amount": 1500,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1450,7 +1450,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O January 2025",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1458,7 +1458,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O January 2025",
-    "amount": 16500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1466,7 +1466,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O January 2025",
-    "amount": 280,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -1476,7 +1476,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — February 2025",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1484,7 +1484,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1492,7 +1492,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 280,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1500,7 +1500,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Feb",
-    "amount": 1100,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1508,7 +1508,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 150,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1516,7 +1516,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 400,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1524,7 +1524,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1532,7 +1532,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 02/25",
-    "amount": 600,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1540,7 +1540,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 400,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1548,7 +1548,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1556,7 +1556,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1564,7 +1564,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 100,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1572,7 +1572,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1580,7 +1580,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O February 2025",
-    "amount": 13500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1588,7 +1588,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O February 2025",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1596,7 +1596,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O February 2025",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1604,7 +1604,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O February 2025",
-    "amount": 1400,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1612,7 +1612,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O February 2025",
-    "amount": 17500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1620,7 +1620,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O February 2025",
-    "amount": 280,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -1630,7 +1630,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — March 2025",
-    "amount": 3600,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1638,7 +1638,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 800,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1646,7 +1646,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 300,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1654,7 +1654,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Mar",
-    "amount": 1150,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1662,7 +1662,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 160,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1670,7 +1670,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1678,7 +1678,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 1900,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1686,7 +1686,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 03/25",
-    "amount": 650,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1694,7 +1694,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 420,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1702,7 +1702,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1710,7 +1710,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1718,7 +1718,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1726,7 +1726,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1734,7 +1734,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O March 2025",
-    "amount": 14000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1742,7 +1742,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O March 2025",
-    "amount": 2300,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1750,7 +1750,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O March 2025",
-    "amount": 1900,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1758,7 +1758,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O March 2025",
-    "amount": 1500,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1766,7 +1766,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O March 2025",
-    "amount": 18500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1774,7 +1774,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O March 2025",
-    "amount": 300,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -1784,7 +1784,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — April 2025",
-    "amount": 3800,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1792,7 +1792,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 800,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1800,7 +1800,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 300,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1808,7 +1808,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Apr",
-    "amount": 1150,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1816,7 +1816,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 180,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1824,7 +1824,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1832,7 +1832,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 1900,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1840,7 +1840,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 04/25",
-    "amount": 650,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -1848,7 +1848,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 420,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -1856,7 +1856,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -1864,7 +1864,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -1872,7 +1872,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 105,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -1880,7 +1880,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1100,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -1888,7 +1888,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O April 2025",
-    "amount": 14500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -1896,7 +1896,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O April 2025",
-    "amount": 2400,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -1904,7 +1904,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O April 2025",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -1912,7 +1912,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O April 2025",
-    "amount": 1600,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -1920,7 +1920,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O April 2025",
-    "amount": 19500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -1928,7 +1928,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O April 2025",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -1938,7 +1938,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — May 2025",
-    "amount": 4000,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -1946,7 +1946,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -1954,7 +1954,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -1962,7 +1962,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises May",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -1970,7 +1970,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 200,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -1978,7 +1978,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -1986,7 +1986,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -1994,7 +1994,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 05/25",
-    "amount": 700,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2002,7 +2002,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2010,7 +2010,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2018,7 +2018,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2026,7 +2026,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2034,7 +2034,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1300,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2042,7 +2042,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O May 2025",
-    "amount": 15500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2050,7 +2050,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O May 2025",
-    "amount": 2600,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2058,7 +2058,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O May 2025",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2066,7 +2066,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O May 2025",
-    "amount": 1700,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2074,7 +2074,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O May 2025",
-    "amount": 21000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2082,7 +2082,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O May 2025",
-    "amount": 340,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2092,7 +2092,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — June 2025",
-    "amount": 4200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2100,7 +2100,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2108,7 +2108,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2116,7 +2116,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jun",
-    "amount": 1200,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2124,7 +2124,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 220,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2132,7 +2132,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2140,7 +2140,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2148,7 +2148,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 06/25",
-    "amount": 700,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2156,7 +2156,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 450,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2164,7 +2164,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2172,7 +2172,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2180,7 +2180,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 110,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2188,7 +2188,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1500,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2196,7 +2196,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O June 2025",
-    "amount": 17000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2204,7 +2204,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O June 2025",
-    "amount": 2800,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2212,7 +2212,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O June 2025",
-    "amount": 2400,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2220,7 +2220,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O June 2025",
-    "amount": 1900,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2228,7 +2228,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O June 2025",
-    "amount": 23000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2236,7 +2236,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O June 2025",
-    "amount": 360,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2246,7 +2246,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — July 2025",
-    "amount": 4500,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2254,7 +2254,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 900,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2262,7 +2262,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 350,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2270,7 +2270,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Jul",
-    "amount": 1250,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2278,7 +2278,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 250,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2286,7 +2286,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2294,7 +2294,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2302,7 +2302,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 07/25",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2310,7 +2310,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 480,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2318,7 +2318,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2326,7 +2326,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2334,7 +2334,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2342,7 +2342,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1700,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2350,7 +2350,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O July 2025",
-    "amount": 18500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2358,7 +2358,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O July 2025",
-    "amount": 3000,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2366,7 +2366,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O July 2025",
-    "amount": 2600,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2374,7 +2374,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O July 2025",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2382,7 +2382,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O July 2025",
-    "amount": 25000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2390,7 +2390,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O July 2025",
-    "amount": 380,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2400,7 +2400,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — August 2025",
-    "amount": 4600,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2408,7 +2408,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 900,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2416,7 +2416,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 350,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2424,7 +2424,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Aug",
-    "amount": 1250,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2432,7 +2432,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 260,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2440,7 +2440,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 550,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2448,7 +2448,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2456,7 +2456,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 08/25",
-    "amount": 750,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2464,7 +2464,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 480,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2472,7 +2472,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2480,7 +2480,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2488,7 +2488,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 120,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2496,7 +2496,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1800,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2504,7 +2504,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O August 2025",
-    "amount": 19000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2512,7 +2512,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O August 2025",
-    "amount": 3100,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2520,7 +2520,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O August 2025",
-    "amount": 2700,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2528,7 +2528,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O August 2025",
-    "amount": 2100,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2536,7 +2536,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O August 2025",
-    "amount": 25500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2544,7 +2544,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O August 2025",
-    "amount": 390,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2554,7 +2554,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — September 2025",
-    "amount": 4800,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2562,7 +2562,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 950,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2570,7 +2570,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 360,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2578,7 +2578,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Sep",
-    "amount": 1300,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2586,7 +2586,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 280,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2594,7 +2594,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 550,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2602,7 +2602,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2610,7 +2610,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 09/25",
-    "amount": 800,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2618,7 +2618,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2626,7 +2626,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2634,7 +2634,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2642,7 +2642,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2650,7 +2650,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 1900,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2658,7 +2658,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O September 2025",
-    "amount": 20000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2666,7 +2666,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O September 2025",
-    "amount": 3200,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2674,7 +2674,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O September 2025",
-    "amount": 2800,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2682,7 +2682,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O September 2025",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2690,7 +2690,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O September 2025",
-    "amount": 26500,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2698,7 +2698,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O September 2025",
-    "amount": 400,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2708,7 +2708,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — October 2025",
-    "amount": 5000,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2716,7 +2716,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 950,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2724,7 +2724,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 360,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2732,7 +2732,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Oct",
-    "amount": 1300,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2740,7 +2740,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 300,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2748,7 +2748,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 600,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2756,7 +2756,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2764,7 +2764,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 10/25",
-    "amount": 800,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2772,7 +2772,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 500,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2780,7 +2780,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2788,7 +2788,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2796,7 +2796,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 125,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2804,7 +2804,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 2000,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2812,7 +2812,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O October 2025",
-    "amount": 21000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2820,7 +2820,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O October 2025",
-    "amount": 3300,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2828,7 +2828,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O October 2025",
-    "amount": 2900,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2836,7 +2836,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O October 2025",
-    "amount": 2300,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2844,7 +2844,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O October 2025",
-    "amount": 28000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -2852,7 +2852,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O October 2025",
-    "amount": 420,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -2862,7 +2862,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — November 2025",
-    "amount": 5200,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -2870,7 +2870,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -2878,7 +2878,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 380,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -2886,7 +2886,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Nov",
-    "amount": 1350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -2894,7 +2894,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 320,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -2902,7 +2902,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 600,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -2910,7 +2910,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2300,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -2918,7 +2918,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 11/25",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -2926,7 +2926,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 520,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -2934,7 +2934,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -2942,7 +2942,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -2950,7 +2950,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -2958,7 +2958,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 2200,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -2966,7 +2966,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O November 2025",
-    "amount": 22500,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -2974,7 +2974,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O November 2025",
-    "amount": 3500,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -2982,7 +2982,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O November 2025",
-    "amount": 3100,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -2990,7 +2990,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O November 2025",
-    "amount": 2400,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -2998,7 +2998,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O November 2025",
-    "amount": 30000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -3006,7 +3006,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O November 2025",
-    "amount": 440,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
@@ -3016,7 +3016,7 @@
     "code": "6180-01",
     "category": "other",
     "description": "A&O LLC — December 2025",
-    "amount": 5500,
+    "amount": 0,
     "included": true,
     "sort_order": 0
    },
@@ -3024,7 +3024,7 @@
     "code": "6110-07",
     "category": "subscriptions",
     "description": "Staffing & Recruiting MX — Indeed Monthly Subscription",
-    "amount": 1000,
+    "amount": 0,
     "included": true,
     "sort_order": 1
    },
@@ -3032,7 +3032,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — Message Media SMS-MMS System",
-    "amount": 380,
+    "amount": 0,
     "included": true,
     "sort_order": 2
    },
@@ -3040,7 +3040,7 @@
     "code": "6130-01",
     "category": "subscriptions",
     "description": "Dues & Subscriptions — One Network Enterprises Dec",
-    "amount": 1350,
+    "amount": 0,
     "included": true,
     "sort_order": 3
    },
@@ -3048,7 +3048,7 @@
     "code": "6150-02",
     "category": "travel",
     "description": "Car Rental / Rideshare — UBER Mondi MX",
-    "amount": 350,
+    "amount": 0,
     "included": true,
     "sort_order": 4
    },
@@ -3056,7 +3056,7 @@
     "code": "6117-01",
     "category": "other",
     "description": "Charitable Contributions — The Home Depot Foundation",
-    "amount": 650,
+    "amount": 0,
     "included": true,
     "sort_order": 5
    },
@@ -3064,7 +3064,7 @@
     "code": "6130-02",
     "category": "it",
     "description": "IT McLeod IT Services — MEMO: Kleinschmidt + Characters INV684373",
-    "amount": 2300,
+    "amount": 0,
     "included": true,
     "sort_order": 6
    },
@@ -3072,7 +3072,7 @@
     "code": "6112-05",
     "category": "facilities",
     "description": "Seminar & Conferences — Los Soles Conference Room 12/25",
-    "amount": 850,
+    "amount": 0,
     "included": true,
     "sort_order": 7
    },
@@ -3080,7 +3080,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — 4 Parking Spots Los Soles",
-    "amount": 520,
+    "amount": 0,
     "included": true,
     "sort_order": 8
    },
@@ -3088,7 +3088,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 2",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 9
    },
@@ -3096,7 +3096,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 3",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 10
    },
@@ -3104,7 +3104,7 @@
     "code": "6140-12",
     "category": "facilities",
     "description": "Parking Expenses MTY — Parking Spot 4",
-    "amount": 130,
+    "amount": 0,
     "included": true,
     "sort_order": 11
    },
@@ -3112,7 +3112,7 @@
     "code": "8000-02",
     "category": "other",
     "description": "Bad Debt — Bad Debts",
-    "amount": 2400,
+    "amount": 0,
     "included": true,
     "sort_order": 12
    },
@@ -3120,7 +3120,7 @@
     "code": "6100-10",
     "category": "payroll",
     "description": "Human Staff Payroll — A&O December 2025",
-    "amount": 24000,
+    "amount": 0,
     "included": true,
     "sort_order": 13
    },
@@ -3128,7 +3128,7 @@
     "code": "6100-12",
     "category": "payroll",
     "description": "Human Staff Finiquitos — A&O December 2025",
-    "amount": 3700,
+    "amount": 0,
     "included": true,
     "sort_order": 14
    },
@@ -3136,7 +3136,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "Payroll MX Bonuses — A&O December 2025",
-    "amount": 3300,
+    "amount": 0,
     "included": true,
     "sort_order": 15
    },
@@ -3144,7 +3144,7 @@
     "code": "6100-11",
     "category": "payroll",
     "description": "MX Payroll Bonus Payments — A&O December 2025",
-    "amount": 2500,
+    "amount": 0,
     "included": true,
     "sort_order": 16
    },
@@ -3152,7 +3152,7 @@
     "code": "6100-01",
     "category": "payroll",
     "description": "ADP Payroll Wages Employee — A&O December 2025",
-    "amount": 32000,
+    "amount": 0,
     "included": true,
     "sort_order": 17
    },
@@ -3160,7 +3160,7 @@
     "code": "6141-01",
     "category": "facilities",
     "description": "Telephone Expense — A&O December 2025",
-    "amount": 460,
+    "amount": 0,
     "included": true,
     "sort_order": 18
    }
