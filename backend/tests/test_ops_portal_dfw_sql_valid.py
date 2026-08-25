@@ -43,6 +43,7 @@ import inspect
 import os
 import re
 import types
+from datetime import date
 
 import pytest
 
@@ -82,14 +83,26 @@ class _StubPool:
 
 
 def _patch_pools(pool):
+    """Point every pool accessor at the stub — gold AND the portal hub.
+
+    ⚠ `get_pool` (analytics_hub) must be patched too. /team-projection-history
+    resolves it FIRST, before emitting a single statement, and the real one
+    raises HTTPException(503) on a stub request — so leaving it alone does not
+    fail the test, it silently contributes ZERO statements to the corpus and
+    the endpoint reads as covered when it is not.
+    """
     originals = []
     mods = [importlib.import_module(f"app.routers.ops_portal_overview.{n}")
             for n in _ENDPOINT_MODULES] + [dfw]
     for m in mods:
-        if hasattr(m, "get_datalake_gold_pool"):
-            originals.append((m, m.get_datalake_gold_pool))
-            m.get_datalake_gold_pool = lambda request, _p=pool: _p
-    return lambda: [setattr(mod, "get_datalake_gold_pool", fn) for mod, fn in originals]
+        for attr, repl in (
+            ("get_datalake_gold_pool", lambda request, _p=pool: _p),
+            ("get_pool", lambda request, _p=pool: _p),
+        ):
+            if hasattr(m, attr):
+                originals.append((m, attr, getattr(m, attr)))
+                setattr(m, attr, repl)
+    return lambda: [setattr(mod, attr, fn) for mod, attr, fn in originals]
 
 
 def _axis(name: str, scope):
@@ -164,8 +177,48 @@ def _statements(router, scope) -> list[tuple[str, str, tuple]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# The projection-history service statements
+# ---------------------------------------------------------------------------
+# These never pass through a route, so the endpoint harness above cannot see
+# them — and they are the ones a replay bug hides in. Built here explicitly so
+# they join both the offline linters (via ALL) and the live PREPARE below.
+
+
+def _projection_history_statements() -> list[tuple[str, str, tuple]]:
+    from app.services import projection_history as ph
+
+    out: list[tuple[str, str, tuple]] = []
+    for scope_key, team_key, scope, team_ids in ph.SNAPSHOT_SCOPES:
+        params: list = []
+        where = _sql._v4_scope_where(
+            "br4", list(team_ids) or None, None, None, params,
+            None, None, None, None, scope=scope,
+        )
+        n = len(params)
+        label = f"projection_history[{scope_key}/{team_key}]"
+        # Bound values are what asyncpg would send; PREPARE only needs the text
+        # and the parameter COUNT to line up.
+        dates = (date(2026, 1, 1), date(2026, 8, 24), date(2025, 11, 22))
+        out.append((f"{label} replay",
+                    ph._replay_sums_sql(where, n + 1, n + 2, n + 3),
+                    tuple(params) + dates))
+        out.append((f"{label} team_count",
+                    ph._team_count_sql(where, scope), tuple(params)))
+        out.append((f"{label} weekly",
+                    ph._weekly_sql(where, n + 1, n + 2), tuple(params) + dates[:2]))
+        out.append((f"{label} actuals",
+                    ph._ACTUALS_SQL.format(where=where, p_start=n + 1, p_end=n + 2),
+                    tuple(params) + dates[:2]))
+    return out
+
+
 def _all_statements() -> list[tuple[str, str, tuple]]:
-    return _statements(dfw.r, DFW_SCOPE) + _statements(opo.router, CORP_SCOPE)
+    return (
+        _statements(dfw.r, DFW_SCOPE)
+        + _statements(opo.router, CORP_SCOPE)
+        + _projection_history_statements()
+    )
 
 
 ALL = _all_statements()
@@ -180,6 +233,11 @@ def test_the_harness_actually_drives_both_portals() -> None:
                  "/custom/ops-portal-overview-dfw/team-weekly-performance",
                  "/custom/ops-portal-overview-dfw/team-performance-by-team"):
         assert path in labels, f"{path} emitted no SQL — the four that broke must be covered"
+    # The projection-history statements bypass the router entirely, so their
+    # presence has to be asserted by name or a refactor could drop them
+    # silently from the corpus.
+    assert any(lbl.startswith("projection_history[corp/ALL]") for lbl, _, _ in ALL)
+    assert any(lbl.startswith("projection_history[dfw/TM1]") for lbl, _, _ in ALL)
 
 
 # ---------------------------------------------------------------------------

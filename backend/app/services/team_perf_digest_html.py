@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from html import escape
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import quote
 
 # Outlook resets font-family inside nested tables — declare inline on every td.
@@ -306,8 +306,57 @@ def _card_projection(card: dict) -> str:
             f"{_plain(_fmt(card['month_budget'], 'usd'))} "
             f"({_plain(_fmt(card['achievement_pct'], 'pct'))} of budget)"
         )
+        + _projection_range_line(card.get("history"))
     )
     return _card_shell(inner)
+
+
+def _projection_range_line(hist: Optional[dict]) -> str:
+    """The month's High / Low / range for Projected Profit — request 2026-08-25.
+
+    Omitted entirely when there is no stored series (see
+    ``team_perf_digest._fetch_projection_history``): an absent line reads as
+    "not tracked yet", whereas "High $0" reads as a collapse.
+
+    Arrows are text, never an image or a background-image — Outlook strips
+    both — and each colour is stated inline because Outlook resets
+    font-family and colour inside nested tables.
+    """
+    if not hist:
+        return ""
+    hi = _fmt(hist.get("high"), "usd")
+    lo = _fmt(hist.get("low"), "usd")
+    hi_d = _date_label(hist.get("high_date"))
+    lo_d = _date_label(hist.get("low_date"))
+    rng = _fmt(hist.get("range_pct"), "pct")
+
+    chg = hist.get("chg_pct")
+    if chg is None:
+        chg_html = ""
+    else:
+        up = chg >= 0
+        chg_html = (
+            f' &middot; vs yesterday <span style="font-family:{FONT_STACK};'
+            f'color:{GREEN_TX if up else RED_TX};font-weight:700;">'
+            f'{"&#9650;" if up else "&#9660;"} {_fmt(chg, "pctSigned")}</span>'
+        )
+    return (
+        f'<div style="font-family:{FONT_STACK};font-size:11px;color:{GREY};'
+        f'margin-top:6px;padding-top:6px;border-top:1px solid {BORDER};">'
+        f'<span style="font-family:{FONT_STACK};color:{GREEN_TX};font-weight:700;">'
+        f'&#9650; High</span> {hi}{hi_d}'
+        f' &middot; <span style="font-family:{FONT_STACK};color:{RED_TX};font-weight:700;">'
+        f'&#9660; Low</span> {lo}{lo_d}'
+        f' &middot; range {rng}{chg_html}'
+        f"</div>"
+    )
+
+
+def _date_label(d) -> str:
+    """`` (08/20)`` for a date, empty string for ``None``."""
+    if d is None:
+        return ""
+    return f" ({d.month:02d}/{d.day:02d})"
 
 
 def _plain(s: str) -> str:

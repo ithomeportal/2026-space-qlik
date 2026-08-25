@@ -748,3 +748,28 @@ async def team_projection_weekly(
         request=request, team=_sub_team(team), customer=customer, load_type=load_type,
         lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
     )
+
+
+# ---- /team-projection-history -----------------------------------------
+# Request 2026-08-25. `_pin_dfw_scope` (via `gate`) puts DFW_SCOPE on the
+# request, so the endpoint resolves its history under scope_key='dfw' and the
+# TM1..TM5 pills map onto the dfw/TMn series. Without this shim the DFW page
+# 404s on the panel's new strip (§74).
+@r.get("/team-projection-history")
+async def team_projection_history(
+    request: Request,
+    team: Optional[str] = Query(None),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    months: int = Query(13, ge=1, le=60),
+    _user: dict = Depends(gate),
+):
+    return await opo.team_projection_history(
+        request=request, team=_sub_team(team), teams=None, customer=customer,
+        load_type=load_type, lanes=lanes, exclude_lanes=exclude_lanes,
+        carriers=carriers, exclude_carriers=exclude_carriers, months=months, _user=_user,
+    )

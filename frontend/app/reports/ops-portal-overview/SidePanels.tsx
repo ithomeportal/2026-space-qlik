@@ -13,6 +13,7 @@ import {
   useOppTeamPerformance,
   useOppTeamProjection,
   useOppTeamProjectionByTeam,
+  useOppTeamProjectionHistory,
   useOppTeamProjectionWeekly,
   useOppTeamVariance,
   useOppTeamVarianceByTeam,
@@ -22,10 +23,12 @@ import {
   type OppCustomerNotBilledTotals,
   type OppCustomerVariance,
   type OppFilters,
+  type OppProjectionHistory,
   type OppTeamProjection,
   type OppTeamVariance,
 } from "@/lib/ops-portal-overview-api"
 import { TeamWeeklyModal } from "./TeamWeeklyModal"
+import { ProjectionTrendModal } from "./ProjectionTrendModal"
 import { TeamMonthlyModal } from "./TeamMonthlyModal"
 import { MetricMatrixModal, type MatrixCell, type MatrixRow } from "./MetricMatrixModal"
 
@@ -424,6 +427,11 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
   // Bruno (PDF 2026-07-13): Week / Team break-out modals.
   const [weekOpen, setWeekOpen] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
+  // Request 2026-08-25: the month's high / low / variation for Proj. Profit.
+  const [trendOpen, setTrendOpen] = useState(false)
+  const { data: histData } = useOppTeamProjectionHistory(cf)
+  const hist = histData?.data
+  const cur = hist?.tracked ? hist.current_month : null
   return (
     <PanelCard
       title="Team Monthly Projection"
@@ -434,6 +442,7 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
         <WeekTeamButtons
           onWeek={() => setWeekOpen(true)}
           onTeam={() => setTeamOpen(true)}
+          onTrend={() => setTrendOpen(true)}
           lockedTeam={lockedTeam}
         />
       }
@@ -449,6 +458,9 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
           <Row label="Proj. Volume"    value={v ? fmtCount(v.proj_volume)  : "—"} />
           <Row label="Proj. Revenue"   value={v ? fmtUsd(v.proj_revenue)   : "—"} />
           <Row label="Proj. Profit"    value={v ? fmtUsd(v.proj_profit)    : "—"} signed numeric={v?.proj_profit ?? 0} />
+          {cur && cur.high !== null && cur.low !== null && cur.days > 1 && (
+            <ProjProfitTicker stats={cur} onOpen={() => setTrendOpen(true)} />
+          )}
           <Row label="Proj. Margin P %" value={v ? fmtPct(v.proj_margin_pct) : "—"} signed numeric={v?.proj_margin_pct ?? 0} />
           <Row label="Proj. Rev. x L." value={v ? fmtUsd(v.proj_rev_x_l)   : "—"} />
           <Row label="Proj. Prf. X L." value={v ? fmtUsd(v.proj_prof_x_l)  : "—"} signed numeric={v?.proj_prof_x_l ?? 0} />
@@ -457,8 +469,73 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
       </table>
       {weekOpen && <ProjectionWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
       {teamOpen && <ProjectionTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
+      {trendOpen && <ProjectionTrendModal filters={filters} onClose={() => setTrendOpen(false)} />}
     </PanelCard>
   )
+}
+
+// Request 2026-08-25 — the "stock market" strip under Proj. Profit: this
+// month's HIGH, LOW and % variation, plus the day-over-day move.
+//
+// Rendered as <tr>s so it sits inside the panel's own table and inherits its
+// column widths; a sibling <div> would break the label/value alignment of
+// every row above and below it.
+//
+// ⚠ The values come from an endpoint that folds the LIVE projection into the
+// stored series, so the High can never print below the Proj. Profit figure on
+// the line directly above (§16). Hidden entirely when the panel is filtered —
+// history is unfiltered, and a range from a different population would be a
+// lie told confidently.
+function ProjProfitTicker({
+  stats,
+  onOpen,
+}: {
+  stats: NonNullable<OppProjectionHistory["current_month"]>
+  onOpen: () => void
+}) {
+  const chg = stats.chg_pct
+  return (
+    <tr>
+      <td colSpan={2} className="pb-1 pl-2 pr-1">
+        <button
+          type="button"
+          onClick={onOpen}
+          title="Open the month's projection path and the monthly error rate"
+          className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded px-1 py-0.5 text-left text-[10px] leading-tight text-[#6B7280] hover:bg-[#F0F9FF]"
+        >
+          <span className="whitespace-nowrap font-semibold text-[#166534]">
+            ▲ {fmtUsd(stats.high ?? 0)}
+            {stats.high_date && (
+              <span className="font-normal text-[#9CA3AF]"> {shortDay(stats.high_date)}</span>
+            )}
+          </span>
+          <span className="whitespace-nowrap font-semibold text-[#991B1B]">
+            ▼ {fmtUsd(stats.low ?? 0)}
+            {stats.low_date && (
+              <span className="font-normal text-[#9CA3AF]"> {shortDay(stats.low_date)}</span>
+            )}
+          </span>
+          {stats.range_pct !== null && (
+            <span className="whitespace-nowrap">
+              range <span className="font-semibold text-[#374151]">{fmtPct(stats.range_pct)}</span>
+            </span>
+          )}
+          {chg !== null && (
+            <span
+              className={`whitespace-nowrap font-semibold ${chg < 0 ? "text-[#DC2626]" : "text-[#166534]"}`}
+            >
+              {chg < 0 ? "▼" : "▲"} {fmtPct(Math.abs(chg))}
+            </span>
+          )}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+/** "08/20" from an ISO date — matches the Trend modal's axis labels. */
+function shortDay(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -717,10 +794,14 @@ function MiniTh<K extends string>({
 function WeekTeamButtons({
   onWeek,
   onTeam,
+  onTrend,
   lockedTeam,
 }: {
   onWeek: () => void
   onTeam: () => void
+  // Request 2026-08-25 — only the projection panel has a stored history, so
+  // the Variance panel calls this without `onTrend` and gets no third button.
+  onTrend?: () => void
   lockedTeam?: string
 }) {
   const btn =
@@ -734,6 +815,16 @@ function WeekTeamButtons({
       {!lockedTeam && (
         <button type="button" onClick={onTeam} className={btn} title="Break out by team">
           Team
+        </button>
+      )}
+      {onTrend && (
+        <button
+          type="button"
+          onClick={onTrend}
+          className={btn}
+          title="This month's high / low path and the monthly error rate"
+        >
+          Trend
         </button>
       )}
     </span>

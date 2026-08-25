@@ -61,6 +61,8 @@ EXPECTED_PATHS = {
     "/custom/ops-portal-overview/team-variance-weekly",
     "/custom/ops-portal-overview/team-variance-by-team",
     "/custom/ops-portal-overview/team-projection-by-team",
+    # Request 2026-08-25 — the month High/Low/variation for Proj. Profit.
+    "/custom/ops-portal-overview/team-projection-history",
     "/custom/ops-portal-overview/team-projection-weekly",
 }
 

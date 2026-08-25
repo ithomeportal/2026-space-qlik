@@ -650,6 +650,73 @@ export interface OppTeamProjectionByTeam {
 }
 
 // ---------------------------------------------------------------------------
+// Team Monthly Projection history — request 2026-08-25 ("as the stock markets")
+// ---------------------------------------------------------------------------
+// `tracked` is false when the panel carries a customer / lane / carrier /
+// load-type filter, or when the team selection is not one of the scopes we
+// snapshot. History is UNFILTERED, so showing a High/Low next to a filtered
+// number would put a range beside a population it does not describe.
+
+export interface OppProjectionPoint {
+  as_of_date: string
+  proj_profit: number
+  proj_revenue: number
+  proj_volume: number
+  proj_margin_pct: number
+  pending_workdays: number
+  /** "live" = observed that morning; "backfill" = replayed from v4. */
+  source: "live" | "backfill"
+}
+
+export interface OppProjectionMonthStats {
+  open: number | null
+  close: number | null
+  high: number | null
+  low: number | null
+  high_date: string | null
+  low_date: string | null
+  range_pct: number | null
+  latest: number | null
+  prev: number | null
+  chg_pct: number | null
+  settled_high: number | null
+  settled_low: number | null
+  settled_range_pct: number | null
+  settled_from_business_day: number
+  days: number
+  backfilled_days: number
+  points: OppProjectionPoint[]
+}
+
+export interface OppProjectionMonthRow {
+  month_start: string
+  open: number | null
+  close: number | null
+  high: number
+  low: number
+  range_pct: number | null
+  days: number
+  live_days: number
+  actual_profit: number | null
+  error_pct: number | null
+  high_error_pct: number | null
+  low_error_pct: number | null
+}
+
+export interface OppProjectionHistory {
+  scope_key: string
+  team_key: string | null
+  today: string
+  month_start: string
+  month_end: string
+  live_proj_profit: number
+  tracked: boolean
+  untracked_reason?: "filtered" | "team_scope"
+  current_month: OppProjectionMonthStats | null
+  months: OppProjectionMonthRow[]
+}
+
+// ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
 
@@ -1014,6 +1081,29 @@ export function useOppTeamVarianceByTeam(f: OppFilters, enabled: boolean) {
   return useQuery({
     queryKey: [prefix, "opp-team-variance-by-team", f.range, f.startDate, f.endDate, f.customer || ""],
     queryFn: () => apiFetch<OppTeamVarianceByTeam>(`${prefix}/team-variance-by-team${qs(f)}`),
+    enabled,
+    ...RETRY,
+  })
+}
+
+export function useOppTeamProjectionHistory(
+  f: Pick<OppFilters, "team" | "customer" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
+  enabled = true,
+  months = 13,
+) {
+  const prefix = useApiPrefix()
+  const filters: OppFilters = { range: "full", ...f }
+  return useQuery({
+    // ⚠ The key must cover everything qs() emits — `months` included. The
+    // panel strip and the Trend modal both take the default, so they share one
+    // cache entry and the modal opens without a second round trip; omit
+    // `months` from the key and the day someone varies it they would silently
+    // read each other's response.
+    queryKey: [prefix, "opp-team-projection-history", f.team || "", f.customer || "", f.loadType || "", laneKey(f), months],
+    queryFn: () =>
+      apiFetch<OppProjectionHistory>(
+        `${prefix}/team-projection-history${qs(filters, { months: String(months) })}`,
+      ),
     enabled,
     ...RETRY,
   })

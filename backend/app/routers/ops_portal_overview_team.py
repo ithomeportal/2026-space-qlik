@@ -600,6 +600,30 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
+    # ---- /team-projection-history -----------------------------------------
+    # Request 2026-08-25. Mandatory here, not optional: the four CORP clone
+    # pages render the SAME OpsPortalOverviewContent as the base portal, so a
+    # missing shim is a 404 on the panel's new strip for every one of them
+    # (§74). `teams` is pinned to None — a clone is scope-LOCKED and must never
+    # be able to widen itself past its own team (§7.1).
+    @r.get("/team-projection-history")
+    async def team_projection_history(
+        request: Request,
+        customer: Optional[str] = Query(None),
+        load_type: Optional[str] = Query(None),
+        lanes: Optional[List[str]] = Query(None),
+        exclude_lanes: Optional[List[str]] = Query(None),
+        carriers: Optional[List[str]] = Query(None),
+        exclude_carriers: Optional[List[str]] = Query(None),
+        months: int = Query(13, ge=1, le=60),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.team_projection_history(
+            request=request, team=team, teams=None, customer=customer, load_type=load_type,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
+            exclude_carriers=exclude_carriers, months=months, _user=_user,
+        )
+
     return r
 
 

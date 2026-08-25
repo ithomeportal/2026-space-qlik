@@ -177,6 +177,11 @@ def _projection_from_sums(vol_12, rev_12, prof_12, vol_mtd, rev_mtd, prof_mtd,
     proj_prof = avg_prof * pending + _safe_float(prof_mtd)
     cap = 500.0 * (team_count or 0)
     return {
+        # Published (additively — no existing key moves) so a caller can store
+        # the capacity denominator alongside the figures it produced. Without
+        # it, `proj_team_ut` is unreproducible from a stored row, and the daily
+        # projection snapshot had no way to record what it divided by.
+        "team_count":   int(team_count or 0),
         "avg_vol_day":  _safe_float(avg_vol),
         "avg_rev_day":  _safe_float(avg_rev),
         "avg_prof_day": _safe_float(avg_prof),

@@ -344,6 +344,60 @@ def _same_elapsed_last_month(mtd_start: date, mtd_end: date) -> Optional[tuple[d
 # ---------------------------------------------------------------------------
 
 
+async def _fetch_projection_history(
+    app, team_ids: list[str], *, live_profit: float, today: date,
+) -> Optional[dict[str, Any]]:
+    """Month-to-date High / Low / variation for this e-mail's team scope.
+
+    Returns ``None`` — rendered as nothing at all, not as zeros — when the
+    portal DB is unavailable or the scope has no stored series yet. A mail that
+    prints "High $0" the morning after a deploy is worse than one that simply
+    omits the line, and this whole feature is about trusting the number.
+
+    ⚠ Reads ``app.state.pool`` (analytics_hub), NOT the gold pool this module's
+    other helpers use. Never derive one from the other — each database has its
+    own least-privilege role.
+    """
+    from app.routers.ops_portal_overview._scope import CORP_SCOPE
+    from app.services.projection_history import (
+        current_month_stats,
+        month_points,
+        resolve_history_key,
+    )
+
+    hub = getattr(app.state, "pool", None)
+    if hub is None:
+        return None
+    team_key = resolve_history_key(CORP_SCOPE, team_ids)
+    if team_key is None:
+        return None
+    try:
+        pts = await month_points(
+            hub, scope_key=CORP_SCOPE.key, team_key=team_key,
+            month_start=today.replace(day=1),
+        )
+    except Exception as e:  # noqa: BLE001 — a digest must never 500 on a panel
+        logger.warning("Projection history unavailable for %s: %s", team_key, e)
+        return None
+
+    stats = current_month_stats(pts, live_value=live_profit, today=today)
+    # One stored day plus today's live value is not a range — it is the same
+    # number twice. Below two distinct days the line says nothing.
+    if stats["days"] < 2 or stats["high"] is None:
+        return None
+    return {
+        "team_key": team_key,
+        "high": stats["high"],
+        "low": stats["low"],
+        "high_date": stats["high_date"],
+        "low_date": stats["low_date"],
+        "range_pct": stats["range_pct"],
+        "chg_pct": stats["chg_pct"],
+        "days": stats["days"],
+        "backfilled_days": stats["backfilled_days"],
+    }
+
+
 async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
     """Assemble the "Performance for Team N" / "PERFORMANCE CORP" payload.
 
@@ -522,6 +576,9 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
     ytd_achievement = _achievement_pct(ytd_profit, budgets["ytd_budget"])
     profit_week = sum(d["profit"] for d in series[-WEEK_DAYS:]) if series else 0.0
     proj_profit = _safe_float(proj.get("proj_profit")) if proj else 0.0
+    proj_history = await _fetch_projection_history(
+        app, list(team_ids), live_profit=proj_profit, today=today,
+    )
 
     # Each pill = (achievement% − 100) in percentage POINTS. Achievement is a
     # rate recomputed from its own components, so the delta is pp, not a
@@ -596,6 +653,12 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
     }
 
     # --- Card 5 — PROJECTED PROFIT PERFORMANCE (TM) ------------------------
+    # Request 2026-08-25: *"there we can make more clear in the section
+    # Projected Profit Performance … which one is the higher value for the
+    # month, the min value, the variation … the same for each email for each
+    # team."* Reads the stored series (services/projection_history.py) with the
+    # LIVE proj_profit folded in, so the High can never come out below the
+    # headline printed directly above it (§16).
     month_budget = budgets["month_budget"]
     card5 = {
         "proj_profit": proj_profit,
@@ -603,6 +666,7 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
         "on_track": bool(month_budget) and proj_profit >= month_budget,
         "has_budget": bool(month_budget),
         "achievement_pct": _achievement_pct(proj_profit, month_budget),
+        "history": proj_history,
     }
 
     html, chart_urls = render_html(
@@ -679,6 +743,18 @@ async def build_team_perf_digest(app, pool, team) -> dict[str, Any]:
             "otd_pct_mtd": otd_mtd,
             "proj_profit": proj_profit,
             "on_track": card5["on_track"],
+            # Request 2026-08-25 — the month's High/Low/variation for Projected
+            # Profit. ADDED, never renaming an existing key: four per-team n8n
+            # workflows already read this payload. `None` when the scope has no
+            # stored series yet, so a consumer can tell "not tracked" from "flat".
+            "proj_profit_month": (
+                {
+                    **proj_history,
+                    "high_date": proj_history["high_date"].isoformat(),
+                    "low_date": proj_history["low_date"].isoformat(),
+                }
+                if proj_history else None
+            ),
             "customer_rows": len(customer_rows),
             "customer_rows_before_zero_filter": len(all_customer_rows),
             "customer_rows_producing": len(producing_rows),

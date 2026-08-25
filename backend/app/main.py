@@ -99,6 +99,94 @@ async def _scheduled_headcount_snapshot():
         logger.error(f"Headcount snapshot failed: {e}")
 
 
+async def _scheduled_projection_snapshot():
+    """Background job: record today's Team Monthly Projection for every scope.
+
+    Runs at 02:45 CST, which is BEFORE the 05:28 CST n8n "Performance CORP"
+    e-mail — that mail prints the month's High/Low and needs today's row to
+    exist. What it captures is therefore each day's OPENING value: at 02:45 the
+    month-to-date leg holds essentially nothing for today yet. That is a clean,
+    well-defined series ("the projection at the start of each business day");
+    every reader folds the LIVE figure in on top of it so the strip can never
+    contradict the number printed beside it.
+
+    Weekly actuals are refreshed in the same job over a trailing 8-week window,
+    so late-posted loads correct themselves and older weeks freeze on their own.
+
+    ⚠ Two awaits, two try blocks. A single `try` around both would let one
+    failing statement silently kill the other for days — the exact shape of the
+    3-day outage in the global notes.
+    """
+    from app.services.projection_history import (
+        capture_projection_snapshots,
+        capture_weekly_actuals,
+    )
+
+    hub = getattr(app.state, "pool", None)
+    gold = getattr(app.state, "savings_pool", None)
+    try:
+        result = await capture_projection_snapshots(hub, gold)
+        logger.info(f"Projection snapshot complete: {result}")
+    except Exception as e:
+        logger.error(f"Projection snapshot failed: {e}")
+    try:
+        result = await capture_weekly_actuals(hub, gold)
+        logger.info(f"Weekly actuals complete: {result}")
+    except Exception as e:
+        logger.error(f"Weekly actuals failed: {e}")
+
+
+async def _seed_projection_history():
+    """One-shot replay that gives the High/Low something to show on day one.
+
+    Without it the panel would read "—" until a month of snapshots accumulated,
+    and the year-over-year seasonality the request asks for would be a year
+    away. v4 holds history back to 2020-12, so the whole path is
+    reconstructible — see services/projection_history.py for the two caveats
+    (the MTD clamp, and that a replayed point is approximate).
+
+    Guarded on the table being EMPTY, so a restart never re-runs it, and always
+    launched with `create_task` — never awaited in the lifespan, which would
+    add minutes to every cold start (the favicon-backfill rule).
+    """
+    from app.services.projection_history import (
+        BACKFILL_START,
+        backfill_projection_history,
+        capture_weekly_actuals,
+    )
+
+    hub = getattr(app.state, "pool", None)
+    gold = getattr(app.state, "savings_pool", None)
+    if hub is None or gold is None:
+        return
+    try:
+        existing = await hub.fetchval("SELECT COUNT(*) FROM ops_projection_history")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Projection history seed check failed: {e}")
+        return
+    # ⚠ The emptiness guard must gate BOTH writes. `capture_weekly_actuals` is
+    # DO UPDATE by design (a week keeps moving as loads post late), so letting
+    # it run on every restart with source='backfill' would relabel — and
+    # rewrite — rows that had been captured live.
+    if existing:
+        return
+
+    logger.info("Projection history is empty — seeding from %s (background)...",
+                BACKFILL_START.isoformat())
+    try:
+        result = await backfill_projection_history(hub, gold, start=BACKFILL_START)
+        logger.info(f"Projection history seed complete: {result}")
+    except Exception as e:
+        logger.error(f"Projection history seed failed: {e}")
+    try:
+        weeks = await capture_weekly_actuals(
+            hub, gold, start=BACKFILL_START, source="backfill",
+        )
+        logger.info(f"Weekly actuals seed complete: {weeks}")
+    except Exception as e:
+        logger.error(f"Weekly actuals seed failed: {e}")
+
+
 async def _scheduled_losses_alert():
     """Background job: send daily 7 AM CST Losses Lanes weekly-movers email."""
     try:
@@ -879,6 +967,23 @@ async def lifespan(app: FastAPI):
                 """
             )
 
+            # Team Monthly Projection history (request 2026-08-25) — the HIGH,
+            # the LOW and the % variation of Proj. Profit within a month, plus
+            # weekly actuals kept for ever for seasonality. Portal-owned for
+            # the same reason headcount is: the live value is recomputed every
+            # day and its path is otherwise unrecoverable. See
+            # services/projection_history.py for why a replay is allowed to
+            # seed history but is never allowed to overwrite an observed row.
+            from app.services.projection_history import (
+                PROJECTION_HISTORY_DDL,
+                PROJECTION_HISTORY_INDEX_DDL,
+                WEEKLY_ACTUALS_DDL,
+            )
+
+            await app.state.pool.execute(PROJECTION_HISTORY_DDL)
+            await app.state.pool.execute(PROJECTION_HISTORY_INDEX_DDL)
+            await app.state.pool.execute(WEEKLY_ACTUALS_DDL)
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
@@ -1116,6 +1221,25 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+    # Team Monthly Projection snapshot at 02:45 CST (request 2026-08-25).
+    # Gated on the gold datalake, not on TIMEOFF_DATABASE_URL — it reads v4 and
+    # writes analytics_hub, and nothing else. Placed before the 05:28 CST n8n
+    # digest so the e-mail's High/Low always has today's row.
+    if settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_projection_snapshot,
+            CronTrigger(hour=2, minute=45, timezone="America/Chicago"),
+            id="daily_projection_snapshot",
+            name="Record Team Monthly Projection + weekly actuals",
+            replace_existing=True,
+        )
+        asyncio.create_task(_seed_projection_history())
+    else:
+        logger.warning(
+            "Projection snapshot NOT scheduled — SAVINGS_DATABASE_URL unset; "
+            "Team Monthly Projection High/Low will stay empty"
+        )
+
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
     # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
     # savings_pool (aivn_datalake_gold) + RESEND_API_KEY.
@@ -1293,6 +1417,7 @@ async def lifespan(app: FastAPI):
         "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
+        "daily_projection_snapshot": "Team Monthly Projection history, 02:45 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)

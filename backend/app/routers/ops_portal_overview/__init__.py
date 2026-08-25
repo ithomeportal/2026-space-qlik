@@ -137,6 +137,7 @@ from .projection import (  # noqa: F401
     profit_tm_gauge,
     team_projection,
     team_projection_by_team,
+    team_projection_history,
     team_projection_weekly,
 )
 from .actuals import (  # noqa: F401
@@ -222,6 +223,7 @@ __all__ = [
     "team_performance_by_team",
     "team_projection",
     "team_projection_by_team",
+    "team_projection_history",
     "team_projection_weekly",
     "team_variance",
     "team_variance_by_team",

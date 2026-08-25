@@ -7,18 +7,44 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import Depends, Query, Request
 
 from app.clock import cst_today
-from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _last_5_weeks, _last_n_business_days_start, _month_bounds, _week_label
 from ._scope import scope_of
 from ._sql import _parse_team_scope, _v4_scope_where
 from ._metrics import _zero_val, _projection_from_sums, _safe_float, _team_projection_core
+
+# ⚠ `app.services.projection_history` is imported INSIDE the endpoint, not at
+# module level, and the indirection is load-bearing.
+#
+# The service needs this package's leaf modules (`_metrics`, `_sql`, `_scope`,
+# `_constants`) — and importing ANY submodule of a package runs that package's
+# `__init__` first. This package's `__init__` is a façade that imports
+# `.projection` (§28), so a module-level import here closes the loop:
+#
+#     app.services.projection_history
+#       -> app.routers.ops_portal_overview._constants
+#       -> app.routers.ops_portal_overview.__init__   (the façade)
+#       -> .projection
+#       -> app.services.projection_history            (still initialising)
+#
+# It only fails in ONE direction — importing the router package first works,
+# which is what the app and every existing test do — so it would have shipped
+# green and broken the scheduler job and any standalone script that reaches for
+# the service on its own. `sys.modules` makes the deferred import a dict lookup.
+
+
+def _history() -> Any:
+    """The projection-history service — deferred; see the note above."""
+    from app.services import projection_history
+
+    return projection_history
 
 
 # ---------------------------------------------------------------------------
@@ -322,3 +348,127 @@ async def team_projection_weekly(
             "proj_team_ut":  _safe_float((vol / cap * 100.0) if cap else 0.0),
         })
     return {"success": True, "data": {"weeks": weeks_out}}
+
+
+# ---------------------------------------------------------------------------
+# /team-projection-history — the "stock market" view of Proj. Profit
+# ---------------------------------------------------------------------------
+# Request 2026-08-25: show the month's HIGH, LOW and % variation beside the
+# projection, track that variation by month to expose the error rate, and keep
+# the series for ever so seasonality is comparable year over year.
+#
+# Reads `ops_projection_history` (analytics_hub, portal-owned) rather than
+# recomputing: the point of the panel is what the number DID, and only a
+# stored series knows that. See services/projection_history.py.
+#
+# ⚠ Today's LIVE value is folded in over the stored row. The snapshot job runs
+# at 02:45 CST and captures the day's OPENING value; by the time anyone opens
+# the page — or the 05:28 e-mail goes out — the live figure has moved. Without
+# the fold-in the strip could print a "High" lower than the number printed
+# directly above it (§16).
+#
+# ⚠ History is UNFILTERED. A customer / lane / carrier / load-type filter makes
+# the panel's number incomparable with the stored series, so the endpoint
+# answers `tracked: false` and the UI hides the strip instead of showing a
+# High/Low that belongs to a different population.
+
+
+@router.get("/team-projection-history")
+async def team_projection_history(
+    request: Request,
+    team: Optional[str] = Query(None),
+    teams: Optional[str] = Query(
+        None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
+    ),
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    months: int = Query(13, ge=1, le=60, description="How many closed months of OHLC history"),
+    _user: dict = Depends(require_report_access("ops-portal-overview")),
+):
+    """Month-to-date High / Low / variation for Proj. Profit, plus monthly OHLC.
+
+    Every filter parameter is declared even though only the team scope selects
+    a stored series: sibling endpoints on this router must accept the same set
+    or FastAPI drops the ones they omit, and the page sends one filter object
+    to all of them.
+    """
+    gold = get_datalake_gold_pool(request)
+    hub = get_pool(request)
+    scope = scope_of(request)
+    today = cst_today()
+    m_start, m_end = _month_bounds(today)
+    team_scope = _parse_team_scope(team, teams)
+
+    filtered = bool(customer or load_type or lanes or exclude_lanes
+                    or carriers or exclude_carriers)
+    hist = _history()
+    team_key = hist.resolve_history_key(scope, team_scope)
+
+    # The live figure is fetched either way — it is what the strip compares
+    # against, and it is the same call the panel above it makes (§69).
+    live = await _team_projection_core(
+        gold, team=team_scope or None, customer=customer, load_type=load_type,
+        lanes=lanes, exclude_lanes=exclude_lanes,
+        carriers=carriers, exclude_carriers=exclude_carriers,
+        today=today, scope=scope,
+    )
+    live_profit = _safe_float(live.get("proj_profit"))
+
+    base = {
+        "scope_key": scope.key,
+        "team_key": team_key,
+        "today": today.isoformat(),
+        "month_start": m_start.isoformat(),
+        "month_end": m_end.isoformat(),
+        "live_proj_profit": live_profit,
+    }
+    if filtered or team_key is None:
+        return {
+            "success": True,
+            "data": {
+                **base,
+                "tracked": False,
+                "untracked_reason": "filtered" if filtered else "team_scope",
+                "current_month": None,
+                "months": [],
+            },
+        }
+
+    points, month_rows = await asyncio.gather(
+        hist.month_points(hub, scope_key=scope.key, team_key=team_key, month_start=m_start),
+        hist.monthly_summary(hub, scope_key=scope.key, team_key=team_key,
+                             months=months, before_month=m_start),
+    )
+    current = hist.current_month_stats(points, live_value=live_profit, today=today)
+
+    if month_rows:
+        actuals = await hist.actual_profit_by_month(
+            gold, scope=scope, team_ids=team_scope,
+            start=month_rows[0]["month_start"], end=m_start - timedelta(days=1),
+        )
+        month_rows = hist.attach_actuals(month_rows, actuals)
+
+    return {
+        "success": True,
+        "data": {
+            **base,
+            "tracked": True,
+            "current_month": {
+                **{k: v for k, v in current.items() if k != "points"},
+                "high_date": current["high_date"].isoformat() if current["high_date"] else None,
+                "low_date": current["low_date"].isoformat() if current["low_date"] else None,
+                "points": [
+                    {**p, "as_of_date": p["as_of_date"].isoformat()}
+                    for p in current["points"]
+                ],
+            },
+            "months": [
+                {**m, "month_start": m["month_start"].isoformat()}
+                for m in month_rows
+            ],
+        },
+    }
