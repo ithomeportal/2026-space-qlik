@@ -115,6 +115,53 @@ def _row_html(entry: dict[str, Any], kind: str) -> str:
     """
 
 
+def _subtotal_html(entries: list[dict[str, Any]]) -> str:
+    """Subtotal row, pinned to the top of a bucket's table.
+
+    Requested 2026-08-26 ("can we add subtotals to this report in each bucket?").
+
+    ⚠ The two money columns are NOT populated on every row, and that is the whole
+    difficulty. A "New entries" row has no last-week figure and a "Dropped out"
+    row has no this-week figure — `_fmt_usd(None)` prints an em dash for both. A
+    subtotal that silently summed only the populated cells would sit under a
+    header saying "(7)" and total three of them, which reads as a total over
+    seven. So each column carries the count it actually covers whenever that
+    count differs from the bucket size, and a column with nothing to add prints
+    an em dash rather than a misleading $0.
+    """
+    def total(field: str) -> tuple[float | None, int]:
+        vals = [e.get(field) for e in entries]
+        nums = [float(v) for v in vals if v is not None]
+        return (sum(nums) if nums else None, len(nums))
+
+    this_sum, this_n = total("this_profit")
+    last_sum, last_n = total("last_profit")
+
+    def cell(value: float | None, n: int, color: str, weight: str) -> str:
+        qualifier = (
+            f'<div style="font-weight:400;color:#9CA3AF;font-size:10px;">{n} of {len(entries)}</div>'
+            if value is not None and n != len(entries)
+            else ""
+        )
+        return (
+            f'<td style="padding:8px 10px;text-align:right;font-size:12px;'
+            f'color:{color};font-weight:{weight};vertical-align:top;">'
+            f"{_fmt_usd(value)}{qualifier}</td>"
+        )
+
+    return f"""
+    <tr style="background:#F9FAFB;border-top:1px solid #E5E7EB;">
+      <td style="padding:8px 10px;font-size:12px;color:#374151;font-weight:700;vertical-align:top;">
+        Subtotal
+        <div style="color:#6B7280;font-size:11px;font-weight:400;">{len(entries)} customer / lane pair{"" if len(entries) == 1 else "s"}</div>
+      </td>
+      <td style="padding:8px 10px;"></td>
+      {cell(this_sum, this_n, "#B91C1C", "700")}
+      {cell(last_sum, last_n, "#6B7280", "600")}
+    </tr>
+    """
+
+
 def _section(title: str, entries: Iterable[dict[str, Any]], kind: str, tone: str) -> str:
     entries = list(entries)
     color_map = {
@@ -124,7 +171,12 @@ def _section(title: str, entries: Iterable[dict[str, Any]], kind: str, tone: str
     }
     bg, fg = color_map.get(tone, color_map["neutral"])
     body = (
-        "".join(_row_html(e, kind) for e in entries)
+        # Subtotal FIRST — the request asked for it "in the top of each
+        # section/bucket", and it matches the portal's own totals-row-on-top
+        # convention. Skipped entirely when the bucket is empty: a subtotal of
+        # nothing is noise, and the "No changes in this category" row already
+        # says what the reader needs.
+        _subtotal_html(entries) + "".join(_row_html(e, kind) for e in entries)
         if entries
         else """
         <tr><td colspan="4" style="padding:16px;text-align:center;font-size:12px;color:#6B7280;">
