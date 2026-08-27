@@ -74,7 +74,16 @@ EXPECT_FALLBACK = {
     "STARCOMX - STARCORR DE MEXICO S DE RL DE CV": "TEAM3",
 }
 
-FROZEN_TODAY = date(2026, 8, 27)
+FROZEN_TODAY = date(2026, 8, 27)  # a Thursday — mid-week AND mid-month on purpose
+
+# The last bucket of each grain, and the whole-period budget it must carry.
+# Measured against live gold 2026-08-27. Truncating at today read 1,242.52 /
+# $2,317,148.42 / $433,303.44 (month) and 199.32 / $373,032.72 / $68,641.60
+# (week) — the week bucket was 39% short.
+BUCKETS = {
+    "month": (date(2026, 8, 1),  date(2026, 8, 31), 1432.03, 2706634.18, 502241.50),
+    "week":  (date(2026, 8, 24), date(2026, 8, 30),  326.27,  615933.38, 114176.62),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -392,20 +401,28 @@ def test_live_ops_portal_this_month_matches_brunos_figures() -> None:
 
 
 @live
-def test_live_the_chart_month_bucket_carries_the_whole_month() -> None:
+@pytest.mark.parametrize("grain", sorted(BUCKETS))
+def test_live_the_chart_bucket_carries_the_whole_period(grain: str) -> None:
     """The BDGT line read 1,243 because its window stopped at today.
 
-    The production leg must stay capped — this asserts the two windows differ,
+    A budget is a whole-PERIOD plan stored one row per day, so every grain's
+    last bucket must carry the full period. The week bucket had the identical
+    defect one grain down; leaving it would have put two conventions on one
+    chart behind a grain toggle.
+
+    The production leg must stay capped — this asserts the two windows DIFFER,
     not merely that the budget one is long enough.
     """
-    calls = _drive("app.routers.ops_portal_overview.chart", "combo", grain="month")
+    bucket_start, bucket_end, loads, revenue, profit = BUCKETS[grain]
+    calls = _drive("app.routers.ops_portal_overview.chart", "combo", grain=grain)
     bud = _budget_statements(calls)
     assert len(bud) == 1
     bud_sql, bud_params = bud[0]
     prod = [(s, p) for s, p in calls if "mcleod_gld_budget_report_v4" in s]
     assert prod, "no production statement emitted"
 
-    assert bud_params[1] == date(2026, 8, 31), bud_params[1]
+    assert bud_params[1] == bucket_end, bud_params[1]
+    assert bud_params[1] > FROZEN_TODAY, "the budget leg was not widened at all"
     assert any(FROZEN_TODAY in p for _s, p in prod), (
         "the production bars must still stop at today"
     )
@@ -418,8 +435,21 @@ def test_live_the_chart_month_bucket_carries_the_whole_month() -> None:
             await conn.close()
 
     rows = asyncio.run(run())
-    aug = [r for r in rows if r["bucket_start"] == date(2026, 8, 1)]
-    assert len(aug) == 1, "no Aug-2026 bucket"
-    assert round(float(aug[0]["budget_loads"]), 2) == EXPECT_LOADS
-    assert round(float(aug[0]["budget_revenue"]), 2) == EXPECT_REVENUE
-    assert round(float(aug[0]["budget_profit"]), 2) == EXPECT_PROFIT
+    last = [r for r in rows if r["bucket_start"] == bucket_start]
+    assert len(last) == 1, f"no {bucket_start} bucket at {grain} grain"
+    assert round(float(last[0]["budget_loads"]), 2) == loads
+    assert round(float(last[0]["budget_revenue"]), 2) == revenue
+    assert round(float(last[0]["budget_profit"]), 2) == profit
+
+
+@live
+def test_live_the_day_grain_is_unchanged() -> None:
+    """Day buckets are already whole — widening must be a no-op there.
+
+    `_bucket_end` is the identity for `day`, which is what lets `combo` apply it
+    with no branch. If that ever stops holding, the budget leg would run past
+    the production leg for a single day and the last bar would read as a miss.
+    """
+    calls = _drive("app.routers.ops_portal_overview.chart", "combo", grain="day")
+    bud_sql, bud_params = _budget_statements(calls)[0]
+    assert bud_params[1] == FROZEN_TODAY, bud_params[1]

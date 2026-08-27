@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from app.routers.ops_portal_overview._dates import _resolve_grain_window
+from app.routers.ops_portal_overview._dates import _bucket_end, _resolve_grain_window
 
 CHART_TSX = (
     Path(__file__).resolve().parents[2]
@@ -96,3 +96,40 @@ def test_frontend_does_not_slice_history_away() -> None:
     src = CHART_TSX.read_text(encoding="utf-8")
     assert "allBase.slice(-periods)" not in src
     assert "all.slice(-periods)" not in src
+
+
+# ---------------------------------------------------------------------------
+# _bucket_end — the whole-period end, the counterpart to the capped window
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "grain,anchor,expected",
+    [
+        # 2026-08-27 is a Thursday: mid-week and mid-month, so every grain's
+        # last bucket extends PAST today and the two windows must differ.
+        ("day", date(2026, 8, 27), date(2026, 8, 27)),
+        ("week", date(2026, 8, 24), date(2026, 8, 30)),
+        ("month", date(2026, 8, 1), date(2026, 8, 31)),
+        # month-length edge cases the `+30 days` shortcut would get wrong
+        ("month", date(2026, 2, 1), date(2026, 2, 28)),
+        ("month", date(2028, 2, 1), date(2028, 2, 29)),
+        # a week that straddles a month AND a year boundary
+        ("week", date(2026, 12, 28), date(2027, 1, 3)),
+    ],
+)
+def test_bucket_end_returns_the_whole_period(grain, anchor, expected) -> None:
+    assert _bucket_end(grain, anchor) == expected
+
+
+@pytest.mark.parametrize("grain", sorted(EXPECTED_BUCKETS))
+def test_bucket_end_never_precedes_the_capped_window(grain: str) -> None:
+    """The budget leg widens the window, it never narrows it.
+
+    Together with `test_window_ends_at_today_and_is_ordered` this pins the pair:
+    the measured leg stops at today, the planned leg reaches the period's end,
+    and neither can silently become the other.
+    """
+    today = date(2026, 8, 27)
+    _start, end, anchors = _resolve_grain_window(grain, today)
+    assert _bucket_end(grain, anchors[-1]) >= end

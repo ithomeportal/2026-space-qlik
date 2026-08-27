@@ -15,7 +15,7 @@ from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
-from ._dates import _count_workdays, _month_bounds, _resolve_grain_window
+from ._dates import _bucket_end, _count_workdays, _month_bounds, _resolve_grain_window
 from ._scope import scope_of
 from ._sql import _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _safe_float, _team_projection_core
@@ -65,22 +65,24 @@ async def combo(
     # 1,432.03 / $2,706,634.18 / $502,241.50. `_resolve_grain_window` caps the
     # window at today so a partial period is not double-counted — right for the
     # v4 bars (production that has not happened yet does not exist), wrong for
-    # the budget line, which is a WHOLE-MONTH plan that merely happens to be
+    # the budget line, which is a WHOLE-PERIOD plan that merely happens to be
     # stored one row per day. Truncating it compared a full month of production
     # against 27/31 of its target.
     #
-    # So the budget leg alone runs to the end of the last MONTH bucket. The
-    # gauge directly under this chart already pairs MTD actual with the full
+    # So the budget leg alone runs to the end of the last bucket, at EVERY
+    # grain: the week bucket carried the identical defect one grain down (the
+    # current week's target cut off mid-week), and leaving it would have put two
+    # conventions on one chart behind a grain toggle. Day is already whole, so
+    # `_bucket_end` is the identity there and this needs no branch.
+    #
+    # The gauge directly under this chart already pairs MTD actual with the full
     # month's target, so this makes the two agree instead of disagreeing by the
-    # remaining days. Day and week grains keep `win_end` untouched: a day bucket
-    # is already whole, and Bruno validated the month figure only.
+    # remaining days.
     #
     # ⚠ Deliberately computed here and NOT inside `_resolve_grain_window` —
     # `test_chart_grain_window.py` pins that helper to end at today, and that
     # guard protects the production bars. This widens one leg, not the window.
-    bud_end = win_end
-    if grain == "month":
-        bud_end = _month_bounds(anchors[-1])[1]
+    bud_end = _bucket_end(grain, anchors[-1])
 
     trunc_v4 = {
         "day":   "br4.origin_actual_departure::date",

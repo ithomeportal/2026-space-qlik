@@ -174,6 +174,30 @@ def _resolve_grain_window(grain: str, today: date) -> tuple[date, date, list[dat
     return anchors[0], end, anchors
 
 
+def _bucket_end(grain: str, anchor: date) -> date:
+    """Last calendar date of the bucket starting at ``anchor`` — NOT capped at today.
+
+    ``_resolve_grain_window`` deliberately ends its window at today so a partial
+    period is never double-counted. That is right for anything MEASURED (v4 has
+    no future rows) and wrong for anything PLANNED: the budget is a whole-period
+    target that merely happens to be stored one row per day, so truncating it
+    compares a full period of production against a fraction of its goal.
+
+    Bruno (PDF 2026-08-27) hit this on the month bucket — the BDGT line read
+    1,243 / $2,317,148 / $433,303 for Aug-2026 against the true 1,432.03 /
+    $2,706,634.18 / $502,241.50, the month cut off at the 27th. The week bucket
+    carried the identical defect one grain down and is fixed with it (§92).
+
+    Day is whole by construction, so this is the identity there — which is why
+    callers can apply it unconditionally rather than branching per grain.
+    """
+    if grain == "month":
+        return _month_bounds(anchor)[1]
+    if grain == "week":
+        return anchor + timedelta(days=6)
+    return anchor
+
+
 def _last_5_weeks(today: date) -> tuple[list[date], date, date]:
     """The 5 most recent Mon-Sun week-starts (current week included), plus the
     span bounds. Mirrors /team-weekly-performance so the two Week views align."""
