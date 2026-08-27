@@ -116,17 +116,24 @@ def test_the_two_thresholds_are_module_constants():
 
 
 # --------------------------------------------------------------------------
-# R2 — the four-month pop-up
+# R2 — the discrete-month pop-up (4 table months, 8 fetched for the charts)
 # --------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_the_popup_buckets_four_discrete_months_newest_first():
+async def test_the_popup_buckets_discrete_months_newest_first():
     pool = _StubPool()
     resp = await _popup(pool)
     buckets = resp["meta"]["buckets"]
-    assert [b["key"] for b in buckets] == ["tm", "lm", "l2m", "l3m"]
+    # The first four keys are the TABLE's and must never move — the frontend
+    # reads tm/lm/l2m/l3m by name. Anything after them is chart-only.
+    assert [b["key"] for b in buckets][:4] == ["tm", "lm", "l2m", "l3m"]
+    assert len(buckets) == ac.TOP_DELAYED_MONTHS
+    assert ac.TOP_DELAYED_TABLE_MONTHS == 4
+    assert ac.TOP_DELAYED_MONTHS >= ac.TOP_DELAYED_TABLE_MONTHS, \
+        "the table would lose columns"
 
     months = [b["month"] for b in buckets]
-    assert len(set(months)) == 4, "a bucket repeats — the month walk is wrong"
+    assert len(set(months)) == ac.TOP_DELAYED_MONTHS, \
+        "a bucket repeats — the month walk is wrong"
     assert months == sorted(months, reverse=True), "buckets must run newest first"
     for m in months:
         assert m.endswith("-01"), f"{m} is not a month start"
@@ -146,11 +153,12 @@ async def test_the_popup_ignores_the_pages_date_range():
 
     pool = _StubPool()
     await _popup(pool)
-    # The window it DOES bind is the four buckets: L3M start → today.
+    # The window it DOES bind is every fetched bucket: oldest start → today.
     params = pool.params[0]
     start, end = params[-2], params[-1]
     assert start.day == 1
-    assert (end.year * 12 + end.month) - (start.year * 12 + start.month) == 3
+    assert (end.year * 12 + end.month) - (start.year * 12 + start.month) == \
+        ac.TOP_DELAYED_MONTHS - 1
 
 
 @pytest.mark.asyncio
@@ -251,3 +259,84 @@ async def test_both_endpoints_are_access_gated():
     for fn in (ac.top_delayed_customers, ac.top_delayed_customers_monthly):
         src = inspect.getsource(fn)
         assert 'require_report_access("admin-cashflow")' in src, fn.__name__
+
+
+# --------------------------------------------------------------------------
+# R2 (PDF 2026-08-27) — eight buckets for the charts, four for the table
+# --------------------------------------------------------------------------
+def _bucket_rows(months, *, customer, n_late, avg_days=5.0, n_loads=10):
+    """One aggregate row per (customer, bucket), the shape asyncpg returns."""
+    return [
+        {
+            "customer_name": customer,
+            "bucket": m,
+            "n_loads": n_loads,
+            "n_late": n_late,
+            "late_revenue": 100.0 * n_late,
+            "avg_days": avg_days,
+        }
+        for m in months
+    ]
+
+
+async def _popup_months(pool):
+    """The month starts the endpoint walks, newest first."""
+    resp = await _popup(pool)
+    from datetime import date as _d
+    return [
+        _d(int(b["month"][:4]), int(b["month"][5:7]), 1)
+        for b in resp["meta"]["buckets"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_chart_months_do_not_widen_the_customer_population():
+    """⚠ The regression the 4→8 widening invites, and it would be silent.
+
+    A customer who has been clean for the four TABLE months but was late back in
+    month five must NOT appear in the pop-up — the table would gain a row Bruno
+    never asked for, and the ordering of the rest would shift with it. The extra
+    buckets are chart data, not membership criteria.
+    """
+    months = await _popup_months(_StubPool())
+    assert len(months) == ac.TOP_DELAYED_MONTHS
+
+    old_only = months[ac.TOP_DELAYED_TABLE_MONTHS:]
+    assert old_only, "no chart-only buckets — the widening did not happen"
+
+    pool = _StubPool(rows=_bucket_rows(old_only, customer="STALE CO", n_late=9))
+    resp = await _popup(pool)
+    assert [r["customer_name"] for r in resp["data"]] == [], (
+        "a customer late only outside the table window leaked into the pop-up"
+    )
+
+
+@pytest.mark.asyncio
+async def test_totals_count_only_the_table_months():
+    """The chart-only buckets must not inflate the totals that order the rows."""
+    months = await _popup_months(_StubPool())
+    table_months = months[: ac.TOP_DELAYED_TABLE_MONTHS]
+
+    in_window = _StubPool(rows=_bucket_rows(table_months, customer="ACME", n_late=2))
+    both = _StubPool(rows=_bucket_rows(months, customer="ACME", n_late=2))
+
+    a = (await _popup(in_window))["data"][0]
+    b = (await _popup(both))["data"][0]
+
+    assert a["n_late_total"] == b["n_late_total"] == 2 * ac.TOP_DELAYED_TABLE_MONTHS
+    assert a["late_revenue_total"] == b["late_revenue_total"]
+    assert a["avg_days_total"] == b["avg_days_total"]
+
+
+@pytest.mark.asyncio
+async def test_the_chart_only_buckets_are_still_returned_per_customer():
+    """They are dropped from the totals, not from the payload — the chart needs them."""
+    months = await _popup_months(_StubPool())
+    pool = _StubPool(rows=_bucket_rows(months, customer="ACME", n_late=3))
+    row = (await _popup(pool))["data"][0]
+
+    keys = ["tm", "lm"] + [f"l{i}m" for i in range(2, ac.TOP_DELAYED_MONTHS)]
+    for k in keys:
+        assert row[f"late_{k}"] == 3, f"chart bucket {k} is missing its Late value"
+        assert row[f"rev_{k}"] is not None, f"chart bucket {k} is missing Revenue"
+        assert row[f"avg_days_{k}"] is not None, f"chart bucket {k} is missing AVG Days"

@@ -104,6 +104,10 @@ function AdminCashflowContent() {
   const setEndDate = (d: string) => updateUrl({ e: d })
   const setCustomers = (next: string[]) =>
     updateUrl({ customers: next.length ? next.join(",") : null })
+  // Also the click target behind every customer name in the six panels below
+  // (Bruno PDF 2026-08-27 R1). Sharing this one function is the point: a click
+  // and a chip are the same filter, so a name can never mean something the
+  // header does not already show.
   const toggleCustomer = (c: string) => {
     if (!c) return
     setCustomers(customers.includes(c) ? customers.filter((x) => x !== c) : [...customers, c])
@@ -426,15 +430,15 @@ function AdminCashflowContent() {
             <AgingBucketsChart filters={filters} />
           </div>
           <div>
-            <TopDelayedCustomers filters={filters} />
+            <TopDelayedCustomers filters={filters} onCustomerClick={toggleCustomer} />
           </div>
         </div>
 
         {/* Two unbilled tables */}
-        <UnbilledTables filters={filters} />
+        <UnbilledTables filters={filters} onCustomerClick={toggleCustomer} />
 
         {/* Aging detail tabs */}
-        <AgingTabs filters={filters} />
+        <AgingTabs filters={filters} onCustomerClick={toggleCustomer} />
 
         {/* Footer scope chips */}
         <div className="flex items-center gap-3 pb-6 text-[11px] text-[#6B7280]">

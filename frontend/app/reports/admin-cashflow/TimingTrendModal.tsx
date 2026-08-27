@@ -21,7 +21,7 @@ import {
   type TimingMetricKey,
 } from "@/lib/admin-cashflow-api"
 import { UnbilledExpandModal } from "./UnbilledShared"
-import { fmtCount } from "./format"
+import { fmtCount, fmtUsd } from "./format"
 
 // Bruno Aging "+" pop-up (PDF 2026-06-22): per-KPI monthly combo chart.
 // Bar = total orders in the metric's universe, green line = within threshold,
@@ -131,11 +131,18 @@ export function TimingTrendModal({
     const s = payload[metric]
     const avg = s.avg_days ?? []
     const n = grain === "week" ? TABLE_ROWS_WEEK : TABLE_ROWS_MONTH
+    // Bruno Aging (PDF 2026-08-27) R3: Orders + Revenue columns. `total` IS the
+    // order count of the metric's universe — the same denominator the
+    // Percentage beside it divides by — so Orders needed no new field, and the
+    // two cannot disagree. Revenue is that same universe's revenue.
+    const rev = s.revenue ?? []
     const rows = payload.months.map((iso, i) => {
       const total = s.total[i] ?? 0
       const within = s.within[i] ?? 0
       return {
         iso,
+        orders: total,
+        revenue: rev[i] ?? null,
         pct: total > 0 ? (within / total) * 100 : null,
         avgDays: avg[i] ?? null,
       }
@@ -225,6 +232,8 @@ export function TimingTrendModal({
               <tr>
                 <th className="px-3 py-2">{grain === "week" ? "Week" : "Month"}</th>
                 {grain === "week" && <th className="px-3 py-2">Week #</th>}
+                <th className="px-3 py-2 text-right">Orders</th>
+                <th className="px-3 py-2 text-right">Revenue</th>
                 <th className="px-3 py-2 text-right">Percentage</th>
                 <th className="px-3 py-2 text-right">AVG Days</th>
               </tr>
@@ -240,6 +249,12 @@ export function TimingTrendModal({
                       {isoWeekNum(r.iso) ?? "—"}
                     </td>
                   )}
+                  <td className="px-3 py-2 text-right tabular-nums text-[#111827]">
+                    {fmtCount(r.orders)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-[#111827]">
+                    {r.revenue == null ? "—" : fmtUsd(r.revenue)}
+                  </td>
                   <td className="px-3 py-2 text-right font-semibold tabular-nums text-[#1B3A5C]">
                     {r.pct == null ? "—" : `${r.pct.toFixed(1)}%`}
                   </td>

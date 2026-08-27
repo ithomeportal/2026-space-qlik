@@ -219,3 +219,46 @@ export function Pager({ page, pages, total, size, onChange }: PagerProps) {
     </div>
   )
 }
+
+
+/**
+ * Bruno (PDF 2026-08-27) R1 — a customer name that filters the whole page.
+ *
+ * Clicking calls the page's existing `toggleCustomer`, so this behaves exactly
+ * like the filter chips in the header: click to add, click again to remove.
+ * Deliberately NOT a new filtering concept — one customer filter, two ways in.
+ *
+ * Every panel refetches on its own from there: the customer list already lives
+ * in the URL, and every React Query key on this report already includes it.
+ *
+ * ⚠ The names rendered here are `TRIM(customer_name)` while the backend filter
+ * compares the raw `varchar(50)` column. Verified against gold on 2026-08-27:
+ * 0 rows differ from their trimmed form and the distinct count is 88 either
+ * way, so the two agree. If a padded name ever lands in this table the filter
+ * would match nothing and say nothing (§87) — re-check before assuming.
+ *
+ * Renders plain text when no handler is passed, so a read-only surface can
+ * reuse the same cell without pretending to be clickable.
+ */
+export function CustomerFilterLink({
+  name,
+  onClick,
+  className,
+}: {
+  name: string | null | undefined
+  onClick?: (name: string) => void
+  className?: string
+}) {
+  const text = name || "—"
+  if (!onClick || !name) return <span className={className}>{text}</span>
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(name)}
+      title={`Filter this report by ${name}`}
+      className={`text-left hover:text-[#1B3A5C] hover:underline ${className ?? ""}`}
+    >
+      {text}
+    </button>
+  )
+}

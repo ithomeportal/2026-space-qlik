@@ -17,6 +17,7 @@ import {
   Pager,
   SortableTh,
   UnbilledExpandModal,
+  CustomerFilterLink,
 } from "./UnbilledShared"
 
 const PAGE_SIZE = 25
@@ -24,6 +25,8 @@ const EXPANDED_PAGE_SIZE = 100
 
 interface Props {
   filters: AdminCashflowFilters
+  // Bruno (PDF 2026-08-27) R1: click a customer name to filter the page.
+  onCustomerClick?: (name: string) => void
 }
 
 // Presentational thead + tbody — shared by the inline card and the pop-up.
@@ -32,11 +35,13 @@ function DeliveredTable({
   loading,
   sort,
   onSort,
+  onCustomerClick,
 }: {
   rows: DeliveredNotBilledRow[]
   loading: boolean
   sort: string
   onSort: (s: string) => void
+  onCustomerClick?: (name: string) => void
 }) {
   return (
     <div className="overflow-auto">
@@ -73,7 +78,11 @@ function DeliveredTable({
               >
                 <td className="px-2 py-1.5 font-mono text-[11px]">{r.id}</td>
                 <td className="max-w-[200px] truncate px-2 py-1.5" title={r.customer_name}>
-                  {r.customer_name || "—"}
+                  <CustomerFilterLink
+                    name={r.customer_name}
+                    onClick={onCustomerClick}
+                    className="block max-w-full truncate"
+                  />
                 </td>
                 <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
                 <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
@@ -101,12 +110,14 @@ function DeliveredExpanded({
   onSort,
   orderQ,
   customerQ,
+  onCustomerClick,
 }: {
   filters: AdminCashflowFilters
   sort: string
   onSort: (s: string) => void
   orderQ: string
   customerQ: string
+  onCustomerClick?: (name: string) => void
 }) {
   const [page, setPage] = useState(1)
   useEffect(() => setPage(1), [sort, orderQ, customerQ])
@@ -122,13 +133,19 @@ function DeliveredExpanded({
   const pages = Math.max(1, Math.ceil(total / EXPANDED_PAGE_SIZE))
   return (
     <>
-      <DeliveredTable rows={rows} loading={isLoading} sort={sort} onSort={onSort} />
+      <DeliveredTable
+        rows={rows}
+        loading={isLoading}
+        sort={sort}
+        onSort={onSort}
+        onCustomerClick={onCustomerClick}
+      />
       <Pager page={page} pages={pages} total={total} size={EXPANDED_PAGE_SIZE} onChange={setPage} />
     </>
   )
 }
 
-export function DeliveredNotBilledCard({ filters }: Props) {
+export function DeliveredNotBilledCard({ filters, onCustomerClick }: Props) {
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState<string>("delivered_asc")
   const [orderQ, setOrderQ] = useState("")
@@ -190,7 +207,13 @@ export function DeliveredNotBilledCard({ filters }: Props) {
         onOrder={setOrderQ}
         onCustomer={setCustomerQ}
       />
-      <DeliveredTable rows={rows} loading={isLoading} sort={sort} onSort={setSort} />
+      <DeliveredTable
+        rows={rows}
+        loading={isLoading}
+        sort={sort}
+        onSort={setSort}
+        onCustomerClick={onCustomerClick}
+      />
       <Pager page={page} pages={pages} total={total} size={PAGE_SIZE} onChange={setPage} />
 
       {expanded && (
@@ -211,6 +234,7 @@ export function DeliveredNotBilledCard({ filters }: Props) {
             onSort={setSort}
             orderQ={dOrderQ}
             customerQ={dCustomerQ}
+            onCustomerClick={onCustomerClick}
           />
         </UnbilledExpandModal>
       )}

@@ -9,9 +9,12 @@ import {
 } from "@/lib/admin-cashflow-api"
 import { fmtCount, fmtNum1, fmtUsd } from "./format"
 import { TopDelayedMonthlyModal } from "./TopDelayedMonthlyModal"
+import { CustomerFilterLink } from "./UnbilledShared"
 
 interface Props {
   filters: AdminCashflowFilters
+  // Bruno (PDF 2026-08-27) R1: click a customer name to filter the page.
+  onCustomerClick?: (name: string) => void
 }
 
 // Bruno R4 PDF 2026-05-26: sort every column. The list is ≤10 pre-fetched
@@ -19,7 +22,7 @@ interface Props {
 type SortKey = "customer_name" | "n_late" | "late_revenue" | "avg_days"
 type SortDir = "asc" | "desc"
 
-export function TopDelayedCustomers({ filters }: Props) {
+export function TopDelayedCustomers({ filters, onCustomerClick }: Props) {
   const { data, isLoading } = useTopDelayedCustomers(filters, 10)
   const [sortKey, setSortKey] = useState<SortKey>("late_revenue")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -98,7 +101,11 @@ export function TopDelayedCustomers({ filters }: Props) {
                   className="border-b border-[#F3F4F6] last:border-0"
                 >
                   <td className="px-1.5 py-1.5 truncate" title={r.customer_name}>
-                    {r.customer_name}
+                    <CustomerFilterLink
+                      name={r.customer_name}
+                      onClick={onCustomerClick}
+                      className="block max-w-full truncate"
+                    />
                   </td>
                   <td className="px-1.5 py-1.5 text-right tabular-nums">
                     {fmtCount(r.n_late)}
@@ -116,7 +123,11 @@ export function TopDelayedCustomers({ filters }: Props) {
         )}
       </div>
       {showTable ? (
-        <TopDelayedMonthlyModal filters={filters} onClose={() => setShowTable(false)} />
+        <TopDelayedMonthlyModal
+          filters={filters}
+          onClose={() => setShowTable(false)}
+          onCustomerClick={onCustomerClick}
+        />
       ) : null}
     </div>
   )

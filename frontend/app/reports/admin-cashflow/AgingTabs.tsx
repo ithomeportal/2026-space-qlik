@@ -10,10 +10,15 @@ import {
   type AgingTab,
 } from "@/lib/admin-cashflow-api"
 import { DownloadCsvButton } from "./DownloadCsvButton"
+import { CustomerFilterLink } from "./UnbilledShared"
 import { daysBandClass, fmtCount, fmtDate, fmtUsd } from "./format"
 
 interface Props {
   filters: AdminCashflowFilters
+  // Bruno (PDF 2026-08-27) R1: click a customer name to filter the page. One
+  // handler here covers Delivery→Bill, BOL→Bill and Carrier Inv→Bill (C-B) —
+  // the three tabs share this table.
+  onCustomerClick?: (name: string) => void
 }
 
 const PAGE_SIZE = 50
@@ -52,7 +57,7 @@ const TABS: TabSpec[] = [
   },
 ]
 
-export function AgingTabs({ filters }: Props) {
+export function AgingTabs({ filters, onCustomerClick }: Props) {
   const [active, setActive] = useState<AgingTab>("delivery-vs-bill")
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState<string>("days_desc")
@@ -220,7 +225,11 @@ export function AgingTabs({ filters }: Props) {
                   <td className="px-2 py-1.5">{r.team_id}</td>
                   <td className="px-2 py-1.5 font-mono text-[11px]">{r.id}</td>
                   <td className="px-2 py-1.5 truncate" title={r.customer_name}>
-                    {r.customer_name}
+                    <CustomerFilterLink
+                      name={r.customer_name}
+                      onClick={onCustomerClick}
+                      className="block max-w-full truncate"
+                    />
                   </td>
                   <td className="px-2 py-1.5">{fmtDate(r.left_date)}</td>
                   <td className="px-2 py-1.5">{fmtDate(r.bill_date)}</td>

@@ -83,6 +83,20 @@ YEAR_FLOOR = date(2024, 1, 1)
 LATE_DAYS = 2
 MIN_AVG_DAYS = 2
 
+# How many discrete month buckets the delays "Table" pop-up returns.
+#
+# Bruno Aging (PDF 2026-08-27) R2 asks for line charts spanning the last eight
+# months. The pop-up's TABLE still shows only the newest four (tm/lm/l2m/l3m) —
+# the frontend slices — so widening this changes the chart's reach, never the
+# table's shape. Keep it >= TOP_DELAYED_TABLE_MONTHS or the table loses columns.
+TOP_DELAYED_MONTHS = 8
+
+# How many of those buckets the TABLE renders (TM, LM, L2M, L3M) — and, more
+# importantly, the window that decides which customers qualify for the pop-up
+# at all and in what order. Held separate from TOP_DELAYED_MONTHS so the chart
+# can reach further back without changing the table's population.
+TOP_DELAYED_TABLE_MONTHS = 4
+
 
 router = APIRouter(tags=["admin-cashflow"], prefix="/custom/admin-cashflow")
 
@@ -880,6 +894,7 @@ async def timing_monthly(
       SELECT
         date_trunc('{trunc}', c.origin_actual_arrival)::date AS mon,
         c.id,
+        c.total_charge,
         c.bill_date,
         c.bol_recv_date,
         c.invoice_recv_date,
@@ -934,7 +949,32 @@ async def timing_monthly(
         AVG(bill_date::date - invoice_recv_date::date) FILTER (
           WHERE bill_date>'2000-01-01'::date
             AND invoice_recv_date>'2000-01-01'::date
-        ) AS inv_avg
+        ) AS inv_avg,
+        -- Bruno Aging (PDF 2026-08-27) R3: revenue per bucket for the "+"
+        -- Table view's new Revenue column. The FILTER on each is byte-for-byte
+        -- the matching *_total predicate above, so Orders / Revenue / Percentage
+        -- in one row all describe the SAME universe and reconcile with the card
+        -- behind the pop-up (§16). A metric's revenue is its DENOMINATOR's
+        -- revenue — every order in scope, not just the on-time ones.
+        --
+        -- Plain SUM, not SUM(DISTINCT …): the counts above say COUNT(DISTINCT id)
+        -- defensively, but `id` is in fact unique in this table (24,229 rows /
+        -- 24,229 distinct ids over 2026), so there is nothing to de-duplicate.
+        -- Were that ever to change, this SUM would double-count while the count
+        -- beside it would not — re-check before widening the base CTE.
+        SUM(total_charge) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND dest_actual_arrival>'2000-01-01'::date
+            AND dest_actual_departure>'2000-01-01'::date
+        ) AS del_rev,
+        SUM(total_charge) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND bol_recv_date>'2000-01-01'::date
+        ) AS bol_rev,
+        SUM(total_charge) FILTER (
+          WHERE bill_date>'2000-01-01'::date
+            AND invoice_recv_date>'2000-01-01'::date
+        ) AS inv_rev
       FROM base
       GROUP BY mon
     ),
@@ -952,28 +992,41 @@ async def timing_monthly(
       COALESCE(a.inv_within, 0) AS inv_within,
       a.del_avg,
       a.bol_avg,
-      a.inv_avg
+      a.inv_avg,
+      COALESCE(a.del_rev, 0) AS del_rev,
+      COALESCE(a.bol_rev, 0) AS bol_rev,
+      COALESCE(a.inv_rev, 0) AS inv_rev
     FROM months m
     LEFT JOIN agg a USING (mon)
     ORDER BY m.mon
     """
     rows = await pool.fetch(sql, *params)
 
-    def series(total_col: str, within_col: str, avg_col: str) -> dict:
+    def series(total_col: str, within_col: str, avg_col: str, rev_col: str) -> dict:
         total = [int(r[total_col] or 0) for r in rows]
         within = [int(r[within_col] or 0) for r in rows]
         over = [t - w for t, w in zip(total, within)]
         avg_days = [float(r[avg_col]) if r[avg_col] is not None else None for r in rows]
-        return {"total": total, "within": within, "over": over, "avg_days": avg_days}
+        # `total` doubles as the Table view's "Orders" column — it is already the
+        # count of orders in the metric's universe, so that column needed no new
+        # aggregate. `revenue` is the same universe's revenue.
+        revenue = [float(r[rev_col] or 0) for r in rows]
+        return {
+            "total": total,
+            "within": within,
+            "over": over,
+            "avg_days": avg_days,
+            "revenue": revenue,
+        }
 
     return {
         "success": True,
         "data": {
             "grain": grain,
             "months": [r["mon"].isoformat() for r in rows],
-            "del": series("del_total", "del_within", "del_avg"),
-            "bol": series("bol_total", "bol_within", "bol_avg"),
-            "carrinv": series("inv_total", "inv_within", "inv_avg"),
+            "del": series("del_total", "del_within", "del_avg", "del_rev"),
+            "bol": series("bol_total", "bol_within", "bol_avg", "bol_rev"),
+            "carrinv": series("inv_total", "inv_within", "inv_avg", "inv_rev"),
         },
     }
 
@@ -1702,17 +1755,28 @@ async def top_delayed_customers_monthly(
     limit: int = Query(200, ge=1, le=500),
     _user: dict = Depends(require_report_access("admin-cashflow")),
 ):
-    """The "Table" pop-up behind the delays card — four months, side by side.
+    """The "Table" pop-up behind the delays card — discrete months, side by side.
 
     Bruno PDF 2026-08-24 R2: Late / Revenue / AVG Days for **this month, last
-    month, two months ago and three months ago**. Four DISCRETE months, not
-    widening trailing windows — each column is that month alone, so a row reads
-    as a trend rather than as four nested totals.
+    month, two months ago and three months ago**. DISCRETE months, not widening
+    trailing windows — each column is that month alone, so a row reads as a
+    trend rather than as nested totals.
+
+    Bruno PDF 2026-08-27 R2 added the Late / Revenue / AVG Days **line charts**
+    to the same pop-up, spanning ``TOP_DELAYED_MONTHS`` (8) months. That is why
+    this endpoint now returns eight buckets where it used to return four; the
+    table reads only the newest ``TOP_DELAYED_TABLE_MONTHS`` (4) and ignores the
+    rest, so one fetch feeds both views.
+
+    ⚠ The extra buckets are DATA ONLY. ``n_late_total`` / ``late_revenue_total``
+    / ``avg_days_total`` — which decide who qualifies for the pop-up and how the
+    rows are ordered — stay pinned to the four table months. A wider window must
+    not silently admit a wider set of customers.
 
     Scope-only, exactly like ``/timing-monthly``: teams, companies, customer and
     contract type apply; the page's date range does NOT. An MTD range would
     collapse the pop-up to a single populated column, which is the one thing a
-    four-month comparison must not do.
+    multi-month comparison must not do.
 
     Bucketed on ``origin_actual_arrival`` — the same date every other panel on
     this page filters by — so the **TM** column reconciles with the card sitting
@@ -1724,7 +1788,7 @@ async def top_delayed_customers_monthly(
     the asymmetry: revenue and the count are late-loads-only, the average is
     over every load. The customer list is the card's too — at least one late
     load and an overall average of at least ``MIN_AVG_DAYS`` across the four
-    months.
+    table months.
     """
     pool = get_datalake_gold_pool(request)
     today = _today_clamped()
@@ -1733,19 +1797,26 @@ async def top_delayed_customers_monthly(
     late_days = LATE_DAYS
     min_avg_days = MIN_AVG_DAYS
 
-    # Four month starts, newest first: TM, LM, L2M, L3M.
+    # Month starts, newest first: TM, LM, L2M … L7M.
+    #
+    # Bruno Aging (PDF 2026-08-27) R2 widened this from four months to eight so
+    # the pop-up can also draw a trailing-8-month line chart. The TABLE is
+    # unchanged: it reads only tm/lm/l2m/l3m and ignores the rest, so one fetch
+    # now serves both views rather than costing a second round trip.
     buckets: list[date] = [date(today.year, today.month, 1)]
-    for _ in range(3):
+    for _ in range(TOP_DELAYED_MONTHS - 1):
         prev = buckets[-1] - timedelta(days=1)
         buckets.append(date(prev.year, prev.month, 1))
-    keys = ["tm", "lm", "l2m", "l3m"]
+    keys = ["tm", "lm"] + [f"l{i}m" for i in range(2, TOP_DELAYED_MONTHS)]
+    # The four the TABLE renders. Everything beyond them is chart-only data.
+    table_keys = set(keys[:TOP_DELAYED_TABLE_MONTHS])
 
     params: list = []
     where = _scope_where(
         "c", team_list, company_list, OPEN_STATUSES, customer, contract_type, params,
         customers=_parse_customers(customers), customer_mode=customer_mode,
     )
-    # The window is the four buckets, never the page range — see the docstring.
+    # The window is the buckets above, never the page range — see the docstring.
     date_frag = _date_fragment("c", buckets[-1], today, params)
 
     sql = f"""
@@ -1779,7 +1850,7 @@ async def top_delayed_customers_monthly(
     index = {b: k for b, k in zip(buckets, keys)}
     for r in rows:
         key = index.get(r["bucket"])
-        if key is None:          # a bucket outside the four (clamped range edge)
+        if key is None:          # a bucket outside the window (clamped range edge)
             continue
         rec = by_customer.setdefault(
             r["customer_name"],
@@ -1789,7 +1860,11 @@ async def top_delayed_customers_monthly(
                 "late_revenue_total": 0.0,
                 "_days_sum": 0.0,
                 "_loads": 0,
-                **{f"{m}_{k}": None for m in ("late", "rev", "avg_days") for k in keys},
+                **{
+                    f"{m}_{k}": None
+                    for m in ("late", "rev", "avg_days", "loads")
+                    for k in keys
+                },
             },
         )
         n_late = int(r["n_late"] or 0)
@@ -1797,6 +1872,19 @@ async def top_delayed_customers_monthly(
         rec[f"late_{key}"] = n_late
         rec[f"rev_{key}"] = late_revenue
         rec[f"avg_days_{key}"] = float(r["avg_days"] or 0)
+        # ⚠ Emitted so the pop-up's AVG Days line can average across customers
+        # by LOADS. Without it the chart could only take a mean of per-customer
+        # means, letting a 2-load customer outvote a 200-load one — the same
+        # trap `_days_sum` / `_loads` below already avoids for the row total.
+        rec[f"loads_{key}"] = int(r["n_loads"] or 0)
+        # ⚠ The totals — and therefore which customers qualify at all, and the
+        # order they come back in — stay pinned to the TABLE's four months, even
+        # though eight are now fetched for the chart. Letting them run over all
+        # eight would quietly admit customers who have been clean since April
+        # and re-rank the rest, changing a table Bruno did not ask to change.
+        # Widening the window must not widen the population (§16).
+        if key not in table_keys:
+            continue
         rec["n_late_total"] += n_late
         rec["late_revenue_total"] += late_revenue
         # Weighted so the overall average is over loads, not over months — a

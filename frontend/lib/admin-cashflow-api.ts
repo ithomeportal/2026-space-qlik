@@ -183,6 +183,12 @@ export interface TimingMetricSeries {
   // Bruno Aging (PDF 2026-07-20): avg days per bucket for the "+" Table view.
   // null when a bucket has no qualifying loads.
   avg_days?: (number | null)[]
+  // Bruno Aging (PDF 2026-08-27) R3: revenue per bucket for the "+" Table
+  // view's Revenue column. Same universe as `total`, which is why `total`
+  // doubles as that table's "Orders" column — the two describe one set of
+  // orders and therefore reconcile with the KPI card behind the pop-up.
+  // Optional so an older backend response still type-checks.
+  revenue?: number[]
 }
 
 export type TimingGrain = "week" | "month"
@@ -252,30 +258,43 @@ export interface TopDelayedCustomerRow {
 // then one column per preceding month. The month each key stands for is not
 // inferred client-side — the endpoint returns it in `meta.buckets`, so the
 // header and the numbers can never disagree.
-export type TopDelayedBucketKey = "tm" | "lm" | "l2m" | "l3m"
+// Bruno Aging (PDF 2026-08-27) R2: the endpoint now returns EIGHT discrete
+// months. The table still renders only the first four (tm/lm/l2m/l3m) — the
+// rest exist so the pop-up's Late / Revenue / AVG Days line charts can span
+// eight months off the same fetch.
+export type TopDelayedBucketKey =
+  | "tm" | "lm" | "l2m" | "l3m" | "l4m" | "l5m" | "l6m" | "l7m"
+
+// The four the table shows, in table order. `as const` so the four-key subset
+// is its own type — the table's column labels are keyed on it, and typing them
+// against the full eight would demand labels for chart-only buckets.
+export const TOP_DELAYED_TABLE_KEYS = ["tm", "lm", "l2m", "l3m"] as const
+export type TopDelayedTableKey = (typeof TOP_DELAYED_TABLE_KEYS)[number]
 
 export interface TopDelayedBucket {
   key: TopDelayedBucketKey
   month: string
 }
 
-export interface TopDelayedMonthlyRow {
+// Per-bucket fields are `late_` / `rev_` / `avg_days_` / `loads_` + key, for every
+// key in TopDelayedBucketKey. Spelled as a mapped type rather than 24 literal
+// lines so adding a ninth month cannot leave a field behind.
+type TopDelayedBucketFields = {
+  [K in TopDelayedBucketKey as
+    | `late_${K}`
+    | `rev_${K}`
+    | `avg_days_${K}`
+    | `loads_${K}`]: number | null
+}
+
+export interface TopDelayedMonthlyRow extends TopDelayedBucketFields {
   customer_name: string
+  // ⚠ These three cover the TABLE's four months only, never all eight — they
+  // decide which customers qualify and how the rows are ordered, and the
+  // backend pins them deliberately. See the endpoint docstring.
   n_late_total: number
   late_revenue_total: number
   avg_days_total: number
-  late_tm: number | null
-  late_lm: number | null
-  late_l2m: number | null
-  late_l3m: number | null
-  rev_tm: number | null
-  rev_lm: number | null
-  rev_l2m: number | null
-  rev_l3m: number | null
-  avg_days_tm: number | null
-  avg_days_lm: number | null
-  avg_days_l2m: number | null
-  avg_days_l3m: number | null
 }
 
 // ---------------------------------------------------------------------------
