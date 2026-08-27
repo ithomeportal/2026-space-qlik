@@ -201,7 +201,7 @@ function Top5Panel({
     <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="bg-[#FEF3C7] px-3 py-2 text-sm font-semibold text-[#92400E]">
         {title}
-        <span className="ml-2 text-xs font-normal opacity-75">· honors Division · Team · Customer · full-year window</span>
+        <span className="ml-2 text-xs font-normal opacity-75">· honors Division · Team · Customer · date filter</span>
       </div>
       <div className="grid grid-cols-1 gap-0 md:grid-cols-2">
         {loading ? (

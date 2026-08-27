@@ -58,7 +58,7 @@ async def team_variance(
 
     row = await pool.fetchrow(
         f"""
-        WITH {customer_team_cte(scope)},
+        WITH {customer_team_cte(scope, with_budget_team=True)},
         per_customer AS (
           SELECT
             budget."Customer Name" AS customer_name,
@@ -69,7 +69,7 @@ async def team_variance(
             SUM(budget."Profit Actual")   AS profit_actual,
             SUM(budget."Profit Budget")   AS profit_budget
           FROM public.daily_production_budget_report budget
-          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
           WHERE budget."Date" BETWEEN $1 AND $2
           {extra}
           GROUP BY budget."Customer Name"
@@ -147,7 +147,7 @@ async def customer_variance(
     # Bruno round-2 (2026-05-13): actual − budget direction (positive = over-budget).
     rows = await pool.fetch(
         f"""
-        WITH {customer_team_cte(scope)}
+        WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT
           budget."Customer Name" AS customer_name,
           COALESCE(SUM(budget."Loads Actual"),    0)
@@ -157,7 +157,7 @@ async def customer_variance(
           COALESCE(SUM(budget."Revenue Actual"),  0)
             - COALESCE(SUM(budget."Revenue Budget"),  0) AS revenue_var
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         {extra}
         GROUP BY budget."Customer Name"
@@ -361,7 +361,7 @@ async def team_variance_weekly(
         extra += f' AND budget."Customer Name" = ${len(params)}'
     rows = await pool.fetch(
         f"""
-        WITH {customer_team_cte(scope)},
+        WITH {customer_team_cte(scope, with_budget_team=True)},
         per_cw AS (
           SELECT
             DATE_TRUNC('week', budget."Date")::date AS wk,
@@ -370,7 +370,7 @@ async def team_variance_weekly(
             SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
             SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
           FROM public.daily_production_budget_report budget
-          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
           WHERE budget."Date" BETWEEN $1 AND $2
           {extra}
           GROUP BY 1, 2
@@ -427,7 +427,7 @@ async def team_variance_by_team(
         extra += f' AND budget."Customer Name" = ${len(params)}'
     rows = await pool.fetch(
         f"""
-        WITH {customer_team_cte(scope)},
+        WITH {customer_team_cte(scope, with_budget_team=True)},
         per_ct AS (
           SELECT
             ct.team_id AS team_id,
@@ -436,7 +436,7 @@ async def team_variance_by_team(
             SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
             SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
           FROM public.daily_production_budget_report budget
-          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
           WHERE budget."Date" BETWEEN $1 AND $2
           {extra}
           GROUP BY 1, 2

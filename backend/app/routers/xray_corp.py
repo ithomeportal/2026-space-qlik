@@ -32,7 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.datalake import pad_variants as _pad_variants
+from app.datalake import budget_team_cte, pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -373,10 +373,11 @@ async def kpis(
                 GROUP BY TRIM(customer_name), TRIM(team_id)
             ) ranked
             WHERE rn = 1
-        )
+        ),
+        {budget_team_cte()}
         SELECT COALESCE(SUM(budget."Profit Actual"), 0)::numeric
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         {tm_extra}
         """,

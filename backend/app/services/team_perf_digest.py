@@ -13,7 +13,7 @@ bypasses ``require_report_access``) + the proxy secret — the same pattern
 matches the report.
 
 Two things the UI has no endpoint for are computed here with DIRECT SQL,
-reusing ``_v4_scope_where`` / ``CUSTOMER_TEAM_CTE`` so the predicates are
+reusing ``_v4_scope_where`` / ``customer_team_cte`` so the predicates are
 byte-identical to the report's:
 
   1. the 14-day daily series behind the two charts (``/combo`` is a live UI
@@ -47,7 +47,7 @@ from app.clock import cst_now, cst_today
 from app.config import settings
 from app.routers.ops_portal_overview import (
     CORP_TEAMS,
-    CUSTOMER_TEAM_CTE,
+    customer_team_cte,
     YEAR_START,
     _resolve_range,
     _month_bounds,
@@ -280,7 +280,7 @@ async def _fetch_profit_budgets(
 
     ``daily_production_budget_report`` has no pre-aggregated daily/weekly/
     monthly budget columns — every window is a sum over the matching "Date"
-    range. Team scoping goes through CUSTOMER_TEAM_CTE (canonical per-customer
+    range. Team scoping goes through customer_team_cte (canonical per-customer
     team), exactly like /profit-tm-gauge and /actuals.
 
     ⚠ ``mtd_budget`` (month-start → TODAY) and ``month_budget`` (the whole
@@ -293,7 +293,7 @@ async def _fetch_profit_budgets(
     """
     row = await pool.fetchrow(
         f"""
-        WITH {CUSTOMER_TEAM_CTE}
+        WITH {customer_team_cte(with_budget_team=True)}
         SELECT
           COALESCE(SUM(b."Profit Budget") FILTER (WHERE b."Date" BETWEEN $1 AND $2), 0)::numeric  AS ytd_budget,
           COALESCE(SUM(b."Profit Budget") FILTER (WHERE b."Date" = $3), 0)::numeric               AS day_budget,
@@ -301,7 +301,7 @@ async def _fetch_profit_budgets(
           COALESCE(SUM(b."Profit Budget") FILTER (WHERE b."Date" BETWEEN $6 AND $7), 0)::numeric  AS mtd_budget,
           COALESCE(SUM(b."Profit Budget") FILTER (WHERE b."Date" BETWEEN $8 AND $9), 0)::numeric  AS month_budget
         FROM public.daily_production_budget_report b
-        JOIN customer_team ct ON TRIM(b."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(b."Customer Name") = ct.customer_name
         WHERE ct.team_id = ANY($10)
           AND b."Date" BETWEEN LEAST($1, $3, $4, $6, $8) AND GREATEST($2, $3, $5, $7, $9)
         """,

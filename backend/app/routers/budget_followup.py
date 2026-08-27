@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.datalake import sql_str_list
+from app.datalake import budget_team_cte, sql_str_list
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # Scope of this report.
@@ -67,7 +67,7 @@ customer_team AS (
     ) ranked
     WHERE rn = 1
 )
-"""
+""" + "," + budget_team_cte()
 
 router = APIRouter(tags=["budget-followup"], prefix="/custom/budget-followup")
 
@@ -120,7 +120,7 @@ async def filters(
         WITH {CUSTOMER_TEAM_CTE}
         SELECT DISTINCT ct.team_id AS team_id
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         ORDER BY team_id
         """,
@@ -132,7 +132,7 @@ async def filters(
         WITH {CUSTOMER_TEAM_CTE}
         SELECT DISTINCT budget."Customer Name" AS customer_name
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2 AND budget."Customer Name" IS NOT NULL
         ORDER BY customer_name
         """,
@@ -177,7 +177,7 @@ async def summary(
             COUNT(DISTINCT budget."Customer Name")                                                                            AS total_customers,
             COUNT(DISTINCT budget."Date") FILTER (WHERE budget."Loads Actual" > 0 OR budget."Loads Budget" > 0)               AS active_days
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         """,
         *params,
@@ -283,7 +283,7 @@ async def by_customer(
                 SUM(budget."Profit Actual")  AS profit_actual,
                 SUM(budget."Profit Budget")  AS profit_budget
             FROM public.daily_production_budget_report budget
-            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
             WHERE {where}
             GROUP BY budget."Customer Name", ct.team_id
         )
@@ -309,7 +309,7 @@ async def by_customer(
         WITH {CUSTOMER_TEAM_CTE}
         SELECT COUNT(DISTINCT budget."Customer Name")
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         """,
         *params,
@@ -345,7 +345,7 @@ async def by_team(
             SUM(budget."Profit Actual")   AS profit_actual,
             SUM(budget."Profit Budget")   AS profit_budget
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         GROUP BY ct.team_id
         ORDER BY team_id
@@ -380,7 +380,7 @@ async def monthly(
             SUM(budget."Profit Actual")   AS profit_actual,
             SUM(budget."Profit Budget")   AS profit_budget
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         GROUP BY 1
         ORDER BY 1
@@ -553,7 +553,7 @@ async def by_customer_detail(
                 COALESCE(SUM(budget."Profit Actual")  FILTER (WHERE budget."Date" BETWEEN $8 AND $9), 0) AS prof_mtd,
                 COALESCE(SUM(budget."Loads Actual")   FILTER (WHERE budget."Date" BETWEEN $8 AND $9), 0) AS loads_mtd
             FROM public.daily_production_budget_report budget
-            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
             WHERE {where}
             GROUP BY budget."Customer Name", ct.team_id
         )
@@ -666,7 +666,7 @@ async def top5(
                 COALESCE(SUM(budget."Profit Actual"), 0) AS profit_actual,
                 COALESCE(SUM(budget."Profit Budget"), 0) AS profit_budget
             FROM public.daily_production_budget_report budget
-            JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
             WHERE {where}
             GROUP BY budget."Customer Name"
         )
@@ -758,7 +758,7 @@ async def weekly(
             SUM(budget."Profit Actual")  AS profit_actual,
             SUM(budget."Profit Budget")  AS profit_budget
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE {where}
         GROUP BY 1
         ORDER BY 1

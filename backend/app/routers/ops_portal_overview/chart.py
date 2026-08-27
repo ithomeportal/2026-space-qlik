@@ -60,6 +60,28 @@ async def combo(
     today = cst_today()
     win_start, win_end, anchors = _resolve_grain_window(grain, today)
 
+    # Bruno (PDF 2026-08-27 "Ops Portal Updates") Request 1: the BDGT line read
+    # 1,243 / $2,317,148 / $433,303 for Aug-2026 against the budget table's true
+    # 1,432.03 / $2,706,634.18 / $502,241.50. `_resolve_grain_window` caps the
+    # window at today so a partial period is not double-counted — right for the
+    # v4 bars (production that has not happened yet does not exist), wrong for
+    # the budget line, which is a WHOLE-MONTH plan that merely happens to be
+    # stored one row per day. Truncating it compared a full month of production
+    # against 27/31 of its target.
+    #
+    # So the budget leg alone runs to the end of the last MONTH bucket. The
+    # gauge directly under this chart already pairs MTD actual with the full
+    # month's target, so this makes the two agree instead of disagreeing by the
+    # remaining days. Day and week grains keep `win_end` untouched: a day bucket
+    # is already whole, and Bruno validated the month figure only.
+    #
+    # ⚠ Deliberately computed here and NOT inside `_resolve_grain_window` —
+    # `test_chart_grain_window.py` pins that helper to end at today, and that
+    # guard protects the production bars. This widens one leg, not the window.
+    bud_end = win_end
+    if grain == "month":
+        bud_end = _month_bounds(anchors[-1])[1]
+
     trunc_v4 = {
         "day":   "br4.origin_actual_departure::date",
         "week":  "DATE_TRUNC('week', br4.origin_actual_departure)::date",
@@ -96,7 +118,7 @@ async def combo(
     """
 
     # ---- Budget (Budget URL) --------------------------------------------
-    bud_params: list = [win_start, win_end]
+    bud_params: list = [win_start, bud_end]
     bud_extra = ""
     if team:
         bud_params.append(team)
@@ -105,14 +127,14 @@ async def combo(
         bud_params.append(customer)
         bud_extra += f' AND budget."Customer Name" = ${len(bud_params)}'
     bud_sql = f"""
-        WITH {customer_team_cte(scope)}
+        WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT
           {trunc_bud} AS bucket_start,
           COALESCE(SUM(budget."Revenue Budget"), 0)::numeric AS budget_revenue,
           COALESCE(SUM(budget."Profit Budget"),  0)::numeric AS budget_profit,
           COALESCE(SUM(budget."Loads Budget"),   0)::numeric AS budget_loads
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         {bud_extra}
         GROUP BY 1

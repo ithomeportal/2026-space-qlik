@@ -85,3 +85,71 @@ def sql_str_list(values) -> str:
         raise ValueError("sql_str_list() needs at least one value: "
                          "`IN ()` is a syntax error, and an empty scope is a bug")
     return "(" + ", ".join("'" + str(v).replace("'", "''") + "'" for v in vals) + ")"
+
+
+# ---------------------------------------------------------------------------
+# Budget mirror → team map (Bruno PDFs 2026-08-27, Ops Portal + Budget Updates)
+# ---------------------------------------------------------------------------
+
+# `daily_production_budget_report."Customer Name"` carries a McLeod-id prefix on
+# some rows that the v4 customer name does not have. Measured 2026-08-27 against
+# live gold, three names match this pattern and two of them have NO exact twin in
+# v4, so the INNER JOIN every budget panel used dropped them without erroring:
+#
+#   KELLQUMX - KELLOGG COMPANY MEXICO            → v4 'KELLOGG COMPANY MEXICO'  (TEAM4)
+#   STARCOMX - STARCORR DE MEXICO S DE RL DE CV  → v4 'STARCORR DE MEXICO …'    (TEAM3)
+#
+# Cost while it was live: −14.07 loads / −$58,940.28 / −$6,899.76 in Aug-2026 and
+# −107.97 loads / −$391,540 / −$49,091 across 2026 — which is exactly why Budget
+# Follow Up read 1,417.96 against the table's true 1,432.03.
+BUDGET_NAME_PREFIX_RE = "^[A-Z0-9]{2,12} - "
+
+_BUDGET_TEAM_CTE = """
+budget_team AS (
+    SELECT
+        n.customer_name,
+        COALESCE(t_exact.@COL@, t_stripped.@COL@) AS @COL@
+    FROM (
+        SELECT DISTINCT TRIM("Customer Name") AS customer_name
+        FROM public.daily_production_budget_report
+        WHERE "Customer Name" IS NOT NULL
+    ) n
+    LEFT JOIN @SRC@ t_exact
+           ON t_exact.customer_name = n.customer_name
+    LEFT JOIN @SRC@ t_stripped
+           ON t_exact.customer_name IS NULL
+          AND t_stripped.customer_name =
+              regexp_replace(n.customer_name, '@RE@', '')
+)
+"""
+
+
+def budget_team_cte(source_cte: str = "customer_team", team_col: str = "team_id") -> str:
+    """One budget-customer → team row per name in the budget mirror.
+
+    Renders a CTE named ``budget_team`` that resolves ``source_cte`` (the
+    per-customer canonical team map built from ``mcleod_gld_budget_report_v4``)
+    by exact name first, then — only where the exact name did not match — by the
+    name with its ``MCLEODID - `` prefix stripped.
+
+    ⚠ The strip is a LOOKUP KEY ONLY. The customer name a panel groups by and
+    displays is never rewritten, because two different budget customers can
+    strip to the same v4 name (``STARCOMX - STARCORR …`` and the separate
+    ``STARCORR …`` row under mcleod_id ``STARTETX`` both do). Rewriting the
+    output key instead would merge them and double-count actuals — §83.
+
+    ⚠ Join it with LEFT JOIN, never JOIN. A name that resolves to no team must
+    still reach an unfiltered total; only an explicit ``ct.<team_col> = …``
+    predicate may exclude it. Measured 2026-08-27: 0 budget rows dated in 2026
+    fail to resolve, and ``test_budget_team_map.py`` pins that.
+
+    ``team_col`` follows the upstream map's output column — ``team_id`` for the
+    ops-portal / budget-followup / x-ray maps, ``division_team`` for the CEO
+    Executive one.
+    """
+    return (
+        _BUDGET_TEAM_CTE
+        .replace("@SRC@", source_cte)
+        .replace("@COL@", team_col)
+        .replace("@RE@", BUDGET_NAME_PREFIX_RE)
+    )

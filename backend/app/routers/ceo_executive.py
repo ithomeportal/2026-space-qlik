@@ -68,7 +68,7 @@ from typing import Iterable, Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
-from app.datalake import pad_variants as _pad_variants
+from app.datalake import budget_team_cte, pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -553,10 +553,11 @@ async def overview(
         budget_customer_frag = f' AND TRIM(budget."Customer Name") = ${len(budget_params)}'
     budget_task = pool.fetchval(
         f"""
-        WITH {_customer_team_cte(1)}
+        WITH {_customer_team_cte(1)},
+        {budget_team_cte(team_col="division_team")}
         SELECT COALESCE(SUM(budget."Profit Budget"), 0)::numeric
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $2 AND $3
           AND ct.division_team = ANY(${budget_scope_pos})
           {_BUDGET_EXCLUDE_FRAG}
@@ -582,6 +583,7 @@ async def overview(
         f"""
         WITH {_production_cte(4, 3)},
         {_customer_team_cte(5)},
+        {budget_team_cte(team_col="division_team")},
         agg AS (
           SELECT
             ct.division_team AS team,
@@ -626,7 +628,7 @@ async def overview(
                         FILTER (WHERE budget."Date" BETWEEN $4 AND $3)::numeric
                  ELSE 0 END AS mo_p_per_l
           FROM production budget
-          JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
           WHERE UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%OILTEX%'
             AND UPPER(COALESCE(budget."Customer Name",'')) NOT LIKE '%UNILINK%'
             AND ($7 = '' OR TRIM(budget."Customer Name") = $7)
@@ -943,15 +945,23 @@ async def customers(
         *wp_params,
     )
 
-    # ---- Top-5 Concentration ($-window = full year) ---------------------
+    # ---- Top-5 Concentration (honors the date filter) -------------------
     # Bruno R5 (2026-05-21): Customer-aware (collapses to one slice when set).
-    # R7 (2026-05-26): now also honors Division + Team (previously global), and
-    # returns ALL ranked customers so the frontend can expand the "Others"
-    # slice into the full remaining-customer list. Date window stays full-year
-    # and date-immutable.
+    # R7 (2026-05-26): now also honors Division + Team (previously global).
+    # Returns ALL ranked customers so the frontend can expand the "Others"
+    # slice into the full remaining-customer list.
+    #
+    # Bruno (PDF 2026-08-27) Requests 1 & 2: the window was pinned to
+    # [YEAR_START, YEAR_END] and ignored the date filter, so both donuts read
+    # full-year concentration next to date-scoped tables on the same tab — two
+    # answers to "who are our top 5" on one screen (§69). They now bind the
+    # SAME resolved (s, e) as Profit by Customer above, so the donut, the table
+    # and the header all describe one window. The panel subtitle in
+    # Customers.tsx changes with it — a stale "full-year window" label would be
+    # worse than no label.
     t5r_params: list = []
     t5r_scope = _scope_where("br4", team, customer, t5r_params, division=division, load_type=load_type)
-    t5r_params.extend([YEAR_START, YEAR_END])
+    t5r_params.extend([s, e])
     t5r_df = (
         f"br4.origin_actual_departure >= ${len(t5r_params)-1}"
         f" AND br4.origin_actual_departure < (${len(t5r_params)}::date + 1)"
@@ -980,7 +990,7 @@ async def customers(
 
     t5p_params: list = []
     t5p_scope = _scope_where("br4", team, customer, t5p_params, division=division, load_type=load_type)
-    t5p_params.extend([YEAR_START, YEAR_END])
+    t5p_params.extend([s, e])
     t5p_df = (
         f"br4.origin_actual_departure >= ${len(t5p_params)-1}"
         f" AND br4.origin_actual_departure < (${len(t5p_params)}::date + 1)"

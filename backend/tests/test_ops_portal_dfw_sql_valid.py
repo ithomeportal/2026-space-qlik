@@ -477,6 +477,13 @@ def test_live_every_emitted_statement_parses_against_gold() -> None:
 
     url = re.sub(r"[?&]sslmode=\w+", "", _GOLD)
 
+    # ⚠ Portal-OWNED tables live in analytics_hub, not gold, so PREPARE against
+    # gold reports 42P01 for them — a false failure, not a defect. Skipping them
+    # keeps this alarm meaningful: it went red on 2026-08-25 when
+    # /team-projection-history shipped, and a permanently-red guard is a guard
+    # nobody reads. Their SQL is covered by tests/test_projection_history.py.
+    PORTAL_OWNED = ("ops_projection_history", "ops_weekly_actuals")
+
     async def run():
         conn = await asyncpg.connect(url, ssl="require")
         await conn.execute("SET statement_timeout = '30s'")
@@ -484,7 +491,7 @@ def test_live_every_emitted_statement_parses_against_gold() -> None:
         seen = set()
         try:
             for label, sql, params in ALL:
-                if sql in seen:
+                if sql in seen or any(t in sql for t in PORTAL_OWNED):
                     continue
                 seen.add(sql)
                 try:

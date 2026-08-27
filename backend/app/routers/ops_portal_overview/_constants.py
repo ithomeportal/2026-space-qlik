@@ -9,7 +9,7 @@ from datetime import date
 
 from fastapi import APIRouter
 
-from app.datalake import sql_str_list
+from app.datalake import budget_team_cte, sql_str_list
 
 
 YEAR_START = date(2026, 1, 1)
@@ -45,10 +45,16 @@ OTD_CODES = ("AL", "D2", "AZ", "AH", "BE", "D1", "A5", "AI", "AF", "A2", "A1", "
 # DFW division is a SINGLE team_id and reprs as `('TEAM-DFW',)` — a trailing
 # comma Postgres rejects with 42601. Every panel built on this CTE 500'd on the
 # DFW page for three days while CORP, running the same line, stayed green (§81).
-def customer_team_cte(scope=None) -> str:
+#
+# ⚠ `with_budget_team=True` appends the `budget_team` CTE (app.datalake) and is
+# passed ONLY by queries that join `daily_production_budget_report`. Every other
+# caller keeps its SQL byte-identical, which is what lets
+# `test_ops_portal_scope.py` keep asserting the CORP baseline.
+def customer_team_cte(scope=None, *, with_budget_team: bool = False) -> str:
     from ._scope import CORP_SCOPE
 
     sc = scope or CORP_SCOPE
+    tail = "," + budget_team_cte() if with_budget_team else ""
     return f"""
 customer_team AS (
     SELECT customer_name, team_id FROM (
@@ -64,7 +70,7 @@ customer_team AS (
         GROUP BY TRIM(customer_name), TRIM({sc.v4_team_col})
     ) ranked
     WHERE rn = 1
-)
+){tail}
 """
 
 

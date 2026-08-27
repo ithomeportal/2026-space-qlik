@@ -156,10 +156,10 @@ async def profit_tm_gauge(
         b_params.append(customer)
         b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
     bud_sql = f"""
-        WITH {customer_team_cte(scope)}
+        WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT COALESCE(SUM(budget."Profit Budget"), 0)::numeric AS profit_budget
         FROM public.daily_production_budget_report budget
-        JOIN customer_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
         WHERE budget."Date" BETWEEN $1 AND $2
         {b_extra}
     """
