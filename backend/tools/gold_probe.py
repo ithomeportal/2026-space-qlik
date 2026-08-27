@@ -26,9 +26,14 @@ MAX_ROWS = 300
 
 
 def _dsn() -> str:
-    url = settings.SAVINGS_DATABASE_URL
+    """Which database to hit — defaults to gold, `argv[1]` picks another.
+
+        python -m tools.gold_probe DATABASE_URL < q.sql
+    """
+    key = sys.argv[1] if len(sys.argv) > 1 else "SAVINGS_DATABASE_URL"
+    url = getattr(settings, key, "")
     if not url:
-        raise SystemExit("SAVINGS_DATABASE_URL is not configured")
+        raise SystemExit(f"{key} is not configured")
     # sslmode in the URL overrides the ssl= object and fails Aiven's chain.
     return re.sub(r"[?&]sslmode=[a-zA-Z-]+", "", url)
 
