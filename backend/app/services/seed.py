@@ -336,6 +336,33 @@ CUSTOM_REPORTS = [
         "roles": ["CEO", "Executive", "Procurement", "Sales", "Operations"],
     },
     {
+        "key": "edi-load-tenders",  # -> /reports/edi-load-tenders  (Omar Orozco 2026-08-26)
+        "title": "EDI Load Tenders",
+        "description": "EDI 204 load tenders: received, turned into an order, never created, cancelled by the customer vs cancelled by us — plus the orders a customer cancelled that are still live in McLeod",
+        "note": (
+            "Source: mcleod_gld_edi_load_tender (re-ingested ~every 10 min) - the "
+            "first source that can see a tender we NEVER created an order for; "
+            "those shipments have no budget_report_v4 row at all - KPIs are counted "
+            "at SHIPMENT grain, not row grain: one shipment carries an ORIGINAL, any "
+            "number of CHANGEs and a CANCEL (up to 80 observed), so counting rows "
+            "inflates volume ~77% - order_id is EMPTY STRING never NULL, and is 7 "
+            "chars against v4.id's padded 8, so the join needs rpad(order_id, 8) "
+            "(a bare equality matches 0 of 47,928) - status_desc and intercompany "
+            "are both ~100% 'ACCEPTED' and carry no signal; acceptance is derived "
+            "from order_id <> '' - purpose='CANCEL' is the same fact as "
+            "cancelled_order='Y'; only order_cancelled ('we actioned it') adds "
+            "information - rate/total_charge are null-or-zero on 49% of rows, so "
+            "money on the exception board comes from v4.total_charge"
+        ),
+        "category": "Operations",
+        "tags": [
+            "edi", "204", "load tender", "tender", "cancellation", "cancelled",
+            "shipment", "acceptance", "customer", "mcleod",
+        ],
+        "owner_name": "Diego",
+        "roles": ["CEO", "Executive", "CORP", "DFW", "Operations", "Procurement"],
+    },
+    {
         "key": "dfw-losses",  # -> /reports/dfw-losses  (Bruno PDF 2026-07-20)
         "title": "DFW Losses",
         "description": "DFW loss loads: daily loads / amount lost / loss-per-load, one column per DFW customer, plus biggest-offender lanes",

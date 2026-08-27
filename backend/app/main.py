@@ -33,6 +33,7 @@ from app.routers import (
     dfw_access_doors_digest,
     dfw_losses,
     division_payment,
+    edi_load_tenders,
     exec_meeting_recruitment,
     hd_spot,
     hr_access_doors,
@@ -1549,6 +1550,7 @@ app.include_router(track_award_loads.router, prefix="/api")
 app.include_router(rfp_performance.router, prefix="/api")
 app.include_router(carrier_risk.router, prefix="/api")
 app.include_router(carrier_sms.router, prefix="/api")
+app.include_router(edi_load_tenders.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")

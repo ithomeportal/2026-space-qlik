@@ -16,6 +16,7 @@ import {
   Crown,
   DoorOpen,
   FileSpreadsheet,
+  FileInput,
   Gauge,
   GitCompare,
   Headphones,
@@ -135,6 +136,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Carrier Procurement - Access Log Doors":
                                     { icon: DoorOpen,       family: "procurement" },
   "HD Spot":                        { icon: Store,          family: "operations" },
+  "EDI Load Tenders":               { icon: FileInput,      family: "operations" },
   "Podium Set DFW":                 { icon: Trophy,         family: "dfw" },
   "Booker Performance Scorecard":   { icon: ClipboardCheck, family: "dfw" },
   "DFW Podium Top":                 { icon: Trophy,         family: "dfw", tag: "Top" },
