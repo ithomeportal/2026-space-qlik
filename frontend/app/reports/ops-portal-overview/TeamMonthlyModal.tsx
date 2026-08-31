@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { Loader2, X } from "lucide-react"
 import {
+  fmtAttritionPct,
   fmtCount,
   fmtPct,
   fmtUsd,
@@ -17,7 +18,11 @@ interface Props {
   onClose: () => void
 }
 
-type Kind = "count" | "usd" | "usdSigned" | "pct" | "num1"
+// "attritionPct" carries attrition-wow's signed "% Δ" — INVERTED colours,
+// positive = red (Bruno PDF 2026-08-31 R3, §95). It is its own kind rather
+// than `pct` + `signed` because `signed` colours negatives red, which is
+// exactly backwards here: a negative % Δ means the active roster GREW.
+type Kind = "count" | "usd" | "usdSigned" | "pct" | "num1" | "attritionPct"
 
 // Mirrors the §5 Team Monthly Performance row set, broken out by team (one column per team).
 // `conc` marks count/volume rows where a per-team concentration % (team / total) is meaningful.
@@ -52,12 +57,12 @@ const ROWS: {
   { label: "Over Pay",         field: "over_pay",   kind: "usd", signed: true },
   { label: "Net Savings",      field: "net_savings", kind: "usdSigned", signed: true },
   { label: "Loads w/ Loss.",   field: "loss_loads", kind: "count", conc: true },
-  { label: "Profit Loss",      field: "profit_loss", kind: "usdSigned", signed: true },
+  { label: "Total Negative Loads Losses", field: "profit_loss", kind: "usdSigned", signed: true },
   { label: "AVG Days (Billed)", field: "avg_days_billed", kind: "num1" },
   { label: "AVG Days (Not Billed)", field: "avg_days_not_billed", kind: "num1" },
   { label: "% Del vs Bill",    field: "pct_del_bill", kind: "pct" },
-  { label: "Cust. Attrition %", field: "cust_attr_pct", kind: "pct" },
-  { label: "Lane Attrition %", field: "lane_attr_pct", kind: "pct" },
+  { label: "Cust. Attrition %", field: "cust_attr_pct", kind: "attritionPct" },
+  { label: "Lane Attrition %", field: "lane_attr_pct", kind: "attritionPct" },
 ]
 
 // "Cost x Load" is derived (total_cost / volume) — not a wire field, so read it via this helper.
@@ -74,6 +79,7 @@ function fmtVal(kind: Kind, v: number): string {
   if (kind === "usd") return fmtUsd(v)
   if (kind === "usdSigned") return fmtUsdSigned(v)
   if (kind === "num1") return Number(v).toFixed(1)
+  if (kind === "attritionPct") return fmtAttritionPct(v).text
   return fmtPct(v)
 }
 
@@ -108,7 +114,7 @@ export function TeamMonthlyModal({ filters, onClose }: Props) {
         <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F0F9FF] px-4 py-3">
           <div className="flex items-center gap-2">
             <span aria-hidden>📈</span>
-            <div className="text-sm font-semibold text-[#1B3A5C]">Team Monthly Performance</div>
+            <div className="text-sm font-semibold text-[#1B3A5C]">Monthly Performance</div>
             <span className="text-xs text-[#6B7280]">· by team</span>
           </div>
           <button
@@ -164,7 +170,11 @@ export function TeamMonthlyModal({ filters, onClose }: Props) {
                           </span>
                         ) : (
                           <span
-                            className={`${row.signed && totalVal < 0 ? "text-[#DC2626]" : "text-[#374151]"} ${
+                            className={`${
+                              row.kind === "attritionPct"
+                                ? fmtAttritionPct(totalVal).className
+                                : row.signed && totalVal < 0 ? "text-[#DC2626]" : "text-[#374151]"
+                            } ${
                               row.highlight ? "font-bold text-[#1B3A5C]" : ""
                             }`}
                           >
@@ -175,6 +185,9 @@ export function TeamMonthlyModal({ filters, onClose }: Props) {
                       {teams.map((t) => {
                         const v = fieldVal(t, row.field)
                         const neg = row.signed && v < 0
+                        // ⚠ Attrition colours are inverted — see Kind above.
+                        const attrCls =
+                          row.kind === "attritionPct" ? fmtAttritionPct(v).className : null
                         const conc = row.conc && totalVal !== 0 ? (v / totalVal) * 100 : null
                         return (
                           <td key={t.team_id} className="px-2 py-1.5 text-right tabular-nums">
@@ -185,7 +198,7 @@ export function TeamMonthlyModal({ filters, onClose }: Props) {
                             ) : (
                               <span className="inline-flex items-baseline gap-1">
                                 <span
-                                  className={`${neg ? "text-[#DC2626]" : "text-[#374151]"} ${
+                                  className={`${attrCls ?? (neg ? "text-[#DC2626]" : "text-[#374151]")} ${
                                     row.highlight ? "font-bold text-[#1B3A5C]" : ""
                                   }`}
                                 >

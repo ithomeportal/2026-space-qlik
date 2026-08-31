@@ -46,10 +46,13 @@ interface Props {
 // clickable Customer/Lane drill cells, and an expand-to-modal view.
 // Bruno 2026-07-01: R2 Carrier (between Customer and Lane); R11 Bill + Days to
 // Bill (appended at the end).
+// Bruno (PDF 2026-08-31) R8 removes Bill / Days to Bill / POD / POD Age from
+// this table — the Unbilled board below carries all four, at the grain where
+// they matter. All four were in NON_WIRE_SORTS (no server sort key), so
+// nothing on the wire changes.
 type ColumnKey =
   | "order" | "team" | "departure" | "customer" | "carrier" | "lane" | "status"
   | "revenue" | "profit" | "margin" | "otp" | "otd" | "transit"
-  | "bill" | "daystobill" | "pod" | "pod_age"
 
 // Bruno (PDF 2026-07-15) R12: `w` narrows the Order / Team / Status columns.
 const COLUMNS: {
@@ -71,16 +74,20 @@ const COLUMNS: {
   { k: "otp",        label: "OTP %",        align: "right" },
   { k: "otd",        label: "OTD %",        align: "right" },
   { k: "transit",    label: "Transit Time", align: "right" },
-  { k: "bill",       label: "Bill",         align: "right" },
-  { k: "daystobill", label: "Days to Bill", align: "right" },
-  // Bruno (PDF 2026-07-13): POD Tracker document present (checkmark).
-  { k: "pod",        label: "POD",          align: "right" },
-  // Bruno (PDF 2026-07-15) R14: POD Age — only for orders lacking a POD.
-  { k: "pod_age",    label: "POD Age",      align: "right" },
 ]
 
+// ⚠ DERIVED, never literals (§61). The totals row spans "everything before
+// Revenue", then one cell each for Revenue / Profit / Margin, then "everything
+// after". Bruno (PDF 2026-08-31) R8 removed four trailing columns and the old
+// hardcoded 7 / 3 / 7 would have silently misaligned the whole row — the same
+// class of break HoldTable was rewritten to avoid.
+const MONEY_KEYS: ColumnKey[] = ["revenue", "profit", "margin"]
+const MONEY_START = COLUMNS.findIndex((c) => c.k === "revenue")
+const LEADING_COLSPAN = MONEY_START
+const TRAILING_COLSPAN = COLUMNS.length - MONEY_START - MONEY_KEYS.length
+
 const NUMERIC_DESC_FIRST = new Set<ColumnKey>([
-  "revenue", "profit", "margin", "otp", "otd", "transit", "daystobill",
+  "revenue", "profit", "margin", "otp", "otd", "transit",
 ])
 
 const LIMIT = 500
@@ -123,10 +130,11 @@ function applyColFilters(rows: OppOrderRow[], f: ColFilters): OppOrderRow[] {
 export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   const [sortKey, setSortKey] = useState<ColumnKey>("revenue")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
-  // status/bill/daystobill are not server-sortable (no wire sort key), so fall
-  // back to revenue for the wire when one of them is the active sort. carrier IS
-  // server-sortable (carrier_asc/desc). See _BY_ORDER_SORTS in the backend.
-  const NON_WIRE_SORTS = new Set<ColumnKey>(["status", "bill", "daystobill", "pod", "pod_age"])
+  // status is not server-sortable (no wire sort key), so fall back to revenue
+  // for the wire when it is the active sort. carrier IS server-sortable
+  // (carrier_asc/desc). See _BY_ORDER_SORTS in the backend. (bill/daystobill/
+  // pod/pod_age were the other four; R8 removed those columns.)
+  const NON_WIRE_SORTS = new Set<ColumnKey>(["status"])
   const wireKey: ColumnKey = NON_WIRE_SORTS.has(sortKey) ? "revenue" : sortKey
   const sort = `${wireKey}_${sortDir}`
 
@@ -240,7 +248,9 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
             Bruno (PDF 2026-07-30) R1: order is Production · Cover · Pending. */}
         <div className="flex rounded-lg border border-[#E5E7EB] bg-white text-[11px]">
           {([
-            { k: "production" as const, label: "Production" },
+            // Bruno (PDF 2026-08-31) R8: label only — the view KEY stays
+            // "production", which every branch below and the wire read.
+            { k: "production" as const, label: "Progress" },
             { k: "cover" as const,      label: "Cover" },
             { k: "pending" as const,    label: "Pending to Cover" },
           ]).map((opt) => (
@@ -451,11 +461,13 @@ function OrderTable({
           <FilterTd value={colFilters.carrier} onChange={(v) => onColFilter({ carrier: v })} placeholder="Carrier" />
           <FilterTd value={colFilters.lane} onChange={(v) => onColFilter({ lane: v })} placeholder="Lane" />
           <FilterTd value={colFilters.status} onChange={(v) => onColFilter({ status: v })} placeholder="Status" />
-          <td colSpan={10} />
+          {/* Every column after Status has no filter input — derived so a
+              column add/remove cannot shear this row (§61). */}
+          <td colSpan={COLUMNS.length - COLUMNS.findIndex((c) => c.k === "status") - 1} />
         </tr>
         {totals && (
           <tr className="border-b border-[#E5E7EB] bg-[#EFF6FF] font-semibold text-[#1B3A5C]">
-            <td className="px-2 py-1.5" colSpan={7}>
+            <td className="px-2 py-1.5" colSpan={LEADING_COLSPAN}>
               TOTAL · {total.toLocaleString()} orders
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.revenue)}</td>
@@ -465,7 +477,7 @@ function OrderTable({
             <td className={`px-2 py-1.5 text-right tabular-nums ${totals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
               {fmtPct(totals.margin_pct)}
             </td>
-            <td className="px-2 py-1.5" colSpan={7} />
+            <td className="px-2 py-1.5" colSpan={TRAILING_COLSPAN} />
           </tr>
         )}
       </thead>
@@ -521,33 +533,6 @@ function OrderTable({
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(r.otd_pct)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">
               <TransitCell row={r} now={now} />
-            </td>
-            {/* R11: Bill checkmark when billed, else blank. */}
-            <td className="px-2 py-1.5 text-right">
-              {r.billed ? <span className="font-semibold text-[#16A34A]">✓</span> : ""}
-            </td>
-            {/* R11: Days to Bill (bill_date − dest departure, or NOW − departure). */}
-            <td className="px-2 py-1.5 text-right tabular-nums text-[#374151]">
-              {r.days_to_bill == null ? <span className="text-[#9CA3AF]">—</span> : r.days_to_bill}
-            </td>
-            {/* Bruno (PDF 2026-07-15) R13: POD present → green checkmark, else blank. */}
-            <td className="px-2 py-1.5 text-center">
-              {r.pod ? (
-                <span className="font-semibold text-[#16A34A]" aria-label="Has POD document">✓</span>
-              ) : (
-                <span className="sr-only">No POD document</span>
-              )}
-            </td>
-            {/* Bruno (PDF 2026-07-15) R14: POD Age — only for orders lacking a POD.
-                <24h green, >24h red. */}
-            <td className="px-2 py-1.5 text-right tabular-nums">
-              {r.pod || r.pod_age_hours == null ? (
-                <span className="text-[#9CA3AF]">—</span>
-              ) : (
-                <span className={r.pod_age_hours < 24 ? "text-[#16A34A]" : "font-medium text-[#DC2626]"}>
-                  {fmtPodAge(r.pod_age_hours)}
-                </span>
-              )}
             </td>
           </tr>
         ))}
@@ -632,8 +617,6 @@ function SortableTh({
   )
 }
 
-// Bruno (PDF 2026-07-15) R14: compact POD-age label (hours < 48, else days).
-function fmtPodAge(hours: number): string {
-  if (hours < 48) return `${Math.round(hours)}h`
-  return `${Math.round(hours / 24)}d`
-}
+// (The POD-age label helper lived here until Bruno PDF 2026-08-31 R8 removed
+// the column. `HoldTable.tsx` keeps its own copy for the Unbilled board, which
+// still shows POD Age — that is where the metric now lives.)

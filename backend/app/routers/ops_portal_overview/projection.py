@@ -86,10 +86,14 @@ async def team_projection(
     # R6: this endpoint IS the source of truth for Projected. The window,
     # divisor and MTD legs now live in _team_projection_core so /combo and
     # /actuals compute the identical number instead of their own variants.
+    # `with_mtd_display` — Bruno (PDF 2026-08-31) R4's Volume / Revenue /
+    # Profit (MTD) rows. Only THIS endpoint renders them, so only this one asks
+    # for them; /actuals and the history replay keep their existing SQL.
     proj = await _team_projection_core(
         pool, team=_parse_team_scope(team, teams), customer=customer, load_type=load_type,
         lanes=lanes, exclude_lanes=exclude_lanes,
         carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
+        with_mtd_display=True,
     )
 
     return {

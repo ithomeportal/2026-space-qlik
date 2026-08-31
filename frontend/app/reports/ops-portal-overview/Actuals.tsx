@@ -73,7 +73,12 @@ export function Actuals({ filters, onPickCustomer, onPickLane, hideBudget = fals
   // the default — otherwise the DFW table opens on a mode whose pill has been
   // removed and renders two empty sub-rows per cell (Bruno PDF 2026-08-20 R8).
   const [mode, setMode] = useState<Mode>(hideBudget ? "production" : "all")
-  const [sortKey, setSortKey] = useState<ColumnKey>("rev")
+  // Bruno (PDF 2026-08-31) R7: every mode opens sorted by Profit, high → low.
+  // One default covers all four pills because the `prof` accessor is already
+  // mode-aware — it reads prof_budget under Budget and prof_var under Actual
+  // vs Budget Variances — so switching pills re-sorts on the right column
+  // without resetting a sort the user chose themselves.
+  const [sortKey, setSortKey] = useState<ColumnKey>("prof")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
   // Bruno R11 (2026-06-24): expand the table into an uncapped modal.
   const [expanded, setExpanded] = useState(false)
@@ -328,10 +333,14 @@ function ModePills({
   hideBudget?: boolean
 }) {
   const ALL_OPTS: { k: Mode; label: string }[] = [
+    // Bruno (PDF 2026-08-31) R7 renamed two pills. The MODE KEYS are
+    // deliberately unchanged — `hideBudget` filters on `o.k !== "production"`
+    // and the ModeCell/accessor switches all branch on them, so renaming a key
+    // to match its new label would silently unhide the DFW budget pills.
     { k: "all",        label: "All" },
-    { k: "production", label: "Production" },
+    { k: "production", label: "Actual" },
     { k: "budget",     label: "Budget" },
-    { k: "variance",   label: "Variance per Cell" },
+    { k: "variance",   label: "Actual vs Budget Variances" },
   ]
   // Bruno PDF 2026-08-20 DFW R8 removes All / Budget / Variance per Cell.
   // All three are budget-derived; on DFW they would render empty sub-rows.

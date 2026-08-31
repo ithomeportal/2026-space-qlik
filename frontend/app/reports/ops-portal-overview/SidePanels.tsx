@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { ArrowDown, ArrowUp, Loader2, Maximize2, X } from "lucide-react"
 import {
+  fmtAttritionPct,
   fmtCount,
   fmtPct,
   fmtUsd,
@@ -96,7 +97,7 @@ function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilters; lock
   const [teamOpen, setTeamOpen] = useState(false)
   return (
     <PanelCard
-      title="Team Budget Monthly Variance"
+      title="Budget Monthly Variance"
       icon="📊"
       loading={isLoading}
       error={error}
@@ -350,7 +351,7 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
   const costXLoad = v && v.volume ? v.total_cost / v.volume : 0
   return (
     <PanelCard
-      title="Team Monthly Performance"
+      title="Monthly Performance"
       icon="📈"
       loading={isLoading}
       error={error}
@@ -359,9 +360,9 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
           <button
             type="button"
             onClick={() => setWeeklyOpen(true)}
-            title="Team Weekly Performance — last 5 weeks"
+            title="Weekly Performance — last 5 weeks"
             className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
-            aria-label="Open Team Weekly Performance"
+            aria-label="Open Weekly Performance"
           >
             Week
           </button>
@@ -371,9 +372,9 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
             <button
               type="button"
               onClick={() => setMonthlyOpen(true)}
-              title="Team Monthly Performance — by team"
+              title="Monthly Performance — by team"
               className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
-              aria-label="Open Team Monthly Performance"
+              aria-label="Open Monthly Performance"
             >
               Team
             </button>
@@ -402,12 +403,21 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
           <Row label="Over Pay"    value={v ? fmtUsd(v.over_pay)      : "—"} signed numeric={v?.over_pay ?? 0} />
           <Row label="Net Savings" value={v ? fmtUsdSigned(v.net_savings) : "—"} signed numeric={v?.net_savings ?? 0} />
           <Row label="Loads w/ Loss." value={v ? fmtCount(v.loss_loads) : "—"} />
-          <Row label="Profit Loss" value={v ? fmtUsdSigned(v.profit_loss) : "—"} signed numeric={v?.profit_loss ?? 0} />
+          {/* Bruno (PDF 2026-08-31) R3 rename; R6 made this the exact sum of
+              the orders counted by "Loads w/ Loss." above, which is also the
+              Margin-distribution "< 0%" tile's profit (§96). */}
+          <Row label="Total Negative Loads Losses" value={v ? fmtUsdSigned(v.profit_loss) : "—"} signed numeric={v?.profit_loss ?? 0} />
           <Row label="AVG Days (Billed)" value={v ? v.avg_days_billed.toFixed(1) : "—"} />
           <Row label="AVG Days (Not Billed)" value={v ? v.avg_days_not_billed.toFixed(1) : "—"} />
           <Row label="% Del vs Bill" value={v ? fmtPct(v.pct_del_bill) : "—"} />
-          <Row label="Cust. Attrition %" value={v ? fmtPct(v.cust_attr_pct) : "—"} />
-          <Row label="Lane Attrition %" value={v ? fmtPct(v.lane_attr_pct) : "—"} />
+          {/* Bruno (PDF 2026-08-31) R3: these ARE the attrition-wow report's
+              "% Δ" cards — same windows, same weekly-average denominator, same
+              inverted colours. ⚠ Signed: negative = the active roster GREW.
+              ⚠ They ignore the Date filter (fixed completed ISO weeks) and add
+              attrition-wow's %UNILINK% exclusion, so their denominators are
+              NOT the Customers / Lanes rows at the top of this panel (§95). */}
+          <AttritionRow label="Cust. Attrition %" pct={v?.cust_attr_pct} />
+          <AttritionRow label="Lane Attrition %" pct={v?.lane_attr_pct} />
         </tbody>
       </table>
       {weeklyOpen && <TeamWeeklyModal filters={filters} onClose={() => setWeeklyOpen(false)} />}
@@ -434,7 +444,7 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
   const cur = hist?.tracked ? hist.current_month : null
   return (
     <PanelCard
-      title="Team Monthly Projection"
+      title="Monthly Projection"
       icon="🎯"
       loading={isLoading}
       error={error}
@@ -449,11 +459,24 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
     >
       <table className="w-full text-xs">
         <tbody>
-          <Row label="Avg. Vol x Day"  value={v ? fmtCount(v.avg_vol_day)  : "—"} />
-          <Row label="Avg. Rev. x Day" value={v ? fmtUsd(v.avg_rev_day)    : "—"} />
-          <Row label="Avg. Prof. x Day" value={v ? fmtUsd(v.avg_prof_day)  : "—"} signed numeric={v?.avg_prof_day ?? 0} />
+          {/* Bruno (PDF 2026-08-31) R4: "(last 14 days)" is an accurate
+              CALENDAR description of the existing window — 12 Mon-Sat business
+              days ending yesterday spans exactly 14 calendar days. Nothing
+              about the maths changed: the window already ended at the close of
+              the previous day and already ignored the Date filter. */}
+          <Row label="Avg. Vol. x Day (last 14 days)"  value={v ? fmtCount(v.avg_vol_day)  : "—"} />
+          <Row label="Avg. Rev. x Day (last 14 days)" value={v ? fmtUsd(v.avg_rev_day)    : "—"} />
+          <Row label="Avg. Prof. x Day (last 14 days)" value={v ? fmtUsd(v.avg_prof_day)  : "—"} signed numeric={v?.avg_prof_day ?? 0} />
           <tr><td colSpan={2} className="py-1"></td></tr>
           <Row label="Pending Days"    value={v ? fmtCount(v.pending_workdays) : "—"} />
+          {/* Bruno (PDF 2026-08-31) R4: month-start → end of YESTERDAY.
+              Volume reconciles exactly — Avg. Vol x Day × Pending Days +
+              Volume (MTD) = Proj. Volume. Revenue/Profit do NOT, because the
+              projection's own MTD legs run to month end (backend _metrics.py
+              documents why that asymmetry must stay). */}
+          <Row label="Volume (MTD)"    value={v ? fmtCount(v.mtd_volume)   : "—"} />
+          <Row label="Revenue (MTD)"   value={v ? fmtUsd(v.mtd_revenue)    : "—"} />
+          <Row label="Profit (MTD)"    value={v ? fmtUsd(v.mtd_profit)     : "—"} signed numeric={v?.mtd_profit ?? 0} />
           <tr><td colSpan={2} className="py-1"></td></tr>
           <Row label="Proj. Volume"    value={v ? fmtCount(v.proj_volume)  : "—"} />
           <Row label="Proj. Revenue"   value={v ? fmtUsd(v.proj_revenue)   : "—"} />
@@ -585,11 +608,19 @@ export function Row({
   numeric,
   highlight,
   bandPct,
+  valueClassName,
 }: {
   label: string
   value: string
   signed?: boolean
   numeric?: number
+  /**
+   * Explicit colour for the value cell, overriding the `signed` red/black.
+   * Used by the two Attrition rows, whose sign convention is INVERTED — a
+   * negative % Δ means the active roster grew, which is good news and must
+   * render green (Bruno PDF 2026-08-31 R3, §95).
+   */
+  valueClassName?: string
   /** Bold + soft background — Bruno round-2 marker for Volume/Profit/Margin. */
   highlight?: boolean
   /**
@@ -618,7 +649,7 @@ export function Row({
         ) : (
           <span
             className={`${
-              isNeg ? "text-[#DC2626]" : "text-[#374151]"
+              valueClassName ?? (isNeg ? "text-[#DC2626]" : "text-[#374151]")
             } ${highlight ? "font-bold text-[#1B3A5C]" : ""}`}
           >
             {value}
@@ -626,6 +657,23 @@ export function Row({
         )}
       </td>
     </tr>
+  )
+}
+
+/** One attrition row — inverted colours, matching the attrition-wow cards.
+ *
+ * ⚠ `undefined` (still loading / failed) must render "—", not "0.00%". Zero is
+ * a real and meaningful value here — it means the active roster held exactly
+ * flat week over week — so a falsy check would print a lie while the panel is
+ * still loading. */
+function AttritionRow({ label, pct }: { label: string; pct?: number }) {
+  const a = pct === undefined ? null : fmtAttritionPct(pct)
+  return (
+    <Row
+      label={label}
+      value={a ? a.text : "—"}
+      valueClassName={a ? a.className : undefined}
+    />
   )
 }
 
@@ -864,7 +912,7 @@ function VarianceWeekModal({ filters, onClose }: { filters: OppFilters; onClose:
   ]
   return (
     <MetricMatrixModal
-      title="Team Budget Monthly Variance"
+      title="Budget Monthly Variance"
       subtitle="last 5 weeks (Mon–Sun)"
       icon="📊"
       columns={columns}
@@ -911,7 +959,7 @@ function VarianceTeamModal({ filters, onClose }: { filters: OppFilters; onClose:
   ]
   return (
     <MetricMatrixModal
-      title="Team Budget Monthly Variance"
+      title="Budget Monthly Variance"
       subtitle="by team"
       icon="📊"
       columns={columns}
@@ -959,7 +1007,7 @@ function ProjectionWeekModal({ filters, onClose }: { filters: OppFilters; onClos
   ]
   return (
     <MetricMatrixModal
-      title="Team Monthly Projection"
+      title="Monthly Projection"
       subtitle="last 5 weeks (Mon–Sun) · weekly actuals"
       icon="🎯"
       columns={columns}
@@ -1010,7 +1058,7 @@ function ProjectionTeamModal({ filters, onClose }: { filters: OppFilters; onClos
   ]
   return (
     <MetricMatrixModal
-      title="Team Monthly Projection"
+      title="Monthly Projection"
       subtitle="by team"
       icon="🎯"
       columns={columns}

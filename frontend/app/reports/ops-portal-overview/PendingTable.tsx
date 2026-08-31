@@ -21,8 +21,9 @@ const PENDING_COLUMNS: {
   { label: "Team", key: "team_id", align: "left" },
   // Bruno (PDF 2026-07-30) R2: Customer, between Team and Orig Sched Early.
   { label: "Customer", key: "customer_name", align: "left" },
-  { label: "Orig Sched Early", key: "orig_sched_early", align: "left" },
-  { label: "Orig Sched Late", key: "orig_sched_late", align: "left" },
+  // Bruno (PDF 2026-08-31) R8: "Orig …" → "PU …". Labels only; wire keys stay.
+  { label: "PU Sched Early", key: "orig_sched_early", align: "left" },
+  { label: "PU Sched Late", key: "orig_sched_late", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
   { label: "Revenue", key: "revenue", align: "right" },
   { label: "Time to Cover", key: "time_to_cover_hours", align: "right" },

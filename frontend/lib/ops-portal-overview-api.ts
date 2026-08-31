@@ -233,11 +233,17 @@ export interface OppTeamPerformance {
   over_pay: number
   net_savings: number
   loss_loads: number
+  /** Rendered as "Total Negative Loads Losses" since Bruno (PDF 2026-08-31) R3.
+   *  The wire name is deliberately unchanged — five consumers read it. */
   profit_loss: number
-  /** Bruno 2026-07-01 R12 — below Profit Loss. */
+  /** Bruno 2026-07-01 R12 — below Total Negative Loads Losses. */
   avg_days_billed: number
   avg_days_not_billed: number
   pct_del_bill: number
+  /** ⚠ SIGNED since Bruno (PDF 2026-08-31) R3: these carry attrition-wow's
+   *  "% Δ" — (L8W_avg − LW) / L8W_avg, ×100 on the wire. NEGATIVE means the
+   *  active roster GREW. Render with `fmtPctInverted` (positive = red), never
+   *  plain `fmtPct`, or the colour says the opposite of the number. */
   cust_attr_pct: number
   lane_attr_pct: number
   window: { start: string; end: string }
@@ -248,6 +254,18 @@ export interface OppTeamProjection {
   avg_rev_day: number
   avg_prof_day: number
   pending_workdays: number
+  /** Bruno (PDF 2026-08-31) R4 — between "Pending Days" and "Proj. Volume".
+   *  Month-start → END OF YESTERDAY; today never moves them, and the page's
+   *  Date filter never reaches them (/team-projection ignores it).
+   *  Volume uses the report's house definition (charge-bearing orders), so
+   *  `avg_vol_day * pending_workdays + mtd_volume === proj_volume`.
+   *  ⚠ Revenue/Profit do NOT reconcile that way — the projection's own MTD
+   *  legs run to month END by a deliberate asymmetry (backend `_metrics.py`).
+   *  ⚠ Served ONLY by /team-projection. The Week and Team break-out modals
+   *  reuse `OppTeamProjectionWeek` / `...Team`, which do not carry these. */
+  mtd_volume: number
+  mtd_revenue: number
+  mtd_profit: number
   proj_volume: number
   proj_revenue: number
   proj_profit: number
@@ -1167,6 +1185,24 @@ export function fmtCount(v: number): string {
 export function fmtPct(v: number): string {
   if (!Number.isFinite(v)) return "0%"
   return `${v.toFixed(2)}%`
+}
+
+/** Attrition's signed "% Δ" — text + INVERTED colour class.
+ *
+ * Bruno (PDF 2026-08-31) R3 makes this panel render attrition-wow's "% Δ",
+ * where the sign convention is the opposite of every other percentage on the
+ * page: (L8W_avg − LW)/L8W_avg is POSITIVE when the active roster shrank, so
+ * positive is red and negative is green. Mirrors
+ * `app/reports/attrition-wow/format.ts:fmtSignedPctInverted` — but takes a
+ * 0-100 value, because that is the scale this report's wire uses (§95).
+ *
+ * ⚠ Do not swap in plain `fmtPct`: the number would still read correctly while
+ * the colour said the opposite. */
+export function fmtAttritionPct(v: number): { text: string; className: string } {
+  if (!Number.isFinite(v)) return { text: "—", className: "text-[#6B7280]" }
+  if (v > 0) return { text: `+${v.toFixed(2)}%`, className: "text-[#DC2626]" }
+  if (v < 0) return { text: `${v.toFixed(2)}%`, className: "text-[#15803D]" }
+  return { text: "0.00%", className: "text-[#B45309]" }
 }
 
 // Bruno R5: Transit Time / live in-transit timer → "Nd Nh" or "Nh Nm".

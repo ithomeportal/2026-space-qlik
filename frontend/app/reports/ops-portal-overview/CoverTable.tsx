@@ -32,8 +32,11 @@ const COVER_COLUMNS: {
   // movement.override_drvr_cell — the DRIVER's cell — since 2026-08-12. The
   // wire field keeps its old name; only the header changed (§34).
   { label: "Driver Phone", key: "carrier_phone", align: "left" },
-  { label: "Orig Orig Late", key: "orig_sched_late", align: "left" },
-  { label: "Orig Sched Late", key: "orig_sched_arrive_late", align: "left" },
+  // Bruno (PDF 2026-08-31) R8: "Orig …" → "PU …". Labels only — the wire keys
+  // are unchanged and stay deliberately mismatched to the labels (see the
+  // OppCoverRow doc comment: `orig_sched_late` IS the orig-orig date).
+  { label: "PU Orig Late", key: "orig_sched_late", align: "left" },
+  { label: "PU Sched Late", key: "orig_sched_arrive_late", align: "left" },
   { label: "Lane", key: "lane", align: "left" },
   // Revenue − Carrier Cost = Profit, so the money block reads left to right.
   { label: "Revenue", key: "revenue", align: "right" },

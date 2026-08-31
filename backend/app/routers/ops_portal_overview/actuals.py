@@ -382,7 +382,11 @@ async def actuals_by_lane(
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
                              AND total_charge <> 0) AS loss_loads,
-          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS loss_profit,
+          -- ⚠ Guard MATCHES `loss_loads` above — same rule as
+          -- performance.py's profit_loss (Bruno PDF 2026-08-31 R6, §96).
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0
+                                             AND total_charge IS NOT NULL
+                                             AND total_charge <> 0), 0)::numeric AS loss_profit,
           SUM(otp_cnt) AS otp_late,
           SUM(otd_cnt) AS otd_late
         FROM prod CROSS JOIN uni

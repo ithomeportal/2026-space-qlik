@@ -56,11 +56,17 @@ _ROWS: tuple[tuple[str, str, str], ...] = (
     ("Over Pay",           "over_pay",    "usdSigned"),
     ("Net Savings",        "net_savings", "usdSigned"),
     ("Loads w/ Loss.",     "loss_loads",  "count"),
-    ("Profit Loss",        "profit_loss", "usdSigned"),
-    # Bruno round (2026-07-01) R12 — below Profit Loss.
+    # Bruno (PDF 2026-08-31) R3: renamed from "Profit Loss". Same field, and
+    # since R6 the same population as "Loads w/ Loss." above it (§96).
+    ("Total Negative Loads Losses", "profit_loss", "usdSigned"),
+    # Bruno round (2026-07-01) R12 — below Total Negative Loads Losses.
     ("AVG Days (Billed)",     "avg_days_billed",     "days"),
     ("AVG Days (Not Billed)", "avg_days_not_billed", "days"),
     ("% Del vs Bill",         "pct_del_bill",        "pct"),
+    # ⚠ SIGNED since Bruno (PDF 2026-08-31) R3 — these now carry
+    # attrition-wow's "% Δ", where a NEGATIVE value means the active roster
+    # GREW week over week. The mail has no colour convention for that, so the
+    # sign is the whole message; do not wrap them in an abs().
     ("Cust. Attrition %",     "cust_attr_pct",       "pct"),
     ("Lane Attrition %",      "lane_attr_pct",       "pct"),
 )

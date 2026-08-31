@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { Loader2, X } from "lucide-react"
 import {
+  fmtAttritionPct,
   fmtCount,
   fmtPct,
   fmtUsd,
@@ -17,7 +18,11 @@ interface Props {
   onClose: () => void
 }
 
-type Kind = "count" | "usd" | "usdSigned" | "pct"
+// "attritionPct" carries attrition-wow's signed "% Δ" — INVERTED colours,
+// positive = red (Bruno PDF 2026-08-31 R3, §95). It is its own kind rather
+// than `pct` + `signed` because `signed` colours negatives red, which is
+// exactly backwards here: a negative % Δ means the active roster GREW.
+type Kind = "count" | "usd" | "usdSigned" | "pct" | "attritionPct"
 
 // Mirrors the §5 Team Monthly Performance row set, split into the last 5 weeks.
 const ROWS: {
@@ -46,15 +51,16 @@ const ROWS: {
   { label: "Over Pay",         field: "over_pay",   kind: "usd", signed: true },
   { label: "Net Savings",      field: "net_savings", kind: "usdSigned", signed: true },
   { label: "Loads w/ Loss.",   field: "loss_loads", kind: "count" },
-  { label: "Profit Loss",      field: "profit_loss", kind: "usdSigned", signed: true },
-  { label: "Cust. Attrition %", field: "cust_attr_pct", kind: "pct" },
-  { label: "Lane Attrition %", field: "lane_attr_pct", kind: "pct" },
+  { label: "Total Negative Loads Losses", field: "profit_loss", kind: "usdSigned", signed: true },
+  { label: "Cust. Attrition %", field: "cust_attr_pct", kind: "attritionPct" },
+  { label: "Lane Attrition %", field: "lane_attr_pct", kind: "attritionPct" },
 ]
 
 function fmtVal(kind: Kind, v: number): string {
   if (kind === "count") return fmtCount(v)
   if (kind === "usd") return fmtUsd(v)
   if (kind === "usdSigned") return fmtUsdSigned(v)
+  if (kind === "attritionPct") return fmtAttritionPct(v).text
   return fmtPct(v)
 }
 
@@ -89,7 +95,7 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
         <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F0F9FF] px-4 py-3">
           <div className="flex items-center gap-2">
             <span aria-hidden>📈</span>
-            <div className="text-sm font-semibold text-[#1B3A5C]">Team Weekly Performance</div>
+            <div className="text-sm font-semibold text-[#1B3A5C]">Weekly Performance</div>
             <span className="text-xs text-[#6B7280]">· last 5 weeks (Mon–Sun)</span>
           </div>
           <button
@@ -138,6 +144,10 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
                     {weeks.map((w) => {
                       const v = Number(w[row.field] ?? 0)
                       const neg = row.signed && v < 0
+                      // ⚠ Attrition colours are inverted, so they cannot go
+                      // through `neg` — see the Kind comment above.
+                      const attrCls =
+                        row.kind === "attritionPct" ? fmtAttritionPct(v).className : null
                       return (
                         <td key={w.start} className="px-2 py-1.5 text-right tabular-nums">
                           {row.band ? (
@@ -146,7 +156,7 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
                             </span>
                           ) : (
                             <span
-                              className={`${neg ? "text-[#DC2626]" : "text-[#374151]"} ${
+                              className={`${attrCls ?? (neg ? "text-[#DC2626]" : "text-[#374151]")} ${
                                 row.highlight ? "font-bold text-[#1B3A5C]" : ""
                               }`}
                             >

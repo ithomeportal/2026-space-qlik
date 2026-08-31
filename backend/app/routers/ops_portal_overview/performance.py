@@ -11,10 +11,18 @@ from typing import List, Optional
 
 from fastapi import Depends, Query, Request
 
+from app.attrition_core import (
+    attrition_counts_sql,
+    attrition_from_counts,
+    attrition_pct_100,
+    l8w_window,
+    last_completed_week,
+    population_extra_where,
+)
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, YEAR_START, router
+from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _resolve_range
 from ._scope import scope_of
 from ._sql import (
@@ -25,6 +33,63 @@ from ._sql import (
     _v4_scope_where,
 )
 from ._metrics import _safe_float
+
+
+# ---------------------------------------------------------------------------
+# Attrition — Bruno (PDF 2026-08-31) R3
+# ---------------------------------------------------------------------------
+# "Cust. Attrition %" / "Lane Attrition %" must render attrition-wow's "% Δ".
+# Until this round they were a DIFFERENT METRIC under the same label: the share
+# of the YTD-2026 roster with no load in 30 days, unsigned. The definition now
+# lives in `app.attrition_core` and both reports read it from there (§95).
+#
+# ⚠ Three consequences a reader of the panel must not be surprised by:
+#   * the value is SIGNED — negative means the active roster GREW week over
+#     week. The frontend colours it inverted (positive = red) to match the
+#     attrition-wow cards.
+#   * it ignores the page's Date filter, exactly as it always did. The windows
+#     are fixed completed ISO weeks; a date range cannot move them.
+#   * its population adds attrition-wow's `%UNILINK%` exclusion, so its
+#     denominators are NOT the "Customers" / "Lanes" rows above it in the same
+#     panel (those follow the date filter and keep inter-company freight).
+
+
+def _attrition_query(
+    where_builder, *, group_col: str | None = None
+) -> tuple[str, list]:
+    """(sql, params) for the shared attrition counts under this report's scope.
+
+    ``where_builder(params)`` appends the scope predicate's bind values and
+    returns its SQL — i.e. a partially-applied ``_v4_scope_where``. Written this
+    way because the predicate and its params must be built in lockstep, and
+    three call sites got that wrong independently before.
+    """
+    params: list = []
+    where = where_builder(params)
+    # attrition-wow's population rules on top of the portal's scope.
+    where = f"{where} AND {population_extra_where('br4')}"
+    l8w_start, l8w_end = l8w_window()
+    lw_start, lw_end = last_completed_week()
+    params.extend([l8w_start, l8w_end, lw_start, lw_end])
+    n = len(params)
+    return (
+        attrition_counts_sql(where, n - 3, n - 2, n - 1, n, group_col=group_col),
+        params,
+    )
+
+
+def _attrition_pcts(row) -> tuple[float, float]:
+    """(cust_attr_pct, lane_attr_pct) as 0-100 percentages from a counts row."""
+    if row is None:
+        return 0.0, 0.0
+    blocks = attrition_from_counts(
+        row["l8w_lanes_sum"], row["lw_lanes"],
+        row["l8w_customers_sum"], row["lw_customers"],
+    )
+    return (
+        attrition_pct_100(blocks["active_customers"]),
+        attrition_pct_100(blocks["active_lanes"]),
+    )
 
 
 def _bill_fields(row) -> dict:
@@ -117,7 +182,18 @@ async def team_performance(
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
                              AND total_charge <> 0) AS loss_loads,
-          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS profit_loss,
+          -- ⚠ The `total_charge` guard must MATCH `loss_loads` above.
+          -- Bruno (PDF 2026-08-31) R6: the Margin-distribution "< 0%" tile must
+          -- reconcile with this pair. That tile parks zero-revenue orders in a
+          -- `no_revenue` bucket (an undefined margin %), so they belong to
+          -- NEITHER number here. Without the guard this sum spanned 76 rows
+          -- while the count beside it spanned 54 — the pair is presented as
+          -- "Loads w/ Loss." over "Total Negative Loads Losses", so it read
+          -- -$247/load against a true -$180/load (§96). Those orders are still
+          -- inside "Profit" above; only the losses BREAKDOWN excludes them.
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0
+                                             AND total_charge IS NOT NULL
+                                             AND total_charge <> 0), 0)::numeric AS profit_loss,
           SUM(otp_cnt) AS otp_late_sum,
           SUM(otd_cnt) AS otd_late_sum,
           COUNT(DISTINCT team_id) AS team_count
@@ -147,38 +223,13 @@ async def team_performance(
         {sav_extra}
     """
 
-    # ---- Attrition (mirrors xray-corp /attrition) — last-load freshness --
-    # Customer attrition % = customers with last_load > 30d / customers total
-    # Lane attrition % = lanes with last_load > 30d / lanes total
-    attr_params: list = []
-    where_attr = _v4_scope_where("br4", team_scope, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    attr_params.append(YEAR_START)
-    p_ys = len(attr_params)
-    attr_sql = f"""
-        WITH lane_last AS (
-            SELECT br4.customer_name,
-                   TRIM(br4.origin_name) AS origin,
-                   TRIM(br4.dest_name)   AS dest,
-                   MAX(br4.origin_actual_departure)::date AS last_load
-            FROM public.mcleod_gld_budget_report_v4 br4
-            WHERE {where_attr}
-              AND br4.origin_actual_departure >= ${p_ys}
-              AND br4.customer_name IS NOT NULL
-              AND TRIM(br4.origin_name) <> ''
-              AND TRIM(br4.dest_name)   <> ''
-            GROUP BY br4.customer_name, TRIM(br4.origin_name), TRIM(br4.dest_name)
-        ),
-        cust_last AS (
-            SELECT customer_name, MAX(last_load) AS last_load
-            FROM lane_last
-            GROUP BY customer_name
+    # ---- Attrition — attrition-wow's "% Δ" (Bruno PDF 2026-08-31 R3) -----
+    attr_sql, attr_params = _attrition_query(
+        lambda pr: _v4_scope_where(
+            "br4", team_scope, customer, load_type, pr,
+            lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
         )
-        SELECT
-          (SELECT COUNT(*) FROM cust_last)                                          AS cust_total,
-          (SELECT COUNT(*) FROM cust_last WHERE (CURRENT_DATE - last_load) > 30)    AS cust_attr,
-          (SELECT COUNT(*) FROM lane_last)                                          AS lane_total,
-          (SELECT COUNT(*) FROM lane_last WHERE (CURRENT_DATE - last_load) > 30)    AS lane_attr
-    """
+    )
 
     # ---- Billing (Bruno round 2026-07-01 R12) — bill_date on v4 + dest_actual_
     # departure/arrival from customer_windows (same sources as By Order R11, so
@@ -204,8 +255,7 @@ async def team_performance(
     capacity = 500 * team_count
     otp_late = int(prod_row["otp_late_sum"] or 0)
     otd_late = int(prod_row["otd_late_sum"] or 0)
-    cust_total = int(attr_row["cust_total"] or 0)
-    lane_total = int(attr_row["lane_total"] or 0)
+    cust_attr_pct, lane_attr_pct = _attrition_pcts(attr_row)
 
     return {
         "success": True,
@@ -231,8 +281,8 @@ async def team_performance(
             "profit_loss": _safe_float(prod_row["profit_loss"]),
             # Bruno round (2026-07-01) R12 — below Profit Loss.
             **_bill_fields(bill_row),
-            "cust_attr_pct": (int(attr_row["cust_attr"] or 0) / cust_total * 100.0) if cust_total else 0.0,
-            "lane_attr_pct": (int(attr_row["lane_attr"] or 0) / lane_total * 100.0) if lane_total else 0.0,
+            "cust_attr_pct": _safe_float(cust_attr_pct),
+            "lane_attr_pct": _safe_float(lane_attr_pct),
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
     }
@@ -320,7 +370,18 @@ async def team_weekly_performance(
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
                              AND total_charge <> 0) AS loss_loads,
-          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS profit_loss,
+          -- ⚠ The `total_charge` guard must MATCH `loss_loads` above.
+          -- Bruno (PDF 2026-08-31) R6: the Margin-distribution "< 0%" tile must
+          -- reconcile with this pair. That tile parks zero-revenue orders in a
+          -- `no_revenue` bucket (an undefined margin %), so they belong to
+          -- NEITHER number here. Without the guard this sum spanned 76 rows
+          -- while the count beside it spanned 54 — the pair is presented as
+          -- "Loads w/ Loss." over "Total Negative Loads Losses", so it read
+          -- -$247/load against a true -$180/load (§96). Those orders are still
+          -- inside "Profit" above; only the losses BREAKDOWN excludes them.
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0
+                                             AND total_charge IS NOT NULL
+                                             AND total_charge <> 0), 0)::numeric AS profit_loss,
           SUM(otp_cnt) AS otp_late,
           SUM(otd_cnt) AS otd_late,
           COUNT(DISTINCT team_id) AS team_count
@@ -351,35 +412,15 @@ async def team_weekly_performance(
         GROUP BY DATE_TRUNC('week', cs.month_date)::date
     """
 
-    # ---- Attrition (window-independent, identical across weeks) ----------
-    attr_params: list = []
-    where_attr = _v4_scope_where("br4", team, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    attr_params.append(YEAR_START)
-    p_ys = len(attr_params)
-    attr_sql = f"""
-        WITH lane_last AS (
-            SELECT br4.customer_name,
-                   TRIM(br4.origin_name) AS origin,
-                   TRIM(br4.dest_name)   AS dest,
-                   MAX(br4.origin_actual_departure)::date AS last_load
-            FROM public.mcleod_gld_budget_report_v4 br4
-            WHERE {where_attr}
-              AND br4.origin_actual_departure >= ${p_ys}
-              AND br4.customer_name IS NOT NULL
-              AND TRIM(br4.origin_name) <> ''
-              AND TRIM(br4.dest_name)   <> ''
-            GROUP BY br4.customer_name, TRIM(br4.origin_name), TRIM(br4.dest_name)
-        ),
-        cust_last AS (
-            SELECT customer_name, MAX(last_load) AS last_load
-            FROM lane_last GROUP BY customer_name
+    # ---- Attrition (window-independent, identical across the 5 weeks) ----
+    # The windows are fixed completed ISO weeks, so every week column in this
+    # modal carries the same pair — as it always did under the old metric.
+    attr_sql, attr_params = _attrition_query(
+        lambda pr: _v4_scope_where(
+            "br4", team, customer, load_type, pr,
+            lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
         )
-        SELECT
-          (SELECT COUNT(*) FROM cust_last)                                       AS cust_total,
-          (SELECT COUNT(*) FROM cust_last WHERE (CURRENT_DATE - last_load) > 30) AS cust_attr,
-          (SELECT COUNT(*) FROM lane_last)                                       AS lane_total,
-          (SELECT COUNT(*) FROM lane_last WHERE (CURRENT_DATE - last_load) > 30) AS lane_attr
-    """
+    )
 
     prod_rows, sav_rows, attr_row = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
@@ -389,10 +430,7 @@ async def team_weekly_performance(
 
     prod_map = {_wk(r["wk"]): r for r in prod_rows}
     sav_map = {_wk(r["wk"]): r for r in sav_rows}
-    cust_total = int(attr_row["cust_total"] or 0) if attr_row else 0
-    lane_total = int(attr_row["lane_total"] or 0) if attr_row else 0
-    cust_attr_pct = (int(attr_row["cust_attr"] or 0) / cust_total * 100.0) if cust_total else 0.0
-    lane_attr_pct = (int(attr_row["lane_attr"] or 0) / lane_total * 100.0) if lane_total else 0.0
+    cust_attr_pct, lane_attr_pct = _attrition_pcts(attr_row)
 
     weeks = []
     for ws in week_starts:
@@ -456,10 +494,13 @@ def _team_perf_obj(
     savings: float,
     over_pay: float,
     net_savings: float,
-    cust_total: int,
-    cust_attr: int,
-    lane_total: int,
-    lane_attr: int,
+    # ⚠ Percentages, not raw counts. Under attrition-wow's definition (Bruno
+    # PDF 2026-08-31 R3) the per-team numbers CANNOT be summed into the Total —
+    # a customer shipping on two teams is distinct within each — so the Total
+    # reads its own ungrouped query, exactly like the distinct customer/lane
+    # counts beside it.
+    cust_attr_pct: float,
+    lane_attr_pct: float,
     avg_days_billed: float = 0.0,
     avg_days_not_billed: float = 0.0,
     pct_del_bill: float = 0.0,
@@ -492,8 +533,8 @@ def _team_perf_obj(
         "avg_days_billed":     _safe_float(avg_days_billed),
         "avg_days_not_billed": _safe_float(avg_days_not_billed),
         "pct_del_bill":        _safe_float(pct_del_bill),
-        "cust_attr_pct": _safe_float((cust_attr / cust_total * 100.0) if cust_total else 0.0),
-        "lane_attr_pct": _safe_float((lane_attr / lane_total * 100.0) if lane_total else 0.0),
+        "cust_attr_pct": _safe_float(cust_attr_pct),
+        "lane_attr_pct": _safe_float(lane_attr_pct),
     }
 
 
@@ -561,7 +602,18 @@ async def team_performance_by_team(
           COUNT(*) FILTER (WHERE margin_amt < 0
                              AND total_charge IS NOT NULL
                              AND total_charge <> 0) AS loss_loads,
-          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0), 0)::numeric AS profit_loss,
+          -- ⚠ The `total_charge` guard must MATCH `loss_loads` above.
+          -- Bruno (PDF 2026-08-31) R6: the Margin-distribution "< 0%" tile must
+          -- reconcile with this pair. That tile parks zero-revenue orders in a
+          -- `no_revenue` bucket (an undefined margin %), so they belong to
+          -- NEITHER number here. Without the guard this sum spanned 76 rows
+          -- while the count beside it spanned 54 — the pair is presented as
+          -- "Loads w/ Loss." over "Total Negative Loads Losses", so it read
+          -- -$247/load against a true -$180/load (§96). Those orders are still
+          -- inside "Profit" above; only the losses BREAKDOWN excludes them.
+          COALESCE(SUM(margin_amt) FILTER (WHERE margin_amt < 0
+                                             AND total_charge IS NOT NULL
+                                             AND total_charge <> 0), 0)::numeric AS profit_loss,
           SUM(otp_cnt) AS otp_late,
           SUM(otd_cnt) AS otd_late
         FROM prod
@@ -588,39 +640,17 @@ async def team_performance_by_team(
         GROUP BY ct.team_id
     """
 
-    # ---- Attrition grouped by team_id (and rolled up for Total) ----------
-    attr_params: list = []
-    where_attr = _v4_scope_where("br4", None, customer, load_type, attr_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    attr_params.append(YEAR_START)
-    p_ys = len(attr_params)
-    attr_sql = f"""
-        WITH lane_last AS (
-            SELECT TRIM(br4.{scope.v4_team_col}) AS team_id,
-                   br4.customer_name,
-                   TRIM(br4.origin_name) AS origin,
-                   TRIM(br4.dest_name)   AS dest,
-                   MAX(br4.origin_actual_departure)::date AS last_load
-            FROM public.mcleod_gld_budget_report_v4 br4
-            WHERE {where_attr}
-              AND br4.origin_actual_departure >= ${p_ys}
-              AND br4.customer_name IS NOT NULL
-              AND TRIM(br4.origin_name) <> ''
-              AND TRIM(br4.dest_name)   <> ''
-            GROUP BY TRIM(br4.{scope.v4_team_col}), br4.customer_name,
-                     TRIM(br4.origin_name), TRIM(br4.dest_name)
+    # ---- Attrition grouped by team (Bruno PDF 2026-08-31 R3) -------------
+    # ⚠ Grouped rows only. The Total column reads its OWN ungrouped query
+    # further down — summing these would double-count any customer that ships
+    # on two teams.
+    attr_sql, attr_params = _attrition_query(
+        lambda pr: _v4_scope_where(
+            "br4", None, customer, load_type, pr,
+            lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
         ),
-        cust_last AS (
-            SELECT team_id, customer_name, MAX(last_load) AS last_load
-            FROM lane_last GROUP BY team_id, customer_name
-        )
-        SELECT
-          c.team_id,
-          (SELECT COUNT(*) FROM cust_last x WHERE x.team_id = c.team_id)                                          AS cust_total,
-          (SELECT COUNT(*) FROM cust_last x WHERE x.team_id = c.team_id AND (CURRENT_DATE - x.last_load) > 30)    AS cust_attr,
-          (SELECT COUNT(*) FROM lane_last l WHERE l.team_id = c.team_id)                                          AS lane_total,
-          (SELECT COUNT(*) FROM lane_last l WHERE l.team_id = c.team_id AND (CURRENT_DATE - l.last_load) > 30)    AS lane_attr
-        FROM (SELECT DISTINCT team_id FROM cust_last) c
-    """
+        group_col=f"TRIM(br4.{scope.v4_team_col})",
+    )
 
     # ---- Billing grouped by team_id (Bruno round 2026-07-01 R12) ---------
     bill_params: list = []
@@ -639,7 +669,7 @@ async def team_performance_by_team(
 
     prod_map = {r["team_id"]: r for r in prod_rows}
     sav_map = {r["team_id"]: r for r in sav_rows}
-    attr_map = {r["team_id"]: r for r in attr_rows}
+    attr_map = {r["grp"]: r for r in attr_rows}
     bill_map = {r["team_id"]: r for r in bill_rows}
 
     teams_out = []
@@ -647,8 +677,7 @@ async def team_performance_by_team(
         "customers": set(), "lanes": set(), "volume": 0, "revenue": 0.0,
         "total_cost": 0.0, "profit": 0.0, "loss_loads": 0, "profit_loss": 0.0,
         "otp_late": 0, "otd_late": 0, "teams": set(), "savings": 0.0,
-        "over_pay": 0.0, "net_savings": 0.0, "cust_total": 0, "cust_attr": 0,
-        "lane_total": 0, "lane_attr": 0,
+        "over_pay": 0.0, "net_savings": 0.0,
     }
     for tid in scope.sub_teams:
         p = prod_map.get(tid)
@@ -671,10 +700,7 @@ async def team_performance_by_team(
             savings=_safe_float(sv["savings"]) if sv else 0.0,
             over_pay=_safe_float(sv["over_pay"]) if sv else 0.0,
             net_savings=_safe_float(sv["net_savings"]) if sv else 0.0,
-            cust_total=int(at["cust_total"] or 0) if at else 0,
-            cust_attr=int(at["cust_attr"] or 0) if at else 0,
-            lane_total=int(at["lane_total"] or 0) if at else 0,
-            lane_attr=int(at["lane_attr"] or 0) if at else 0,
+            **dict(zip(("cust_attr_pct", "lane_attr_pct"), _attrition_pcts(at))),
             **_bill_fields(bl),
         )
         teams_out.append({"team_id": tid, **obj})
@@ -693,10 +719,6 @@ async def team_performance_by_team(
         tot["savings"] += _safe_float(sv["savings"]) if sv else 0.0
         tot["over_pay"] += _safe_float(sv["over_pay"]) if sv else 0.0
         tot["net_savings"] += _safe_float(sv["net_savings"]) if sv else 0.0
-        tot["cust_total"] += int(at["cust_total"] or 0) if at else 0
-        tot["cust_attr"] += int(at["cust_attr"] or 0) if at else 0
-        tot["lane_total"] += int(at["lane_total"] or 0) if at else 0
-        tot["lane_attr"] += int(at["lane_attr"] or 0) if at else 0
 
     # Total: distinct customers / lanes can't be summed across teams (a customer
     # may ship on two teams), so re-read the universe-wide distinct counts.
@@ -715,7 +737,16 @@ async def team_performance_by_team(
     ub_e = len(ubill_params)
     ubill_sql = _bill_metrics_sql(ubill_where, ub_s, ub_e, group_by_team=False, scope=scope)
 
-    uni_row, ubill_row = await asyncio.gather(
+    # Universe-wide attrition for the Total column — see the ⚠ on
+    # `_grouped_sql`: per-team attrition rows are not summable.
+    uattr_sql, uattr_params = _attrition_query(
+        lambda pr: _v4_scope_where(
+            "br4", None, customer, load_type, pr,
+            lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
+        )
+    )
+
+    uni_row, ubill_row, uattr_row = await asyncio.gather(
         pool.fetchrow(
             f"""
             SELECT
@@ -730,6 +761,7 @@ async def team_performance_by_team(
             *uni_params,
         ),
         pool.fetchrow(ubill_sql, *ubill_params),
+        pool.fetchrow(uattr_sql, *uattr_params),
     )
 
     total_obj = _team_perf_obj(
@@ -747,10 +779,7 @@ async def team_performance_by_team(
         savings=tot["savings"],
         over_pay=tot["over_pay"],
         net_savings=tot["net_savings"],
-        cust_total=tot["cust_total"],
-        cust_attr=tot["cust_attr"],
-        lane_total=tot["lane_total"],
-        lane_attr=tot["lane_attr"],
+        **dict(zip(("cust_attr_pct", "lane_attr_pct"), _attrition_pcts(uattr_row))),
         **_bill_fields(ubill_row),
     )
 

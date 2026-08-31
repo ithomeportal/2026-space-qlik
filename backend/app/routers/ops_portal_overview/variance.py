@@ -221,7 +221,12 @@ async def customer_losses(
           COUNT(*) FILTER (WHERE br4.margin_amt < 0
                              AND br4.total_charge IS NOT NULL
                              AND br4.total_charge <> 0) AS loss_loads,
-          COALESCE(SUM(CASE WHEN br4.margin_amt < 0 THEN br4.margin_amt END), 0)::numeric AS loss_profit
+          -- ⚠ Guard MATCHES `loss_loads` above — same rule as
+          -- performance.py's profit_loss (Bruno PDF 2026-08-31 R6, §96).
+          COALESCE(SUM(CASE WHEN br4.margin_amt < 0
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0
+                            THEN br4.margin_amt END), 0)::numeric AS loss_profit
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
           AND br4.origin_actual_departure >= ${p_s}

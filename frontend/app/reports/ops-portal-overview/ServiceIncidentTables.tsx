@@ -11,6 +11,7 @@ import {
   type OppServiceByCarrierRow,
   type OppServiceIncidentRow,
 } from "@/lib/ops-portal-overview-api"
+import { SortableTh, useSortable, type SortDir } from "@/components/SortableTable"
 
 interface Props {
   filters: OppFilters
@@ -22,6 +23,29 @@ interface Props {
    *  applies it as the single included carrier filter across every panel. */
   onPickCarrier?: (carrier: string) => void
 }
+
+// Bruno (PDF 2026-08-31) R5: every column in all three tables sorts.
+//
+// ⚠ Client-side, over the FETCHED rows — the backend caps each table at the
+// top 100 by fail count (incidents) / volume (carriers). So sorting by
+// "% On Time" ascending surfaces the worst of that 100, not the worst overall.
+// The header says so rather than silently re-ranking a partial set (§16); the
+// cap itself is Bruno's from an earlier round and is not changed here.
+//
+// ⚠ `SF` and `Vol` lead DESC (most incidents first) but `% On Time` / OTP / OTD
+// lead ASC — on a service-quality column the row anyone clicking for wants on
+// top is the WORST one, and plain desc puts the best there (§ negative-column
+// sort direction). Carrier / Customer names lead ASC.
+const SORT_DESC_FIRST = new Set(["fail", "vol", "pct_vol"])
+function incidentDirForKey(key: string): SortDir {
+  return SORT_DESC_FIRST.has(key) ? "desc" : "asc"
+}
+
+// The panel tables are dense (10px uppercase headers, px-2 py-1 cells); the
+// shared SortableTh defaults to the roomier px-3 py-1.5 used elsewhere.
+const TH_CLS = "px-2 py-1 text-[10px] font-normal uppercase tracking-normal"
+
+const CAPPED_NOTE = "Sorting applies to the rows shown — the server sends only the top 100."
 
 // Two side-by-side panels mirroring the §5 incident split (Bruno 2026-06-15):
 // PU service-fails on the left, DEL service-fails on the right. The backend
@@ -139,6 +163,10 @@ function IncidentTable({
   pctHeader: string
   onPickCustomer?: (customer: string) => void
 }) {
+  // Default sort = the order the server already ranks by (fail count desc), so
+  // the table opens looking exactly as it did before this round.
+  const state = useSortable(rows, "fail", "desc", incidentDirForKey)
+  const sorted = state.sorted
   return (
     <table className="w-full table-fixed text-xs">
       <colgroup>
@@ -147,21 +175,21 @@ function IncidentTable({
         <col className="w-[24%]" />
       </colgroup>
       <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-        <tr>
-          <th className="px-2 py-1 text-left">Customer</th>
-          <th className="px-2 py-1 text-right">{failHeader}</th>
-          <th className="px-2 py-1 text-right">{pctHeader}</th>
+        <tr title={CAPPED_NOTE}>
+          <SortableTh label="Customer" columnKey="customer_name" state={state} className={TH_CLS} />
+          <SortableTh label={failHeader} columnKey="fail" state={state} align="right" className={TH_CLS} />
+          <SortableTh label={pctHeader} columnKey="pct_on_time" state={state} align="right" className={TH_CLS} />
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 ? (
+        {sorted.length === 0 ? (
           <tr>
             <td colSpan={3} className="px-2 py-3 text-center text-[#9CA3AF]">
               No incidents
             </td>
           </tr>
         ) : (
-          rows.map((r) => (
+          sorted.map((r) => (
             <tr key={r.customer_name} className="border-t border-[#F3F4F6]">
               <td className="truncate px-2 py-1 text-[#374151]" title={r.customer_name}>
                 {onPickCustomer ? (
@@ -341,6 +369,8 @@ function CarrierTable({
   rows: OppServiceByCarrierRow[]
   onPickCarrier?: (carrier: string) => void
 }) {
+  const state = useSortable(rows, "vol", "desc", incidentDirForKey)
+  const sorted = state.sorted
   return (
     <table className="w-full table-fixed text-xs">
       <colgroup>
@@ -351,23 +381,23 @@ function CarrierTable({
         <col className="w-[18%]" />
       </colgroup>
       <thead className="sticky top-0 bg-[#F9FAFB] text-[10px] uppercase text-[#6B7280]">
-        <tr>
-          <th className="px-2 py-1 text-left">Carrier</th>
-          <th className="px-2 py-1 text-right">Vol</th>
-          <th className="px-2 py-1 text-right">% Vol</th>
-          <th className="px-2 py-1 text-right">OTP</th>
-          <th className="px-2 py-1 text-right">OTD</th>
+        <tr title={CAPPED_NOTE}>
+          <SortableTh label="Carrier" columnKey="carrier" state={state} className={TH_CLS} />
+          <SortableTh label="Vol" columnKey="vol" state={state} align="right" className={TH_CLS} />
+          <SortableTh label="% Vol" columnKey="pct_vol" state={state} align="right" className={TH_CLS} />
+          <SortableTh label="OTP" columnKey="otp_pct" state={state} align="right" className={TH_CLS} />
+          <SortableTh label="OTD" columnKey="otd_pct" state={state} align="right" className={TH_CLS} />
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 ? (
+        {sorted.length === 0 ? (
           <tr>
             <td colSpan={5} className="px-2 py-3 text-center text-[#9CA3AF]">
               No carriers
             </td>
           </tr>
         ) : (
-          rows.map((r) => (
+          sorted.map((r) => (
             <tr key={r.carrier} className="border-t border-[#F3F4F6]">
               <td className="truncate px-2 py-1 text-[#374151]" title={r.carrier}>
                 {onPickCarrier && r.carrier ? (

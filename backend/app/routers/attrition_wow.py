@@ -34,6 +34,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from app.attrition_core import (
+    ATTRITION_WEEKS,
+    attrition_from_counts,
+    l8w_window as _l8w_window,
+    lane_key_expr as _lane_expr,
+    last_completed_week as _last_completed_week,
+)
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
@@ -69,29 +76,16 @@ router = APIRouter(tags=["attrition-wow"], prefix="/custom/attrition-wow")
 # ---------------------------------------------------------------------------
 
 
-def _last_completed_week(today: Optional[date] = None) -> tuple[date, date]:
-    """Return (mon, sun) of the most recent completed Mon-Sun ISO week.
-
-    Bruno's "LAST WEEK (13 APR 26 - 19 APR 26)" anchors here.
-    """
-    today = today or cst_today()
-    # Mon=0..Sun=6 → days back to this Monday
-    this_monday = today - timedelta(days=today.weekday())
-    last_sunday = this_monday - timedelta(days=1)
-    last_monday = last_sunday - timedelta(days=6)
-    return last_monday, last_sunday
-
-
-def _l8w_window(today: Optional[date] = None) -> tuple[date, date]:
-    """8 completed weeks ENDING the day before last week starts.
-
-    PDF: "LAST 8 WEEKS (16 FEB 26 - 12 APR 26)" — 8 full weeks immediately
-    preceding LAST WEEK. Total span = 56 days = 8 × 7.
-    """
-    lw_mon, _ = _last_completed_week(today)
-    end = lw_mon - timedelta(days=1)              # Sunday of the 8-week span
-    start = end - timedelta(days=8 * 7 - 1)       # 56 days inclusive
-    return start, end
+# ⚠ `_last_completed_week` / `_l8w_window` / `_lane_expr` now live in
+# `app.attrition_core` and are imported above under their old private names.
+# Bruno (PDF 2026-08-31) R3 requires the Ops Portal Overview panel to render
+# THIS report's "% Δ", and two copies of a window definition is exactly how the
+# two drift apart again with no error (§95). The names are kept because
+# `attrition_wow_team.py` reaches for `aw._last_completed_week` by name.
+#
+# PDF wording they encode: "LAST WEEK (13 APR 26 - 19 APR 26)" and
+# "LAST 8 WEEKS (16 FEB 26 - 12 APR 26)" — 8 full weeks immediately preceding
+# LAST WEEK, span 56 days.
 
 
 def _l2w_window(today: Optional[date] = None) -> tuple[date, date]:
@@ -226,13 +220,6 @@ def _losses_table_window(
     return date(today.year, 1, 1), tomorrow
 
 
-def _lane_expr(alias: str) -> str:
-    """Bruno's lane = concat(trim(origin_name), ' - ', trim(dest_name))."""
-    return (
-        f"TRIM(COALESCE({alias}.origin_name,'')) "
-        f"|| ' - ' || "
-        f"TRIM(COALESCE({alias}.dest_name,''))"
-    )
 
 
 def _weekly_cte(scope_where: str, weeks_back: int = WEEKS_HISTORY) -> str:
@@ -478,18 +465,23 @@ async def summary(
 
     # Both attrition cards' L8W is the per-week AVERAGE over the 8-week window
     # (lanes: Bruno R12 2026-06-30 — customers: Bruno 2026-08-03). Fixed /8, see
-    # the l8w_weekly CTE comment. Floats on purpose: the cards render 1 decimal
-    # and Δ/%Δ are derived from these, so rounding here would desync the card
-    # from the chart it is required to match.
-    l8w_lanes = _f(row["l8w_lanes_sum"]) / 8.0
-    lw_lanes = int(row["lw_lanes"] or 0)
-    l8w_customers = _f(row["l8w_customers_sum"]) / 8.0
-    lw_customers = int(row["lw_customers"] or 0)
+    # the l8w_weekly CTE comment.
+    #
+    # ⚠ The /8 and the % Δ sign live in `app.attrition_core`, not here. Bruno
+    # (PDF 2026-08-31) R3 makes the Ops Portal Overview panel render this exact
+    # number, so a second copy of the arithmetic is how they silently diverge
+    # again (§95). The blocks below are byte-for-byte the shape this endpoint
+    # has always returned.
+    attr = attrition_from_counts(
+        row["l8w_lanes_sum"], int(row["lw_lanes"] or 0),
+        row["l8w_customers_sum"], int(row["lw_customers"] or 0),
+    )
 
-    # Per-week averages
-    avg_l8w_loads   = _f(row["l8w_loads"])  / 8.0
-    avg_l8w_rev     = _f(row["l8w_rev"])    / 8.0
-    avg_l8w_profit  = _f(row["l8w_profit"]) / 8.0
+    # Per-week averages over the SAME 8-week window the cards use, so the
+    # divisor is the one constant rather than a repeated literal.
+    avg_l8w_loads   = _f(row["l8w_loads"])  / float(ATTRITION_WEEKS)
+    avg_l8w_rev     = _f(row["l8w_rev"])    / float(ATTRITION_WEEKS)
+    avg_l8w_profit  = _f(row["l8w_profit"]) / float(ATTRITION_WEEKS)
     avg_l8w_margin  = (avg_l8w_profit / avg_l8w_rev) if avg_l8w_rev else None
     avg_l8w_perload = (avg_l8w_profit / avg_l8w_loads) if avg_l8w_loads else None
 
@@ -512,19 +504,6 @@ async def summary(
         pct = (d / base) if base not in (0, 0.0) else None
         return {"diff": d, "pct": pct}
 
-    # Attrition cards (Bruno R13, 2026-07-01): the % Δ on the Lane / Customer
-    # Attrition cards is (L8W − LW) / L8W — the REVERSE numerator of the
-    # metric-table % (which is LW − L8W over L8W). A positive value means LW <
-    # L8W (fewer active lanes/customers) and is coloured red on the frontend;
-    # negative → green (fmtSignedPctInverted). The Δ (LW − L8W) count column
-    # keeps the LW − L8W sign.
-    def _attr_diff(lw: Optional[float], l8w: Optional[float]) -> dict:
-        if lw is None or l8w is None:
-            return {"diff": None, "pct": None}
-        diff = lw - l8w
-        pct = ((l8w - lw) / l8w) if l8w not in (0, 0.0) else None
-        return {"diff": diff, "pct": pct}
-
     return {
         "success": True,
         "data": {
@@ -533,16 +512,8 @@ async def summary(
                 "lw":   {"start": lw_start.isoformat(),  "end": lw_end.isoformat()},
                 "l2w":  {"start": l2w_start.isoformat(), "end": l2w_end.isoformat()},
             },
-            "active_lanes": {
-                "l8w": l8w_lanes,
-                "lw":  lw_lanes,
-                **_attr_diff(lw_lanes, l8w_lanes),
-            },
-            "active_customers": {
-                "l8w": l8w_customers,
-                "lw":  lw_customers,
-                **_attr_diff(lw_customers, l8w_customers),
-            },
+            "active_lanes":     attr["active_lanes"],
+            "active_customers": attr["active_customers"],
             "loads": {
                 "l8w_avg": avg_l8w_loads,
                 "lw":      lw_loads_v,

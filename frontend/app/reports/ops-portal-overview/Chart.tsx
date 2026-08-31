@@ -20,6 +20,7 @@ import {
   fmtCount,
   fmtPct,
   fmtUsd,
+  fmtUsdSigned,
   useOppCombo,
   useOppCoverForecast,
   useOppProfitTmGauge,
@@ -132,6 +133,20 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
     carriers: filters.carriers,
     excludeCarriers: filters.excludeCarriers,
   }
+  // Identity of the five filters Bruno's Observation (PDF 2026-08-31) names —
+  // Team, Customer, Lane, Carrier, Contract Type. Any change to them must
+  // return the chart to its per-grain default window. Deliberately EXCLUDES
+  // `measure`: switching Vol./Rev./Prof./Marg.% should preserve a window the
+  // user dragged. Mirrors the /combo + /service React Query keys.
+  const filterKey = [
+    cf.team ?? "",
+    cf.customer ?? "",
+    loadType ?? "",
+    (cf.lanes ?? []).join("|"),
+    (cf.excludeLanes ?? []).join("|"),
+    (cf.carriers ?? []).join("|"),
+    (cf.excludeCarriers ?? []).join("|"),
+  ].join("~")
   const [grain, setGrain] = useState<OppGrain>("month")
   // Bruno 2026-07-01 R5: KPI Management defaults to the "Prof." view on open.
   const [measure, setMeasure] = useState<Measure>("profit")
@@ -279,14 +294,24 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   // data length (see bStart/bEnd at render).
   const userScrolledRef = useRef(false)
 
-  // A grain switch always returns to the default last-N window.
+  // A grain switch — or ANY filter click — returns to the default last-N
+  // window. Bruno's Observation (PDF 2026-08-31): "If the Day button is
+  // selected, clicking on any other filter, either inside or outside the
+  // chart, must keep displaying 52 days."
   useEffect(() => {
     userScrolledRef.current = false
-  }, [grain])
+  }, [grain, filterKey])
 
   // Position the brush: default to the last-N window unless the user has
-  // manually scrolled within the current grain (then just clamp their window
-  // to the — possibly shorter — new data length).
+  // manually scrolled within the current grain + filter set (then just clamp
+  // their window to the — possibly shorter — new data length).
+  //
+  // ⚠ Keyed on `chartData` IDENTITY, not `chartData.length`. The backend emits
+  // a DENSE fixed-length series per grain (365 day / 50 week / 26 month
+  // anchors, zero-filled), so a filter change leaves the length untouched and
+  // a length-keyed effect never fires — which is precisely why the window
+  // stopped re-anchoring. `chartData` is memoised, so this runs once per real
+  // data change and no more.
   useEffect(() => {
     if (!chartData.length) return
     const maxIdx = chartData.length - 1
@@ -297,7 +322,32 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
       const start = Math.max(0, end - defaultVisible + 1)
       setBrush({ start, end })
     }
-  }, [grain, chartData.length, defaultVisible])
+  }, [grain, filterKey, chartData, defaultVisible])
+
+  // 🔴 Recharts 3 keeps the VISIBLE window in an internal Redux store, not in
+  // <Brush>'s props — every series selector reads
+  // `chartData.slice(dataStartIndex, dataEndIndex + 1)` from it.
+  //
+  // Swapping the `data` array runs ChartDataContextProvider's cleanup,
+  // `setChartData(undefined)`, which zeroes BOTH indices; the follow-up
+  // `setChartData(next)` restores only `dataEndIndex = len - 1` and leaves
+  // `dataStartIndex` at 0 — i.e. the WHOLE range. <Brush> pushes its props back
+  // into that store only when their VALUES change, and ours don't (dense
+  // fixed-length series ⇒ the same indices). `keepPreviousData` keeps the chart
+  // mounted across the refetch, so nothing else resets it either. Net effect:
+  // one filter click and Day silently showed 365 days instead of 52, Week 50
+  // instead of 8, Month 26 instead of 8 — for the rest of the session.
+  //
+  // Remounting the <Brush> re-runs its mount dispatch and puts our indices
+  // back. The counter is bumped IN AN EFFECT, not read straight off
+  // `chartData`, so the remount lands in the commit AFTER the one where
+  // Recharts zeroed the store — otherwise the ordering is a coin flip.
+  // <Brush> is a thin wrapper over its dispatcher + internals, so this
+  // remounts neither the chart nor the bar animations.
+  const [dataEpoch, setDataEpoch] = useState(0)
+  useEffect(() => {
+    setDataEpoch((e) => e + 1)
+  }, [chartData, serviceData])
 
   // Clamp brush indices to the datasets before Recharts sees them — a stale
   // index from a previous grain would otherwise make the Brush render the whole
@@ -573,6 +623,9 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                 <LabelList dataKey="otd_pct" position="bottom" fontSize={9} fill="#2563EB" formatter={(v) => `${Number(v).toFixed(1)}%`} />
               </Line>
               <Brush
+                /* ⚠ Load-bearing — see the `dataEpoch` note above. Without it
+                   the props below are ignored after the first data swap. */
+                key={`${grain}-${dataEpoch}`}
                 dataKey="label"
                 height={20}
                 stroke="#94A3B8"
@@ -721,6 +774,9 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                 />
               )}
               <Brush
+                /* ⚠ Load-bearing — see the `dataEpoch` note above. Without it
+                   the props below are ignored after the first data swap. */
+                key={`${grain}-${dataEpoch}`}
                 dataKey="label"
                 height={20}
                 stroke="#94A3B8"
@@ -749,7 +805,13 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
           {!hideBudget && (
             <ProfitTmGauge
               mtd={gauge?.profit_mtd ?? 0}
-              target={gauge?.profit_budget ?? 0}
+              budget={gauge?.profit_budget ?? 0}
+              /* Bruno (PDF 2026-08-31) R2. `projRes` is already fetched above
+                 for the grain-aware Projected series and shares its React
+                 Query key with the Monthly Projection panel, so this adds no
+                 request — and it is by construction the SAME Proj. Profit that
+                 panel shows (§69, one Projected definition). */
+              projProfit={projRes?.data?.proj_profit ?? 0}
             />
           )}
         </div>
@@ -852,20 +914,56 @@ function KpiBox({
   )
 }
 
-function ProfitTmGauge({ mtd, target }: { mtd: number; target: number }) {
-  const max = Math.max(target, mtd, 1) * 1.05
+/** Bruno (PDF 2026-08-31) R2: "Target" → "Budget", and the readout becomes
+ *  Actual / Budget / Differential / Projected Profit.
+ *
+ *  ⚠ Actual is month-to-DATE while Budget is the WHOLE month (§92 — a
+ *  whole-period plan must not be truncated to today). So Differential reads
+ *  negative for most of the month BY CONSTRUCTION and is not a warning sign;
+ *  Projected Profit is the leg to compare against Budget. The labels are spelt
+ *  out rather than implied so nobody reads the gap as underperformance.
+ */
+function ProfitTmGauge({
+  mtd,
+  budget,
+  projProfit,
+}: {
+  mtd: number
+  budget: number
+  projProfit: number
+}) {
+  const max = Math.max(budget, mtd, 1) * 1.05
   const pct = Math.min(100, Math.max(0, (mtd / max) * 100))
-  const targetPct = target > 0 ? Math.min(100, Math.max(0, (target / max) * 100)) : 0
-  const completionPct = target > 0 ? (mtd / target) * 100 : 0
-  const onTrack = target > 0 && mtd >= target * (new Date().getDate() / 30)
+  const budgetPct = budget > 0 ? Math.min(100, Math.max(0, (budget / max) * 100)) : 0
+  const completionPct = budget > 0 ? (mtd / budget) * 100 : 0
+  const onTrack = budget > 0 && mtd >= budget * (new Date().getDate() / 30)
+  const differential = mtd - budget
   return (
     <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
           Profit - TM
         </span>
-        <span className="text-xs font-semibold text-[#1B3A5C]">
-          {fmtUsd(mtd)} <span className="text-[#9CA3AF]">/ Target {fmtUsd(target)}</span>
+        <span className="text-xs font-semibold tabular-nums text-[#1B3A5C]">
+          <span title="Month-to-date profit">Actual {fmtUsd(mtd)}</span>
+          <span className="text-[#D1D5DB]"> / </span>
+          <span className="text-[#6B7280]" title="Whole-month budget">
+            Budget {fmtUsd(budget)}
+          </span>
+          <span className="text-[#D1D5DB]"> / </span>
+          <span
+            className={differential < 0 ? "text-[#DC2626]" : "text-[#15803D]"}
+            title="Actual − Budget. Actual is month-to-date and Budget is the whole month, so this is negative for most of the month by construction — compare Projected Profit against Budget instead."
+          >
+            Differential {fmtUsdSigned(differential)}
+          </span>
+          <span className="text-[#D1D5DB]"> / </span>
+          <span
+            className={projProfit < 0 ? "text-[#DC2626]" : "text-[#1B3A5C]"}
+            title="End-of-month projection — the same number the Monthly Projection panel shows"
+          >
+            Projected Profit {fmtUsd(projProfit)}
+          </span>
         </span>
       </div>
       <div className="relative h-3 w-full overflow-hidden rounded-full bg-[#F3F4F6]">
@@ -876,14 +974,14 @@ function ProfitTmGauge({ mtd, target }: { mtd: number; target: number }) {
             background: onTrack ? "#16A34A" : mtd < 0 ? "#DC2626" : "#F59E0B",
           }}
         />
-        {targetPct > 0 && (
+        {budgetPct > 0 && (
           <div
             className="absolute inset-y-0 w-0.5 bg-[#1B3A5C]"
-            style={{ left: `${targetPct}%` }}
+            style={{ left: `${budgetPct}%` }}
           />
         )}
       </div>
-      {target > 0 && (
+      {budget > 0 && (
         <div className="mt-0.5 text-center text-xs font-medium tabular-nums text-[#374151]">
           {completionPct.toFixed(2)}%
         </div>

@@ -5,6 +5,7 @@ Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTO
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
 from ._constants import CORP_TEAMS
@@ -60,6 +61,13 @@ def _projection_sums_sql(
     ``group_col`` yields one row per group (used by /actuals for its per-
     customer rows); omit it for the report-wide figure. Bruno's "last 12
     business days" is Mon-Sat — ``EXTRACT(DOW) = 0`` is Sunday.
+
+    ⚠ Do NOT add columns here for a panel that merely wants to DISPLAY
+    something. `test_ops_portal_projection` asserts this statement is
+    byte-identical across /team-projection, /combo and /actuals — that is the
+    §69 guard that stopped four rival "Projected" formulas, and an extra SELECT
+    item trips it even when every projection leg is untouched. Bruno's R4
+    month-to-date rows went into `_mtd_display_sql` for exactly this reason.
     """
     sel = f"{group_col} AS grp," if group_col else ""
     grp = f"GROUP BY {group_col}" if group_col else ""
@@ -90,6 +98,58 @@ def _projection_sums_sql(
     """
 
 
+def _mtd_display_sql(where: str, p_ms: int, p_ye: int) -> str:
+    """Volume / Revenue / Profit (MTD) — Bruno (PDF 2026-08-31) R4.
+
+    Three DISPLAY rows between "Pending Days" and "Proj. Volume". A separate
+    statement on purpose: see the ⚠ in ``_projection_sums_sql`` — folding these
+    into it breaks the §69 byte-identity guard for no gain, and this scan hits
+    the same table and window, so the pages are already hot.
+
+    ⚠ Bounds are month-start → YESTERDAY, verbatim from the PDF ("if today is
+    August 31, the calculation should include data through August 30 at 11:59
+    PM"). That makes Revenue/Profit (MTD) DIFFER from the projection's own
+    `rev_mtd`/`prof_mtd` legs, which run to month END by a deliberate asymmetry
+    documented at the top of this module. Proj. Revenue / Proj. Profit are
+    therefore not reconstructable on screen from these three rows; Volume is.
+
+    ⚠ Volume repeats `vol_mtd`'s predicate exactly — including the
+    `total_charge` guard — rather than a bare COUNT(*). "Volume" means
+    charge-bearing orders EVERYWHERE in this report (§5 Monthly Performance
+    counts it that way, and so does the Proj. Volume leg). A plain count reads
+    22 higher today and would reconcile with nothing beside it (§69).
+    """
+    return f"""
+        SELECT
+          COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_ye}
+                             AND br4.total_charge IS NOT NULL
+                             AND br4.total_charge <> 0) AS mtd_volume,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_ye}
+                            THEN br4.total_charge END), 0)::numeric AS mtd_revenue,
+          COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms} AND ${p_ye}
+                            THEN br4.margin_amt END), 0)::numeric AS mtd_profit
+        FROM public.mcleod_gld_budget_report_v4 br4
+        WHERE {where}
+    """
+
+
+def _mtd_display_params(
+    team, customer, load_type, lanes, exclude_lanes, carriers, exclude_carriers,
+    today: date, scope: DivisionScope = CORP_SCOPE,
+) -> tuple[str, list, int, int]:
+    """(where, params, p_month_start, p_yesterday) for ``_mtd_display_sql``."""
+    win_start, win_end, m_start, m_end, _ = _projection_bounds(today)
+    params: list = []
+    where = _v4_scope_where(
+        "br4", team, customer, load_type, params,
+        lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
+    )
+    # `win_end` IS yesterday — reuse it rather than recomputing `today - 1`, so
+    # the display rows and the projection window can never drift apart.
+    params.extend([m_start, win_end])
+    return where, params, len(params) - 1, len(params)
+
+
 def _projection_params(
     team, customer, load_type, lanes, exclude_lanes, carriers, exclude_carriers,
     today: date, scope: DivisionScope = CORP_SCOPE,
@@ -109,13 +169,32 @@ def _projection_params(
 async def _team_projection_core(
     pool, *, team, customer, load_type, lanes, exclude_lanes,
     carriers, exclude_carriers, today: date, scope: DivisionScope = CORP_SCOPE,
+    with_mtd_display: bool = False,
 ) -> dict:
-    """The report-wide Team Monthly Projection object — the source of truth."""
+    """The report-wide Team Monthly Projection object — the source of truth.
+
+    ``with_mtd_display`` adds the three Volume/Revenue/Profit (MTD) rows Bruno
+    (PDF 2026-08-31) R4 put between "Pending Days" and "Proj. Volume". Opt-in so
+    /actuals' per-customer scan keeps emitting the SQL it always has, and so
+    `projection_history`'s replay — which builds its rows from
+    ``_projection_from_sums`` directly — is untouched.
+    """
     where, params, idx, pending = _projection_params(
         team, customer, load_type, lanes, exclude_lanes,
         carriers, exclude_carriers, today, scope=scope,
     )
-    row = await pool.fetchrow(_projection_sums_sql(where, *idx, scope=scope), *params)
+    if with_mtd_display:
+        d_where, d_params, d_ms, d_ye = _mtd_display_params(
+            team, customer, load_type, lanes, exclude_lanes,
+            carriers, exclude_carriers, today, scope=scope,
+        )
+        row, mtd_row = await asyncio.gather(
+            pool.fetchrow(_projection_sums_sql(where, *idx, scope=scope), *params),
+            pool.fetchrow(_mtd_display_sql(d_where, d_ms, d_ye), *d_params),
+        )
+    else:
+        row = await pool.fetchrow(_projection_sums_sql(where, *idx, scope=scope), *params)
+        mtd_row = None
     team_count = int(row["team_count"] or 0) if row else 0
     # Fallback only when the scan returned no rows at all. `team` may be a
     # single id or a list of them (PERFORMANCE CORP passes four), so count the
@@ -124,11 +203,21 @@ async def _team_projection_core(
     team_count = team_count or len(_team_list(team)) or len(scope.sub_teams)
     if not row:
         return _projection_from_sums(0, 0, 0, 0, 0, 0, pending, team_count)
-    return _projection_from_sums(
+    out = _projection_from_sums(
         row["vol_12"], row["rev_12"], row["prof_12"],
         row["vol_mtd"], row["rev_mtd"], row["prof_mtd"],
         pending, team_count,
     )
+    if with_mtd_display:
+        # Additive only — no existing key moves, so every other consumer
+        # (the digest, the history snapshot, the KPI chart) is unaffected.
+        out = {
+            **out,
+            "mtd_volume":  int(mtd_row["mtd_volume"] or 0) if mtd_row else 0,
+            "mtd_revenue": _safe_float(mtd_row["mtd_revenue"]) if mtd_row else 0.0,
+            "mtd_profit":  _safe_float(mtd_row["mtd_profit"]) if mtd_row else 0.0,
+        }
+    return out
 
 
 def _safe_float(v) -> float:

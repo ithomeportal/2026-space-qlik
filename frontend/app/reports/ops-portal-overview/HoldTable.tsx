@@ -101,7 +101,10 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
         <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
-          Hold
+          {/* Bruno (PDF 2026-08-31) R9: the BOARD is "Unbilled". The `Hold`
+              and `Hold Reason` COLUMNS keep their names — they are McLeod's
+              on_hold flag and its reason, not this board's subject. */}
+          Unbilled
         </span>
         <span className="text-[11px] text-[#6B7280]">
           Orders not yet billed in McLeod (excludes voided and pending-cover)
@@ -129,7 +132,7 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
 
       {error ? (
         <div className="px-3 py-6 text-center text-xs text-[#991B1B]">
-          Could not load the Hold board:{" "}
+          Could not load the Unbilled board:{" "}
           {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
