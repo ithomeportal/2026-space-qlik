@@ -108,7 +108,16 @@ _BUDGET_TEAM_CTE = """
 budget_team AS (
     SELECT
         n.customer_name,
-        COALESCE(t_exact.@COL@, t_stripped.@COL@) AS @COL@
+        COALESCE(t_exact.@COL@, t_stripped.@COL@) AS @COL@,
+        -- The v4 name this budget name resolves to, or NULL when neither the
+        -- exact nor the stripped lookup hits. Published so a panel that must
+        -- pair a budget row with a PRODUCTION row can join on one definition
+        -- instead of re-deriving the strip (§69). ⚠ It is still a LOOKUP KEY:
+        -- never display it in place of `customer_name`, and never GROUP a
+        -- FULL OUTER JOIN on it without aggregating the budget side FIRST —
+        -- two budget names can resolve to one v4 name and the join would then
+        -- emit the production row once per budget row (§83).
+        COALESCE(t_exact.customer_name, t_stripped.customer_name) AS v4_customer_name
     FROM (
         SELECT DISTINCT TRIM("Customer Name") AS customer_name
         FROM public.daily_production_budget_report

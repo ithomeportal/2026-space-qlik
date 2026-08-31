@@ -128,7 +128,11 @@ function applyColFilters(rows: OppOrderRow[], f: ColFilters): OppOrderRow[] {
 }
 
 export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
-  const [sortKey, setSortKey] = useState<ColumnKey>("revenue")
+  // Bruno (PDF 2026-08-31 "Ops Portal Updates") R3: the "Progress" board opens
+  // on Profit descending. Server-side (`profit_desc` is in _BY_ORDER_SORTS), so
+  // the 500-row cap is the top 500 BY PROFIT, not a re-sorted revenue slice.
+  // Cover / Pending keep their own arrival-time defaults — separate components.
+  const [sortKey, setSortKey] = useState<ColumnKey>("profit")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
   // status is not server-sortable (no wire sort key), so fall back to revenue
   // for the wire when it is the active sort. carrier IS server-sortable

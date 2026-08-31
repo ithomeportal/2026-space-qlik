@@ -141,6 +141,10 @@ export interface BookerSummary {
   /** broken / threshold_orders. Computed server-side so the KPI card and the
    *  table's totals row cannot drift apart (§69). */
   broken_threshold_pct: number | null
+  /** 1 − broken_threshold_pct (Bruno 2026-08-31 R3) — the figure the KPI card
+   *  now shows. A FRACTION, like every other percentage on this wire: fmtPct
+   *  multiplies by 100, and an already-scaled value prints 100x wrong (§95). */
+  compliance_threshold_pct: number | null
   /** Σ (threshold − carrier cost) over orders coming in UNDER threshold. */
   cost_saving: number | null
   /** How many orders contributed to cost_saving. */
@@ -187,6 +191,7 @@ export interface BookerOrders {
     broken_threshold: number | null
     threshold_orders: number | null
     broken_threshold_pct: number | null
+    compliance_threshold_pct: number | null
     cost_saving: number | null
     under_threshold: number | null
     /** Same server-side definition as the KPI card (§69). */
@@ -235,6 +240,47 @@ export interface BookerFreshness {
   /** Labels of feeds with NO timestamp at all — dead, not merely stale. */
   unavailable: string[]
   checked_at: string | null
+}
+
+/** One row of the Rank tab (Bruno PDF 2026-08-31, page 1). */
+export interface BookerRankRow {
+  booker: string
+  /** Competition rank (1,2,2,4) by bookings in the last completed week.
+   *  null when the booker did not book at all that week. */
+  rank: number | null
+  prev_rank: number | null
+  /** prev_rank − rank. POSITIVE = moved UP. null = not present last week,
+   *  which is not the same as "unchanged" and must not render as 0. */
+  rank_delta: number | null
+  bookings: number
+  prev_bookings: number
+  broken_threshold: number | null
+  threshold_orders: number | null
+  /** A fraction — fmtPct multiplies by 100. */
+  broken_threshold_pct: number | null
+  cost_saving: number | null
+  under_threshold: number | null
+}
+
+export interface BookerRankWeek {
+  start: string
+  end: string
+  label: string
+}
+
+/** ⚠ The INNER payload — apiFetch<T> already unwraps the {success, data}
+ *  envelope, exactly like BookerWeekly. Declaring the envelope here again
+ *  types every field one level too deep. */
+export interface BookerRank {
+  rows: BookerRankRow[]
+  /** Picker options — Bruno's roster first, then everyone else. */
+  bookers: string[]
+  roster: string[]
+  /** The ranked population: the "of N" in "3 of N". Counted BEFORE the
+   *  Posted By display filter, so selecting one name does not renumber. */
+  total_bookers: number
+  week: BookerRankWeek
+  prev_week: BookerRankWeek
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +367,25 @@ export function useBookerWeekly(scope: BookerScopeFilters) {
     queryFn: () =>
       apiFetch<BookerWeekly>(
         `custom/booker-performance-scorecard/weekly${qs ? `?${qs}` : ""}`,
+      ),
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    ...RETRY,
+  })
+}
+
+/** The Rank tab. Scope filters only — it takes NO date params, exactly like
+ *  useBookerWeekly: the window is a fixed pair of completed weeks resolved
+ *  server-side, and the tab captions it on screen. */
+export function useBookerRank(scope: BookerScopeFilters) {
+  const q = new URLSearchParams()
+  scopeParams(q, scope)
+  const qs = q.toString()
+  return useQuery({
+    queryKey: ["booker-scorecard", "rank", ...scopeKey(scope)],
+    queryFn: () =>
+      apiFetch<BookerRank>(
+        `custom/booker-performance-scorecard/rank${qs ? `?${qs}` : ""}`,
       ),
     staleTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,

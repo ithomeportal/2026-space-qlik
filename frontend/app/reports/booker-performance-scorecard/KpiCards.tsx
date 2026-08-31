@@ -80,14 +80,20 @@ export function KpiCards({ filters, baseline }: Props) {
     )
   }
 
-  // Broken Threshold is only meaningful against the number of orders that
+  // Compliance Threshold is only meaningful against the number of orders that
   // actually carry a threshold — thresholds are hand-entered in Loads to Cover,
   // so roughly 40% of bookings have none. Showing the bare count would imply a
   // coverage this data does not have.
-  const brokenSub =
+  //
+  // Bruno (PDF 2026-08-31, Scorecard tab) R3 renamed this card from "Broken
+  // Threshold" to "Compliance Threshold" and flipped it to 1 − broken. The
+  // sub-line keeps the raw BROKEN count, because that is what the Orders table
+  // highlights row by row — the card is the compliant share, the detail below
+  // it is the exceptions (§16).
+  const complianceSub =
     k?.broken_threshold === null || k?.broken_threshold === undefined
       ? "threshold source unavailable"
-      : `${fmtCount(k.broken_threshold)} of ${fmtCount(k.threshold_orders)} with a threshold`
+      : `${fmtCount(k.broken_threshold)} broken of ${fmtCount(k.threshold_orders)} with a threshold`
 
   // Cost Saving is the mirror of Broken Threshold: the same comparison, the
   // orders landing on the good side of it (Bruno R3).
@@ -123,13 +129,14 @@ export function KpiCards({ filters, baseline }: Props) {
         }
       />
       <Card
-        label="Broken Threshold"
-        // Bruno R4: the headline is the PERCENTAGE of comparable orders that
-        // broke their threshold; the raw count moves to the sub-line.
-        value={fmtPct(k?.broken_threshold_pct)}
-        sub={brokenSub}
-        tone={k?.broken_threshold ? "warn" : "default"}
-        title="Share of orders whose Carrier Cost (Revenue − Profit) exceeds the threshold typed in Loads to Cover. Orders with no threshold are excluded from both the numerator and the denominator."
+        label="Compliance Threshold"
+        // Bruno R4: the headline is a PERCENTAGE of comparable orders; the raw
+        // count moves to the sub-line. Bruno 2026-08-31 R3: that percentage is
+        // now COMPLIANCE (1 − broken), so higher is better and the warn tone
+        // is gone — an amber card beside a 96% figure reads as an alarm.
+        value={fmtPct(k?.compliance_threshold_pct)}
+        sub={complianceSub}
+        title="Share of orders whose Carrier Cost (Revenue − Profit) is at or under the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold are excluded from both the numerator and the denominator."
       />
       <Card
         label="Cost Saving"

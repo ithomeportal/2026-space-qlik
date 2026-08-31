@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useMemo } from "react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { ArrowLeft, ClipboardCheck, FlaskConical, Loader2 } from "lucide-react"
+import { ArrowLeft, ClipboardCheck, FlaskConical, Loader2, Trophy } from "lucide-react"
 import {
   SCENARIO_STEPS,
   useBookerFilterOptions,
@@ -20,16 +20,24 @@ import { OrdersTable } from "./OrdersTable"
 import { ActionPlan } from "./ActionPlan"
 import { DataFreshness } from "./DataFreshness"
 import { ScenarioPanel } from "./ScenarioPanel"
+import { RankTable } from "./RankTable"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
-type TabKey = "scorecard" | "scenario"
+type TabKey = "rank" | "scorecard" | "scenario"
 
+// Bruno (PDF 2026-08-31) R1: "Rank" is placed BEFORE all existing tabs — and
+// it is therefore also the landing tab. A leftmost tab that is not the one you
+// arrive on reads as a bug. The default is encoded as the ABSENCE of ?tab, so
+// bare report URLs now open on Rank; "scorecard" carries ?tab=scorecard.
 const TABS: { k: TabKey; label: string; icon: typeof ClipboardCheck }[] = [
+  { k: "rank", label: "Rank", icon: Trophy },
   { k: "scorecard", label: "Scorecard", icon: ClipboardCheck },
   { k: "scenario", label: "Scenario", icon: FlaskConical },
 ]
+
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.k))
 
 const RANGES: { k: BookerRange; label: string }[] = [
   { k: "today", label: "Today" },
@@ -80,7 +88,11 @@ function BookerScorecardContent() {
   // Tab lives in the URL like every other bit of state on this page, so a
   // scenario view is shareable and the back button works (house pattern:
   // kam-performance-dfw). The default tab omits the param entirely.
-  const tab: TabKey = searchParams.get("tab") === "scenario" ? "scenario" : "scorecard"
+  // ⚠ A lookup, not a ternary chain: the old `=== "scenario" ? … : "scorecard"`
+  // silently mapped every unknown value onto the default, so adding a third tab
+  // to that shape would have made `?tab=rank` render the Scorecard.
+  const tabRaw = searchParams.get("tab")
+  const tab: TabKey = tabRaw && TAB_KEYS.has(tabRaw) ? (tabRaw as TabKey) : "rank"
   const stepRaw = Number(searchParams.get("adj"))
   const step: ScenarioStep = (SCENARIO_STEPS as readonly number[]).includes(stepRaw)
     ? (stepRaw as ScenarioStep)
@@ -114,7 +126,7 @@ function BookerScorecardContent() {
     [searchParams, router, pathname],
   )
 
-  const setTab = (t: TabKey) => updateUrl({ tab: t === "scorecard" ? null : t })
+  const setTab = (t: TabKey) => updateUrl({ tab: t === "rank" ? null : t })
   const setStep = (v: ScenarioStep) => updateUrl({ adj: String(v) })
 
   const setRange = (r: BookerRange) =>
@@ -277,6 +289,14 @@ function BookerScorecardContent() {
             </button>
           ))}
         </div>
+
+        {tab === "rank" && (
+          <RankTable
+            scope={scope}
+            postedBy={postedBy}
+            onPostedByChange={setList("poster")}
+          />
+        )}
 
         {tab === "scorecard" && (
           <>

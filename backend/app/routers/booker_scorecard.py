@@ -89,6 +89,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.clock import cst_today
+from app.booker_names import (
+    matches_roster as _matches_roster,
+    roster_keys as _roster_keys,
+)
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import (
     get_ap_pool,
@@ -346,7 +350,28 @@ def _base_sql(
           -- would drag in every order ever confirmed before `start`.
           AND rp.in_window > 0
           AND br.team_id = ANY(${p_teams}::text[])
-          AND br.status <> 'V'{extra_sql}
+          AND br.status <> 'V'
+          -- Bruno (PDF 2026-08-31 "Booker Performance Scorecard", Scorecard
+          -- tab) R1/R2 — placeholder rates are not real bookings. R1: carrier
+          -- cost of exactly 0. R2: the two hard-coded rate pairs
+          -- (revenue 150 / cost 150) and (revenue 250 / cost 150).
+          --
+          -- Applied HERE, inside the one CTE every endpoint builds its
+          -- universe from, so the Orders page, its full-universe Totals pass,
+          -- the KPI cards, the threshold merge, /filters and /weekly cannot end
+          -- up with three different populations (§16, §96). Measured MTD
+          -- 2026-08: 1,425 → 1,395 orders, profit $312,582 → $295,042.
+          --
+          -- ⚠ Row-wise IS DISTINCT FROM, never `NOT (a = 150 AND b = 150)`:
+          -- against a NULL total_charge the NOT form evaluates to NULL and the
+          -- row is DELETED with no error. An order whose revenue has not been
+          -- posted yet is real and stays in the universe — only an explicitly
+          -- ZERO carrier cost is excluded. NULL is not 0 here.
+          AND (br.total_charge - br.margin_amt) IS DISTINCT FROM 0::numeric
+          AND (br.total_charge, br.total_charge - br.margin_amt)
+                IS DISTINCT FROM (150::numeric, 150::numeric)
+          AND (br.total_charge, br.total_charge - br.margin_amt)
+                IS DISTINCT FROM (250::numeric, 150::numeric){extra_sql}
     ),
     sc AS (
         -- Incidents are FAILURES. Restricted to the orders already in scope, so
@@ -450,6 +475,8 @@ def _threshold_stats(
     - ``broken_threshold``     orders where ``carrier_cost > thresh``
     - ``threshold_orders``     the honest denominator: orders having BOTH numbers
     - ``broken_threshold_pct`` broken / comparable, as a fraction
+    - ``compliance_threshold_pct`` 1 − the above (Bruno 2026-08-31 R3), the
+      figure the KPI card now shows; also a fraction
     - ``cost_saving``          Σ (thresh − carrier_cost) where cost is UNDER it
     - ``under_threshold``      how many orders contributed to that sum
 
@@ -466,6 +493,7 @@ def _threshold_stats(
             "broken_threshold": None,
             "threshold_orders": None,
             "broken_threshold_pct": None,
+            "compliance_threshold_pct": None,
             "cost_saving": None,
             "under_threshold": None,
         }
@@ -490,6 +518,17 @@ def _threshold_stats(
         # Computed HERE, not in the browser, so the KPI card and the table's
         # totals row cannot drift apart (§16/§69).
         "broken_threshold_pct": (broken / comparable) if comparable else None,
+        # Bruno (PDF 2026-08-31, Scorecard tab) R3 — the card is now
+        # "Compliance Threshold" = 1 − Broken Threshold. Derived from the SAME
+        # two counters rather than recomputed, so the two can never disagree,
+        # and kept a FRACTION like every other percentage on this wire —
+        # `fmtPct` multiplies by 100 and handing it an already-scaled value
+        # prints 100× wrong with no error (§95).
+        #
+        # ⚠ `broken_threshold` (the raw count) stays on the wire: the Orders
+        # table still flags individual orders whose carrier cost exceeds their
+        # threshold, which is a ROW fact and keeps its own wording.
+        "compliance_threshold_pct": (1.0 - broken / comparable) if comparable else None,
         "cost_saving": saving,
         "under_threshold": under,
     }
@@ -1097,3 +1136,224 @@ async def freshness(
     _freshness_cache["at"] = now
     _freshness_cache["payload"] = payload
     return {"success": True, "data": payload}
+
+
+# --------------------------------------------------------------------------
+# /rank — the "Rank" tab (Bruno PDF 2026-08-31, page 1)
+# --------------------------------------------------------------------------
+
+# Bruno's 15-name roster. It is NOT the same list as podium_top.BOOKER_NAMES
+# (they overlap on 10; each carries 4-5 the other does not), so the two stay
+# separate — only the normalisation in app/booker_names.py is shared (§69).
+#
+# ⚠ Spellings reconciled against live `posted_by_name` on 2026-08-31, because
+# three of Bruno's entries do not match McLeod byte-for-byte:
+#     "Antares Montoya"   → ANTHARES MONTOYA
+#     "Jonathan Hernande" → JONATHAN HERNANDEZ   (truncated in the PDF)
+#     "Roberto Barcens"   → ROBERTO BARCENAS
+# Matching therefore goes through `matches_roster`, never string equality.
+#
+# ⚠ Three entries have (almost) no bookings in the DFW Rate-Conf universe and
+# are recorded here rather than quietly dropped:
+#     Ruben Aguilar        — ZERO postings in all of 2026 (only a *Lorenzo*
+#                            Aguilar exists in McLeod). Possibly a name error
+#                            in the PDF; confirm before "fixing" the roster.
+#     Daniel Galindo       — zero postings in 2026.
+#     Cindy de los Santos  — exactly one posting, 2026-08-28.
+# The roster only ORDERS the picker, so an absent name costs nothing; the table
+# itself ranks whoever actually booked.
+RANK_ROSTER: tuple[str, ...] = (
+    "Eugenio Miranda",
+    "Anthares Montoya",
+    "Andres Sanmiguel",
+    "Juan Reyna",
+    "Jonathan Hernandez",
+    "Jonathan Rodriguez",
+    "Daniel Salazar",
+    "Ximena Herrera",
+    "Antonio Arizpe",
+    "Roberto Barcenas",
+    "Carlos Padilla",
+    "Oscar Macias",
+    "Ruben Aguilar",
+    "Cindy de los Santos",
+    "Daniel Galindo",
+)
+_RANK_ROSTER_KEYS = _roster_keys(RANK_ROSTER)
+
+
+def _rank_weeks(today: date) -> tuple[date, date, date, date]:
+    """The last COMPLETED Mon-Sun week and the one before it.
+
+    ⚠ The in-progress week is never included. Today is Monday 2026-08-31 as
+    this ships: the current week holds ONE day of bookings, and ranking it
+    against a full previous week produced movements of +13 positions for a
+    booker who simply started early. Same rule `app/attrition_core.py` states
+    for its own weekly windows — a comparison is only meaningful between two
+    windows of equal length.
+    """
+    this_monday = today - timedelta(days=today.weekday())
+    cur_start = this_monday - timedelta(days=7)
+    prev_start = this_monday - timedelta(days=14)
+    return prev_start, prev_start + timedelta(days=6), cur_start, cur_start + timedelta(days=6)
+
+
+def _rank_rows(per_booker: dict[str, dict]) -> dict[str, int]:
+    """booker -> competition rank (1,2,2,4) by bookings descending.
+
+    Ties share a rank and consume the slots below them, so "rank 4 of 15" keeps
+    meaning "three bookers are ahead of you". The name is the tiebreak only so
+    the ordering is deterministic between two runs of the same data.
+    """
+    ordered = sorted(per_booker.items(), key=lambda kv: (-kv[1]["bookings"], kv[0]))
+    ranks: dict[str, int] = {}
+    last_n: Optional[int] = None
+    last_rank = 0
+    for i, (name, agg) in enumerate(ordered, start=1):
+        if agg["bookings"] != last_n:
+            last_rank = i
+            last_n = agg["bookings"]
+        ranks[name] = last_rank
+    return ranks
+
+
+@router.get("/rank")
+async def rank(
+    request: Request,
+    contract_type: Optional[list[str]] = Query(None),
+    customer_name: Optional[list[str]] = Query(None),
+    posted_by: Optional[list[str]] = Query(None),
+    _user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """Bruno PDF 2026-08-31 page 1 — the Rank tab.
+
+    Bookers ranked by # of Bookings in the last COMPLETED Mon-Sun week, with
+    the positions each moved against the week before, plus Broken Threshold and
+    Cost Saving over the same week.
+
+    ⚠ Takes **no date parameters at all**, exactly like `/weekly`: the window is
+    a fixed pair of completed weeks computed here, so no hand-crafted URL can
+    widen it (§55 in reverse). The UI captions the window on screen — a table
+    that ignores the filter bar above it reads as a bug otherwise.
+
+    ⚠ ONE scan, not two. `_base_sql` runs a full sequential scan of
+    `mcleod_gld_order_post_hist` (1.9M rows, no usable index — §73), so both
+    weeks are fetched in a single 14-day pass and bucketed in Python. That also
+    fixes the double-count the report's own docstring warns about: over one
+    14-day window each order has exactly one winning posting and therefore
+    belongs to exactly one week, whereas two separate 7-day scans would credit
+    an order re-confirmed in both weeks twice.
+
+    ⚠ `posted_by` filters the DISPLAYED rows, never the ranking. Rank is a rule
+    computed over the whole booker population; filtering before ranking would
+    make every single-name selection show "rank 1 of 1" (§75 — a filter over a
+    rule deletes the answer). `customer_name` / `contract_type` DO narrow the
+    population, because they change which bookings exist at all.
+    """
+    pool = get_datalake_gold_pool(request)
+    contracts = _parse_multi(contract_type)
+    customers = _parse_multi(customer_name)
+    posters = _parse_multi(posted_by)
+
+    prev_start, prev_end, cur_start, cur_end = _rank_weeks(cst_today())
+
+    params: list = []
+    cte = _base_sql(
+        params,
+        start=max(YEAR_START, prev_start),
+        end=min(YEAR_END, cur_end),
+        contract_types=contracts,
+        customers=customers,
+        # NOT `posters` — see the docstring.
+        posted_by=[],
+    )
+    rows = await pool.fetch(
+        f"""
+        WITH {cte}
+        SELECT order_id, posted_by, posted_date, carrier_cost
+        FROM base
+        """,
+        *params,
+    )
+
+    thresholds = await _thresholds(request, [r["order_id"] for r in rows])
+
+    cur_rows: dict[str, list] = {}
+    prev_rows: dict[str, list] = {}
+    for r in rows:
+        name = (r["posted_by"] or "").strip()
+        if not name:
+            continue
+        pd = r["posted_date"]
+        d = pd.date() if isinstance(pd, datetime) else pd
+        if d is None:
+            continue
+        bucket = cur_rows if d >= cur_start else prev_rows
+        bucket.setdefault(name, []).append(r)
+
+    cur_agg = {n: {"bookings": len(rs)} for n, rs in cur_rows.items()}
+    prev_agg = {n: {"bookings": len(rs)} for n, rs in prev_rows.items()}
+    cur_ranks = _rank_rows(cur_agg)
+    prev_ranks = _rank_rows(prev_agg)
+
+    # Every booker seen in EITHER week gets a row: someone who booked last week
+    # and nothing this week has fallen to the bottom, which is information. An
+    # inner join on "booked both weeks" would render that as a missing row
+    # instead of a red one (§91, §75).
+    all_names = sorted(set(cur_agg) | set(prev_agg))
+    out = []
+    for name in all_names:
+        stats = _threshold_stats(cur_rows.get(name, []), thresholds)
+        cur_rank = cur_ranks.get(name)
+        prev_rank = prev_ranks.get(name)
+        out.append({
+            "booker": name,
+            "rank": cur_rank,
+            "prev_rank": prev_rank,
+            # Positive = moved UP the table. None when the booker did not
+            # appear last week — "new" is not the same as "unchanged", and a 0
+            # would print as a flat arrow beside a first-ever appearance.
+            "rank_delta": (prev_rank - cur_rank)
+            if (cur_rank is not None and prev_rank is not None) else None,
+            "bookings": cur_agg.get(name, {}).get("bookings", 0),
+            "prev_bookings": prev_agg.get(name, {}).get("bookings", 0),
+            "broken_threshold": stats["broken_threshold"],
+            "threshold_orders": stats["threshold_orders"],
+            "broken_threshold_pct": stats["broken_threshold_pct"],
+            "cost_saving": stats["cost_saving"],
+            "under_threshold": stats["under_threshold"],
+        })
+    # Unranked bookers (none this week) sort last, not first.
+    out.sort(key=lambda r: (r["rank"] is None, r["rank"] or 0, r["booker"]))
+
+    if posters:
+        wanted = {p.strip() for p in posters}
+        out = [r for r in out if r["booker"] in wanted]
+
+    # Picker options: everyone in the window, with Bruno's roster first so his
+    # 15 are the auto-suggestions without making anybody else unreachable.
+    in_roster = [n for n in all_names if _matches_roster(n, _RANK_ROSTER_KEYS)]
+    rest = [n for n in all_names if n not in set(in_roster)]
+
+    return {
+        "success": True,
+        "data": {
+            "rows": out,
+            "bookers": in_roster + rest,
+            "roster": in_roster,
+            # `total_bookers` is the ranked population — the "of N" in "3 of N".
+            # It is deliberately the count BEFORE the posted_by display filter,
+            # so selecting one name does not renumber the league (§75).
+            "total_bookers": len(cur_agg),
+            "week": {
+                "start": cur_start.isoformat(),
+                "end": cur_end.isoformat(),
+                "label": f"{cur_start.day:02d}/{cur_start.month:02d} - {cur_end.day:02d}/{cur_end.month:02d}",
+            },
+            "prev_week": {
+                "start": prev_start.isoformat(),
+                "end": prev_end.isoformat(),
+                "label": f"{prev_start.day:02d}/{prev_start.month:02d} - {prev_end.day:02d}/{prev_end.month:02d}",
+            },
+        },
+    }

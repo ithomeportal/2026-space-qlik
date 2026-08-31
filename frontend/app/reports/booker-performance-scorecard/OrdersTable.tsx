@@ -251,12 +251,15 @@ export function OrdersTable({ filters }: Props) {
                   <td className="px-3 py-1.5">{fmtPct(totals.otd_pct)}</td>
                   <td className="px-3 py-1.5 text-right text-[10px] font-normal text-[#6B7280]">
                     {/* Reads the SAME server-computed percentage as the KPI
-                        card, rather than dividing again here (§16/§69). */}
+                        card, rather than dividing again here (§16/§69) — so it
+                        moved to compliance with it (Bruno 2026-08-31 R3). The
+                        broken COUNT stays in the parenthetical because that is
+                        what the rows above highlight. */}
                     {totals.broken_threshold === null
                       ? "—"
-                      : `${fmtPct(totals.broken_threshold_pct)} broken (${fmtCount(
+                      : `${fmtPct(totals.compliance_threshold_pct)} compliant (${fmtCount(
                           totals.broken_threshold,
-                        )}/${fmtCount(totals.threshold_orders)})`}
+                        )}/${fmtCount(totals.threshold_orders)} broken)`}
                   </td>
                 </tr>
               </tfoot>

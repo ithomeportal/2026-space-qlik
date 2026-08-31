@@ -48,6 +48,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.booker_names import ACCENTS_FROM as BOOKER_ACCENTS_FROM, ACCENTS_TO as BOOKER_ACCENTS_TO
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
@@ -84,8 +85,11 @@ BOOKER_NAMES: tuple[str, ...] = (
 # "salazar" too). If a roster member never surfaces on the live report it's
 # a spelling/format mismatch we tune once we can see the real posted_by
 # values — this is an iterative Bruno report.
-_ACCENTS_FROM = "áàäâãåÁÀÄÂÃÅéèëêÉÈËÊíìïîÍÌÏÎóòöôõÓÒÖÔÕúùüûÚÙÜÛñÑçÇ"
-_ACCENTS_TO = "a" * 12 + "e" * 8 + "i" * 8 + "o" * 10 + "u" * 8 + "n" * 2 + "c" * 2
+# The map itself lives in app/booker_names.py so the Booker Performance
+# Scorecard's Rank roster and this one cannot drift apart (§69). The two
+# ROSTERS stay separate lists of people; only the normalisation is shared.
+_ACCENTS_FROM = BOOKER_ACCENTS_FROM
+_ACCENTS_TO = BOOKER_ACCENTS_TO
 assert len(_ACCENTS_FROM) == len(_ACCENTS_TO)
 
 # SQL expression: posted_by → lowercase, unaccented, letters-only.

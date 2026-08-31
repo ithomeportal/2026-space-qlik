@@ -46,10 +46,16 @@ const COLUMNS: {
 ]
 
 export function ActualsByLane({ filters, onPickLane }: Props) {
-  const [sortKey, setSortKey] = useState<ColumnKey>("rev")
+  // Bruno (PDF 2026-08-31 "Ops Portal Updates") R2: Profit descending by default.
+  const [sortKey, setSortKey] = useState<ColumnKey>("prof")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
   const [expanded, setExpanded] = useState(false)
-  const { data, isLoading, error } = useOppActualsByLane(filters, { sort: "revenue_desc", limit: 200 })
+  // ⚠ The WIRE sort moves with the default, not just the local sortKey. The
+  // server ranks the whole universe and truncates to `limit`, so leaving this
+  // at revenue_desc would hand the client the top 200 lanes BY REVENUE and then
+  // re-sort only that slice — a high-profit, low-revenue lane outside the
+  // revenue top-200 could never appear no matter how the user sorts (§44).
+  const { data, isLoading, error } = useOppActualsByLane(filters, { sort: "profit_desc", limit: 200 })
   const raw: OppLaneRow[] = useMemo(() => data?.data ?? [], [data])
   const totals = data?.meta?.totals as OppLaneTotals | undefined
 

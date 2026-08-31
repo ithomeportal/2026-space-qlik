@@ -173,12 +173,31 @@ def test_margin_recomputes_off_the_adjusted_rows() -> None:
 
 
 def test_summary_and_orders_share_one_threshold_definition() -> None:
-    """Both endpoints must fold the SAME helper — §69, one metric one definition."""
+    """Every endpoint that reports a threshold figure folds the SAME helper —
+    §69, one metric one definition.
+
+    ⚠ This used to assert a call COUNT of 3. That is not the rule: /rank
+    (Bruno 2026-08-31) is a legitimate third caller and folding the helper is
+    exactly what it should do, yet the count went red — while a caller that
+    reimplemented `carrier_cost > thresh` inline and never named the helper
+    would have kept it green. The property is "nobody recomputes the
+    comparison", so assert THAT.
+    """
+    import inspect
+
     src = open(bs.__file__).read()
-    assert src.count("_threshold_stats(") == 3, (
-        "expected one definition + exactly two call sites (/summary, /orders); "
-        "a third caller means a metric is being recomputed somewhere else"
+    helper = inspect.getsource(bs._threshold_stats)
+
+    for endpoint in (bs.summary, bs.orders, bs.rank):
+        assert "_threshold_stats(" in inspect.getsource(endpoint), (
+            f"{endpoint.__name__} does not fold the shared helper"
+        )
+    # The comparison itself exists in exactly one place.
+    outside = src.replace(helper, "")
+    assert "cc > t" not in outside and "cc < t" not in outside, (
+        "the threshold comparison is reimplemented outside _threshold_stats"
     )
+    assert src.count("def _threshold_stats(") == 1
     assert src.count("_apply_scenario(") == 4, (
         "expected one definition + three call sites (/summary rows, /orders "
         "page rows, /orders full universe)"

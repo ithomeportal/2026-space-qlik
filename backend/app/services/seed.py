@@ -230,12 +230,14 @@ CUSTOM_REPORTS = [
     {
         "key": "booker-performance-scorecard",  # -> /reports/booker-performance-scorecard
         "title": "Booker Performance Scorecard",
-        "description": "Per-booker scorecard over the DFW Bookings universe — #Orders, Profit, Margin %, Avg Margin/Load, Broken Threshold, OTP/OTD + 10-week trend",
+        "description": "Per-booker scorecard over the DFW Bookings universe — Rank, #Orders, Profit, Margin %, Avg Margin/Load, Compliance Threshold, OTP/OTD + 10-week trend",
         "note": (
             "TEAM-DFW only · same Rate-Conf-Received universe as Podium Set DFW · "
-            "Carrier Cost = Revenue − Profit · Broken Threshold joins AP_module "
-            "loads_to_cover.thresh (hand-entered, ~60% coverage — always read it "
-            "against 'of N orders with a threshold') · OTP/OTD from "
+            "Carrier Cost = Revenue − Profit · Compliance Threshold (1 − broken) "
+            "joins AP_module loads_to_cover.thresh (hand-entered, ~60% coverage — "
+            "always read it against 'of N orders with a threshold') · orders with a "
+            "carrier cost of 0, and the 150/150 and 250/150 placeholder rates, are "
+            "excluded from the table AND the KPIs · OTP/OTD from "
             "scorecard_incidents_portal, orders not yet picked up count as on-time · "
             "the 10-week chart ignores the date filter by design"
         ),

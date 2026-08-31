@@ -21,6 +21,148 @@ from ._metrics import _safe_float, _variance_from_sums
 
 
 # ---------------------------------------------------------------------------
+# The budget-variance ACTUAL leg — Bruno "Ops Portal Updates" 2026-08-31 R1
+# ---------------------------------------------------------------------------
+#
+# ⚠ The actual leg is `mcleod_gld_budget_report_v4`, NOT
+# `daily_production_budget_report`'s pre-aggregated "… Actual" columns. Until
+# 2026-08-31 BOTH legs came from the mirror, which made every panel in this file
+# disagree with the KPI cards and the /combo chart sitting directly above them:
+#
+#     Aug-2026 CORP    mirror "… Actual"    v4 (the KPI / chart definition)
+#     loads                    1,569                1,556
+#     revenue              2,966,451            2,983,488
+#     profit                 504,985              509,469
+#
+# Two independent causes, pushing in OPPOSITE directions — which is why no
+# single figure ever looked absurd enough to notice:
+#
+#   * the mirror counts loads with NO `total_charge IS NOT NULL AND <> 0`
+#     guard, so its VOLUME runs high (NIAGARA BOTTLING 67 vs 60, OCV MEXICO
+#     64 vs 50, measured 2026-08-31);
+#   * n8n rebuilds the mirror every 6 h at :10 (`SQi0VmZS1nYmo7Kt`) while v4
+#     refreshes every 15 min, so its MONEY runs low (TRANE −5 loads / −$14,380,
+#     PCA PHOENIX −3 / −$3,192, PCA WACO −2 / −$2,877 …).
+#
+# Net on the day it was reported: +15 loads / −$12,732 / −$3,229 — the panel
+# printed 137 / 259,817 / 2,744 beside a KPI reading 122 / 272,549 / 5,973.
+#
+# ⚠ The BUDGET leg was never wrong (§90: three sources agree to the cent) and
+#   still comes from the mirror. Only the actual leg moved.
+# ⚠ This is deliberately the SAME production measurement `/actuals` uses, so the
+#   panel reconciles with that table's Total row BY CONSTRUCTION rather than by
+#   coincidence (§69) — `test_ops_portal_budget_variance_actual_leg.py` asserts
+#   exactly that against a stub pool.
+# ⚠ All FOUR endpoints here moved together. `/team-variance` alone would have
+#   left its own by-team and weekly drill-throughs — and the per-customer list
+#   beneath it — disagreeing with the panel they expand (§95 "three call sites",
+#   §96 "a count and a sum printed as a pair must span ONE population").
+
+
+def _variance_legs(
+    *,
+    where: str,
+    p_s: int,
+    p_e: int,
+    bud_extra: str,
+    scope,
+    prod_grp: str | None = None,
+    bud_grp: str | None = None,
+) -> str:
+    """Render the ``prod`` / ``bud`` / ``per_customer`` CTEs the four
+    budget-variance endpoints share.
+
+    ``prod_grp`` / ``bud_grp`` add one extra grouping dimension to each leg (a
+    Mon-Sun week bucket, or a team). They are SQL fragments built by this
+    module — never user input. Pass ``None`` on both for the scope-wide row.
+
+    ⚠ The budget leg aggregates AFTER resolving each budget name to its v4
+    twin, so two budget names that resolve to one v4 customer SUM instead of
+    emitting the production row twice through the FULL OUTER JOIN (§83). The
+    displayed name is the resolved one where it exists, which is the name the
+    production leg and the Actuals table already use.
+
+    ⚠ FULL OUTER JOIN, never inner: a customer that shipped with no budget row
+    and a budget customer that shipped nothing are both real, and an inner join
+    would delete rather than flag them (§91, §75).
+    """
+    p_sel = f"{prod_grp} AS grp,\n                 " if prod_grp else ""
+    b_sel = f"{bud_grp} AS grp,\n                 " if bud_grp else ""
+    p_group_by = "1, 2" if prod_grp else "1"
+    b_group_by = "1, 2" if bud_grp else "1"
+    grp_sel = "COALESCE(p.grp, b.grp) AS grp,\n                 " if prod_grp else ""
+    grp_join = "\n               AND b.grp IS NOT DISTINCT FROM p.grp" if prod_grp else ""
+    return f"""
+        prod AS (
+            SELECT {p_sel}TRIM(br4.customer_name) AS customer_name,
+                   COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL
+                                      AND br4.total_charge <> 0) AS loads_actual,
+                   COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue_actual,
+                   COALESCE(SUM(br4.margin_amt),   0)::numeric AS profit_actual
+            FROM public.mcleod_gld_budget_report_v4 br4
+            WHERE {where}
+              AND br4.origin_actual_departure >= ${p_s}
+              AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
+            GROUP BY {p_group_by}
+        ),
+        bud AS (
+            SELECT {b_sel}COALESCE(ct.v4_customer_name,
+                                   TRIM(budget."Customer Name")) AS customer_name,
+                   COALESCE(SUM(budget."Loads Budget"),   0)::numeric AS loads_budget,
+                   COALESCE(SUM(budget."Revenue Budget"), 0)::numeric AS revenue_budget,
+                   COALESCE(SUM(budget."Profit Budget"),  0)::numeric AS profit_budget
+            FROM public.daily_production_budget_report budget
+            LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
+            WHERE budget."Date" BETWEEN ${p_s} AND ${p_e}
+            {bud_extra}
+            GROUP BY {b_group_by}
+        ),
+        per_customer AS (
+            SELECT {grp_sel}COALESCE(p.customer_name, b.customer_name) AS customer_name,
+                   COALESCE(p.loads_actual,   0) AS loads_actual,
+                   COALESCE(b.loads_budget,   0) AS loads_budget,
+                   COALESCE(p.revenue_actual, 0) AS revenue_actual,
+                   COALESCE(b.revenue_budget, 0) AS revenue_budget,
+                   COALESCE(p.profit_actual,  0) AS profit_actual,
+                   COALESCE(b.profit_budget,  0) AS profit_budget
+            FROM prod p
+            FULL OUTER JOIN bud b
+              ON b.customer_name = p.customer_name{grp_join}
+        )"""
+
+
+def _variance_params(
+    *,
+    s: date,
+    e: date,
+    team: Optional[str],
+    customer: Optional[str],
+    scope,
+) -> tuple[list, str, int, int, str]:
+    """Bind both legs off ONE params list and return ``(params, where, p_s, p_e,
+    bud_extra)``.
+
+    The two legs deliberately narrow by team through DIFFERENT mechanisms, the
+    same pairing `/actuals` uses: production by the v4 row's own ``team_id`` (so
+    the Team pill and the per-team split agree — §16) and budget through the
+    ``budget_team`` map (the mirror carries no team column of its own).
+    """
+    params: list = []
+    where = _v4_scope_where("br4", team, customer, None, params, scope=scope)
+    params.extend([s, e])
+    p_s = len(params) - 1
+    p_e = len(params)
+    bud_extra = ""
+    if team:
+        params.append(team)
+        bud_extra += f" AND ct.team_id = ${len(params)}"
+    if customer:
+        params.append(customer)
+        bud_extra += f' AND budget."Customer Name" = ${len(params)}'
+    return params, where, p_s, p_e, bud_extra
+
+
+# ---------------------------------------------------------------------------
 # /team-variance — §2 scope-wide Budget vs Actual variance row (Budget URL)
 # ---------------------------------------------------------------------------
 
@@ -47,36 +189,20 @@ async def team_variance(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
-    params: list = [s, e]
-    extra = ""
-    if team:
-        params.append(team)
-        extra += f" AND ct.team_id = ${len(params)}"
-    if customer:
-        params.append(customer)
-        extra += f' AND budget."Customer Name" = ${len(params)}'
+    params, where, p_s, p_e, bud_extra = _variance_params(
+        s=s, e=e, team=team, customer=customer, scope=scope,
+    )
 
     row = await pool.fetchrow(
         f"""
         WITH {customer_team_cte(scope, with_budget_team=True)},
-        per_customer AS (
-          SELECT
-            budget."Customer Name" AS customer_name,
-            SUM(budget."Loads Actual")    AS loads_actual,
-            SUM(budget."Loads Budget")    AS loads_budget,
-            SUM(budget."Revenue Actual")  AS revenue_actual,
-            SUM(budget."Revenue Budget")  AS revenue_budget,
-            SUM(budget."Profit Actual")   AS profit_actual,
-            SUM(budget."Profit Budget")   AS profit_budget
-          FROM public.daily_production_budget_report budget
-          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-          WHERE budget."Date" BETWEEN $1 AND $2
-          {extra}
-          GROUP BY budget."Customer Name"
-        )
+        {_variance_legs(where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope)}
         SELECT
-          COUNT(*) FILTER (WHERE COALESCE(loads_actual,0) > 0) AS active_customers,
-          COUNT(*)                                              AS in_scope_customers,
+          -- "Customers" counts customers that actually SHIPPED, and it now
+          -- reads the same actual leg as the sums beside it — a count and a
+          -- sum printed as a pair must span one population (§96).
+          COUNT(*) FILTER (WHERE loads_actual > 0) AS active_customers,
+          COUNT(*)                                 AS in_scope_customers,
           COALESCE(SUM(loads_budget),   0) AS loads_budget,
           COALESCE(SUM(loads_actual),   0) AS loads_actual,
           COALESCE(SUM(revenue_budget), 0) AS revenue_budget,
@@ -134,35 +260,23 @@ async def customer_variance(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
-    params: list = [s, e]
-    extra = ""
-    if team:
-        params.append(team)
-        extra += f" AND ct.team_id = ${len(params)}"
-    if customer:
-        params.append(customer)
-        extra += f' AND budget."Customer Name" = ${len(params)}'
+    params, where, p_s, p_e, bud_extra = _variance_params(
+        s=s, e=e, team=team, customer=customer, scope=scope,
+    )
     params.append(limit)
 
     # Bruno round-2 (2026-05-13): actual − budget direction (positive = over-budget).
     rows = await pool.fetch(
         f"""
-        WITH {customer_team_cte(scope, with_budget_team=True)}
+        WITH {customer_team_cte(scope, with_budget_team=True)},
+        {_variance_legs(where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope)}
         SELECT
-          budget."Customer Name" AS customer_name,
-          COALESCE(SUM(budget."Loads Actual"),    0)
-            - COALESCE(SUM(budget."Loads Budget"),    0) AS volume_var,
-          COALESCE(SUM(budget."Profit Actual"),   0)
-            - COALESCE(SUM(budget."Profit Budget"),   0) AS profit_var,
-          COALESCE(SUM(budget."Revenue Actual"),  0)
-            - COALESCE(SUM(budget."Revenue Budget"),  0) AS revenue_var
-        FROM public.daily_production_budget_report budget
-        LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-        WHERE budget."Date" BETWEEN $1 AND $2
-        {extra}
-        GROUP BY budget."Customer Name"
-        ORDER BY ABS(COALESCE(SUM(budget."Profit Actual"),0)
-                   - COALESCE(SUM(budget."Profit Budget"),0)) DESC NULLS LAST
+          customer_name,
+          loads_actual   - loads_budget   AS volume_var,
+          profit_actual  - profit_budget  AS profit_var,
+          revenue_actual - revenue_budget AS revenue_var
+        FROM per_customer
+        ORDER BY ABS(profit_actual - profit_budget) DESC NULLS LAST
         LIMIT ${len(params)}
         """,
         *params,
@@ -356,38 +470,25 @@ async def team_variance_weekly(
     scope = scope_of(request)
     today = cst_today()
     week_starts, weeks_start, weeks_end = _last_5_weeks(today)
-    params: list = [weeks_start, weeks_end]
-    extra = ""
-    if team:
-        params.append(team)
-        extra += f" AND ct.team_id = ${len(params)}"
-    if customer:
-        params.append(customer)
-        extra += f' AND budget."Customer Name" = ${len(params)}'
+    params, where, p_s, p_e, bud_extra = _variance_params(
+        s=weeks_start, e=weeks_end, team=team, customer=customer, scope=scope,
+    )
     rows = await pool.fetch(
         f"""
         WITH {customer_team_cte(scope, with_budget_team=True)},
-        per_cw AS (
-          SELECT
-            DATE_TRUNC('week', budget."Date")::date AS wk,
-            budget."Customer Name" AS cust,
-            SUM(budget."Loads Actual")   AS la, SUM(budget."Loads Budget")   AS lb,
-            SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
-            SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
-          FROM public.daily_production_budget_report budget
-          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-          WHERE budget."Date" BETWEEN $1 AND $2
-          {extra}
-          GROUP BY 1, 2
-        )
+        {_variance_legs(
+            where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope,
+            prod_grp="DATE_TRUNC('week', br4.origin_actual_departure)::date",
+            bud_grp='DATE_TRUNC(\'week\', budget."Date")::date',
+        )}
         SELECT
-          wk,
-          COUNT(*) FILTER (WHERE COALESCE(la,0) > 0) AS active_customers,
-          COALESCE(SUM(lb),0) AS loads_budget,   COALESCE(SUM(la),0) AS loads_actual,
-          COALESCE(SUM(rb),0) AS revenue_budget, COALESCE(SUM(ra),0) AS revenue_actual,
-          COALESCE(SUM(pb),0) AS profit_budget,  COALESCE(SUM(pa),0) AS profit_actual
-        FROM per_cw
-        GROUP BY wk
+          grp AS wk,
+          COUNT(*) FILTER (WHERE loads_actual > 0) AS active_customers,
+          COALESCE(SUM(loads_budget),0) AS loads_budget,   COALESCE(SUM(loads_actual),0) AS loads_actual,
+          COALESCE(SUM(revenue_budget),0) AS revenue_budget, COALESCE(SUM(revenue_actual),0) AS revenue_actual,
+          COALESCE(SUM(profit_budget),0) AS profit_budget,  COALESCE(SUM(profit_actual),0) AS profit_actual
+        FROM per_customer
+        GROUP BY grp
         """,
         *params,
     )
@@ -425,35 +526,27 @@ async def team_variance_by_team(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
-    params: list = [s, e]
-    extra = ""
-    if customer:
-        params.append(customer)
-        extra += f' AND budget."Customer Name" = ${len(params)}'
+    # The single `team` filter is intentionally dropped here — this view always
+    # returns every team in the division.
+    params, where, p_s, p_e, bud_extra = _variance_params(
+        s=s, e=e, team=None, customer=customer, scope=scope,
+    )
     rows = await pool.fetch(
         f"""
         WITH {customer_team_cte(scope, with_budget_team=True)},
-        per_ct AS (
-          SELECT
-            ct.team_id AS team_id,
-            budget."Customer Name" AS cust,
-            SUM(budget."Loads Actual")   AS la, SUM(budget."Loads Budget")   AS lb,
-            SUM(budget."Revenue Actual") AS ra, SUM(budget."Revenue Budget") AS rb,
-            SUM(budget."Profit Actual")  AS pa, SUM(budget."Profit Budget")  AS pb
-          FROM public.daily_production_budget_report budget
-          LEFT JOIN budget_team ct ON TRIM(budget."Customer Name") = ct.customer_name
-          WHERE budget."Date" BETWEEN $1 AND $2
-          {extra}
-          GROUP BY 1, 2
-        )
+        {_variance_legs(
+            where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope,
+            prod_grp=f"TRIM(br4.{scope.v4_team_col})",
+            bud_grp="ct.team_id",
+        )}
         SELECT
-          team_id,
-          COUNT(*) FILTER (WHERE COALESCE(la,0) > 0) AS active_customers,
-          COALESCE(SUM(lb),0) AS loads_budget,   COALESCE(SUM(la),0) AS loads_actual,
-          COALESCE(SUM(rb),0) AS revenue_budget, COALESCE(SUM(ra),0) AS revenue_actual,
-          COALESCE(SUM(pb),0) AS profit_budget,  COALESCE(SUM(pa),0) AS profit_actual
-        FROM per_ct
-        GROUP BY team_id
+          grp AS team_id,
+          COUNT(*) FILTER (WHERE loads_actual > 0) AS active_customers,
+          COALESCE(SUM(loads_budget),0) AS loads_budget,   COALESCE(SUM(loads_actual),0) AS loads_actual,
+          COALESCE(SUM(revenue_budget),0) AS revenue_budget, COALESCE(SUM(revenue_actual),0) AS revenue_actual,
+          COALESCE(SUM(profit_budget),0) AS profit_budget,  COALESCE(SUM(profit_actual),0) AS profit_actual
+        FROM per_customer
+        GROUP BY grp
         """,
         *params,
     )
