@@ -9,9 +9,11 @@ independent pingers hit ``/api/health`` every 5 minutes:
 * **backstop** — ``spaceqlik-keepwarm.timer`` (systemd) on the SAME host, at the
   OS level so it survives n8n container restarts/upgrades
 
-Neither reports its own health. The n8n workflow sets
-``saveDataSuccessExecution: "none"`` and has no ``errorWorkflow``, so if it
-silently stopped, **nothing in n8n would surface it** — the first symptom would
+Neither reports a SILENT STOP. The n8n workflow sets
+``saveDataSuccessExecution: "none"``, so successes are never persisted. It was
+given an ``errorWorkflow`` on 2026-08-22, so hard errors do e-mail now — but a
+schedule trigger that stops firing raises no error at all, so there is still no
+execution to alert on. If it silently stopped, **nothing in n8n would surface it** — the first symptom would
 be users seeing blank reports (the same silent-outage shape as the Jul 2026
 ``/spots/report`` cron incident). This job closes that gap: ``/api/health``
 stamps a row per pinger in ``keepwarm_pings``, and once a day we check that both
