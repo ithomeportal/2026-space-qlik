@@ -150,7 +150,8 @@ DFW_SCOPE = BonusScope(
     report_key="bonus-calculator-dfw",
     url_prefix="/custom/bonus-calculator-dfw",
     teams=DFW_BONUS_TEAMS,
-    team_names={t: f"TM{t.rsplit('-', 1)[-1]}" for t in DFW_BONUS_TEAMS},
+    # Bruno PDF 2026-09-02: the container label is "TM 1", with the space.
+    team_names={t: f"TM {t.rsplit('-', 1)[-1]}" for t in DFW_BONUS_TEAMS},
     cfg=DFW_BONUS,
     tbl_roster="bonus_dfw_roster",
     tbl_afterhours="bonus_dfw_afterhours",
@@ -243,8 +244,8 @@ def _recent_period_keys(count: int = 12) -> list[str]:
 
 
 async def _team_metrics(
-    pool, team_no: int, start: date, end: date, buckets, month_start: date, month_end: date,
-    scope: "BonusScope" = None, team_id: Optional[str] = None,
+    pool, scope: "BonusScope", team_id: str, start: date, end: date, buckets,
+    month_start: date, month_end: date,
 ) -> dict:
     """Per-team weekly loads/rev/profit (×N buckets) + period OTP/OTD AND the
     calendar-month cumulative loads/rev/profit/service for one team.
@@ -259,8 +260,6 @@ async def _team_metrics(
         cumulative, NOT the sum of the weekly buckets.
     The read window is the union of both so month-edge days are fetched.
     """
-    scope = scope or CORP_SCOPE
-    team_id = team_id or f"team-{team_no}"
     read_lo = min(start, month_start)
     read_hi = max(end, month_end)
 
@@ -424,8 +423,7 @@ async def _suggested_dof_fx(financial_pool, on_or_before: date) -> Optional[floa
 # ---------------------------------------------------------------------------
 
 
-async def _load_roster(pool, scope: "BonusScope" = None) -> dict[str, list[dict]]:
-    scope = scope or CORP_SCOPE
+async def _load_roster(pool, scope: "BonusScope") -> dict[str, list[dict]]:
     rows = await pool.fetch(
         f"""
         SELECT id, team_id, employee_name, role, salary_mxn, sort_order
@@ -446,8 +444,7 @@ async def _load_roster(pool, scope: "BonusScope" = None) -> dict[str, list[dict]
     return grouped
 
 
-async def _load_afterhours(pool, scope: "BonusScope" = None) -> list[dict]:
-    scope = scope or CORP_SCOPE
+async def _load_afterhours(pool, scope: "BonusScope") -> list[dict]:
     rows = await pool.fetch(
         f"""
         SELECT id, shift_group, employee_name, salary_mxn, receives_bonus, sort_order
@@ -467,8 +464,7 @@ async def _load_afterhours(pool, scope: "BonusScope" = None) -> list[dict]:
     ]
 
 
-async def _load_settings(pool, period_key: str, scope: "BonusScope" = None) -> dict:
-    scope = scope or CORP_SCOPE
+async def _load_settings(pool, period_key: str, scope: "BonusScope") -> dict:
     row = await pool.fetchrow(
         f"SELECT team_fx, night_fx, updated_by, updated_at FROM {scope.tbl_settings} WHERE period_key = $1",
         period_key,
@@ -489,8 +485,7 @@ async def _load_settings(pool, period_key: str, scope: "BonusScope" = None) -> d
     }
 
 
-async def _load_lock(pool, period_key: str, scope: "BonusScope" = None) -> dict:
-    scope = scope or CORP_SCOPE
+async def _load_lock(pool, period_key: str, scope: "BonusScope") -> dict:
     row = await pool.fetchrow(
         f"SELECT status, approved_by, approved_at FROM {scope.tbl_lock} WHERE period_key = $1",
         period_key,
@@ -509,24 +504,33 @@ async def _load_lock(pool, period_key: str, scope: "BonusScope" = None) -> dict:
 
 
 async def build_bonus_report_data(
-    gold, primary, financial, period: Optional[str], scope: "BonusScope" = None
+    gold, primary, financial, period: Optional[str], scope: "BonusScope"
 ) -> dict:
     """Assemble the full calculated bonus report for one period from live datalake.
 
     Request-free (takes pools directly) so it is reused by both the ``/report``
     endpoint and the History finalize job (services/bonus_history.py).
+
+    ⚠ ``scope`` is REQUIRED, and deliberately has no default. It used to default
+    to corporate, and the DFW router's ``/report`` and ``/history`` simply never
+    passed it — so `/custom/bonus-calculator-dfw/report` served the CORPORATE
+    report whole: CORP TEAM1-4 instead of TEAM-DFW, the corporate margin ladder
+    instead of DFW's, and the corporate roster, night shift, FX and month lock.
+    Every endpoint answered 200 and `/roster` (HR Settings) was correctly scoped,
+    so the page contradicted its own settings dialog rather than failing. A
+    missing argument is now a TypeError at import, not wrong payroll on screen
+    (Bruno PDF "space --Bonus HR" 2026-09-02).
     """
-    scope = scope or CORP_SCOPE
     period_key, label, start, end, buckets = _period_bounds(period)
     y, m = _parse_period(period)
     month_start = date(y, m, 1)
     month_end = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
 
     roster, afterhours, settings, lock, suggested_fx = await asyncio.gather(
-        _load_roster(primary),
-        _load_afterhours(primary),
-        _load_settings(primary, period_key),
-        _load_lock(primary, period_key),
+        _load_roster(primary, scope),
+        _load_afterhours(primary, scope),
+        _load_settings(primary, period_key, scope),
+        _load_lock(primary, period_key, scope),
         _suggested_dof_fx(financial, start),
     )
 
@@ -535,10 +539,7 @@ async def build_bonus_report_data(
 
     metrics = await asyncio.gather(
         *[
-            _team_metrics(
-                gold, int(t.rsplit("-", 1)[-1]), start, end, buckets, month_start, month_end,
-                scope=scope, team_id=t,
-            )
+            _team_metrics(gold, scope, t, start, end, buckets, month_start, month_end)
             for t in scope.teams
         ]
     )
@@ -724,6 +725,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
             get_pool(request),
             getattr(request.app.state, "financial_pool", None),
             period,
+            scope,
         )
         return {"success": True, "data": report_data}
 
@@ -752,6 +754,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
                 primary,
                 getattr(request.app.state, "financial_pool", None),
                 current_key,
+                scope,
             )
             rows = []
             for t in rep["teams"]:

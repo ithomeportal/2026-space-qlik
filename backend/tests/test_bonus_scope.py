@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 
 import pytest
 
@@ -218,8 +219,6 @@ def test_every_sql_statement_names_its_scopes_table() -> None:
     read and WRITE the corporate roster while every other endpoint looked
     correct.
     """
-    import re
-
     src = inspect.getsource(bc)
     body = src[src.index("async def _load_roster") :]
     # Only lines that actually address a table — a prose mention of
@@ -322,3 +321,194 @@ def test_dfw_reads_the_dfw_division_not_corp_teams() -> None:
     )
     assert "TEAM3" in corp_flat
     assert "TEAM-DFW" not in corp_flat
+
+
+# ---------------------------------------------------------------------------
+# 🔴 The scope must reach the WIRE, not just exist on the scope object
+# ---------------------------------------------------------------------------
+#
+# Everything above asserts properties of `BonusScope` and of `bonus_engine`.
+# All of it passed while `/custom/bonus-calculator-dfw/report` served the
+# CORPORATE report whole — CORP TEAM1-4 instead of TEAM-DFW, the corporate
+# margin ladder, the corporate roster, night shift, FX and month lock — because
+# `build_bonus_report_data` defaulted `scope` to corporate and the DFW router's
+# `/report` and `/history` never passed it (Bruno PDF 2026-09-02).
+#
+# ⚠ Nothing errored. Every endpoint answered 200, and `/roster` (HR Settings)
+# WAS correctly scoped, so the page contradicted its own settings dialog. The
+# only assertion that could have caught it is one that drives the real endpoint
+# and reads what it emits — so that is what these do.
+
+
+class _ZeroRow:
+    """A datalake row that answers 0 for every column the query aliased."""
+
+    def __getitem__(self, key):  # noqa: D105
+        return 0
+
+    def get(self, key, default=None):  # noqa: D102
+        return 0
+
+
+class _StubPool:
+    """Captures every statement instead of running any of them."""
+
+    def __init__(self, row=None) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+        self._row = row
+
+    async def fetch(self, sql, *params):
+        self.calls.append((sql, params))
+        return []
+
+    async def fetchrow(self, sql, *params):
+        self.calls.append((sql, params))
+        return self._row
+
+    async def fetchval(self, sql, *params):
+        self.calls.append((sql, params))
+        return None
+
+    def blob(self) -> str:
+        out = []
+        for sql, params in self.calls:
+            out.append(sql)
+            out.append(json.dumps([list(p) if isinstance(p, (list, tuple)) else str(p) for p in params]))
+        return "\n".join(out)
+
+
+def _endpoint(router, path: str):
+    for route in router.routes:
+        if route.path.endswith(path) and "GET" in getattr(route, "methods", ()):
+            return route.endpoint
+    raise AssertionError(f"no GET {path} on {router}")
+
+
+def _drive(router, path: str, **overrides):
+    """Call one endpoint of a bonus router against stub pools.
+
+    Returns ``(payload, gold_pool, primary_pool)``. Mirrors what FastAPI does
+    over HTTP: a `Query(...)` default object is replaced by its `.default`.
+    """
+    import asyncio
+    import types
+
+    gold = _StubPool(row=_ZeroRow())
+    primary = _StubPool()
+    orig_gold, orig_primary = bc.get_datalake_gold_pool, bc.get_pool
+    bc.get_datalake_gold_pool = lambda request: gold
+    bc.get_pool = lambda request: primary
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()))
+    fn = _endpoint(router, path)
+    kwargs = {}
+    for name, p in inspect.signature(fn).parameters.items():
+        if name == "request":
+            kwargs[name] = request
+        elif name in ("_user", "user"):
+            kwargs[name] = {}
+        else:
+            d = p.default
+            v = getattr(d, "default", d)
+            kwargs[name] = None if v is Ellipsis else v
+    kwargs.update(overrides)
+    try:
+        payload = asyncio.run(fn(**kwargs))
+    finally:
+        bc.get_datalake_gold_pool, bc.get_pool = orig_gold, orig_primary
+    return payload["data"], gold, primary
+
+
+def test_no_scope_argument_may_carry_a_default() -> None:
+    """The defect was a DEFAULT, not a typo — this is the guard for the class.
+
+    A `scope=None` that falls back to corporate turns "the caller forgot" into
+    "the caller silently got corporate". Required, it is a TypeError at import.
+    """
+    from app.services import bonus_history as bh
+
+    for fn in (
+        bc.build_bonus_report_data,
+        bc._team_metrics,
+        bc._load_roster,
+        bc._load_afterhours,
+        bc._load_settings,
+        bc._load_lock,
+        bh.finalize_due_periods,
+        bh.get_history,
+    ):
+        p = inspect.signature(fn).parameters["scope"]
+        assert p.default is inspect.Parameter.empty, f"{fn.__name__} defaults its scope"
+
+
+def test_the_dfw_report_endpoint_serves_the_dfw_division() -> None:
+    """Drive the real `/report` and read what it emitted."""
+    data, gold, primary = _drive(bc.dfw_router, "/report")
+
+    # ...the DFW ladder actually reaches the wire.
+    assert data["criteria"]["marginBrackets"] is be.DFW_MARGIN_BRACKETS
+
+    # ...the teams are DFW's, labelled the way the PDF asks.
+    assert [t["id"] for t in data["teams"]] == list(bc.DFW_SCOPE.teams)
+    assert [t["name"] for t in data["teams"]] == ["TM 1", "TM 2", "TM 3", "TM 4"]
+
+    # ...the datalake read is TEAM-DFW, never a CORP team.
+    g = gold.blob()
+    assert "TEAM-DFW" in g
+    for n in (1, 2, 3, 4):
+        assert f"TM{n}" in g
+    for corp_id in ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"):
+        assert corp_id not in g, f"DFW /report read CORP {corp_id}"
+
+    # ...and roster / afterhours / FX / lock come from the DFW tables. The
+    # corporate names are checked as whole words: `bonus_dfw_roster` contains
+    # neither `bonus_roster` nor `bonus_afterhours` as a token.
+    p = primary.blob()
+    for tbl in ("bonus_dfw_roster", "bonus_dfw_afterhours", "bonus_dfw_settings", "bonus_dfw_period_lock"):
+        assert tbl in p, f"DFW /report never read {tbl}"
+    for tbl in ("bonus_roster", "bonus_afterhours", "bonus_settings", "bonus_period_lock"):
+        assert not re.search(rf"(?<![_a-z]){tbl}\b", p), f"DFW /report read corporate {tbl}"
+
+
+def test_the_corporate_report_endpoint_still_serves_corporate() -> None:
+    """The other half of the same property — corporate must not have moved."""
+    data, gold, primary = _drive(bc.router, "/report")
+
+    assert data["criteria"]["marginBrackets"] is be.MARGIN_BRACKETS
+    assert [t["id"] for t in data["teams"]] == list(bc.CORP_SCOPE.teams)
+    assert [t["name"] for t in data["teams"]] == ["Team 1", "Team 2", "Team 3", "Team 4"]
+
+    g = gold.blob()
+    assert "TEAM-DFW" not in g
+    assert "TEAM1" in g
+
+    p = primary.blob()
+    for tbl in ("bonus_roster", "bonus_afterhours", "bonus_settings", "bonus_period_lock"):
+        assert re.search(rf"(?<![_a-z]){tbl}\b", p), f"corporate /report stopped reading {tbl}"
+    assert "bonus_dfw_" not in p
+
+
+def test_the_dfw_history_open_month_is_scoped_too() -> None:
+    """`/history` computes the still-open month live — through the same call.
+
+    It was the second unscoped call site, so the History tab's "in progress"
+    row showed corporate teams beside DFW snapshots on the same screen.
+    """
+    data, gold, primary = _drive(bc.dfw_router, "/history")
+
+    assert data["current"] is not None, "open-month preview swallowed an error"
+    assert [r["teamName"] for r in data["current"]["rows"]] == ["TM 1", "TM 2", "TM 3", "TM 4"]
+    assert [r["teamId"] for r in data["current"]["rows"]] == list(bc.DFW_SCOPE.teams)
+
+    assert "TEAM-DFW" in gold.blob()
+    assert "bonus_dfw_history" in primary.blob()
+
+
+def test_the_dfw_team_label_carries_the_space() -> None:
+    """Bruno PDF 2026-09-02: the container is "TM 1", not "TM1"."""
+    assert list(bc.DFW_SCOPE.team_names.values()) == ["TM 1", "TM 2", "TM 3", "TM 4"]
+    # ...while the SQL still keys off the McLeod value, which has no space.
+    params: list = []
+    flat = bc.DFW_SCOPE.scope_where("br4", "dfw-tm-1", params) + json.dumps(
+        [list(p) if isinstance(p, list) else str(p) for p in params]
+    )
+    assert "TM1" in flat and "TM 1" not in flat

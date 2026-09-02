@@ -40,16 +40,16 @@ def _snapshot_rows(period_key: str, report: dict) -> list[tuple]:
     return rows
 
 
-async def finalize_due_periods(app, scope=None) -> dict:
+async def finalize_due_periods(app, scope) -> dict:
     """Snapshot every closed-and-due period not yet in this scope's history.
 
-    ⚠ ``scope`` selects BOTH the tables and the bracket ladders. It defaults to
-    corporate, but the caller must pass DFW explicitly for the DFW calculator:
-    the two share the `(period_key, team_id)` shape, so a single shared table
-    would let one scope's snapshot make the scheduler skip the other's for that
-    month entirely (the `already` short-circuit below).
+    ⚠ ``scope`` selects BOTH the tables and the bracket ladders, and has NO
+    default on purpose: a scope that defaults to corporate is how the DFW
+    ``/report`` came to serve the corporate report for two weeks. The two
+    scopes share the `(period_key, team_id)` shape, so a single shared table
+    would also let one scope's snapshot make the scheduler skip the other's for
+    that month entirely (the `already` short-circuit below).
     """
-    scope = scope or bc.CORP_SCOPE
     gold = getattr(app.state, "savings_pool", None)
     primary = getattr(app.state, "pool", None)
     financial = getattr(app.state, "financial_pool", None)
@@ -90,9 +90,8 @@ async def finalize_due_periods(app, scope=None) -> dict:
     return {"finalized": finalized, "scope": scope.key}
 
 
-async def get_history(pool, scope=None) -> list[dict]:
+async def get_history(pool, scope) -> list[dict]:
     """All persisted snapshots for one scope, newest period first."""
-    scope = scope or bc.CORP_SCOPE
     rows = await pool.fetch(
         f"""
         SELECT period_key, team_id, team_name, profit_usd, total_bonus_usd,
