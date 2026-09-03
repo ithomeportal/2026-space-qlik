@@ -222,6 +222,28 @@ async def _scheduled_bonus_history_finalize():
         logger.error(f"Scheduled bonus history finalize failed: {e}")
 
 
+async def _scheduled_dfw_bonus_roster_sync():
+    """Background job: add new DFW staff to the Bonus Calculator – DFW roster.
+
+    Source of truth for WHO and their ROLE is the Time-off DB; the TM1-TM4 split
+    comes from `mcleod_dfw_bookers_rank` (Time-off has no team column).
+
+    🔴 Additive only — it never edits a row it did not create, so HR's team,
+    role and salary decisions always win. See services/bonus_dfw_roster_sync.
+    """
+    try:
+        from app.services.bonus_dfw_roster_sync import sync_dfw_bonus_roster
+
+        result = await sync_dfw_bonus_roster(
+            app.state.pool,
+            getattr(app.state, "timeoff_pool", None),
+            getattr(app.state, "savings_pool", None),
+        )
+        logger.info(f"Scheduled DFW bonus roster sync complete: {result}")
+    except Exception as e:
+        logger.error(f"Scheduled DFW bonus roster sync failed: {e}")
+
+
 async def _scheduled_rfp_digest():
     """Background job: send daily 5:30 PM CST RFP Performance email digest.
 
@@ -1222,6 +1244,29 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+    # Bonus Calculator – DFW roster sync at 05:00 CST (Diego 2026-09-02).
+    # Needs BOTH pools: Time-off names the people, the gold datalake places them
+    # in a team. Gated on both so a half-configured deploy skips it loudly via
+    # the roster log rather than inserting everyone as unplaceable.
+    if settings.TIMEOFF_DATABASE_URL and settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_dfw_bonus_roster_sync,
+            CronTrigger(hour=5, minute=0, timezone="America/Chicago"),
+            id="daily_dfw_bonus_roster_sync",
+            name="Sync Bonus Calculator – DFW roster from Time-off",
+            replace_existing=True,
+        )
+    else:
+        missing = []
+        if not settings.TIMEOFF_DATABASE_URL:
+            missing.append("TIMEOFF_DATABASE_URL")
+        if not settings.SAVINGS_DATABASE_URL:
+            missing.append("SAVINGS_DATABASE_URL")
+        logger.warning(
+            "DFW bonus roster sync NOT scheduled — missing env vars: %s",
+            ", ".join(missing),
+        )
+
     # Team Monthly Projection snapshot at 02:45 CST (request 2026-08-25).
     # Gated on the gold datalake, not on TIMEOFF_DATABASE_URL — it reads v4 and
     # writes analytics_hub, and nothing else. Placed before the 05:28 CST n8n
@@ -1419,6 +1464,7 @@ async def lifespan(app: FastAPI):
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
         "daily_projection_snapshot": "Team Monthly Projection history, 02:45 CST",
+        "daily_dfw_bonus_roster_sync": "Bonus DFW roster from Time-off, 05:00 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
