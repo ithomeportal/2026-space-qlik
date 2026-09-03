@@ -99,6 +99,18 @@ interface Props {
    *  DOWN this month. The sign convention is OPPOSITE, so the panel labels it
    *  rather than leaving the reader to infer it (§69). */
   customerVarianceBasis?: "budget" | "mom"
+  /** Bruno (PDF "BRUNO -- Exec Portal", 2026-09-03) R3: the Division selector,
+   *  used only by the CEO Executive Portal. Every other portal is pinned to one
+   *  division server-side and omits these three props entirely.
+   *
+   *  The selected key is baked into `apiPrefix` by the page, so switching it
+   *  re-keys all 29 React Query caches for free — the prefix is already part of
+   *  every queryKey. */
+  divisions?: readonly { key: string; label: string }[]
+  /** The selected division key. Also drives the reset below: a `TEAM1` pill
+   *  left over from a CORP view must not survive into a DFW request. */
+  division?: string
+  onDivisionChange?: (key: string) => void
 }
 
 /**
@@ -117,6 +129,9 @@ export function OpsPortalOverviewContent({
   hideGoTo = false,
   hideBudget = false,
   customerVarianceBasis = "budget",
+  divisions,
+  division,
+  onDivisionChange,
 }: Props) {
   return (
     <OppApiProvider prefix={apiPrefix}>
@@ -128,6 +143,9 @@ export function OpsPortalOverviewContent({
         hideGoTo={hideGoTo}
         hideBudget={hideBudget}
         customerVarianceBasis={customerVarianceBasis}
+        divisions={divisions}
+        division={division}
+        onDivisionChange={onDivisionChange}
       />
     </OppApiProvider>
   )
@@ -141,6 +159,9 @@ function Body({
   hideGoTo,
   hideBudget,
   customerVarianceBasis,
+  divisions,
+  division,
+  onDivisionChange,
 }: {
   title: string
   lockedTeam?: string
@@ -149,6 +170,9 @@ function Body({
   hideGoTo?: boolean
   hideBudget?: boolean
   customerVarianceBasis?: "budget" | "mom"
+  divisions?: readonly { key: string; label: string }[]
+  division?: string
+  onDivisionChange?: (key: string) => void
 }) {
   const qc = useQueryClient()
   // Default = current month (Bruno: "Date: dafault value (this month)")
@@ -173,6 +197,32 @@ function Body({
   // Bruno (PDF 2026-07-15) R1: Carrier filter — multi-select with Include⇄Exclude.
   const [carrierIds, setCarrierIds] = useState<string[]>([])
   const [carrierMode, setCarrierMode] = useState<FilterMode>("include")
+
+  // Bruno (PDF "BRUNO -- Exec Portal", 2026-09-03) R3 — switching Division must
+  // drop every filter whose VOCABULARY changed with it.
+  //
+  // ⚠ Not cosmetic. The team pills are TEAM1..TEAM5 under CORP and TM1..TM5
+  // under DFW, and the customer/lane/carrier lists share no members: a stale
+  // `TEAM1` or a CORP-only customer carried into a DFW request narrows to
+  // nothing, and zero rows reads as "this team had no work" rather than as an
+  // error (§75). The backend widens an out-of-division team to the whole
+  // division, so the wire is already safe — this keeps the PILL from lying
+  // about what is being shown.
+  //
+  // Adjust-state-during-render rather than a useEffect: the reset lands in the
+  // same commit as the new division, so no panel ever renders the old filter
+  // against the new scope. Dates are deliberately KEPT — a date range means the
+  // same thing in both divisions, and losing it on every toggle is friction
+  // with no correctness value.
+  const [prevDivision, setPrevDivision] = useState(division)
+  if (division !== prevDivision) {
+    setPrevDivision(division)
+    setTeam(lockedTeam ?? "")
+    setCustomer("")
+    setCustomerInput("")
+    setLaneIds([])
+    setCarrierIds([])
+  }
 
   const { data: filterRes, isLoading: loadingFilters } = useOppFilters()
   const filterOptions = filterRes?.data
@@ -361,6 +411,29 @@ function Body({
               </div>
             )}
           </div>
+
+          {divisions && divisions.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+                Division
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {divisions.map((d) => (
+                  <button
+                    key={d.key}
+                    onClick={() => onDivisionChange?.(d.key)}
+                    className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                      division === d.key
+                        ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
+                        : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F3F4F6]"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {lockedTeam ? (
             <div className="flex items-center gap-2">

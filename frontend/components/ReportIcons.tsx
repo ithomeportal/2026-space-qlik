@@ -128,6 +128,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "XRay DFW TM3":                   { icon: Activity,       family: "dfw", tag: "TM3" },
   "XRay DFW TM4":                   { icon: Activity,       family: "dfw", tag: "TM4" },
   "CEO Executive":                  { icon: Crown,          family: "executive" },
+  "CEO Executive Portal":           { icon: Crown,          family: "executive" },
   "HR - Access Log Doors":          { icon: DoorOpen,       family: "hr" },
   "DFW - Access Log Doors":         { icon: DoorOpen,       family: "dfw" },
   "Admin - Access Log Doors":       { icon: DoorOpen,       family: "admin" },

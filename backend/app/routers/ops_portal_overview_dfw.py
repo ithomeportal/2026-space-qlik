@@ -65,7 +65,7 @@ from app.routers import ops_portal_overview as opo
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.ops_portal_overview._dates import _month_bounds
 from app.routers.ops_portal_overview._metrics import _safe_float
-from app.routers.ops_portal_overview._scope import DFW_SCOPE
+from app.routers.ops_portal_overview._scope import DFW_SCOPE, sub_team_of
 from app.routers.ops_portal_overview._sql import _v4_scope_where
 
 REPORT_KEY = "ops-managers-portal-dfw"
@@ -84,11 +84,12 @@ def _sub_team(team: Optional[str]) -> Optional[str]:
     ⚠ Returns None rather than raising. An unknown value must widen to the
     division, never narrow to nothing: a predicate that matches zero rows is
     indistinguishable from "this team had no work" (§75).
+
+    Delegates to the shared ``_scope.sub_team_of`` so this rule has exactly one
+    implementation: the CEO Executive Portal needs the same normalisation for
+    both divisions, and a third private copy is how two of them drift (§7.1).
     """
-    if not isinstance(team, str):
-        return None
-    t = team.strip().upper()
-    return t if t in DFW_SCOPE.sub_teams else None
+    return sub_team_of(DFW_SCOPE, team)
 
 
 r = APIRouter(
@@ -772,4 +773,33 @@ async def team_projection_history(
         request=request, team=_sub_team(team), teams=None, customer=customer,
         load_type=load_type, lanes=lanes, exclude_lanes=exclude_lanes,
         carriers=carriers, exclude_carriers=exclude_carriers, months=months, _user=_user,
+    )
+
+
+# ---- /team-projection-by-team -----------------------------------------
+# ⚠ Missing since this router shipped (2026-08-21): `SidePanels` renders the
+# Monthly Projection panel's "Team" button UNCONDITIONALLY, so on DFW it opened
+# `ProjectionTeamModal` onto a 404 while every other panel looked fine — the
+# same class of hole the /customer-not-billed shim above closes, and invisible
+# for the same reason (one modal, no page-level error).
+#
+# It is NOT a budget endpoint despite the name's proximity to the three that
+# are: it breaks the rolling 14-day projection out per sub-team, so under DFW it
+# lists TM1..TM5 from `scope.sub_teams`. Found while building the CEO Executive
+# Portal, which registers all 29 paths for both divisions (2026-09-03).
+@r.get("/team-projection-by-team")
+async def team_projection_by_team(
+    request: Request,
+    customer: Optional[str] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    _user: dict = Depends(gate),
+):
+    return await opo.team_projection_by_team(
+        request=request, customer=customer, load_type=load_type, lanes=lanes,
+        exclude_lanes=exclude_lanes, carriers=carriers,
+        exclude_carriers=exclude_carriers, _user=_user,
     )

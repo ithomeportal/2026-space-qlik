@@ -270,6 +270,12 @@ export function ProjectionTrendModal({ filters, onClose }: Props) {
                       <th className="px-2 py-2 text-right font-semibold">Range</th>
                       <th className="px-2 py-2 text-right font-semibold text-[#1B3A5C]">Actual</th>
                       <th className="px-2 py-2 text-right font-semibold text-[#1B3A5C]">Error</th>
+                      {/* Bruno (PDF "space -- Ops Portal Updates", 2026-09-03)
+                          R1 — (Actual − High) / Actual. Sits beside Error
+                          because it answers the same question against a
+                          different reference point: Error grades the month's
+                          LAST projection, Deviation grades its HIGHEST. */}
+                      <th className="px-2 py-2 text-right font-semibold text-[#1B3A5C]">Deviation</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -301,6 +307,11 @@ export function ProjectionTrendModal({ filters, onClose }: Props) {
                             {m.error_pct === null ? "—" : fmtPct(m.error_pct)}
                           </span>
                         </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">
+                          <span className={`rounded px-1.5 py-0.5 font-semibold ${errCls(m.deviation_pct)}`}>
+                            {m.deviation_pct === null ? "—" : fmtPct(m.deviation_pct)}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -309,8 +320,10 @@ export function ProjectionTrendModal({ filters, onClose }: Props) {
 
               <div className="mt-3 text-[10px] leading-relaxed text-[#9CA3AF]">
                 <span className="font-semibold">Error</span> = the month&apos;s LAST projection vs
-                the profit that actually landed, signed so a standing bias is visible. Green ≤5%,
-                amber ≤10%, red above.{" "}
+                the profit that actually landed, signed so a standing bias is visible.{" "}
+                <span className="font-semibold">Deviation</span> = (Actual − High) ÷ Actual — the
+                same month against its HIGHEST projection, so a negative figure means the high
+                overshot what landed. Both bands: green ≤5%, amber ≤10%, red above.{" "}
                 {cur && cur.backfilled_days > 0 && (
                   <>
                     {liveOnlyDays} of this month&apos;s {cur.days} points were observed live; the

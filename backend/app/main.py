@@ -46,6 +46,7 @@ from app.routers import (
     ops_direct_compare_team,
     ops_margins,
     ops_portal_overview,
+    ops_portal_overview_ceo,
     ops_portal_overview_dfw,
     ops_portal_overview_team,
     ops_team_perf_digest,
@@ -1587,6 +1588,12 @@ for _opo_team_router in ops_portal_overview_team.team_routers:
 # Ops Managers Portal – DFW (Bruno PDF 2026-08-20). Same engine, DFW division
 # scope — see app/routers/ops_portal_overview_dfw.py.
 app.include_router(ops_portal_overview_dfw.r, prefix="/api")
+# CEO Executive Portal (Bruno PDF "BRUNO -- Exec Portal", 2026-09-03) — the
+# same engine over BOTH divisions, with the division as a required path
+# segment so it can never default to the other one (§100). Registered after
+# the pinned portals; every path is a static literal plus {division}, so
+# FastAPI matching does not depend on the order.
+app.include_router(ops_portal_overview_ceo.r, prefix="/api")
 # "Performance for Team N" e-mail digest — same /custom/ops-portal-overview
 # prefix, own module so the 3.9k-line UI router stays untouched. Pulled by n8n.
 app.include_router(ops_team_perf_digest.router, prefix="/api")

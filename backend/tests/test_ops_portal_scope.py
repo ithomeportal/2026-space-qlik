@@ -329,11 +329,28 @@ def test_an_unknown_team_widens_to_the_division_rather_than_to_nothing() -> None
 
 
 def test_the_budget_only_endpoints_are_not_exposed_on_dfw() -> None:
-    """Requests 5-6 delete every budget panel; the endpoints go with them."""
+    """Requests 5-6 delete every budget panel; the endpoints go with them.
+
+    ⚠ `/team-projection-by-team` used to be on this list and did not belong on
+    it — corrected 2026-09-03 while building the CEO Executive Portal, which
+    registers all 29 paths for both divisions.
+
+    It is not a budget endpoint. It breaks the ROLLING 14-DAY PROJECTION out
+    per sub-team and never touches `daily_production_budget_report`; only its
+    name sits near the three that do. Because it was classified as budget it
+    was never shimmed, and `SidePanels` renders the Monthly Projection "Team"
+    button unconditionally — so on DFW that button opened a modal onto a 404
+    while every other panel on the page rendered normally.
+
+    The lesson this line now pins: a name is not a classification. The three
+    below are asserted absent because a query PROVES they read the budget
+    table; the fourth is asserted PRESENT because the same query proves it
+    does not.
+    """
     paths = {route.path for route in dfw.r.routes}
-    for gone in ("/team-variance", "/team-variance-weekly",
-                 "/team-variance-by-team", "/team-projection-by-team"):
+    for gone in ("/team-variance", "/team-variance-weekly", "/team-variance-by-team"):
         assert f"/custom/ops-portal-overview-dfw{gone}" not in paths
+    assert "/custom/ops-portal-overview-dfw/team-projection-by-team" in paths
 
 
 def test_the_not_billed_panel_is_delegated_everywhere() -> None:

@@ -33,7 +33,7 @@ this wrong deletes rows rather than erroring (§75).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Optional, Sequence
 
 from ._constants import CORP_TEAMS, DFW_SUB_TEAMS, DFW_TEAM
 
@@ -106,6 +106,41 @@ def case_variants(values: Sequence[str]) -> list[str]:
     return out
 
 
+DIVISIONS: dict[str, DivisionScope] = {"corp": CORP_SCOPE, "dfw": DFW_SCOPE}
+"""The user-selectable divisions, keyed by URL segment.
+
+Used by the CEO Executive Portal, which is the ONE report where the division is
+chosen by the client (Bruno PDF "BRUNO -- Exec Portal", 2026-09-03). Every
+other portal pins its scope server-side — see ``scope_of``.
+"""
+
+
+def sub_team_of(scope: DivisionScope, team: Optional[str]) -> Optional[str]:
+    """Accept only ``scope``'s sub-teams; anything else means "all".
+
+    ⚠ Returns None rather than raising, and rather than passing the value
+    through. A stale ``?team=TEAM1`` carried over from a CORP view must widen
+    to the whole DFW division, never narrow to a predicate that matches
+    nothing: zero rows is indistinguishable from "this team had no work" (§75).
+    """
+    if not isinstance(team, str):
+        return None
+    t = team.strip().upper()
+    return t if t in scope.sub_teams else None
+
+
+def sub_teams_of(scope: DivisionScope, teams: Optional[str]) -> Optional[str]:
+    """The CSV multi-team form of ``sub_team_of``; drops out-of-division ids.
+
+    An all-foreign list collapses to None ("no narrowing"), for the same reason
+    as above — never to an empty predicate.
+    """
+    if not isinstance(teams, str):
+        return None
+    keep = [t for t in (x.strip().upper() for x in teams.split(",")) if t in scope.sub_teams]
+    return ",".join(keep) or None
+
+
 def scope_of(request) -> DivisionScope:
     """The division scope for this request — ``CORP_SCOPE`` unless pinned.
 
@@ -114,8 +149,16 @@ def scope_of(request) -> DivisionScope:
     ``team=``. It is request-scoped state, never module state, so concurrent
     CORP and DFW requests cannot see each other's scope.
 
-    Deliberately NOT a query parameter: a client-settable scope would let any
-    DFW user widen themselves onto CORP data.
+    Deliberately NOT a query parameter on the per-division portals: a
+    client-settable scope would let any DFW user widen themselves onto CORP
+    data.
+
+    ⚠ ONE report is the exception — the CEO Executive Portal takes the division
+    from a required PATH SEGMENT (``ops_portal_overview_ceo.py``). That is safe
+    only because its report gate runs first and grants both divisions to the
+    same TagRole, so the segment selects a view rather than granting one. It is
+    a path segment, never a defaulting query param, because a defaulted scope
+    serves the OTHER scope's whole report without erroring (§100).
     """
     state = getattr(request, "state", None)
     return getattr(state, "opp_scope", CORP_SCOPE) if state is not None else CORP_SCOPE

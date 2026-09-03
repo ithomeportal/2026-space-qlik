@@ -719,6 +719,11 @@ export interface OppProjectionMonthRow {
   error_pct: number | null
   high_error_pct: number | null
   low_error_pct: number | null
+  /** Bruno (PDF "space -- Ops Portal Updates", 2026-09-03) R1: "Deviation" =
+   *  (Actual − High) / Actual, as a percent. Backend-computed so the formula
+   *  has one home (§69) — it is NOT `-high_error_pct`: that one divides by
+   *  |actual| and so disagrees in a losing month. */
+  deviation_pct: number | null
 }
 
 export interface OppProjectionHistory {

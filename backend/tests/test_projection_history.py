@@ -644,3 +644,85 @@ def test_the_endpoint_maps_the_four_team_digest_scope() -> None:
     d = _call(hub=_HubStub(pts), gold=_GoldStub(), teams="TEAM1,TEAM2,TEAM3,TEAM4")
     assert d["tracked"] is True
     assert d["team_key"] == ph.DIGEST_KEY
+
+
+# ---------------------------------------------------------------------------
+# "Deviation" — Bruno PDF "space -- Ops Portal Updates" (2026-09-03), R1
+# ---------------------------------------------------------------------------
+
+
+def test_deviation_matches_the_formula_on_brunos_own_screenshot() -> None:
+    """(Actual − High) / Actual, on the row the PDF circles.
+
+    Aug 26: High $542,402, Actual $509,117 → −6.538%. A fixed vector from the
+    request itself, so a later "simplification" that reuses an existing percent
+    helper has to reproduce this number rather than merely stay plausible.
+    """
+    assert ph.deviation_pct(509_117.0, 542_402.0) == pytest.approx(-6.5378, abs=1e-3)
+
+
+def test_deviation_is_not_a_sign_flip_of_high_error_pct() -> None:
+    """They agree on a profitable month and DISAGREE on a losing one.
+
+    ``high_error_pct`` is ``_pct_change(high, actual)``, which divides by
+    ``abs(actual)`` — a deliberate convention that keeps the OTHER columns
+    reading intuitively when the baseline is negative. Bruno wrote a plain
+    ``/ Actual``. On a month that lost money the two differ in SIGN, so
+    implementing Deviation as ``-high_error_pct`` would print the opposite
+    verdict on exactly the months anyone would look at (§69: a different
+    measurement gets its own name, not a minus sign at the call site).
+    """
+    # Profitable month — the two ARE mirror images, which is why the bug hides.
+    assert ph.deviation_pct(100.0, 120.0) == pytest.approx(-20.0)
+    assert -ph._pct_change(120.0, 100.0) == pytest.approx(-20.0)
+
+    # Losing month — the projection said +20k, the month lost 100k. Bruno's
+    # formula divides by the raw actual, so the sign inverts against the
+    # abs()-based helper: +120% vs −120%. Same magnitude, opposite verdict.
+    assert ph.deviation_pct(-100.0, 20.0) == pytest.approx(120.0)
+    assert -ph._pct_change(20.0, -100.0) == pytest.approx(-120.0)
+
+
+@pytest.mark.parametrize("actual,high", [(None, 100.0), (100.0, None), (0.0, 100.0), (None, None)])
+def test_deviation_is_none_rather_than_zero_when_it_cannot_be_computed(actual, high) -> None:
+    """A zero denominator has no percent, and 0% would claim a perfect call.
+
+    Same trap the replay clamp fixed: a fabricated "we were exactly right"
+    reads as the best row in the table (§93).
+    """
+    assert ph.deviation_pct(actual, high) is None
+
+
+def test_attach_actuals_puts_deviation_on_every_month_row() -> None:
+    """Backend-computed, so the wire carries the definition (§69).
+
+    Computing it in the modal instead would leave the formula in a component
+    that three portals render, with nothing pinning it.
+    """
+    months = [
+        {"month_start": date(2026, 8, 1), "high": 542_402.0, "low": 405_981.0,
+         "close": 512_321.0},
+        {"month_start": date(2026, 7, 1), "high": 556_008.0, "low": 399_161.0,
+         "close": 469_525.0},
+        # A month with no realised profit yet — the ticker's own month.
+        {"month_start": date(2026, 9, 1), "high": 489_139.0, "low": 481_049.0,
+         "close": None},
+    ]
+    ph.attach_actuals(months, {
+        date(2026, 8, 1): 509_117.0,
+        date(2026, 7, 1): 453_904.0,
+    })
+    assert all("deviation_pct" in m for m in months)
+    assert months[0]["deviation_pct"] == pytest.approx(-6.5378, abs=1e-3)
+    assert months[1]["deviation_pct"] == pytest.approx(-22.494, abs=1e-2)
+    assert months[2]["deviation_pct"] is None
+
+
+def test_deviation_travels_on_the_same_rows_the_modal_reads() -> None:
+    """The modal renders `months`, not `current_month` — so it must be there.
+
+    A field attached to the wrong half of the payload renders as an em-dash on
+    every row, which looks exactly like "no data yet".
+    """
+    src = inspect.getsource(ph.attach_actuals)
+    assert 'm["deviation_pct"]' in src

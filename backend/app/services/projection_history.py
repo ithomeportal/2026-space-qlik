@@ -886,12 +886,40 @@ async def actual_profit_by_month(
     return {r["m"]: _safe_float(r["profit"]) for r in rows}
 
 
+def deviation_pct(actual: Optional[float], high: Optional[float]) -> Optional[float]:
+    """Bruno's "Deviation" — ``(Actual - High) / Actual``, as a percent.
+
+    PDF "space -- Ops Portal Updates" (2026-09-03), Request 1, verbatim:
+    the month's realised profit against the HIGHEST projection it ever showed.
+    Negative means the high overshot what landed; positive means the month beat
+    every projection it made.
+
+    ⚠ NOT ``_pct_change(actual, high)`` and NOT ``-high_error_pct``, even though
+    all three agree on a profitable month. ``_pct_change`` divides by
+    ``abs(base)`` so a negative baseline still reads intuitively — a deliberate
+    convention for the OTHER columns. Bruno wrote a plain ``/ "Actual"``, so a
+    LOSING month (actual < 0) flips sign between the two formulas. This is a
+    different measurement from ``high_error_pct``, so it gets its own name and
+    its own function rather than a sign flip at the call site (§69).
+
+    ``None`` when either leg is missing or ``actual`` is zero — a zero
+    denominator has no percent, and printing 0% there would claim the
+    projection was perfect (§93: the same trap the replay clamp fixed).
+    """
+    if actual is None or high is None or not actual:
+        return None
+    return (actual - high) / actual * 100.0
+
+
 def attach_actuals(months: list[dict], actual_by_month: dict[date, float]) -> list[dict]:
     """Add the realised profit and the projection error to each month row.
 
     ``error_pct`` is (close − actual) / |actual|: how wrong the LAST projection
     of the month was. Signed, so a persistent bias is visible rather than being
     averaged away by an absolute value.
+
+    ``deviation_pct`` is Bruno's (actual − high) / actual — see the function
+    above for why it is not a sign flip of ``high_error_pct``.
     """
     for m in months:
         actual = actual_by_month.get(m["month_start"])
@@ -906,4 +934,5 @@ def attach_actuals(months: list[dict], actual_by_month: dict[date, float]) -> li
         m["low_error_pct"] = (
             _pct_change(m["low"], actual) if actual else None
         )
+        m["deviation_pct"] = deviation_pct(actual, m.get("high"))
     return months
