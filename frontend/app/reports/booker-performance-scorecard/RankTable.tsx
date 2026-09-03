@@ -53,7 +53,7 @@ function Movement({ delta }: { delta: number | null }) {
   )
 }
 
-type SortKey = "rank" | "booker" | "broken" | "saving" | "bookings"
+type SortKey = "rank" | "booker" | "compliance" | "saving" | "bookings"
 
 export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
   const { data, isLoading, error } = useBookerRank(scope)
@@ -68,26 +68,38 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1
-    const val = (r: BookerRankRow): number | string => {
+    // `null` means "no answer", and is handled by the comparator rather than
+    // by a sentinel number.
+    //
+    // ⚠ The sentinel form this replaced (`?? POSITIVE_INFINITY`) claimed in a
+    // comment to sort nulls last in BOTH directions, and did not: +Infinity
+    // sorts last ascending and FIRST descending. Harmless while the column was
+    // "Broken Threshold" and read ascending; with the 2026-09-03 rename the
+    // column inverted and its default sort is descending, so every booker with
+    // no threshold coverage would have led the table under a heading that now
+    // means "most compliant" — a verdict this data cannot support (§4).
+    const val = (r: BookerRankRow): number | string | null => {
       switch (sortKey) {
         case "booker":
           return r.booker
-        case "broken":
-          // Nulls (no threshold coverage) sort last in BOTH directions —
-          // "unknown" is not "best" and is not "worst" (§4).
-          return r.broken_threshold_pct ?? Number.POSITIVE_INFINITY
+        case "compliance":
+          return r.compliance_threshold_pct
         case "saving":
-          return r.cost_saving ?? Number.NEGATIVE_INFINITY
+          return r.cost_saving
         case "bookings":
           return r.bookings
         default:
           // An unranked booker (nothing booked this week) always sorts last.
-          return r.rank ?? Number.POSITIVE_INFINITY
+          return r.rank
       }
     }
     return rows.slice().sort((a, b) => {
       const av = val(a)
       const bv = val(b)
+      if (av === null || bv === null) {
+        if (av === bv) return 0
+        return av === null ? 1 : -1
+      }
       if (typeof av === "string" || typeof bv === "string") {
         return String(av).localeCompare(String(bv)) * dir
       }
@@ -145,14 +157,14 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
               <>
                 Bookings for{" "}
                 <span className="font-medium text-[#374151]">{d.week.label}</span>{" "}
-                — the last complete Mon–Sun week — with movement against{" "}
+                — the last complete Sat–Fri week — with movement against{" "}
                 <span className="font-medium text-[#374151]">
                   {d.prev_week.label}
                 </span>
-                . Not affected by the Date filter.
+                . Bookers only. Not affected by the Date filter.
               </>
             ) : (
-              "The last complete Mon–Sun week. Not affected by the Date filter."
+              "The last complete Sat–Fri week, bookers only. Not affected by the Date filter."
             )}
           </p>
         </div>
@@ -169,7 +181,7 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
 
       {noThresholds && (
         <div className="border-b border-[#FDE68A] bg-[#FFFBEB] px-4 py-2 text-xs text-[#92400E]">
-          Threshold source unavailable — Broken Threshold and Cost Saving show —
+          Threshold source unavailable — Compliance Threshold and Cost Saving show —
         </div>
       )}
 
@@ -180,14 +192,14 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
               <Th
                 label="Rank"
                 k="rank"
-                title="Position by # of Bookings this week, out of every booker who booked, and the positions moved since last week."
+                title="Position by # of Bookings this week, out of every roster booker who booked, and the positions moved since last week."
               />
               <Th label="Booker Name" k="booker" />
               <Th
-                label="Broken Threshold"
-                k="broken"
+                label="Compliance Threshold"
+                k="compliance"
                 align="right"
-                title="Share of this week's bookings whose Carrier Cost exceeds the threshold typed in Loads to Cover. Orders with no threshold count in neither half."
+                title="Share of this week's bookings whose Carrier Cost came in AT or UNDER the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold count in neither half."
               />
               <Th
                 label="Cost Saving"
@@ -216,7 +228,16 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
             {!isLoading && !error && sorted.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-3 py-8 text-center text-[#6B7280]">
-                  No bookings in {d?.week.label ?? "the selected week"}.
+                  {/* ⚠ The Posted By selection is SHARED with the Scorecard
+                      tab, whose picker lists everyone who posts Rate Confs.
+                      This tab shows bookers only, so a name picked over there
+                      can empty this table — say which of the two it is rather
+                      than reporting "no bookings" for a week that had them. */}
+                  {postedBy.length > 0
+                    ? `None of the selected names are bookers with bookings in ${
+                        d?.week.label ?? "the selected week"
+                      }.`
+                    : `No bookings in ${d?.week.label ?? "the selected week"}.`}
                 </td>
               </tr>
             )}
@@ -236,13 +257,19 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
                 </td>
                 <td className="px-3 py-1.5 text-[#111827]">{r.booker}</td>
                 <td className="px-3 py-1.5 text-right">
-                  {r.broken_threshold_pct === null ? (
+                  {/* ⚠ compliance, NOT broken: the two are 1 − each other, so
+                      rendering the wrong field looks entirely plausible and
+                      inverts every verdict on the tab. The sub-count is the
+                      server's `compliant_threshold`, never `threshold_orders −
+                      broken_threshold` re-derived here — the count and the
+                      percentage must come off one population (§96). */}
+                  {r.compliance_threshold_pct === null ? (
                     <span className="text-[#9CA3AF]">—</span>
                   ) : (
                     <>
-                      {fmtPct(r.broken_threshold_pct)}
+                      {fmtPct(r.compliance_threshold_pct)}
                       <span className="ml-1 text-[10px] text-[#9CA3AF]">
-                        ({fmtCount(r.broken_threshold)}/
+                        ({fmtCount(r.compliant_threshold)}/
                         {fmtCount(r.threshold_orders)})
                       </span>
                     </>

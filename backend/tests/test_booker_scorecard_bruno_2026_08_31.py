@@ -6,9 +6,17 @@ Page 2 (Scorecard tab)
   R3  "Broken Threshold" KPI becomes "Compliance Threshold" = 1 − broken.
 
 Page 1 (new Rank tab)
-  Bookers ranked by # of Bookings in the last COMPLETED Mon-Sun week, with the
-  positions moved against the week before, plus Broken Threshold and Cost
+  Bookers ranked by # of Bookings in the last COMPLETED week, with the
+  positions moved against the week before, plus the threshold measure and Cost
   Saving over that week.
+
+⚠ SUPERSEDED IN PART by Bruno PDF 2026-09-03 (see
+``test_booker_scorecard_bruno_2026_09_03.py``): the Rank tab's week became
+Sat-Fri and its population became `RANK_ROSTER` only. The assertions below were
+rewritten to that reality rather than deleted — the RULES they pin (the
+in-progress week is never ranked, `posted_by` never re-ranks, one scan, a
+booker who stopped keeps a row) all still hold. Stub bookers are roster names
+now, because a non-roster name no longer produces a row at all.
 
 Measured before shipping (MTD 2026-08, TEAM-DFW): the exclusions take the
 universe from 1,425 to 1,395 orders and profit from $312,582 to $295,042 —
@@ -125,16 +133,36 @@ class _StubPool:
         return self.rows[0] if self.rows else None
 
 
-def _drive(fn, rows=None, **kwargs):
+_NO_THRESHOLDS: dict = {}
+
+
+def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, **kwargs):
+    """Drive an endpoint against a stub pool.
+
+    ⚠ `today` pins the clock. /rank resolves its own window from `cst_today()`,
+    so a stub row dated in August lands in a DIFFERENT week each time the real
+    calendar advances — a test that passes today and goes red next Saturday for
+    no code change. Every rank test that asserts on bucketing passes it.
+
+    ⚠ `thresholds` is what `_thresholds` returns: `{}` (the default — the AP
+    source is up and knows none of these orders), a dict, or `None` (the source
+    is DOWN, which is a different answer). It is a parameter because this
+    helper stubs `_thresholds` unconditionally: a caller that patched it before
+    calling had its stub silently replaced, and every threshold assertion then
+    ran against an empty dict and read as a broken feature.
+    """
     pool = _StubPool(rows)
     orig_pool = bs.get_datalake_gold_pool
     orig_thresh = bs._thresholds
+    orig_clock = bs.cst_today
     bs.get_datalake_gold_pool = lambda request: pool
 
-    async def _no_ap(request, order_ids):
-        return {}
+    async def _stub_thresholds(request, order_ids):
+        return thresholds
 
-    bs._thresholds = _no_ap
+    bs._thresholds = _stub_thresholds
+    if today is not None:
+        bs.cst_today = lambda: today
     try:
         request = types.SimpleNamespace(
             app=types.SimpleNamespace(state=types.SimpleNamespace())
@@ -143,6 +171,7 @@ def _drive(fn, rows=None, **kwargs):
     finally:
         bs.get_datalake_gold_pool = orig_pool
         bs._thresholds = orig_thresh
+        bs.cst_today = orig_clock
     return pool, resp
 
 
@@ -228,11 +257,30 @@ def test_summary_and_orders_share_one_compliance_definition():
     # The quoted form is the dict KEY; the helper's docstring also names it in
     # prose, which is not a definition.
     assert stats_src.count('"compliance_threshold_pct"') == 2
-    # Nobody recomputes `1 -` outside the helper.
+    assert stats_src.count('"compliant_threshold"') == 2
+
+    # Nobody DERIVES the figure outside the helper.
+    #
+    # ⚠ This used to read `"compliance_threshold_pct" not in others`, which was
+    # the right property spelled as the wrong assertion: it also forbade a
+    # legitimate FORWARD, and went red the moment /rank put the same helper's
+    # value on its own wire (Bruno 2026-09-03 R1). The property meant is
+    # "every mention outside the helper reads it back from `stats`" — a second
+    # `1 − broken/comparable` anywhere else is the defect, because two
+    # derivations drift and the two tabs then disagree about one person.
     others = _SOURCE.replace(stats_src, "")
-    assert "compliance_threshold_pct" not in others, (
-        "compliance is derived somewhere other than _threshold_stats"
+    for key in ("compliance_threshold_pct", "compliant_threshold"):
+        for line in others.splitlines():
+            if key not in line:
+                continue
+            assert f'stats["{key}"]' in line, (
+                f"{key} is derived outside _threshold_stats: {line.strip()}"
+            )
+    # And the arithmetic itself appears nowhere else, in any spelling.
+    assert not re.search(r"1(\.0)?\s*-\s*\w*broken", others), (
+        "a second `1 - broken` derivation exists outside _threshold_stats"
     )
+
     for endpoint in (bs.summary, bs.orders, bs.rank):
         assert "_threshold_stats(" in inspect.getsource(endpoint), endpoint.__name__
 
@@ -246,16 +294,22 @@ def test_the_rank_window_is_two_completed_weeks():
     """⚠ Never the in-progress week. Shipped on Monday 2026-08-31, when the
     current week held ONE day: ranking it against a full previous week produced
     +13-position moves for a booker who merely started early. Same rule
-    `attrition_core` states for its own weekly windows."""
+    `attrition_core` states for its own weekly windows.
+
+    The week turned Sat-Fri on 2026-09-03; the rule did not move. The
+    weekday-agnostic half of this assertion is deliberately kept here, and the
+    Saturday boundary itself is pinned in the 09-03 file.
+    """
     for weekday in range(7):
         today = date(2026, 8, 31) + timedelta(days=weekday)
         prev_s, prev_e, cur_s, cur_e = bs._rank_weeks(today)
-        assert cur_s.weekday() == 0 and prev_s.weekday() == 0
+        assert cur_s.weekday() == prev_s.weekday()
         assert (cur_e - cur_s).days == 6 and (prev_e - prev_s).days == 6
         assert prev_e + timedelta(days=1) == cur_s, "the two weeks must be adjacent"
         # The whole compared week is in the past, on every day of the week.
-        assert cur_e < today - timedelta(days=today.weekday()), (
-            "the in-progress week leaked into the ranking"
+        assert cur_e < today, "the in-progress week leaked into the ranking"
+        assert (today - cur_e).days <= 7, (
+            "the ranked week is more than one week stale"
         )
 
 
@@ -320,7 +374,7 @@ def test_rank_scans_the_bookings_table_once():
     every execution is a full sequential scan. Both weeks come from ONE 14-day
     pass, which also gives each order exactly one week instead of crediting a
     re-confirmed order to both."""
-    pool, _ = _drive(bs.rank, **_SCOPE)
+    pool, _ = _drive(bs.rank, today=date(2026, 8, 31), **_SCOPE)
     assert len(pool.sqls) == 1
 
 
@@ -330,19 +384,22 @@ def test_posted_by_filters_the_rows_but_never_the_ranking():
     rows = [
         {"order_id": f"O{i}", "carrier_cost": 500.0, "posted_by": name,
          "posted_date": datetime(2026, 8, 25, 9, 0)}
-        for name, n in (("TOP BOOKER", 5), ("QUIET BOOKER", 1))
+        # ⚠ Roster names since 2026-09-03: a non-roster booker no longer
+        # produces a row at all, so the old placeholders would have made this
+        # assertion vacuously true against an empty table.
+        for name, n in (("EUGENIO MIRANDA", 5), ("JUAN REYNA", 1))
         for i in range(n)
     ]
-    _, unfiltered = _drive(bs.rank, rows=rows, **_SCOPE)
-    _, filtered = _drive(bs.rank, rows=rows,
+    _, unfiltered = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_SCOPE)
+    _, filtered = _drive(bs.rank, rows=rows, today=date(2026, 8, 31),
                          contract_type=None, customer_name=None,
-                         posted_by=["QUIET BOOKER"])
+                         posted_by=["JUAN REYNA"])
 
     assert unfiltered["data"]["total_bookers"] == 2
     # The population, and therefore the rank, is unchanged by the picker.
     assert filtered["data"]["total_bookers"] == 2
     only = filtered["data"]["rows"]
-    assert len(only) == 1 and only[0]["booker"] == "QUIET BOOKER"
+    assert len(only) == 1 and only[0]["booker"] == "JUAN REYNA"
     assert only[0]["rank"] == 2, "the picker renumbered the league"
 
 
@@ -357,7 +414,7 @@ def test_posted_by_never_reaches_the_rank_query():
     the second half proves the scan can see a known positive (§91).
     """
     pool, _ = _drive(bs.rank, contract_type=None, customer_name=None,
-                     posted_by=["QUIET BOOKER"])
+                     posted_by=["JUAN REYNA"])
     rank_sql = "\n".join(pool.sqls)
     assert "TRIM(rp.posted_by_name) = ANY(" not in rank_sql, (
         "/rank pushed the Posted By picker into the query, which re-ranks a "
@@ -366,7 +423,7 @@ def test_posted_by_never_reaches_the_rank_query():
 
     pool2, _ = _drive(bs.summary, range="mtd", start_date=None, end_date=None,
                       contract_type=None, customer_name=None,
-                      posted_by=["QUIET BOOKER"], adjustment=0.0)
+                      posted_by=["JUAN REYNA"], adjustment=0.0)
     assert "TRIM(rp.posted_by_name) = ANY(" in "\n".join(pool2.sqls), (
         "the scan cannot see the predicate at all — the check above is vacuous"
     )
@@ -377,33 +434,29 @@ def test_a_booker_who_stopped_still_gets_a_row():
     to the bottom. That is information; an inner join would render it as a
     missing row instead of a red one."""
     rows = [
-        {"order_id": "OLD", "carrier_cost": 500.0, "posted_by": "GONE QUIET",
+        {"order_id": "OLD", "carrier_cost": 500.0, "posted_by": "OSCAR MACIAS",
          "posted_date": datetime(2026, 8, 18, 9, 0)},
-        {"order_id": "NEW", "carrier_cost": 500.0, "posted_by": "STILL HERE",
+        {"order_id": "NEW", "carrier_cost": 500.0, "posted_by": "DANIEL SALAZAR",
          "posted_date": datetime(2026, 8, 25, 9, 0)},
     ]
-    # Pin the clock so the two stub dates land in the intended weeks.
-    orig = bs.cst_today
-    bs.cst_today = lambda: date(2026, 8, 31)
-    try:
-        _, resp = _drive(bs.rank, rows=rows, **_SCOPE)
-    finally:
-        bs.cst_today = orig
+    # Pin the clock so the two stub dates land in the intended weeks: with
+    # today = Mon 2026-08-31 the Sat-Fri pair is 15-21 Aug and 22-28 Aug.
+    _, resp = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_SCOPE)
     by_name = {r["booker"]: r for r in resp["data"]["rows"]}
-    assert set(by_name) == {"GONE QUIET", "STILL HERE"}
-    assert by_name["GONE QUIET"]["rank"] is None
-    assert by_name["GONE QUIET"]["bookings"] == 0
-    assert by_name["GONE QUIET"]["prev_bookings"] == 1
+    assert set(by_name) == {"OSCAR MACIAS", "DANIEL SALAZAR"}
+    assert by_name["OSCAR MACIAS"]["rank"] is None
+    assert by_name["OSCAR MACIAS"]["bookings"] == 0
+    assert by_name["OSCAR MACIAS"]["prev_bookings"] == 1
     # A first appearance is "new", never a 0 that claims the position held.
-    assert by_name["STILL HERE"]["rank_delta"] is None
-    assert by_name["STILL HERE"]["rank"] == 1
+    assert by_name["DANIEL SALAZAR"]["rank_delta"] is None
+    assert by_name["DANIEL SALAZAR"]["rank"] == 1
     # Unranked bookers sort last, not first.
-    assert resp["data"]["rows"][0]["booker"] == "STILL HERE"
+    assert resp["data"]["rows"][0]["booker"] == "DANIEL SALAZAR"
 
 
 def test_rank_survives_an_ap_outage():
     """The threshold source is secondary — the ranking must still render."""
-    rows = [{"order_id": "A", "carrier_cost": 500.0, "posted_by": "SOMEBODY",
+    rows = [{"order_id": "A", "carrier_cost": 500.0, "posted_by": "EUGENIO MIRANDA",
              "posted_date": datetime(2026, 8, 25, 9, 0)}]
     pool = _StubPool(rows)
     orig_pool = bs.get_datalake_gold_pool

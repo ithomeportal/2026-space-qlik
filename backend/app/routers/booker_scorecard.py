@@ -476,7 +476,10 @@ def _threshold_stats(
     - ``threshold_orders``     the honest denominator: orders having BOTH numbers
     - ``broken_threshold_pct`` broken / comparable, as a fraction
     - ``compliance_threshold_pct`` 1 − the above (Bruno 2026-08-31 R3), the
-      figure the KPI card now shows; also a fraction
+      figure the KPI card and the Rank tab now show; also a fraction
+    - ``compliant_threshold``  comparable − broken, the COUNT that goes beside
+      that percentage. Published here rather than subtracted at the call site
+      so the count and the ratio can never span two populations (§96)
     - ``cost_saving``          Σ (thresh − carrier_cost) where cost is UNDER it
     - ``under_threshold``      how many orders contributed to that sum
 
@@ -494,6 +497,7 @@ def _threshold_stats(
             "threshold_orders": None,
             "broken_threshold_pct": None,
             "compliance_threshold_pct": None,
+            "compliant_threshold": None,
             "cost_saving": None,
             "under_threshold": None,
         }
@@ -529,6 +533,15 @@ def _threshold_stats(
         # table still flags individual orders whose carrier cost exceeds their
         # threshold, which is a ROW fact and keeps its own wording.
         "compliance_threshold_pct": (1.0 - broken / comparable) if comparable else None,
+        # The count the Rank tab prints beside that percentage. Derived from
+        # the SAME two counters, so "9/12" and "75%" cannot come from two
+        # different populations (§96). Orders sitting exactly ON their
+        # threshold are compliant — they are not broken — which is why this is
+        # `comparable - broken` and NOT `under_threshold` (that one is the
+        # strictly-under population the Cost Saving sum runs over).
+        # A raw count like `broken_threshold`, not a ratio: 0 comparable
+        # orders is 0 compliant orders, while the RATIO above is undefined.
+        "compliant_threshold": comparable - broken,
         "cost_saving": saving,
         "under_threshold": under,
     }
@@ -1160,8 +1173,25 @@ async def freshness(
 #                            in the PDF; confirm before "fixing" the roster.
 #     Daniel Galindo       — zero postings in 2026.
 #     Cindy de los Santos  — exactly one posting, 2026-08-28.
-# The roster only ORDERS the picker, so an absent name costs nothing; the table
-# itself ranks whoever actually booked.
+# An absent name still costs nothing — it simply never produces a row.
+#
+# 🔴 CHANGED 2026-09-03 (Bruno R3, "only display Bookers"). This list used to
+# ORDER the picker only, and the table ranked whoever had booked. It is now the
+# **POPULATION of the Rank tab**: a name that is not here is not ranked, not
+# counted in "of N" and not offered in the picker. Two consequences to hold on
+# to before editing it:
+#   * Adding a name ADMITS somebody to the league; removing one deletes their
+#     history from every week the tab can show. There is no `is_booker` flag
+#     anywhere in McLeod or the datalake (`mcleod_dfw_bookers_rank` carries no
+#     role column) — this hand-kept list is the only definition that exists.
+#   * Measured over the ranked week 22-28 Aug 2026: 26 names posted Rate Confs
+#     for TEAM-DFW, 11 of them on this roster. The 15 dropped include ARMANDO
+#     CALVILLO (37 loads — the week's #2 by volume, and rank 2 on the tab as it
+#     stood), GYNETH DOMINGUEZ (24), KARLA TREVINO (21) and JIMENA VIVANCO (18)
+#     — high-volume users who are not bookers. Calvillo is absent from
+#     `podium_top.BOOKER_NAMES` too, which is the independent second opinion
+#     that made dropping him safe.
+# ⚠ Still NOT the podium roster (§99/§69): two different lists of people.
 RANK_ROSTER: tuple[str, ...] = (
     "Eugenio Miranda",
     "Anthares Montoya",
@@ -1182,19 +1212,36 @@ RANK_ROSTER: tuple[str, ...] = (
 _RANK_ROSTER_KEYS = _roster_keys(RANK_ROSTER)
 
 
-def _rank_weeks(today: date) -> tuple[date, date, date, date]:
-    """The last COMPLETED Mon-Sun week and the one before it.
+# Bruno (PDF 2026-09-03) R2 — the Rank tab's week runs SATURDAY → FRIDAY.
+#
+# ⚠ This tab ONLY. Every other window in this report — /summary's `wtd`, the
+# 10-week /weekly trend, the Scorecard tab — stays Mon-Sun, because they are
+# read beside other portal reports that all use the ISO week. Changing the
+# shared definition to satisfy one tab is the §95 class: one label, two
+# metrics. The divergence is therefore deliberate, confined to `_rank_weeks`,
+# and captioned on screen.
+#
+# Python's `weekday()` is Mon=0 … Sat=5, so the most recent Saturday is
+# `today - (today.weekday() - 5) % 7` — the identity for a Saturday itself.
+_RANK_WEEK_START_WEEKDAY = 5  # Saturday
 
-    ⚠ The in-progress week is never included. Today is Monday 2026-08-31 as
-    this ships: the current week holds ONE day of bookings, and ranking it
-    against a full previous week produced movements of +13 positions for a
-    booker who simply started early. Same rule `app/attrition_core.py` states
-    for its own weekly windows — a comparison is only meaningful between two
-    windows of equal length.
+
+def _rank_weeks(today: date) -> tuple[date, date, date, date]:
+    """The last COMPLETED Sat-Fri week and the one before it.
+
+    ⚠ The in-progress week is never included. Shipped Monday 2026-08-31: the
+    current week held ONE day of bookings, and ranking it against a full
+    previous week produced movements of +13 positions for a booker who simply
+    started early. Same rule `app/attrition_core.py` states for its own weekly
+    windows — a comparison is only meaningful between two windows of equal
+    length. That rule survives the Sat-Fri move unchanged; only the day the
+    week turns over has changed (Bruno PDF 2026-09-03 R2).
     """
-    this_monday = today - timedelta(days=today.weekday())
-    cur_start = this_monday - timedelta(days=7)
-    prev_start = this_monday - timedelta(days=14)
+    this_saturday = today - timedelta(
+        days=(today.weekday() - _RANK_WEEK_START_WEEKDAY) % 7
+    )
+    cur_start = this_saturday - timedelta(days=7)
+    prev_start = this_saturday - timedelta(days=14)
     return prev_start, prev_start + timedelta(days=6), cur_start, cur_start + timedelta(days=6)
 
 
@@ -1225,11 +1272,27 @@ async def rank(
     posted_by: Optional[list[str]] = Query(None),
     _user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
-    """Bruno PDF 2026-08-31 page 1 — the Rank tab.
+    """Bruno PDF 2026-08-31 page 1 — the Rank tab. Revised 2026-09-03.
 
-    Bookers ranked by # of Bookings in the last COMPLETED Mon-Sun week, with
-    the positions each moved against the week before, plus Broken Threshold and
-    Cost Saving over the same week.
+    Bookers ranked by # of Bookings in the last COMPLETED Sat-Fri week, with
+    the positions each moved against the week before, plus Compliance Threshold
+    and Cost Saving over the same week.
+
+    ⚠ Bruno PDF 2026-09-03 R3 — the table shows **BOOKERS ONLY**: the rows are
+    restricted to `RANK_ROSTER`, his own 15-name list. `posted_by_name` is
+    whoever pressed the button in McLeod, so the unrestricted population also
+    carried night-shift, coverage and management users; over the week 22-28 Aug
+    the table ranked 26 names, 15 of them not bookers.
+
+    ⚠ The restriction is applied to the ROW SET of BOTH weeks, BEFORE ranking —
+    it is a population definition, not the §75 display filter `posted_by` is.
+    Ranking first and hiding afterwards would leave gaps (1, 3, 4, 6 …) and an
+    "of N" counting people the table refuses to show; restricting one week only
+    would make every `rank_delta` a comparison between two different leagues.
+    Decision: Diego, 2026-09-03 — this DROPS the week's #2 by volume (ARMANDO
+    CALVILLO, 37 loads), who is on neither this roster nor
+    `podium_top.BOOKER_NAMES`. Adding somebody back is a roster
+    edit, made HERE, never a second filter somewhere downstream.
 
     ⚠ Takes **no date parameters at all**, exactly like `/weekly`: the window is
     a fixed pair of completed weeks computed here, so no hand-crafted URL can
@@ -1248,7 +1311,9 @@ async def rank(
     computed over the whole booker population; filtering before ranking would
     make every single-name selection show "rank 1 of 1" (§75 — a filter over a
     rule deletes the answer). `customer_name` / `contract_type` DO narrow the
-    population, because they change which bookings exist at all.
+    population, because they change which bookings exist at all. The roster is
+    neither of those: it is the definition of who the league is about, fixed in
+    code and identical on every request.
     """
     pool = get_datalake_gold_pool(request)
     contracts = _parse_multi(contract_type)
@@ -1280,9 +1345,21 @@ async def rank(
 
     cur_rows: dict[str, list] = {}
     prev_rows: dict[str, list] = {}
+    # Bruno 2026-09-03 R3 — bookers only. Matched through the shared normaliser
+    # (§69), never string equality: three of the 15 roster spellings differ from
+    # McLeod's byte-for-byte, and a strict compare would silently drop them.
+    # `_matches_roster` is cheap but the same handful of names repeats across
+    # thousands of rows, so the verdict is memoised per distinct spelling.
+    is_booker: dict[str, bool] = {}
     for r in rows:
         name = (r["posted_by"] or "").strip()
         if not name:
+            continue
+        keep = is_booker.get(name)
+        if keep is None:
+            keep = _matches_roster(name, _RANK_ROSTER_KEYS)
+            is_booker[name] = keep
+        if not keep:
             continue
         pd = r["posted_date"]
         d = pd.date() if isinstance(pd, datetime) else pd
@@ -1317,9 +1394,18 @@ async def rank(
             if (cur_rank is not None and prev_rank is not None) else None,
             "bookings": cur_agg.get(name, {}).get("bookings", 0),
             "prev_bookings": prev_agg.get(name, {}).get("bookings", 0),
+            # Bruno 2026-09-03 R1 — the tab now reads "Compliance Threshold".
+            # FORWARDED from `_threshold_stats`, never recomputed here: the
+            # Scorecard tab's KPI card folds the very same helper, so the two
+            # tabs cannot end up disagreeing about one person's compliance
+            # (§69). `broken_threshold` stays on the wire because the Orders
+            # table still flags individual broken orders — a ROW fact that
+            # keeps its own wording.
             "broken_threshold": stats["broken_threshold"],
             "threshold_orders": stats["threshold_orders"],
             "broken_threshold_pct": stats["broken_threshold_pct"],
+            "compliance_threshold_pct": stats["compliance_threshold_pct"],
+            "compliant_threshold": stats["compliant_threshold"],
             "cost_saving": stats["cost_saving"],
             "under_threshold": stats["under_threshold"],
         })
@@ -1330,21 +1416,24 @@ async def rank(
         wanted = {p.strip() for p in posters}
         out = [r for r in out if r["booker"] in wanted]
 
-    # Picker options: everyone in the window, with Bruno's roster first so his
-    # 15 are the auto-suggestions without making anybody else unreachable.
-    in_roster = [n for n in all_names if _matches_roster(n, _RANK_ROSTER_KEYS)]
-    rest = [n for n in all_names if n not in set(in_roster)]
+    # Picker options. `all_names` is already roster-only, so this IS the list
+    # of bookers who booked in either week — offering a name the table cannot
+    # show would be a picker that empties its own table.
+    in_roster = list(all_names)
 
     return {
         "success": True,
         "data": {
             "rows": out,
-            "bookers": in_roster + rest,
+            "bookers": in_roster,
             "roster": in_roster,
             # `total_bookers` is the ranked population — the "of N" in "3 of N".
             # It is deliberately the count BEFORE the posted_by display filter,
             # so selecting one name does not renumber the league (§75).
             "total_bookers": len(cur_agg),
+            # Sat-Fri (Bruno 2026-09-03 R2), and this tab only — the caption
+            # on screen says so, because a table that silently disagrees with
+            # the rest of the report about what "a week" is reads as a bug.
             "week": {
                 "start": cur_start.isoformat(),
                 "end": cur_end.isoformat(),

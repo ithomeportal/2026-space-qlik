@@ -254,10 +254,20 @@ export interface BookerRankRow {
   rank_delta: number | null
   bookings: number
   prev_bookings: number
+  /** Still on the wire: the Orders table flags individual broken orders, a
+   *  ROW fact that keeps its own wording. The Rank tab renders compliance. */
   broken_threshold: number | null
   threshold_orders: number | null
   /** A fraction — fmtPct multiplies by 100. */
   broken_threshold_pct: number | null
+  /** Bruno 2026-09-03 R1 — what the Rank tab shows: 1 − broken_threshold_pct,
+   *  forwarded from the backend's ONE `_threshold_stats` helper so this tab and
+   *  the Scorecard KPI card cannot disagree (§69). A FRACTION. */
+  compliance_threshold_pct: number | null
+  /** threshold_orders − broken_threshold, the COUNT printed beside that
+   *  percentage. Computed server-side off the same two counters so the count
+   *  and the ratio cannot span two populations (§96) — never re-derived here. */
+  compliant_threshold: number | null
   cost_saving: number | null
   under_threshold: number | null
 }
@@ -273,11 +283,14 @@ export interface BookerRankWeek {
  *  types every field one level too deep. */
 export interface BookerRank {
   rows: BookerRankRow[]
-  /** Picker options — Bruno's roster first, then everyone else. */
+  /** Picker options. Bruno 2026-09-03 R3 — the Rank tab is bookers only, so
+   *  this is exactly the roster members who booked in either week. Offering a
+   *  name the table cannot show would be a picker that empties its own table. */
   bookers: string[]
   roster: string[]
-  /** The ranked population: the "of N" in "3 of N". Counted BEFORE the
-   *  Posted By display filter, so selecting one name does not renumber. */
+  /** The ranked population: the "of N" in "3 of N". Roster members only, and
+   *  counted BEFORE the Posted By display filter, so selecting one name does
+   *  not renumber the league (§75). */
   total_bookers: number
   week: BookerRankWeek
   prev_week: BookerRankWeek
@@ -376,7 +389,10 @@ export function useBookerWeekly(scope: BookerScopeFilters) {
 
 /** The Rank tab. Scope filters only — it takes NO date params, exactly like
  *  useBookerWeekly: the window is a fixed pair of completed weeks resolved
- *  server-side, and the tab captions it on screen. */
+ *  server-side, and the tab captions it on screen.
+ *
+ *  ⚠ Those weeks run SATURDAY → FRIDAY (Bruno 2026-09-03 R2) on this tab ONLY.
+ *  Every other window in this report is Mon-Sun. Do not "harmonise" them. */
 export function useBookerRank(scope: BookerScopeFilters) {
   const q = new URLSearchParams()
   scopeParams(q, scope)
