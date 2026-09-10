@@ -1,8 +1,11 @@
 import type { ReactNode } from "react"
+import { FavoritesSidebar } from "@/components/FavoritesSidebar"
 
 /**
- * Shared backdrop for every report route.
+ * Shared chrome for every report route: the Favorites rail, plus a continuous
+ * page backdrop.
  *
+ * ── The backdrop (2026-08-17) ───────────────────────────────────────────────
  * `app/layout.tsx` paints `<body>` white, while each report's own root paints
  * `#F9FAFB`. Any document height beyond that root therefore renders as a band of
  * pure WHITE below the last card — which is exactly what was reported against
@@ -17,12 +20,31 @@ import type { ReactNode } from "react"
  * culprit in a component five reports share, this makes the page background
  * continuous: whatever the height turns out to be, it can never paint white.
  *
- * Deliberately background + min-height only — no padding, no flex, no overflow.
- * Report roots keep their own layout, and `position: sticky` still resolves
- * against the viewport because this wrapper never becomes a scroll container.
+ * ── The rail (2026-09-09) ───────────────────────────────────────────────────
+ * The wrapper became a flex ROW to seat `<FavoritesSidebar/>` beside the report.
+ * Three constraints survive from the note above, and breaking any of them
+ * regresses something that took a harness to find:
+ *
+ *   - Still no `overflow` here. The moment this element scrolls, it becomes the
+ *     scroll container for everything inside it and the `sticky top-0` toolbars
+ *     ~20 reports use stop resolving against the viewport. The rail owns its own
+ *     `overflow-y-auto`, and nothing else in this subtree has one.
+ *   - Still no padding. Report roots carry their own, and they are full-bleed
+ *     columns (`flex min-h-[calc(100vh-64px)] flex-col`).
+ *   - `min-w-0` on the content column is load-bearing. A flex item defaults to
+ *     `min-width: auto`, so a report with a wide table (`min-w-[1100px]` inside
+ *     an `overflow-x-auto` wrapper) would push the track wider than the viewport
+ *     and give the whole page a horizontal scrollbar instead of scrolling the
+ *     table.
+ *
+ * `/` does not pass through this layout, so the Home dashboard is untouched —
+ * which is what the request asked for.
  */
 export default function ReportsLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-[#F9FAFB]">{children}</div>
+    <div className="flex min-h-[calc(100vh-64px)] bg-[#F9FAFB]">
+      <FavoritesSidebar />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
   )
 }

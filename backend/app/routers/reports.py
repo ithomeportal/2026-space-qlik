@@ -15,7 +15,7 @@ async def list_reports(
     category: Optional[str] = Query(None),
     mobile: bool = Query(False),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=500),
 ):
     pool = get_pool(request)
     offset = (page - 1) * limit
@@ -46,7 +46,13 @@ async def list_reports(
         JOIN role_report_access rra ON rra.report_id = r.id
         JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
         WHERE r.is_active = TRUE
-          AND COALESCE(r.is_mobile, FALSE) = $2
+          -- `mobile` INCLUDES the (Mob) variants, it does not replace the
+          -- desktop set. `useIsMobile()` calls anything under 1920px mobile and
+          -- every seeded report carries `is_mobile = FALSE`, so the old
+          -- `= $2` equality made Home render "0 reports" on any laptop —
+          -- silently, with no error anywhere. A duplicate tile is visible; a
+          -- blank catalog is not.
+          AND (COALESCE(r.is_mobile, FALSE) = FALSE OR $2)
           AND ($3::text IS NULL OR r.category = $3)
         -- Favourites first (Bruno PDF 2026-08-17 R3). This has to happen in SQL,
         -- not only in the grid: there are 60 reports and the default page size
@@ -69,7 +75,7 @@ async def list_reports(
         JOIN role_report_access rra ON rra.report_id = r.id
         JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
         WHERE r.is_active = TRUE
-          AND COALESCE(r.is_mobile, FALSE) = $2
+          AND (COALESCE(r.is_mobile, FALSE) = FALSE OR $2)
           AND ($3::text IS NULL OR r.category = $3)
         """,
         user_id,
@@ -148,7 +154,8 @@ async def trending_reports(
         LEFT JOIN access_log al ON al.report_id = r.id
           AND al.accessed_at > NOW() - INTERVAL '7 days'
         WHERE r.is_active = TRUE
-          AND COALESCE(r.is_mobile, FALSE) = $2
+          -- Same inclusive rule as `list_reports` — see the note there.
+          AND (COALESCE(r.is_mobile, FALSE) = FALSE OR $2)
         GROUP BY r.id
         ORDER BY view_count DESC
         LIMIT $3
@@ -252,3 +259,61 @@ async def list_user_tag_roles(
         "success": True,
         "data": [dict(r) for r in rows],
     }
+
+
+@router.get("/user/favorites")
+async def list_user_favorites(
+    request: Request,
+    user: dict = Depends(require_user),
+    mobile: bool = Query(False),
+):
+    """The current user's starred reports, for the in-report Favorites rail.
+
+    Powers ``<FavoritesSidebar/>`` — the collapsible left column every
+    ``/reports/*`` route renders, so a user can jump between their favourites
+    without going back Home (request 2026-09-09).
+
+    Two invariants this endpoint exists to hold:
+
+    * **It shows exactly what Home's "Favorites" filter shows.** The access
+      gate is a byte-for-byte copy of ``list_reports``' — the same
+      ``role_report_access``/``user_roles`` joins, the same ``is_active``, the
+      same inclusive ``is_mobile`` clause. A user who was starred into a report
+      and later lost the TagRole must drop out of BOTH, together. There is no
+      admin bypass here for the same reason there is none on the Home list:
+      the rail is a shortcut to what you can already see, not a second door.
+    * **"Most used" means most used BY THIS USER.** ``access_log`` is counted
+      with ``al.user_id = $1``. The Home grid's ``view_count`` is deliberately
+      different — it is company-wide over 30 days, which orders every user's
+      grid identically. A personal rail ordered by other people's habits would
+      be indistinguishable from a broken one, so this is the one place the two
+      orderings are allowed to disagree.
+
+    All-time rather than a rolling window: a favourites list is a handful of
+    rows, the ordering is stable, and a window would silently re-shuffle the
+    rail for anyone back from leave. ``idx_access_log_user`` serves it.
+    """
+    pool = get_pool(request)
+    user_id = user_uuid(user)
+
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT r.id, r.title, r.category, r.custom_path,
+               COALESCE(
+                 (SELECT COUNT(*) FROM access_log al
+                  WHERE al.report_id = r.id AND al.user_id = $1), 0
+               ) AS use_count
+        FROM reports r
+        JOIN user_preferences up ON up.user_id = $1
+          AND r.id = ANY(up.pinned_reports)
+        JOIN role_report_access rra ON rra.report_id = r.id
+        JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
+        WHERE r.is_active = TRUE
+          AND (COALESCE(r.is_mobile, FALSE) = FALSE OR $2)
+        ORDER BY use_count DESC, r.title
+        """,
+        user_id,
+        mobile,
+    )
+
+    return {"success": True, "data": [dict(r) for r in rows]}

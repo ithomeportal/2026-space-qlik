@@ -50,13 +50,29 @@ export interface TagRole {
   report_count: number
 }
 
+/**
+ * One page big enough to hold the entire catalog.
+ *
+ * `GET /reports` paginates, and nothing here ever asked for page 2 — so the
+ * server default of 50 against 64 code-made reports silently truncated the
+ * grid (the header read "50 reports" while `meta.total` said otherwise).
+ * Favourites survived only because the SQL sorts `is_favorited DESC` first.
+ * `test_frontend_asks_for_the_whole_catalog` pins this to the real report
+ * count on the backend side, so growing past it fails a test rather than a
+ * screenshot.
+ */
+export const REPORTS_PAGE_LIMIT = 300
+
 export function useReports(category?: string, mobile?: boolean) {
   const params = new URLSearchParams()
   if (category) params.set("category", category)
   if (mobile) params.set("mobile", "true")
+  params.set("limit", String(REPORTS_PAGE_LIMIT))
   const qs = params.toString()
   return useQuery({
-    queryKey: ["reports", category, mobile],
+    // The key covers every input to `qs` — including the limit, so bumping the
+    // constant cannot be served from a stale 50-row cache.
+    queryKey: ["reports", category, mobile, REPORTS_PAGE_LIMIT],
     queryFn: () => apiFetch<Report[]>(`reports${qs ? `?${qs}` : ""}`),
   })
 }
@@ -130,6 +146,55 @@ export function usePreferences() {
     queryKey: ["preferences"],
     queryFn: () => apiFetch<UserPreferences>("user/preferences"),
   })
+}
+
+export interface FavoriteReport {
+  id: string
+  title: string
+  category: string | null
+  custom_path: string | null
+  use_count: number
+}
+
+/**
+ * The current user's starred reports, ordered by their OWN usage — the feed for
+ * `<FavoritesSidebar/>`. Deliberately a separate endpoint from `useReports`:
+ * that one runs a correlated 30-day COUNT per row over the whole catalog, and
+ * the rail renders on all 65 report routes.
+ */
+export function useFavoriteReports(mobile?: boolean) {
+  const qs = mobile ? "?mobile=true" : ""
+  return useQuery({
+    queryKey: ["favorites", mobile],
+    queryFn: () => apiFetch<FavoriteReport[]>(`user/favorites${qs}`),
+    staleTime: 60 * 1000,
+  })
+}
+
+/**
+ * Record that the user opened a report, without waiting for it.
+ *
+ * `access_log` is written by `GET /reports/{uuid}` — which only the
+ * `/reports/[id]` redirect page calls. The rail links straight to
+ * `custom_path` so switching reports is instant instead of a round-trip
+ * through that redirect (seconds, on a cold Render dyno). ⚠ Without this call
+ * the rail's own navigations would stop feeding `access_log` entirely and the
+ * "most used" ordering it is sorted by would quietly freeze — a feature that
+ * stops learning looks exactly like one nobody's habits have changed.
+ *
+ * Fire-and-forget by design: `keepalive` so it survives the navigation, and
+ * every failure is swallowed — a missed log line must never block a click.
+ */
+export function logReportAccess(reportId: string) {
+  try {
+    void fetch(`/api/proxy/reports/${reportId}`, {
+      method: "GET",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+    }).catch(() => {})
+  } catch {
+    // no-op
+  }
 }
 
 export function useUpdatePreferences() {
@@ -728,6 +793,9 @@ export function useToggleFavorite() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["preferences"] })
       queryClient.invalidateQueries({ queryKey: ["reports"] })
+      // The in-report rail reads its own endpoint — un-starring from a report
+      // page has to empty its row too, not just the Home grid's.
+      queryClient.invalidateQueries({ queryKey: ["favorites"] })
     },
   })
 }
