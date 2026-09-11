@@ -190,3 +190,77 @@ class TestTeamFilter:
         frag = _build_filters_sql(params, "Ada", "Booker", "Team 2")
         assert frag == " AND nm = $3 AND jt = $4 AND team = $5"
         assert params[2:] == ["Ada", "Booker", "Team 2"]
+
+
+class TestITExclusionAndPerPersonOverride:
+    """The IT rule, and the four people who are now exempt from it.
+
+    🔴 Every assertion here exists because this filter spent months in the wrong
+    SQL clause and excluded NOBODY (fixed 2026-09-11). It was appended to the
+    `LEFT JOIN public.app_auth_users u ON ...` clause, where a predicate cannot
+    remove a row — it only decides whether the right side matches. Seven IT
+    people were in the last seven days of data while the comment above it said
+    "applied inside the JOIN so every endpoint drops them uniformly".
+
+    That is why the placement is asserted structurally and not just by substring:
+    the predicate TEXT was correct the whole time. A test that only checked the
+    text was present would have passed every day it was broken.
+    """
+
+    def test_the_it_predicate_is_in_the_where_not_the_left_join(self):
+        sql = FIRST
+        where_at = sql.index("WHERE z.event_date BETWEEN")
+        join_at = sql.index("LEFT JOIN public.app_auth_users")
+        it_at = sql.index("'INFORMATION TECHNOLOGY'")
+        assert join_at < where_at < it_at, (
+            "the IT filter is back inside the LEFT JOIN's ON clause, where it "
+            "cannot remove a single row and excludes nobody"
+        )
+
+    def test_the_predicate_is_exact_never_a_substring_pattern(self):
+        """`%IT%` matches Recruiting, Security Audit and Capital Markets too."""
+        sql = _squash(FIRST)
+        assert "NOT IN ('IT', 'INFORMATION TECHNOLOGY')" in sql
+        assert "NOT LIKE 'IT %'" in sql
+        assert "ILIKE '%IT%'" not in sql
+
+    def test_the_per_person_override_is_consulted(self):
+        """Four named people in IT are in this report by request (2026-09-11).
+
+        Dropping this table does not error and does not look wrong — they simply
+        stop appearing, in a report nobody reads looking for them.
+        """
+        sql = _squash(FIRST)
+        assert "late_arrival_report_override" in sql
+        assert "o.include_it" in sql
+
+    def test_the_override_is_keyed_on_email_and_nothing_else(self):
+        """🔴 THE POLARITY GUARD, and the reason this file has a test for it.
+
+        A department- or title-keyed override would re-admit all 29 people in IT
+        while every page still rendered perfectly — the exact opposite of the
+        standing rule ("no included never nobody from IT", 2026-08-19). An
+        e-mail key can only ever add ONE NAMED PERSON.
+        """
+        sql = _squash(FIRST)
+        start = sql.index("late_arrival_report_override")
+        # Bounded by the subquery it opens, so a key added elsewhere in the file
+        # cannot make this pass. `in` first, never index() — a missing key must
+        # read as a failed assertion, not as a ValueError from the harness.
+        clause = sql[start : start + 400]
+        assert "o.email" in clause, "the override is not keyed on e-mail at all"
+        assert "o.department" not in clause, (
+            "the override is keyed on department — that re-admits all 29 people "
+            "in IT, with every page still rendering perfectly"
+        )
+        assert "o.job_title" not in clause, (
+            "the override is keyed on job_title — a title key admits everyone "
+            "who holds it, not the one person who was requested"
+        )
+
+    def test_the_override_widens_the_filter_rather_than_replacing_it(self):
+        """The override must be an OR in front of the IT predicate, not instead
+        of it. Replacing it would admit the whole department."""
+        sql = _squash(FIRST)
+        assert "o.include_it" in sql and "'INFORMATION TECHNOLOGY'" in sql
+        assert sql.index("o.include_it") < sql.index("'INFORMATION TECHNOLOGY'")

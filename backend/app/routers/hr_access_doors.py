@@ -84,15 +84,46 @@ _DEPARTMENT_NORMALIZED = """
 
 # IT department employees are excluded from this report (requested by HR — IT
 # staff keep irregular hours so their punches are noise in the on-time metric).
-# Applied inside the JOIN so every endpoint (filters, kpis, rows, trend,
-# by-department) drops them uniformly. The REPLACE strips periods so dot-style
-# spellings ("I.T.", "I.T") collapse to "IT". Covered variants:
-#   "IT", "I.T.", "I.T", "Information Technology", "IT Support" (any "IT "
-#   prefix). Case + trailing whitespace normalised via UPPER(TRIM(...)).
-# NULL departments pass through (Graph-sync drift safety).
+# The REPLACE strips periods so dot-style spellings ("I.T.", "I.T") collapse to
+# "IT". Covered variants: "IT", "I.T.", "I.T", "Information Technology",
+# "IT Support" (any "IT " prefix). Case + trailing whitespace normalised via
+# UPPER(TRIM(...)). NULL departments pass through (Graph-sync drift safety).
+#
+# 🔴 2026-09-11 — THIS FILTER HAD NEVER EXCLUDED ANYBODY.
+#
+# It was appended to the `LEFT JOIN public.app_auth_users u ON ...` clause, one
+# line below it and indented as if it belonged to the FROM list. In a LEFT JOIN
+# an ON-clause predicate cannot remove a row: it only decides whether the RIGHT
+# side matches. So for every IT employee it quietly set `u.*` to NULL and passed
+# the punch straight through. Measured the day it was found: 7 IT people in the
+# last 7 days, out of 87. The comment said "applied inside the JOIN so every
+# endpoint drops them uniformly", which is exactly what a reader would check and
+# exactly what was not happening — the intent was documented, never executed.
+#
+# ⚠ A filter in the wrong clause does not error and does not look wrong. It is
+# the mirror image of the 2026-08-21 window-as-WHERE bug one file over: there a
+# predicate that should have ordered was filtering and DELETED people; here a
+# predicate that should have filtered was joining and deleted nobody. Both
+# render perfectly. Whenever a filter lives next to a LEFT JOIN, check which
+# clause it is actually in.
+#
+# It is now applied in the WHERE, where it does what it says.
+#
+# ⚠ EXCEPT the people named in late_arrival_report_override (requested
+# 2026-09-11: "This specific users are no longer an exception even if they are
+# inside IT division"). Keyed on E-MAIL ONLY — a department or job_title key
+# would re-admit all 29 people in IT with every page rendering perfectly, which
+# is the precise opposite of the standing rule. Same table, same semantics as
+# n8n workflow PSanv3Sz1qS9yMbf; the two surfaces must agree, so change both.
 _EXCLUDE_IT_SQL = """
   AND (
-    e.department IS NULL
+    EXISTS (
+      SELECT 1 FROM public.late_arrival_report_override o
+       WHERE o.active
+         AND o.include_it
+         AND lower(btrim(o.email)) = lower(btrim(e.email))
+    )
+    OR e.department IS NULL
     OR (
       UPPER(REPLACE(TRIM(e.department), '.', '')) NOT IN ('IT', 'INFORMATION TECHNOLOGY')
       AND UPPER(REPLACE(TRIM(e.department), '.', '')) NOT LIKE 'IT %'
@@ -257,9 +288,11 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
         -- an inner join would silently drop them from every KPI.
         LEFT JOIN public.app_auth_users u
           ON lower(btrim(u.email)) = lower(btrim(e.email))
-         {_EXCLUDE_IT_SQL}
         WHERE z.event_date BETWEEN ({start_placeholder}::date - 1)
                                AND ({end_placeholder}::date + 1)
+         -- ⚠ IN THE WHERE, NOT IN THE LEFT JOIN'S ON CLAUSE. It sat there until
+         -- 2026-09-11 and therefore excluded nobody — see _EXCLUDE_IT_SQL.
+         {_EXCLUDE_IT_SQL}
     ),
     scheduled AS (
         SELECT p.*, {_EXPECTED_TIME_LOOKUP} AS expected_time
