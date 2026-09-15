@@ -36,7 +36,11 @@ services:
         sync: false
       - key: FINANCIAL_DATABASE_URL    # UNLK-Financial (read-only, optional)
         sync: false
-      - key: TIMEOFF_DATABASE_URL      # daily user sync
+      - key: TIMEOFF_DATABASE_URL      # daily user sync + Bonus DFW roster
+        sync: false
+      - key: PRICING_DATABASE_URL      # modern_pricing_portal — HD Spot
+        sync: false
+      - key: RECRUIT_DATABASE_URL      # recruit_unilink (read-only)
         sync: false
 
       # --- App ---
@@ -62,7 +66,18 @@ services:
         sync: false
 
       # --- External market-rate providers ---
-      - key: SONAR_TOKEN
+      # 🛑 SONAR_TOKEN is NOT here on purpose. It was deleted from the live
+      # service on 2026-08-13 because `if static_token: return static_token`
+      # short-circuited ahead of the credentials, so an EXPIRED static token
+      # outranked a working username/password and Sonar silently stopped
+      # answering. The service self-mints a 365-day token from these two.
+      # Re-adding the key here would restore that bug the moment anyone
+      # connects this file as a Blueprint — which is exactly what the header
+      # warns about. Verified against the live service 2026-09-15: 23 keys,
+      # no SONAR_TOKEN.
+      - key: SONAR_USERNAME
+        sync: false
+      - key: SONAR_PASSWORD
         sync: false
       - key: LB123_CLIENT_ID
         sync: false
@@ -89,7 +104,8 @@ services:
 #     Typesense code was deleted 2026-07-31 (services/typesense_client.py,
 #     services/search_indexer.py, the `typesense` pip dep, the 4 config.py
 #     settings and the root docker-compose.yml). Nothing imported any of it.
-# The live service still carries those keys plus QLIK_BACKEND_CLIENT_ID/SECRET,
-# QLIK_IMPERSONATION_CLIENT_ID/SECRET and TV_SECRET. Deleting them from Render
-# is safe (nothing reads them) but is a live-service change, so it is left as a
-# deliberate decision rather than done as cleanup.
+# ✅ Those keys are now GONE from the live service too. Re-verified
+# 2026-09-15: the service carries exactly the 23 keys declared above — no
+# QLIK_*, no TYPESENSE_*, no TV_SECRET, no SONAR_TOKEN. This file and the live
+# service agree key-for-key; keep it that way, because the header's warning is
+# the whole reason it is worth maintaining.

@@ -43,9 +43,6 @@ UNLK logo base.png
 docs/
 !LICENSE
 
-# Prisma
-prisma/*.db
-
 # Typesense
 typesense-data/
 

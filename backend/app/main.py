@@ -522,9 +522,10 @@ async def lifespan(app: FastAPI):
                 "CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id, accessed_at DESC)"
             )
 
-            # Per-user preferences. This table predates the startup-DDL pattern
-            # and lived only in prisma/schema.prisma + SPEC-DATA, so a fresh
-            # database booted without it and every /user/preferences call 500'd.
+            # Per-user preferences. This table predates the startup-DDL
+            # pattern and was recorded only in SPEC-DATA (and, until it was
+            # deleted on 2026-09-15, prisma/schema.prisma), so a fresh database
+            # booted without it and every /user/preferences call 500'd.
             # Favourites (Bruno PDF 2026-08-17) write here on every star click,
             # so it is no longer an optional nicety. UUID[] to match the columns
             # `reports.is_favorited` already probes with `= ANY(...)`.
@@ -534,10 +535,12 @@ async def lifespan(app: FastAPI):
                   user_id         UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                   pinned_reports  UUID[],
                   recent_reports  UUID[],
-                  -- NOT NULL mirrors the live column (Prisma `String
-                  -- @default("light")`). Declaring it nullable here made a
-                  -- fresh dev database DISAGREE with production, so the
+                  -- NOT NULL mirrors the live column, which Prisma created
+                  -- as `String @default("light")`. Declaring it nullable here
+                  -- made a fresh dev database DISAGREE with production, so the
                   -- 2026-08-18 star-click 500 could not reproduce locally.
+                  -- Re-verified against live analytics_hub 2026-09-15: both
+                  -- sides read NOT NULL DEFAULT 'light' (§71).
                   theme           TEXT NOT NULL DEFAULT 'light'
                 )
                 """
