@@ -175,6 +175,19 @@ export interface BookerOrderRow {
   threshold: number | null
   /** "RC" — Rate-Conf postings on this order as of the window end. */
   rc_count: number
+  /**
+   * Bruno PDF 2026-09-15 R1 — the per-order leg of the Cost Saving KPI.
+   * `threshold − carrier_cost`, and ONLY for an order strictly UNDER its
+   * threshold; null for broken, exactly-on, and no-threshold orders. That
+   * asymmetry is what makes this column sum to the KPI card (§16).
+   */
+  cost_saving: number | null
+  /**
+   * Bruno PDF 2026-09-15 R2 — `carrier_cost / threshold`, as a FRACTION.
+   * A ratio, not a variance from a baseline: 0.94 = came in at 94% of
+   * threshold, 1.06 = 6% over. Feed it to `fmtPct`, never pre-scale it.
+   */
+  threshold_variance_pct: number | null
 }
 
 export interface BookerOrders {
@@ -194,6 +207,9 @@ export interface BookerOrders {
     compliance_threshold_pct: number | null
     cost_saving: number | null
     under_threshold: number | null
+    /** Σcost / Σthreshold over the comparable orders only — weighted, never a
+     *  mean of the per-row ratios (§96). */
+    threshold_variance_pct: number | null
     /** Same server-side definition as the KPI card (§69). */
     recoveries: number
   }
@@ -202,12 +218,27 @@ export interface BookerOrders {
   window: { start: string; end: string }
 }
 
+/**
+ * Every column sorts (Bruno PDF 2026-09-15 R3). ⚠ These tokens are a contract
+ * with `_ORDERS_SORT` in `backend/app/routers/booker_scorecard.py`: an unknown
+ * one is now a 400, not a silent fallback to `posted_desc`.
+ * `test_orders_sort_whitelist_matches_frontend` pins the two lists together.
+ */
 export type BookerOrdersSort =
   | "posted_desc" | "posted_asc"
   | "order_desc" | "order_asc"
+  | "team_desc" | "team_asc"
+  | "customer_desc" | "customer_asc"
+  | "poster_desc" | "poster_asc"
+  | "rc_desc" | "rc_asc"
   | "profit_desc" | "profit_asc"
   | "revenue_desc" | "revenue_asc"
   | "cost_desc" | "cost_asc"
+  | "otp_desc" | "otp_asc"
+  | "otd_desc" | "otd_asc"
+  | "threshold_desc" | "threshold_asc"
+  | "saving_desc" | "saving_asc"
+  | "variance_desc" | "variance_asc"
 
 export interface BookerWeek {
   week_start: string

@@ -21,16 +21,35 @@ const PAGE_SIZE = 200
 // three separate literals, and missing one silently shifts the totals row (§61).
 /** Columns left of RC: Order, Team, Customer, Posted By, Posted. */
 const LEAD_COLS = 5
-/** LEAD_COLS + RC + Revenue, Carrier Cost, Profit, OTP, OTD, Threshold. */
-const COLUMN_COUNT = LEAD_COLS + 7
+/**
+ * LEAD_COLS + RC + Revenue, Carrier Cost, Profit, OTP, OTD, Threshold,
+ * Cost Savings, Threshold Variance % (the last two: Bruno PDF 2026-09-15).
+ */
+const COLUMN_COUNT = LEAD_COLS + 9
 
-/** Column key -> (asc sort, desc sort) understood by the backend whitelist. */
+/**
+ * Column key -> (asc sort, desc sort) understood by the backend whitelist.
+ *
+ * ⚠ Every token here must exist in `_ORDERS_SORT` in
+ * `backend/app/routers/booker_scorecard.py` — an unknown one is a 400 now
+ * rather than a silent fallback that painted ▼ on a column the server never
+ * sorted by. `test_orders_sort_whitelist_matches_frontend` reads THIS map.
+ */
 const SORTS: Record<string, [BookerOrdersSort, BookerOrdersSort]> = {
   order_id: ["order_asc", "order_desc"],
+  team: ["team_asc", "team_desc"],
+  customer: ["customer_asc", "customer_desc"],
+  posted_by: ["poster_asc", "poster_desc"],
   posted_date: ["posted_asc", "posted_desc"],
+  rc_count: ["rc_asc", "rc_desc"],
   revenue: ["revenue_asc", "revenue_desc"],
   carrier_cost: ["cost_asc", "cost_desc"],
   profit: ["profit_asc", "profit_desc"],
+  otp_on_time: ["otp_asc", "otp_desc"],
+  otd_on_time: ["otd_asc", "otd_desc"],
+  threshold: ["threshold_asc", "threshold_desc"],
+  cost_saving: ["saving_asc", "saving_desc"],
+  threshold_variance_pct: ["variance_asc", "variance_desc"],
 }
 
 function OnTime({ ok }: { ok: boolean }) {
@@ -136,19 +155,31 @@ export function OrdersTable({ filters }: Props) {
           <table className="w-full text-xs">
             <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
               <tr className="border-b border-[#E5E7EB]">
+                {/* Bruno PDF 2026-09-15 R3 — every column sorts. Sorting runs
+                    server-side over the full universe, so these reorder the
+                    whole table, not the 200 rows on screen. */}
                 <Th label="Order" columnKey="order_id" sort={sort} setSort={setSort} />
-                <Th label="Team" sort={sort} setSort={setSort} />
-                <Th label="Customer" sort={sort} setSort={setSort} />
-                <Th label="Posted By" sort={sort} setSort={setSort} />
+                <Th label="Team" columnKey="team" sort={sort} setSort={setSort} />
+                <Th label="Customer" columnKey="customer" sort={sort} setSort={setSort} />
+                <Th label="Posted By" columnKey="posted_by" sort={sort} setSort={setSort} />
                 <Th label="Posted" columnKey="posted_date" sort={sort} setSort={setSort} />
                 {/* Bruno PDF 2026-08-19 R2 — Rate Confs received on this order. */}
-                <Th label="RC" sort={sort} setSort={setSort} align="right" />
+                <Th label="RC" columnKey="rc_count" sort={sort} setSort={setSort} align="right" />
                 <Th label="Revenue" columnKey="revenue" sort={sort} setSort={setSort} align="right" />
                 <Th label="Carrier Cost" columnKey="carrier_cost" sort={sort} setSort={setSort} align="right" />
                 <Th label="Profit" columnKey="profit" sort={sort} setSort={setSort} align="right" />
-                <Th label="OTP" sort={sort} setSort={setSort} />
-                <Th label="OTD" sort={sort} setSort={setSort} />
-                <Th label="Threshold" sort={sort} setSort={setSort} align="right" />
+                <Th label="OTP" columnKey="otp_on_time" sort={sort} setSort={setSort} />
+                <Th label="OTD" columnKey="otd_on_time" sort={sort} setSort={setSort} />
+                <Th label="Threshold" columnKey="threshold" sort={sort} setSort={setSort} align="right" />
+                {/* Bruno PDF 2026-09-15 R1 / R2. */}
+                <Th label="Cost Savings" columnKey="cost_saving" sort={sort} setSort={setSort} align="right" />
+                <Th
+                  label="Threshold Variance %"
+                  columnKey="threshold_variance_pct"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
               </tr>
             </thead>
             <tbody>
@@ -223,6 +254,28 @@ export function OrdersTable({ filters }: Props) {
                       >
                         {fmtUsd(r.threshold)}
                       </td>
+                      {/* Bruno PDF 2026-09-15 R1 — only orders strictly UNDER
+                          their threshold carry a saving, so these cells sum to
+                          the Cost Saving KPI card exactly (§16). A broken order
+                          shows an em-dash here and is flagged amber by the
+                          Threshold cell to its left instead. */}
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#065F46]">
+                        {fmtUsd(r.cost_saving)}
+                      </td>
+                      {/* R2 — Carrier Cost / Threshold. Over 100% is the same
+                          fact the Threshold cell flags, coloured to match. */}
+                      <td
+                        className={`px-3 py-1.5 text-right tabular-nums ${
+                          broken ? "font-semibold text-[#B45309]" : ""
+                        }`}
+                        title={
+                          r.threshold_variance_pct === null
+                            ? undefined
+                            : "Carrier cost as a share of this order's threshold — under 100% came in below it."
+                        }
+                      >
+                        {fmtPct(r.threshold_variance_pct)}
+                      </td>
                     </tr>
                   )
                 })
@@ -260,6 +313,18 @@ export function OrdersTable({ filters }: Props) {
                       : `${fmtPct(totals.compliance_threshold_pct)} compliant (${fmtCount(
                           totals.broken_threshold,
                         )}/${fmtCount(totals.threshold_orders)} broken)`}
+                  </td>
+                  {/* The SAME `cost_saving` the KPI card renders — this cell is
+                      not a sum of the page, and the per-row column above adds
+                      up to it by construction (§16/§69). */}
+                  <td className="px-3 py-1.5 text-right tabular-nums text-[#065F46]">
+                    {fmtUsd(totals.cost_saving)}
+                  </td>
+                  {/* Σcost / Σthreshold over the comparable orders, computed
+                      server-side. ⚠ NOT the mean of the column above it: a
+                      $900 order would otherwise outvote a $9,000 one (§96). */}
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {fmtPct(totals.threshold_variance_pct)}
                   </td>
                 </tr>
               </tfoot>

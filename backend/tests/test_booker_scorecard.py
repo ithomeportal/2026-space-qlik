@@ -198,9 +198,23 @@ def test_summary_and_orders_share_one_threshold_definition() -> None:
         "the threshold comparison is reimplemented outside _threshold_stats"
     )
     assert src.count("def _threshold_stats(") == 1
-    assert src.count("_apply_scenario(") == 4, (
-        "expected one definition + three call sites (/summary rows, /orders "
-        "page rows, /orders full universe)"
+    # ⚠ This used to assert `src.count("_apply_scenario(") == 4` — one
+    # definition plus three call sites. It went red on 2026-09-15 for a change
+    # that made the thing it was protecting STRUCTURALLY impossible to get
+    # wrong: /orders stopped fetching a separate page query, so there is one
+    # row set to adjust instead of two and the count legitimately fell to 3.
+    # A count cannot tell "removed a call site" from "forgot a call site",
+    # which is the same lesson written at the top of this test about the
+    # threshold helper. Assert the property: every scenario-aware endpoint
+    # folds the shared helper, and nobody open-codes the ± adjustment.
+    for endpoint in (bs.summary, bs.orders):
+        assert "_apply_scenario(" in inspect.getsource(endpoint), (
+            f"{endpoint.__name__} accepts ?adjustment= but never applies it"
+        )
+    scenario = inspect.getsource(bs._apply_scenario)
+    assert src.count("def _apply_scenario(") == 1
+    assert '+ adjustment' not in src.replace(scenario, ""), (
+        "the scenario arithmetic is reimplemented outside _apply_scenario"
     )
 
 

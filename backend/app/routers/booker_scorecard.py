@@ -482,6 +482,10 @@ def _threshold_stats(
       so the count and the ratio can never span two populations (§96)
     - ``cost_saving``          Σ (thresh − carrier_cost) where cost is UNDER it
     - ``under_threshold``      how many orders contributed to that sum
+    - ``threshold_variance_pct`` Σ carrier_cost / Σ thresh over the SAME
+      comparable population — the totals-row twin of the per-order column added
+      on 2026-09-15. A weighted ratio, never an average of ratios: the mean of
+      per-order percentages would let a $900 order outvote a $9,000 one (§96)
 
     Deliberately one function rather than two (§69): "broken" and "saving" are
     the two sides of the same comparison, and computing them apart would let
@@ -500,17 +504,22 @@ def _threshold_stats(
             "compliant_threshold": None,
             "cost_saving": None,
             "under_threshold": None,
+            "threshold_variance_pct": None,
         }
     broken = 0
     comparable = 0
     under = 0
     saving = 0.0
+    cost_total = 0.0
+    thresh_total = 0.0
     for r in rows:
         t = thresholds.get(r["order_id"])
         cc = _fl(r["carrier_cost"])
         if t is None or cc is None:
             continue
         comparable += 1
+        cost_total += cc
+        thresh_total += t
         if cc > t:
             broken += 1
         elif cc < t:
@@ -544,7 +553,65 @@ def _threshold_stats(
         "compliant_threshold": comparable - broken,
         "cost_saving": saving,
         "under_threshold": under,
+        # Bruno PDF 2026-09-15 R2 — the Totals cell under the new
+        # "Threshold Variance %" column. Σcost / Σthresh over the comparable
+        # orders ONLY, i.e. the very population `cost_saving` and
+        # `compliance_threshold_pct` run over, so the three cells in that
+        # corner of the table describe one set of orders (§96).
+        #
+        # ⚠ `thresh_total` cannot be 0 while `comparable > 0` in practice
+        # (AP_module constrains `thresh` to $100-$9,999) but the guard stays:
+        # a future row with thresh = 0 would otherwise 500 the whole endpoint.
+        "threshold_variance_pct": (cost_total / thresh_total) if thresh_total else None,
     }
+
+
+def _row_cost_saving(threshold: Optional[float], cost: Optional[float]) -> Optional[float]:
+    """Per-order leg of the Cost Saving KPI (Bruno PDF 2026-09-15 R1).
+
+    Returns the saving ONLY for an order that came in strictly UNDER its
+    threshold; ``None`` for a broken order, an order sitting exactly ON its
+    threshold, and an order with no threshold at all.
+
+    That asymmetry is the point, not an oversight: summed over EVERY matching
+    order this column reproduces `cost_saving` from `_threshold_stats` exactly,
+    so the column and the KPI card cannot disagree (§16/§69). ⚠ Over one PAGE
+    it sums to a fraction of the card, as any per-row leg of a full-universe
+    aggregate does (§44) — that is not a mismatch to "fix". Handing broken
+    orders a NEGATIVE saving would read as more information while quietly
+    making the column stop adding up to the card above it. Decision: Diego,
+    2026-09-15.
+
+    "Broken" is still visible on the row — the Threshold cell goes amber — so
+    nothing is hidden by the em-dash; it is carried by the column that already
+    owned that fact.
+    """
+    if threshold is None or cost is None or cost >= threshold:
+        return None
+    return threshold - cost
+
+
+def _row_threshold_variance(
+    threshold: Optional[float], cost: Optional[float]
+) -> Optional[float]:
+    """Carrier Cost / Threshold, as a FRACTION (Bruno PDF 2026-09-15 R2).
+
+    Bruno's formula verbatim. Note it is a RATIO, not a variance from a
+    baseline: 0.94 means the order came in at 94% of its threshold (good),
+    1.06 means 6% over (the same orders the Threshold cell already flags), and
+    exactly 1.0 is the on-threshold case that contributes to neither
+    `cost_saving` nor `broken_threshold`.
+
+    A fraction because `fmtPct` multiplies by 100 on the way out — handing it
+    an already-scaled value prints 100× wrong with no error (§95).
+
+    ``None`` when either side is missing, and when the threshold is 0: a
+    ZeroDivisionError here would 500 an endpoint that is otherwise degrading
+    gracefully through an AP outage.
+    """
+    if threshold is None or cost is None or threshold == 0:
+        return None
+    return cost / threshold
 
 
 def _resolve_adjustment(value: Optional[float]) -> float:
@@ -743,18 +810,85 @@ async def summary(
 # /orders — the detail table (Bruno Request 4)
 # --------------------------------------------------------------------------
 
-_ORDERS_SORT: dict[str, str] = {
-    "posted_desc": "posted_date DESC NULLS LAST",
-    "posted_asc": "posted_date ASC NULLS LAST",
-    "order_desc": "order_id DESC",
-    "order_asc": "order_id ASC",
-    "profit_desc": "profit DESC NULLS LAST",
-    "profit_asc": "profit ASC NULLS LAST",
-    "revenue_desc": "revenue DESC NULLS LAST",
-    "revenue_asc": "revenue ASC NULLS LAST",
-    "cost_desc": "carrier_cost DESC NULLS LAST",
-    "cost_asc": "carrier_cost ASC NULLS LAST",
+# Sort token -> (field on the emitted row, descending?).
+#
+# ⚠ These are PYTHON field names, not SQL fragments — and that is the whole
+# point of Bruno's PDF 2026-09-15 R3 ("enable sorting for all columns").
+# Three of the fourteen columns — Threshold, Cost Savings, Threshold
+# Variance % — come from `loads_to_cover` in a DIFFERENT DATABASE and are
+# merged in Python (see `_thresholds`), so they do not exist in the SQL result
+# at all and `ORDER BY` cannot reach them. Sorting them page-locally would
+# reorder 200 rows out of thousands while looking like it sorted everything.
+#
+# So the whole table now sorts in Python over the full-universe pass this
+# endpoint was ALREADY making for its Totals row, and pagination follows the
+# sort. That removes the second seq scan of the 1.9M-row
+# `mcleod_gld_order_post_hist` rather than adding anything: the endpoint went
+# from two scans to one. Measured ceiling on the in-memory set is 14,161 rows
+# (every TEAM-DFW rate-conf order in 2026); the window is hard-clamped to one
+# calendar year by `_clamp`, so it cannot grow without that constant moving.
+_ORDERS_SORT: dict[str, tuple[str, bool]] = {
+    "posted_desc": ("posted_date", True),
+    "posted_asc": ("posted_date", False),
+    "order_desc": ("order_id", True),
+    "order_asc": ("order_id", False),
+    "team_desc": ("team", True),
+    "team_asc": ("team", False),
+    "customer_desc": ("customer", True),
+    "customer_asc": ("customer", False),
+    "poster_desc": ("posted_by", True),
+    "poster_asc": ("posted_by", False),
+    "rc_desc": ("rc_count", True),
+    "rc_asc": ("rc_count", False),
+    "profit_desc": ("profit", True),
+    "profit_asc": ("profit", False),
+    "revenue_desc": ("revenue", True),
+    "revenue_asc": ("revenue", False),
+    "cost_desc": ("carrier_cost", True),
+    "cost_asc": ("carrier_cost", False),
+    "otp_desc": ("otp_on_time", True),
+    "otp_asc": ("otp_on_time", False),
+    "otd_desc": ("otd_on_time", True),
+    "otd_asc": ("otd_on_time", False),
+    "threshold_desc": ("threshold", True),
+    "threshold_asc": ("threshold", False),
+    "saving_desc": ("cost_saving", True),
+    "saving_asc": ("cost_saving", False),
+    "variance_desc": ("threshold_variance_pct", True),
+    "variance_asc": ("threshold_variance_pct", False),
 }
+
+
+def _sort_orders(rows: list[dict], sort: str) -> list[dict]:
+    """Order the full universe by one column, NULLS LAST in BOTH directions.
+
+    ⚠ The nulls-last part is not decoration. The Rank tab shipped a
+    ``?? POSITIVE_INFINITY`` sentinel whose own comment claimed it sorted nulls
+    last both ways; it sorts them last ASCENDING and FIRST descending. Harmless
+    while that column read "Broken Threshold", and actively wrong the day it was
+    renamed to "Compliance Threshold" — every booker with no threshold coverage
+    would have led a table headed "most compliant". Only ~61% of DFW bookings
+    carry a threshold, so three of this table's columns are null on roughly two
+    rows in five: a sentinel here would put the least-informative rows on top of
+    the default descending view of each of them.
+
+    Partitioning instead of sentinel-substituting also keeps the comparison
+    type-clean — no float sentinel ever meets a date string or a bool.
+
+    Ties break on ``order_id`` DESC, applied FIRST and relied on through
+    Python's stable sort, exactly as the old SQL `ORDER BY {col}, order_id DESC`
+    did — so a page boundary cannot shuffle between two requests that sort on a
+    column with many equal values (every OTP/OTD sort is exactly that case: two
+    distinct values across thousands of rows).
+    """
+    field, desc = _ORDERS_SORT[sort]
+    present = [r for r in rows if r.get(field) is not None]
+    missing = [r for r in rows if r.get(field) is None]
+    for bucket in (present, missing):
+        bucket.sort(key=lambda r: r["order_id"], reverse=True)
+    present.sort(key=lambda r: r[field], reverse=desc)
+    present.extend(missing)
+    return present
 
 
 @router.get("/orders")
@@ -777,6 +911,10 @@ async def orders(
     ⚠ ``totals`` is a **server-side aggregate over every matching order**, not a
     client-side reduce of the current page (§44) — a Totals row that only sums
     what you can see is a lie the moment the table paginates.
+
+    Since 2026-09-15 this runs ONE scan, not two: the full-universe pass the
+    Totals row already required now carries the display columns too, and the
+    page is a slice of it. See `_ORDERS_SORT` for why sorting had to leave SQL.
     """
     pool = get_datalake_gold_pool(request)
     s, e = _resolve_range(range, start_date, end_date)
@@ -784,12 +922,17 @@ async def orders(
     contracts = _parse_multi(contract_type)
     customers = _parse_multi(customer_name)
     posters = _parse_multi(posted_by)
-    # Sorting stays in SQL even under a scenario: the adjustment is the SAME
-    # constant on every order, and a constant shift is monotonic, so ordering by
-    # the unadjusted profit / carrier_cost is identical to ordering by the
-    # adjusted ones. Revenue is invariant. Re-sorting in Python would only be
-    # able to sort the current page — i.e. wrongly.
-    order_by = _ORDERS_SORT.get(sort, _ORDERS_SORT["posted_desc"])
+    # ⚠ An unknown key is a 400, NOT a silent fall back to `posted_desc`.
+    # The old `.get(sort, default)` meant a sort token that existed on only one
+    # side of the wire still rendered a plausible table — the frontend would
+    # paint its ▼ arrow on a column the server never sorted by, and nothing
+    # anywhere would fail. `test_orders_sort_whitelist_matches_frontend` pins
+    # the two lists together; this turns a drift into a visible error.
+    if sort not in _ORDERS_SORT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort must be one of: {', '.join(sorted(_ORDERS_SORT))}",
+        )
 
     params: list = []
     cte = _base_sql(
@@ -801,52 +944,30 @@ async def orders(
         posted_by=posters,
     )
 
-    offset = (page - 1) * limit
-    params.append(limit)
-    p_limit = len(params)
-    params.append(offset)
-    p_offset = len(params)
-
-    rows = await pool.fetch(
+    # ONE scan, carrying every column the table renders. The ORDER BY / LIMIT /
+    # OFFSET that used to live here are gone: the sort now spans columns this
+    # query cannot see (see `_ORDERS_SORT`), so slicing before the sort would
+    # paginate the wrong rows.
+    all_rows = await pool.fetch(
         f"""
         WITH {cte}
         SELECT order_id, team, customer, posted_by, posted_date,
                revenue, carrier_cost, profit, otp_on_time, otd_on_time,
                contract_type, rc_count
         FROM base
-        ORDER BY {order_by}, order_id DESC
-        LIMIT ${p_limit} OFFSET ${p_offset}
         """,
         *params,
     )
 
-    # Full-universe pass — ONE scan serving both the Totals row and the
-    # cross-database threshold merge (see /summary for why extra scans are
-    # expensive here). `params[:-2]` drops LIMIT/OFFSET: they are appended
-    # strictly after the CTE's params, so the slice is an exact prefix whose
-    # length equals the highest placeholder the CTE text references.
-    agg_params = params[:-2]
-    all_rows = await pool.fetch(
-        f"""
-        WITH {cte}
-        SELECT order_id, carrier_cost, profit, revenue, otp_on_time, otd_on_time,
-               rc_count
-        FROM base
-        """,
-        *agg_params,
-    )
-
-    # Same helper, same order, on BOTH row sets — the page the user reads and
-    # the full universe the Totals row sums. Applying it to only one of them is
-    # exactly how a totals row starts contradicting the rows above it (§16).
-    rows = _apply_scenario(rows, adj)
+    # Applied ONCE, to the single row set the page and the Totals row are both
+    # derived from — so a totals row contradicting the rows above it is now
+    # structurally impossible rather than merely tested for (§16).
     all_rows = _apply_scenario(all_rows, adj)
 
     total = len(all_rows)
     thresholds = await _thresholds(request, [r["order_id"] for r in all_rows])
-    stats = _threshold_stats(all_rows, thresholds)
 
-    out_rows = [
+    enriched = [
         {
             "order_id": r["order_id"],
             "team": r["team"],
@@ -866,17 +987,38 @@ async def orders(
             # threshold typed — both render as an em-dash.
             "threshold": None if thresholds is None else thresholds.get(r["order_id"]),
         }
-        for r in rows
+        for r in all_rows
     ]
+    # Bruno PDF 2026-09-15 R1/R2. Derived from the row's OWN threshold and
+    # carrier cost — the same two numbers the Threshold cell already shows —
+    # so the three threshold columns on a row cannot tell three stories. Under
+    # a scenario `carrier_cost` is the ADJUSTED one, which is the whole reason
+    # they are computed here and not in SQL.
+    for row in enriched:
+        row["cost_saving"] = _row_cost_saving(row["threshold"], row["carrier_cost"])
+        row["threshold_variance_pct"] = _row_threshold_variance(
+            row["threshold"], row["carrier_cost"]
+        )
 
-    # Folded in Python from the single full-universe pass above. `_fl(...) or 0`
-    # keeps a NaN `numeric` (Postgres allows 'NaN') from poisoning the sum and
-    # turning a division into a TypeError → 500.
-    revenue = sum(_fl(r["revenue"]) or 0.0 for r in all_rows)
-    profit = sum(_fl(r["profit"]) or 0.0 for r in all_rows)
-    carrier_cost = sum(_fl(r["carrier_cost"]) or 0.0 for r in all_rows)
-    otp_on_time = sum(1 for r in all_rows if r["otp_on_time"])
-    otd_on_time = sum(1 for r in all_rows if r["otd_on_time"])
+    stats = _threshold_stats(enriched, thresholds)
+
+    # ⚠ `max(0, ...)`: FastAPI enforces `ge=1` on the wire, but this endpoint is
+    # also called directly (shims, tests), and a NEGATIVE offset does not raise
+    # here the way `OFFSET -1` would in Postgres — `rows[-200:0]` is simply
+    # EMPTY. That reads as "no orders match", not as a bad page number.
+    offset = max(0, (page - 1) * limit)
+    out_rows = _sort_orders(enriched, sort)[offset : offset + limit]
+
+    # Folded from `enriched` — the SAME list the page is sliced out of and the
+    # same one `_threshold_stats` ran over, so every number in the Totals row
+    # spans one population (§96). `or 0.0` keeps a NaN `numeric` (Postgres
+    # allows 'NaN', `_fl` maps it to None) from poisoning the sum and turning a
+    # division into a TypeError → 500.
+    revenue = sum(r["revenue"] or 0.0 for r in enriched)
+    profit = sum(r["profit"] or 0.0 for r in enriched)
+    carrier_cost = sum(r["carrier_cost"] or 0.0 for r in enriched)
+    otp_on_time = sum(1 for r in enriched if r["otp_on_time"])
+    otd_on_time = sum(1 for r in enriched if r["otd_on_time"])
 
     return {
         "success": True,
@@ -891,7 +1033,7 @@ async def orders(
                 "otp_pct": (otp_on_time / total) if total else None,
                 "otd_pct": (otd_on_time / total) if total else None,
                 # Same helper, same full-universe rows as /summary (§69).
-                "recoveries": _recoveries(all_rows),
+                "recoveries": _recoveries(enriched),
                 **stats,
             },
             "adjustment": adj,
