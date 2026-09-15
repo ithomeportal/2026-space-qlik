@@ -422,13 +422,20 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
         # SPEC-CODE-RULES §40 (a direct Python call never applies Query()
         # defaults; an omitted param would arrive as FieldInfo and 500).
         page: int = Query(1, ge=1),
+        # Bruno PDF 2026-09-15 — same rule, same reason: omit either of these
+        # from the call below and the parent receives a raw `FieldInfo`, which
+        # is not a key in `_ALL_ORDERS_SORT` and turns every per-team All
+        # Orders request into a 400.
+        sort: str = Query("departure_desc"),
+        include_zero_charge: bool = Query(False),
         _user: dict = Depends(gate),
     ):
         return await xray_dfw.all_orders(
             request=request, range=range, start_date=start_date, end_date=end_date,
             sub_teams=tm, customers=customers, lanes=lanes, view=view,
             contract_type=contract_type, equipment=equipment, limit=limit,
-            page=page, _user=_user,
+            page=page, sort=sort, include_zero_charge=include_zero_charge,
+            _user=_user,
         )
 
     @r.get("/lane-analysis")

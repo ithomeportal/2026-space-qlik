@@ -1,7 +1,6 @@
 "use client"
 
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Loader2 } from "lucide-react"
 import {
   Bar,
   CartesianGrid,
@@ -17,13 +16,15 @@ import {
   fmtCount,
   fmtPct,
   fmtUsd,
-  useXrayDfwAllOrders,
   useXrayDfwContractSpot,
   useXrayDfwContractSpotKpis,
   useXrayDfwLaneAnalysis,
   type XrayDfwFilters,
 } from "@/lib/xray-dfw-api"
+import { useState } from "react"
 import { useSortable, SortableTh } from "@/components/SortableTable"
+import { AllOrdersTable } from "./AllOrdersTable"
+import { ClickName } from "./ClickName"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 
 interface Props {
@@ -45,37 +46,26 @@ export function ContractSpot({
   onCustomerClick,
   onLaneClick,
 }: Props) {
+  // The All Orders table owns its own query now, so it reports its error up
+  // here rather than the banner reading a hook this component no longer holds.
+  // `setOrdErr` is a setState — a stable identity, so the child's effect does
+  // not re-fire on every render the way an inline arrow would.
+  const [ordErr, setOrdErr] = useState<unknown>(null)
+
   const trioFilter = {
     subTeams: filters.subTeams,
     customers: filters.customers,
     lanes: filters.lanes,
     view: filters.view,
   }
-  // Bruno 2026-06-03: All Orders is server-paginated, 500/page. Reset to
-  // page 1 whenever the filter scope changes.
-  const [page, setPage] = useState(1)
-  const filterKey = JSON.stringify(filters)
-  useEffect(() => {
-    setPage(1)
-  }, [filterKey])
-
   const { data: csRes, isLoading: loadingCs, error: csErr } = useXrayDfwContractSpot(trioFilter)
   const { data: kpiRes, isLoading: loadingKpi, error: kpiErr } = useXrayDfwContractSpotKpis(filters)
-  const { data: ordersRes, isLoading: loadingOrd, error: ordErr } = useXrayDfwAllOrders(filters, page)
   const { data: laRes, isLoading: loadingLa, error: laErr } = useXrayDfwLaneAnalysis(filters)
   const cs = csRes?.data
   const kpi = kpiRes?.data
-  const ordersPage = ordersRes?.data
-  const orders = ordersPage?.rows ?? []
-  const ordersTotals = ordersPage?.totals
   const lanes = laRes?.data?.rows ?? []
   const laneTotals = laRes?.data?.totals
 
-  const totalOrders = ordersPage?.total ?? 0
-  const pageSize = ordersPage?.page_size ?? 500
-  const pageCount = Math.max(1, Math.ceil(totalOrders / pageSize))
-
-  const orderSort = useSortable(orders)
   const laneSort = useSortable(lanes)
 
   return (
@@ -160,110 +150,16 @@ export function ContractSpot({
         </ChartCard>
       </div>
 
-      <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E7EB] bg-[#FEF3C7] px-3 py-2 text-sm font-semibold text-[#111827]">
-          <div>
-            All Orders
-            <span className="ml-2 text-xs font-normal text-[#6B7280]">
-              {fmtCount(totalOrders)} orders · 500 per page · most recent departure first
-            </span>
-          </div>
-          {/* Bruno 2026-06-03: server pagination, 500/page. */}
-          <div className="flex items-center gap-2 text-xs font-normal text-[#374151]">
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="inline-flex items-center rounded border border-[#E5E7EB] bg-white px-2 py-1 disabled:opacity-40"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" /> Prev
-            </button>
-            <span>
-              Page {page} of {fmtCount(pageCount)}
-            </span>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-              disabled={page >= pageCount}
-              className="inline-flex items-center rounded border border-[#E5E7EB] bg-white px-2 py-1 disabled:opacity-40"
-            >
-              Next <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-        {loadingOrd ? (
-          <Spin />
-        ) : (
-          <div className="max-h-[500px] overflow-auto">
-            <table className="w-full text-xs tabular-nums">
-              <thead className="sticky top-0 bg-[#FEF3C7] text-[#6B7280]">
-                <tr>
-                  <SortableTh label="Team" columnKey="team" state={orderSort} />
-                  <SortableTh label="Order" columnKey="id" state={orderSort} />
-                  <SortableTh label={entityLabel} columnKey="customer" state={orderSort} />
-                  <SortableTh label="Carrier" columnKey="carrier" state={orderSort} />
-                  <SortableTh label="Origin" columnKey="origin" state={orderSort} />
-                  <SortableTh label="Destination" columnKey="destination" state={orderSort} />
-                  <SortableTh label="Departure" columnKey="departure" state={orderSort} />
-                  <SortableTh label="$ Revenue" columnKey="revenue" state={orderSort} align="right" />
-                  <SortableTh label="$ Profit" columnKey="profit" state={orderSort} align="right" />
-                  <SortableTh label="Margin %" columnKey="margin_pct" state={orderSort} align="right" />
-                  <SortableTh label="Contract / Spot" columnKey="contract_type" state={orderSort} />
-                  <SortableTh label="Equip" columnKey="equipment_group" state={orderSort} />
-                </tr>
-              </thead>
-              <tbody>
-                {/* Bruno 2026-06-03: universe Totals row (all pages, not just
-                    the visible one). */}
-                {ordersTotals && (
-                  <tr className="sticky top-[29px] z-10 bg-[#FDE68A] font-semibold">
-                    <td className="px-3 py-1.5" colSpan={7}>
-                      Totals ({fmtCount(ordersTotals.loads)} orders)
-                    </td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.revenue)}</td>
-                    <td className={`px-3 py-1.5 text-right ${ordersTotals.profit < 0 ? "text-[#DC2626]" : ""}`}>
-                      {fmtUsd(ordersTotals.profit)}
-                    </td>
-                    <td className={`px-3 py-1.5 text-right ${ordersTotals.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
-                      {fmtPct(ordersTotals.margin_pct)}
-                    </td>
-                    <td className="px-3 py-1.5" />
-                    <td className="px-3 py-1.5" />
-                  </tr>
-                )}
-                {orderSort.sorted.map((r) => (
-                  <tr key={r.id} className="border-t border-[#F3F4F6] hover:bg-[#FEFCE8]">
-                    <td className="px-3 py-1.5">{r.team}</td>
-                    <td className="px-3 py-1.5">{r.id}</td>
-                    <td className="px-3 py-1.5">
-                      <ClickName value={r.customer} onClick={onCustomerClick} />
-                    </td>
-                    <td className="px-3 py-1.5">{r.carrier}</td>
-                    <td className="px-3 py-1.5">{r.origin}</td>
-                    <td className="px-3 py-1.5">
-                      <ClickName
-                        value={`${r.origin} - ${r.destination}`}
-                        display={r.destination}
-                        onClick={onLaneClick}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">{r.departure ? r.departure.substring(0, 16).replace("T", " ") : "—"}</td>
-                    <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
-                    <td className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}>
-                      {fmtUsd(r.profit)}
-                    </td>
-                    <td className={`px-3 py-1.5 text-right ${r.margin_pct < 0 ? "text-[#DC2626]" : ""}`}>
-                      {fmtPct(r.margin_pct)}
-                    </td>
-                    <td className="px-3 py-1.5">{r.contract_type}</td>
-                    <td className="px-3 py-1.5">{r.equipment_group}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      {/* Bruno PDF 2026-09-15 R2 — extracted so the GM tab can render the
+          same table. Defaults here reproduce this tab exactly: departure
+          order, no BOL/PO, `total_charge <> 0` still applied. */}
+      <AllOrdersTable
+        filters={filters}
+        entityLabel={entityLabel}
+        onCustomerClick={onCustomerClick}
+        onLaneClick={onLaneClick}
+        onError={setOrdErr}
+      />
 
       <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
         <div className="border-b border-[#E5E7EB] bg-[#EDE9FE] px-3 py-2 text-sm font-semibold text-[#111827]">
@@ -395,29 +291,6 @@ function CsKpi({
         {loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : value}
       </div>
     </div>
-  )
-}
-
-function ClickName({
-  value,
-  display,
-  onClick,
-}: {
-  value: string
-  display?: string
-  onClick?: (v: string) => void
-}) {
-  const text = display ?? value
-  if (!onClick) return <>{text}</>
-  return (
-    <button
-      type="button"
-      onClick={() => onClick(value)}
-      className="text-left hover:text-[#1B3A5C] hover:underline"
-      title="Filter by this value"
-    >
-      {text}
-    </button>
   )
 }
 

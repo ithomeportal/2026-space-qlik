@@ -17,11 +17,19 @@ import { Teams } from "@/app/reports/xray-dfw-mng/tabs/Teams"
 import { Trends } from "@/app/reports/xray-dfw-mng/tabs/Trends"
 import { Risk } from "@/app/reports/xray-dfw-mng/tabs/Risk"
 import { ContractSpot } from "@/app/reports/xray-dfw-mng/tabs/ContractSpot"
+import { Gm } from "@/app/reports/xray-dfw-mng/tabs/Gm"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
-type TabKey = "overview" | "customers" | "teams" | "trends" | "risk" | "contract-spot"
+type TabKey =
+  | "overview"
+  | "customers"
+  | "teams"
+  | "trends"
+  | "risk"
+  | "contract-spot"
+  | "gm"
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
@@ -30,7 +38,18 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "trends", label: "Trends" },
   { key: "risk", label: "Risk" },
   { key: "contract-spot", label: "Contract vs Spot" },
+  { key: "gm", label: "GM" },
 ]
+
+/**
+ * Tabs the four per-team reports (xray-dfw-tm1..tm4) do NOT get.
+ *
+ * ⚠ This component backs FIVE routes. GM (Bruno PDF 2026-09-15) was asked for
+ * on `/reports/xray-dfw-mng` only, and a per-team copy would silently
+ * intersect one customer with one sub-team — a near-empty table under a tab
+ * named after a customer, which reads as GM having stopped shipping.
+ */
+const DIVISION_ONLY_TABS: ReadonlySet<TabKey> = new Set<TabKey>(["gm"])
 
 const ALL_SUB_TEAMS = ["TM1", "TM2", "TM3", "TM4"]
 
@@ -155,6 +174,10 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
     if (!lane) return
     setLanes((prev) => (prev.includes(lane) ? prev : [...prev, lane]))
   }, [])
+
+  const visibleTabs = lockedTeam
+    ? TABS.filter((t) => !DIVISION_ONLY_TABS.has(t.key))
+    : TABS
 
   const teamSummary = lockedTeam
     ? lockedTeam
@@ -332,7 +355,7 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
         </div>
 
         <div className="mx-auto flex w-full max-w-[1920px] gap-1 overflow-x-auto border-t border-[#E5E7EB] px-6">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
@@ -367,6 +390,10 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
             onCustomerClick={onCustomerClick}
             onLaneClick={onLaneClick}
           />
+        )}
+          {/* Bruno PDF 2026-09-15 — division report only; see DIVISION_ONLY_TABS. */}
+        {activeTab === "gm" && !lockedTeam && (
+          <Gm filters={filters} onLaneClick={onLaneClick} />
         )}
         {activeTab === "contract-spot" && (
           <ContractSpot

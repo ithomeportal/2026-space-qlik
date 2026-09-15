@@ -337,6 +337,8 @@ export interface XrayDfwContractSpotKpis {
 export interface XrayDfwAllOrder {
   team: string
   id: string
+  /** ⚠ `id` alone is not unique in v4 — key rows on `id`+`company_id`. */
+  company_id: string
   customer: string
   carrier: string
   origin: string
@@ -347,6 +349,14 @@ export interface XrayDfwAllOrder {
   margin_pct: number
   contract_type: string
   equipment_group: string
+  /**
+   * Bruno PDF 2026-09-15 R4 — from `mcleod_gld_customer_view`, joined on BOTH
+   * `id` and `company_id` (that pair is its PRIMARY KEY, so no fan-out).
+   * null when McLeod has none: the server NULLIFs the empty string McLeod
+   * actually writes, so the cell renders an em-dash rather than a silent gap.
+   */
+  bol: string | null
+  po: string | null
 }
 
 export interface XrayDfwLaneAnalysisRow {
@@ -369,6 +379,14 @@ export interface XrayDfwLaneAnalysisRow {
 // Contract-vs-Spot tables carry full-universe Totals rows.
 export interface XrayDfwAllOrdersTotals {
   loads: number
+  /**
+   * Orders with `total_charge = 0` — real moving loads whose revenue has not
+   * been billed yet, so `margin_amt = −carrier_pay` on each. Always 0 unless
+   * the caller passed `includeZeroCharge`. The GM tab prints it beside the
+   * order count so the profit those rows drag down reads as a billing lag
+   * rather than a loss.
+   */
+  unbilled: number
   revenue: number
   profit: number
   margin_pct: number
@@ -622,16 +640,51 @@ export function useXrayDfwContractSpotKpis(f: XrayDfwFilters, enabled = true) {
 
 // Server-paginated (Bruno 2026-06-03, 500/page). `placeholderData` keeps the
 // previous page visible while the next one loads (no spinner flash).
-export function useXrayDfwAllOrders(f: XrayDfwFilters, page = 1, enabled = true) {
+/**
+ * Server-side default order (Bruno PDF 2026-09-15 R5). ⚠ These tokens are a
+ * contract with `_ALL_ORDERS_SORT` in `backend/app/routers/xray_dfw.py`; an
+ * unknown one is a 400, not a silent fallback.
+ */
+export type XrayDfwAllOrdersSort =
+  | "departure_desc" | "departure_asc"
+  | "order_desc" | "order_asc"
+  | "revenue_desc" | "revenue_asc"
+  | "profit_desc" | "profit_asc"
+
+export interface XrayDfwAllOrdersOpts {
+  /** Server-side ORDER BY. Default `departure_desc` = today's behaviour. */
+  sort?: XrayDfwAllOrdersSort
+  /**
+   * Drop the `total_charge <> 0` filter (Bruno PDF 2026-09-15 R3, GM tab).
+   * ⚠ Not cosmetic — it admits unbilled loads whose margin is pure negative
+   * carrier pay. Measured for GM on 2026-09-15: MTD 89 → 147 orders, Totals
+   * profit $192,837 → $56,462. Defaults false so every other tab is unmoved.
+   */
+  includeZeroCharge?: boolean
+}
+
+export function useXrayDfwAllOrders(
+  f: XrayDfwFilters,
+  page = 1,
+  enabled = true,
+  opts: XrayDfwAllOrdersOpts = {},
+) {
   const prefix = useApiPrefix()
+  const { sort = "departure_desc", includeZeroCharge = false } = opts
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
-    queryKey: [prefix, "all-orders", f, page],
+    // ⚠ Both options belong in the key: they change the response, and a key
+    // that does not cover every query-string input serves another tab's
+    // cached rows under this tab's heading.
+    queryKey: [prefix, "all-orders", f, page, sort, includeZeroCharge],
     queryFn: () => {
       const qs = dfwQs(f)
       const sep = qs ? "&" : "?"
-      return apiFetch<XrayDfwAllOrdersPage>(`${prefix}/all-orders${qs}${sep}page=${page}`)
+      const extra = `page=${page}&sort=${sort}${
+        includeZeroCharge ? "&include_zero_charge=true" : ""
+      }`
+      return apiFetch<XrayDfwAllOrdersPage>(`${prefix}/all-orders${qs}${sep}${extra}`)
     },
     placeholderData: (prev) => prev,
   })

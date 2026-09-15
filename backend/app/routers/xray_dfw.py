@@ -26,7 +26,7 @@ import asyncio
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
@@ -1915,6 +1915,45 @@ async def contract_spot_kpis(
     }
 
 
+# Sort token -> ORDER BY fragment for /all-orders (Bruno PDF 2026-09-15 R5).
+#
+# ⚠ Server-side, because the table paginates at 500/page: the client-side
+# `useSortable` in the tab can only reorder the rows already on screen, which is
+# fine as an in-page convenience but cannot express a DEFAULT order over a
+# 4,111-row universe.
+#
+# `cv.po` is varchar(40) holding digit strings ("54966448") and occasionally a
+# composite ("54930622 / 54931827"), so DESC is a lexical sort — which is what
+# "PO DESC" means on this data. `br4.id` is zero-padded varchar(8), so its
+# lexical DESC is also its numeric DESC.
+#
+# 🔴 EVERY fragment ends with `br4.company_id DESC`, and that leg is not
+# decoration — it is what makes the order TOTAL.
+#
+# `br4.id` alone is NOT unique: measured 2026-09-15 on live gold, v4 holds
+# 281,951 rows over only 247,882 distinct ids. `(id, company_id)` IS unique
+# (281,951 = 281,951), so appending company_id leaves no tie anywhere.
+#
+# ⚠ Why it matters here and not before: this table paginates with
+# LIMIT/OFFSET over 9 pages of GM orders. Postgres does not promise a stable
+# order for rows that tie, so an unbroken tie at a page boundary can show one
+# row on two pages and drop another entirely — silently, and differently on
+# each request. `departure_*` is the worse case in practice: duplicate
+# `origin_actual_departure` timestamps are far more common than duplicate order
+# ids. That tie was pre-existing; it is fixed here because it is one line.
+_ALL_ORDERS_SORT: dict[str, str] = {
+    "departure_desc": "br4.origin_actual_departure DESC NULLS LAST, br4.id DESC, br4.company_id DESC",
+    "departure_asc": "br4.origin_actual_departure ASC NULLS LAST, br4.id DESC, br4.company_id DESC",
+    # Bruno PDF 2026-09-15 R5, the GM default: Order DESC, then PO DESC.
+    "order_desc": "br4.id DESC, cv.po DESC NULLS LAST, br4.company_id DESC",
+    "order_asc": "br4.id ASC, cv.po DESC NULLS LAST, br4.company_id DESC",
+    "revenue_desc": "br4.total_charge DESC NULLS LAST, br4.id DESC, br4.company_id DESC",
+    "revenue_asc": "br4.total_charge ASC NULLS LAST, br4.id DESC, br4.company_id DESC",
+    "profit_desc": "br4.margin_amt DESC NULLS LAST, br4.id DESC, br4.company_id DESC",
+    "profit_asc": "br4.margin_amt ASC NULLS LAST, br4.id DESC, br4.company_id DESC",
+}
+
+
 @router.get("/all-orders")
 async def all_orders(
     request: Request,
@@ -1929,6 +1968,8 @@ async def all_orders(
     view: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     page: int = Query(1, ge=1),
+    sort: str = Query("departure_desc"),
+    include_zero_charge: bool = Query(False),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     """All Orders — server-paginated (Bruno 2026-06-03: 500/page).
@@ -1939,8 +1980,51 @@ async def all_orders(
     together they blew past the pool command_timeout. Now: LATERAL carrier
     seek per returned row + sargable half-open date bounds + LIMIT/OFFSET,
     plus a separate aggregate for the universe Totals row + total count.
+
+    **Bruno PDF 2026-09-15 (XRAY DFW Updates)** added the GM tab, which reads
+    this same endpoint with `customers=GM C/O CTSI`, `include_zero_charge=true`
+    and `sort=order_desc`. Two notes on those two parameters:
+
+    * ``include_zero_charge`` defaults to **False**, so Contract vs Spot and
+      the four per-team sibling reports keep the exact population they had.
+      It is a display filter, not a scope: a wrong value widens or narrows one
+      tab's row list, it does not serve another division's report (§100).
+    * ⚠ Turning it on is **not cosmetic**. The zero-or-NULL-charge rows are real
+      moving loads whose revenue has not been billed yet — status P, a real
+      departure, real carrier pay — so `margin_amt = −carrier_pay` on each.
+      Measured for GM on 2026-09-15: MTD goes 89 → 147 orders and the Totals
+      profit goes $192,837 → $56,462. That drop is a BILLING-LAG artifact, not
+      a loss, which is why `totals.unbilled` rides along and the tab prints it
+      beside the order count. Do not propagate this flag to a *profit* report
+      without a written request — §39 still governs those.
+
+    BOL / PO come from ``mcleod_gld_customer_view``, joined on BOTH ``id`` and
+    ``company_id``. ⚠ That pair is the table's PRIMARY KEY, so the LEFT JOIN
+    cannot fan out. `hd_spot.py` warns this join inflates money ~2.5% — it
+    joins on ``id`` ALONE, i.e. one column of a two-column key. Verified
+    2026-09-15 on live gold: 4,111 GM orders in scope → 4,111 joined rows.
     """
     pool = get_datalake_gold_pool(request)
+    # ⚠ A 400, not a fallback to the default. A sort token that exists on only
+    # one side of the wire would otherwise render a plausible table ordered by
+    # something else entirely, and nothing would fail (§55).
+    if sort not in _ALL_ORDERS_SORT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort must be one of: {', '.join(sorted(_ALL_ORDERS_SORT))}",
+        )
+    order_by = _ALL_ORDERS_SORT[sort]
+    # Applied to the rows query AND the totals query, or the Totals row would
+    # count a different population from the rows above it (§16/§96).
+    # ⚠ COALESCE, not a bare `<> 0`. `total_charge <> 0` is NULL for a NULL
+    # charge and Postgres drops the row — so the old filter excluded NULLs as
+    # well as zeros, and dropping it admits BOTH. The `unbilled` counter below
+    # must therefore count both too, or a NULL-charge row joins the population,
+    # drags `margin_amt` into Totals profit, and is NOT named in the "N
+    # unbilled" caption that exists to explain exactly that. Measured
+    # 2026-09-15: 0 NULL-charge rows in DFW 2026, so this is a guard against a
+    # future row, not a live fix — which is why it must be written down.
+    charge_filter = "" if include_zero_charge else "AND COALESCE(br4.total_charge, 0) <> 0"
     s, e = _resolve_range(range, start_date, end_date)
     sub_team_list = _parse_csv(sub_teams, DFW_SUB_TEAMS)
     customers_list = _parse_list(customers)
@@ -1964,6 +2048,11 @@ async def all_orders(
         SELECT
           TRIM(br4.team) AS team,
           br4.id,
+          -- On the wire so the client can key a row uniquely: `id` alone is
+          -- NOT unique in v4 (281,951 rows / 247,882 distinct ids), and React
+          -- mis-reconciles duplicate keys — on a tab whose whole point is
+          -- showing EVERY order. `(id, company_id)` is unique.
+          TRIM(br4.company_id) AS company_id,
           {_entity_expr("br4", view)} AS customer,
           COALESCE(mov.payee_name, '—') AS carrier,
           TRIM(br4.origin_name) AS origin,
@@ -1973,7 +2062,14 @@ async def all_orders(
           br4.margin_amt   AS profit,
           CASE WHEN br4.total_charge > 0 THEN br4.margin_amt/br4.total_charge*100 ELSE 0 END AS margin_pct,
           COALESCE(TRIM(br4.contract_type_descr), '')   AS contract_type,
-          COALESCE(TRIM(br4.equipment_group_descr), '') AS equipment_group
+          COALESCE(TRIM(br4.equipment_group_descr), '') AS equipment_group,
+          -- Bruno PDF 2026-09-15 R4. NULLIF because McLeod writes an EMPTY
+          -- STRING, not NULL, when a load carries no BOL/PO (202 blank blnum
+          -- and 1,536 blank po across GM's 34,868 orders) -- `IS NULL` would
+          -- read 0 of them and the cell would render '' as a silent gap
+          -- instead of an em-dash.
+          NULLIF(TRIM(COALESCE(cv.blnum, '')), '') AS bol,
+          NULLIF(TRIM(COALESCE(cv.po, '')), '')    AS po
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
             SELECT m.payee_name
@@ -1982,9 +2078,15 @@ async def all_orders(
             ORDER BY m.movement_id ASC
             LIMIT 1
         ) mov ON TRUE
+        -- BOTH key columns: (id, company_id) is this table's PRIMARY KEY, so
+        -- the join is an index probe that CANNOT fan out. Joining on `id`
+        -- alone -- one column of a two-column key -- is what inflates money
+        -- ~2.5% in hd_spot.
+        LEFT JOIN public.mcleod_gld_customer_view cv
+               ON cv.id = br4.id AND cv.company_id = br4.company_id
         WHERE {where} AND {date_frag}
-          AND br4.total_charge <> 0
-        ORDER BY br4.origin_actual_departure DESC NULLS LAST
+          {charge_filter}
+        ORDER BY {order_by}
         LIMIT ${len(params)-1} OFFSET ${len(params)}
         """,
         *params,
@@ -2006,10 +2108,14 @@ async def all_orders(
         SELECT
           COUNT(*) AS total,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit
+          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
+          -- The rows `total_charge <> 0` used to hide. Published so the tab can
+          -- SAY "147 orders - 58 unbilled" rather than let a billing-lag
+          -- artifact read as a collapse in profit.
+          COUNT(*) FILTER (WHERE COALESCE(br4.total_charge, 0) = 0) AS unbilled
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {tot_where} AND {tot_date}
-          AND br4.total_charge <> 0
+          {charge_filter}
         """,
         *tot_params,
     )
@@ -2034,6 +2140,9 @@ async def all_orders(
             "page_size": limit,
             "totals": {
                 "loads": int(tot["total"] or 0),
+                # Always 0 while `include_zero_charge` is false -- the WHERE
+                # removed those rows before the FILTER could count them.
+                "unbilled": int(tot["unbilled"] or 0),
                 "revenue": tot_revenue,
                 "profit": tot_profit,
                 "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
