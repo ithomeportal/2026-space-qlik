@@ -646,7 +646,8 @@ def _base_cte(params: list, start: date, end: date, f: dict) -> str:
       -- either way, and only the lower bound was ever wrong. The window is
       -- therefore too WIDE at the start and never short at the end — the error
       -- can only over-count, which is why it reads as plausible. The same
-      -- idiom is live in /BOT/quoting `spot-desk/sql.ts pushReportDay()`.
+      -- same idiom was live in /BOT/quoting `spot-desk/sql.ts pushReportDay()`
+      -- and in this repo's own hd_spot.py; both were fixed 2026-09-21.
       WHERE price_date >= ({lo}::date::timestamp AT TIME ZONE 'America/Chicago')
         AND price_date <  (({hi}::date + 1)::timestamp AT TIME ZONE 'America/Chicago')
         AND (source IS NULL OR source <> ALL({frozen}::text[])){extra}

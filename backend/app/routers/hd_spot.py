@@ -73,12 +73,28 @@ agree; both are footnoted in the UI)
 
 Other rules this file obeys
 ---------------------------
-* Date bounds are bound as ``price_date >= ($n::date AT TIME ZONE 'America/
-  Chicago')``, i.e. the conversion is applied to the **parameter**, never the
-  column. ``(price_date AT TIME ZONE ...)::date >= x`` — what the email does —
-  is a function on the indexed column and forces a seq scan: measured
-  36.7 ms vs **2.5 ms** on the same window (§43/§49). It is also DST-correct,
-  unlike a fixed -6h offset.
+* Date bounds are bound as ``price_date >= ($n::date::timestamp AT TIME ZONE
+  'America/Chicago')``, i.e. the conversion is applied to the **parameter**,
+  never the column. ``(price_date AT TIME ZONE ...)::date >= x`` — what the
+  email does — is a function on the indexed column and forces a seq scan:
+  measured 36.7 ms vs **2.5 ms** on the same window (§43/§49). It is also
+  DST-correct, unlike a fixed -6h offset.
+
+  🔴 **The ``::timestamp`` step was missing until 2026-09-21 and this report ran
+  high for its whole life.** Without it the expression is midnight *UTC*
+  rendered in Chicago — type ``timestamp WITHOUT time zone`` — which compares
+  back as GMT, so every window opened **10 hours early**. Measured on the day of
+  the fix: MTD counted **5,072** rows against a true **4,999** (**-73, -1.4%**),
+  Last Month 6,279 against 6,267, Apr-Sep 36,672 against 36,627. The 73 were
+  2026-08-31 from **14:02 CST** onward and included **19 WON** orders, so
+  September's Awarded, Revenue and Profit each carried a slice of August — and
+  because August's own window kept those rows too, the boundary evening was
+  **double-counted** across a month-over-month comparison rather than moved.
+  ⚠ The error could only ever over-count: the upper bound was always correct
+  (``date + INTERVAL`` is already a naive timestamp), so the window was too wide
+  at the start and never short at the end. Guard:
+  ``tests/test_hd_spot_cst_bounds.py``. Fleet note:
+  ``/BOT/TIMEZONE-CAST-FLEET.md`` §112.
 * Every rate is recomputed from its components, never averaged, and guarded
   ``den > 0`` rather than ``not den`` — a negative denominator is the real
   hazard here, since 29 of 286 budget rows carry a negative ``margin_amt`` and a
@@ -234,9 +250,18 @@ def _spot_where(params: list, start: date, end: date, groups: list[str]) -> str:
     frozen = f"${len(params)}"
     return (
         f"WHERE express_module_customer_name = {cust} "
-        # parameter-side AT TIME ZONE keeps idx_..._price_date usable AND is
+        # Parameter-side AT TIME ZONE keeps idx_..._price_date usable AND is
         # DST-correct; end bound is exclusive-next-day so the last day is whole.
-        f"AND price_date >= ({lo}::date AT TIME ZONE 'America/Chicago') "
+        #
+        # 🔴 The `::timestamp` on the LOWER bound is load-bearing and was missing
+        # until 2026-09-21. `$1::date AT TIME ZONE 'America/Chicago'` is NOT
+        # midnight in Chicago: for a `date` input Postgres resolves the cast to
+        # timestamptz FIRST, so it yields a `timestamp WITHOUT time zone`
+        # (2026-06-23 19:00:00) that compares back as GMT, and the window opened
+        # 10 hours early. ⚠ The UPPER bound needs no such fix and never did —
+        # `date + INTERVAL` is already a naive timestamp — which is exactly why
+        # the two adjacent lines looked identical and only one was wrong.
+        f"AND price_date >= ({lo}::date::timestamp AT TIME ZONE 'America/Chicago') "
         f"AND price_date <  (({hi}::date + INTERVAL '1 day') AT TIME ZONE 'America/Chicago') "
         f"AND (source IS NULL OR source <> ALL({frozen}::text[])) "
         f"AND (equipment ILIKE '%VAN%' OR equipment ILIKE '%FLAT%')"
