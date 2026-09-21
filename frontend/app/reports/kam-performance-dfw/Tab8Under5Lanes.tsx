@@ -1,44 +1,71 @@
 "use client"
 
+// Tab 8 — LOADS UNDER 5% (Bruno PDF 2026-09-21).
+//
+// Every (customer, lane) pair whose margin is under 5% for the selected month,
+// not a top-N: the server returns the whole list (the busiest month of 2026
+// produced 241 lanes) and publishes `meta.truncated` if its runaway cap ever
+// bites, so this table can never quietly stop short.
+//
+// ⚠ Same shape as Worst 10 Lanes, deliberately NOT the same numbers — that tab
+// measures the negative-margin slice of a lane, this one measures the whole
+// lane. The expiration date and action plan ARE the same rows.
+
 import { useEffect, useState } from "react"
-import { AlertTriangle, Loader2, Save } from "lucide-react"
+import { Loader2, Percent, Save } from "lucide-react"
 import {
+  kamDefaultMonth,
+  useUnder5Lanes,
   useUpsertLaneNote,
-  useWorstLanes,
-  type KamWorstLaneRow,
+  type KamUnder5LaneRow,
 } from "@/lib/kam-performance-dfw-api"
-import { DateRangeControl, useKamDateRange } from "./DateRangeControl"
+import { MonthFilter } from "./MonthFilter"
 import { SubTeamFilter } from "./SubTeamFilter"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
 
-export function Tab6WorstLanes() {
-  const { value, setValue, bounds } = useKamDateRange("ytd")
+export function Tab8Under5Lanes() {
+  const [month, setMonth] = useState<string>(() => kamDefaultMonth())
   const [subTeams, setSubTeams] = useState<string[]>([])
-  const { data, isLoading } = useWorstLanes(bounds, subTeams)
+  const { data, isLoading } = useUnder5Lanes(month, subTeams)
   const upsert = useUpsertLaneNote()
   const rows = data?.data ?? []
+  const meta = data?.meta
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <DateRangeControl value={value} onChange={setValue} />
+        <MonthFilter value={month} onChange={setMonth} />
         <SubTeamFilter value={subTeams} onChange={setSubTeams} />
       </div>
 
       <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
         <div className="mb-1 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-[#991B1B]" />
-          <div className="text-sm font-semibold text-[#1B3A5C]">Worst Lanes</div>
+          <Percent className="h-4 w-4 text-[#B45309]" />
+          <div className="text-sm font-semibold text-[#1B3A5C]">
+            Lanes under {meta?.threshold_pct ?? 5}% margin
+          </div>
+          {!isLoading && (
+            <span className="rounded-full bg-[#FEF3C7] px-2 py-0.5 text-[10px] text-[#92400E]">
+              {fmtCount(rows.length)} {rows.length === 1 ? "lane" : "lanes"}
+            </span>
+          )}
         </div>
         <p className="mb-3 text-xs text-[#6B7280]">
-          Worst losing (customer, lane) pairs for DFW — same source as the
-          daily Losses email (negative-margin loads only). Set an expiration
-          date and action plan per lane; they persist as the list reshuffles.
-          Loads, Revenue and Profit here count the <strong>losing loads
-          only</strong>, so a lane that also appears under{" "}
-          <em>Loads Under 5%</em> shows larger numbers there — the expiration
-          date and action plan are the same for both.
+          Every (customer, lane) pair for DFW whose margin came in under{" "}
+          {meta?.threshold_pct ?? 5}% in the selected month —{" "}
+          <strong>all</strong> of them, not a top 10. Loads, Revenue and Profit
+          count <strong>every</strong> load on the lane (that is what the margin
+          percentage is a percentage of), so a lane that also appears under{" "}
+          <em>Worst 10 Lanes</em> shows smaller numbers there, where only the
+          losing loads are counted. The expiration date and action plan are the
+          same for both tabs — one plan per lane.
         </p>
+        {meta?.truncated && (
+          <p className="mb-3 rounded-md bg-[#FEF2F2] px-2 py-1.5 text-xs text-[#991B1B]">
+            Showing the first {fmtCount(rows.length)} lanes — the list was cut
+            off. Narrow the month or team filter.
+          </p>
+        )}
         <div className="overflow-auto">
           <table className="w-full text-xs">
             <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
@@ -65,12 +92,12 @@ export function Tab6WorstLanes() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="py-10 text-center text-[#9CA3AF]">
-                    No losing lanes in this window
+                    No lanes under {meta?.threshold_pct ?? 5}% margin this month
                   </td>
                 </tr>
               ) : (
                 rows.map((r, i) => (
-                  <WorstLaneRow
+                  <Under5LaneRow
                     key={r.lane_key}
                     rank={i + 1}
                     row={r}
@@ -86,22 +113,25 @@ export function Tab6WorstLanes() {
         </div>
       </div>
       <div className="text-[10px] text-[#6B7280]">
-        {bounds.start} → {bounds.end} · scope: TEAM-DFW · source:
-        Losses Lanes (mcleod_gld_budget_report_v4)
+        {meta?.window.start} → {meta?.window.end} · worst margin first · scope:
+        TEAM-DFW · source: mcleod_gld_budget_report_v4 (billed loads)
       </div>
     </div>
   )
 }
 
-function WorstLaneRow({
+function Under5LaneRow({
   rank,
   row,
   onSave,
   savePending,
 }: {
   rank: number
-  row: KamWorstLaneRow
-  onSave: (patch: { expiration_date?: string | null; action_plan?: string }) => Promise<unknown>
+  row: KamUnder5LaneRow
+  onSave: (patch: {
+    expiration_date?: string | null
+    action_plan?: string
+  }) => Promise<unknown>
   savePending: boolean
 }) {
   const [exp, setExp] = useState(row.expiration_date ?? "")
@@ -114,6 +144,7 @@ function WorstLaneRow({
   }, [row.lane_key, row.expiration_date, row.action_plan])
 
   const dirty = (row.expiration_date ?? "") !== exp || plan !== row.action_plan
+  const losing = row.profit < 0
 
   return (
     <tr className="border-b border-[#F3F4F6] align-top last:border-0">
@@ -126,10 +157,20 @@ function WorstLaneRow({
       </td>
       <td className="px-2 py-2 text-right tabular-nums">{fmtCount(row.loads)}</td>
       <td className="px-2 py-2 text-right tabular-nums">{fmtUsd(row.revenue)}</td>
-      <td className="px-2 py-2 text-right tabular-nums text-[#991B1B]">
+      <td
+        className={`px-2 py-2 text-right tabular-nums ${
+          losing ? "text-[#991B1B]" : ""
+        }`}
+      >
         {fmtUsd(row.profit)}
       </td>
-      <td className="px-2 py-2 text-right tabular-nums">{fmtPct(row.margin_pct)}</td>
+      <td
+        className={`px-2 py-2 text-right tabular-nums ${
+          losing ? "text-[#991B1B]" : "text-[#B45309]"
+        }`}
+      >
+        {fmtPct(row.margin_pct)}
+      </td>
       <td className="px-2 py-2">
         <input
           type="date"

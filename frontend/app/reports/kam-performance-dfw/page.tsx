@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   ClipboardList,
   Loader2,
+  Percent,
   ScrollText,
   Stethoscope,
   TrendingUp,
@@ -22,12 +23,14 @@ import { Tab4CustomerDev } from "./Tab4CustomerDev"
 import { Tab5TeamDev } from "./Tab5TeamDev"
 import { Tab6WorstLanes } from "./Tab6WorstLanes"
 import { Tab7CarrierSales } from "./Tab7CarrierSales"
+import { Tab8Under5Lanes } from "./Tab8Under5Lanes"
 
 type TabKey =
   | "scorecards"
   | "service"
   | "lanes"
   | "worst-lanes"
+  | "under-5"
   | "carrier-sales"
   | "customer-dev"
   | "team-dev"
@@ -37,6 +40,7 @@ const TABS: { k: TabKey; label: string; icon: React.ReactNode }[] = [
   { k: "service", label: "Service", icon: <Stethoscope className="h-3.5 w-3.5" /> },
   { k: "lanes", label: "Top 10 lanes", icon: <TrendingUp className="h-3.5 w-3.5" /> },
   { k: "worst-lanes", label: "Worst 10 Lanes", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+  { k: "under-5", label: "Loads Under 5%", icon: <Percent className="h-3.5 w-3.5" /> },
   { k: "carrier-sales", label: "Carrier Sales", icon: <Truck className="h-3.5 w-3.5" /> },
   { k: "customer-dev", label: "Customer Development", icon: <ClipboardList className="h-3.5 w-3.5" /> },
   { k: "team-dev", label: "Team Development", icon: <Users className="h-3.5 w-3.5" /> },
@@ -111,6 +115,7 @@ function KamPerformanceContent() {
         {tab === "service" && <Tab2Service />}
         {tab === "lanes" && <Tab3TopLanes />}
         {tab === "worst-lanes" && <Tab6WorstLanes />}
+        {tab === "under-5" && <Tab8Under5Lanes />}
         {tab === "carrier-sales" && <Tab7CarrierSales />}
         {tab === "customer-dev" && <Tab4CustomerDev />}
         {tab === "team-dev" && <Tab5TeamDev />}

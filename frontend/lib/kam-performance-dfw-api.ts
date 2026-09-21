@@ -3,16 +3,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { mutationErrorToast } from "@/lib/mutation-error"
 
-interface ApiResponse<T> {
+interface ApiResponse<T, M = unknown> {
   success: boolean
   data?: T
   error?: string
+  meta?: M
 }
 
-async function apiFetch<T>(
+async function apiFetch<T, M = unknown>(
   path: string,
   init?: RequestInit,
-): Promise<ApiResponse<T>> {
+): Promise<ApiResponse<T, M>> {
   const res = await fetch(`/api/proxy/${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
@@ -613,7 +614,12 @@ export function useWorstLanes(bounds: KamBounds, subTeams: string[] = []) {
   })
 }
 
-export function useUpsertWorstLaneNote() {
+/**
+ * ⚠ ONE action plan per lane, shared by Worst 10 Lanes and Loads Under 5%
+ * (`kam_worst_lane_notes`, keyed `customer::lane`). The name is deliberately
+ * not tab-specific: a second store would give one lane two plans.
+ */
+export function useUpsertLaneNote() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
@@ -625,9 +631,98 @@ export function useUpsertWorstLaneNote() {
         "custom/kam-performance-dfw/worst-lane-notes",
         { method: "PUT", body: JSON.stringify(body) },
       ),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "worst-lanes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "worst-lanes"] })
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "under-5-lanes"] })
+    },
     onError: mutationErrorToast("Save lane note"),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Tab 8 — LOADS UNDER 5% (Bruno PDF 2026-09-21). EVERY (customer, lane) pair
+// whose margin is under 5% for the selected month — not a top-N.
+//
+// ⚠ Shares the Tab 6 note rows, and deliberately does NOT share its numbers:
+// Worst 10 Lanes measures the negative-margin SLICE of a lane (to tie out to
+// the Losses email), this tab measures the WHOLE lane (or a margin percentage
+// would be meaningless). Same lane, different Loads/Revenue/Profit. Both
+// captions say so.
+// ---------------------------------------------------------------------------
+
+export interface KamUnder5LaneRow {
+  lane_key: string
+  customer: string
+  lane: string
+  loads: number
+  revenue: number
+  profit: number
+  margin_pct: number | null
+  expiration_date: string | null
+  action_plan: string
+}
+
+export interface KamUnder5Meta {
+  window: { start: string; end: string }
+  month: string
+  threshold_pct: number
+  total: number
+  /** The server cap actually bit. A list that stops silently is §105. */
+  truncated: boolean
+}
+
+const KAM_MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+]
+
+/**
+ * Current month in CST as `YYYY-MM`.
+ *
+ * ⚠ NOT `new Date().getMonth()`. The backend defaults to the current CST month
+ * (`cst_today()`), and a browser one timezone east would seed the picker with
+ * the NEXT month for the last hours of the 1st — showing an empty table on a
+ * month the report would happily serve.
+ */
+export function cstMonthNow(): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date())
+  const y = parts.find((p) => p.type === "year")?.value ?? "2026"
+  const m = parts.find((p) => p.type === "month")?.value ?? "01"
+  return `${y}-${m}`
+}
+
+/** Selectable months, newest first. 2026 only — the router's v4 scope year. */
+export function kamMonthOptions(): { value: string; label: string }[] {
+  const [y, m] = cstMonthNow().split("-").map(Number)
+  const year = KAM_YEAR_START.slice(0, 4)
+  const last = y > Number(year) ? 12 : y < Number(year) ? 1 : m
+  const out: { value: string; label: string }[] = []
+  for (let i = last; i >= 1; i--) {
+    out.push({
+      value: `${year}-${String(i).padStart(2, "0")}`,
+      label: `${KAM_MONTH_NAMES[i - 1]} ${year}`,
+    })
+  }
+  return out
+}
+
+export function kamDefaultMonth(): string {
+  return kamMonthOptions()[0].value
+}
+
+export function useUnder5Lanes(month: string, subTeams: string[] = []) {
+  return useQuery({
+    queryKey: ["kam-performance-dfw", "under-5-lanes", month, subTeams.join(",")],
+    queryFn: () =>
+      apiFetch<KamUnder5LaneRow[], KamUnder5Meta>(
+        `custom/kam-performance-dfw/under-5-lanes?month=${encodeURIComponent(month)}${subTeamsQuery(subTeams)}`,
+      ),
+    staleTime: 60 * 1000,
+    ...RETRY,
   })
 }
 

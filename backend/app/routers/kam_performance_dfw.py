@@ -21,6 +21,16 @@ Per-KAM scratchpad layered on top of two existing reports:
 * Tab 5 TEAM DEV      — local CRUD (kam_team_dev). Editable: team member,
                         last-day-1-on-1 (free text), specific area to
                         develop, action plan.
+* Tab 6 WORST LANES   — v4 directly. The worst losing (customer, lane) pairs,
+                        measured over the NEGATIVE-MARGIN SLICE so they tie
+                        out to the daily Losses email. Notes in
+                        kam_worst_lane_notes.
+* Tab 7 CARRIER SALES — v4 ⨝ dispatchers. Per-lane carrier intel; comments in
+                        kam_carrier_comments.
+* Tab 8 UNDER 5%      — v4 directly. EVERY lane under 5% margin for one
+                        calendar month, measured over the WHOLE lane, sharing
+                        Tab 6's note rows. ⚠ Same lane, different numbers from
+                        Tab 6 — that is the design, see §113.
 
 Per-user scope: every row carries ``user_id = user["sub"]``. List endpoints
 filter on it; create/update/delete enforce ownership server-side, so even
@@ -974,6 +984,178 @@ async def upsert_worst_lane_note(
             "expiration_date": _iso(row["expiration_date"]),
             "action_plan": row["action_plan"] or "",
             "updated_at": _iso(row["updated_at"]),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tab 8 — LOADS UNDER 5% (Bruno PDF 2026-09-21, "space DFW Sept 21")
+#
+# "Same information and structure as Worst 10 Lanes, but display ALL lanes with
+# a Margin% under 5% for the selected month."
+#
+# ⚠ It is NOT a clone of `/worst-lanes`, and the difference is the whole point.
+# Worst 10 Lanes measures Loads / Revenue / Profit over the NEGATIVE-MARGIN
+# SLICE of each lane, because it exists to tie out to the daily Losses email.
+# A margin PERCENTAGE over that slice is meaningless — it is negative by
+# construction for every row. This tab therefore aggregates EVERY load on the
+# lane and applies the 5% threshold to the resulting ratio, so the same lane
+# prints different numbers in the two tabs (measured 2026-09-21, GM C/O CTSI
+# COLOMA, MI - ARLINGTON, TX in Sept: 7 loads / $19.3K / -$6,613 on Worst
+# Lanes, 13 loads / $33.6K / -$2,848 / -8.48% here). Both captions say so.
+#
+# The threshold is a HAVING over the GROUP, never a per-row predicate: a lane
+# is under 5% when its own revenue earns less than 5%, not when it happens to
+# carry a thin load.
+#
+# Expiration Date + Action Plan are the SAME per-user rows as Worst 10 Lanes
+# (`kam_worst_lane_notes`, keyed `customer::lane`) — one action plan per lane,
+# whichever tab surfaced it. Both captions say that too.
+# ---------------------------------------------------------------------------
+
+# Bruno's threshold. A float literal interpolated into the statement, not a
+# bind param: asyncpg cannot infer a type for a bare `$n` compared against
+# numeric, and `$n::numeric` would demand a Decimal. It is a module constant,
+# never user input.
+UNDER_MARGIN_PCT = 5.0
+
+# A generous runaway guard, NOT a business limit. The request says "all lanes"
+# and the busiest month of 2026 produced 241 (March, measured 2026-09-21), so
+# nothing real is ever truncated — but an unbounded fetch on a report page is
+# how a datalake surprise becomes a browser hang. `meta.truncated` tells the
+# UI when the guard actually bit, so it can never truncate silently (§105).
+UNDER_5_MAX_ROWS = 1000
+
+_MONTH_RE = _re.compile(r"^(\d{4})-(\d{2})$")
+
+
+def _month_end(d: date) -> date:
+    """Last calendar day of `d`'s month."""
+    return (d.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+
+
+def _resolve_month(month: Optional[str]) -> tuple[date, date]:
+    """``YYYY-MM`` → that month's full window, clamped to the v4 scope year.
+
+    The default is the CURRENT month **in CST** (`cst_today()`), not in the
+    server's UTC or the browser's locale: Render and Aiven both run UTC, so on
+    the 1st of a month a naive `date.today()` would still be serving the
+    previous month for the first 5-6 hours of the CST day.
+    """
+    today = cst_today()
+    anchor = max(YEAR_START, min(YEAR_END, today)).replace(day=1)
+    if month:
+        m = _MONTH_RE.match(month.strip())
+        if not m:
+            raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+        try:
+            anchor = date(int(m.group(1)), int(m.group(2)), 1)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+        if anchor < YEAR_START:
+            anchor = YEAR_START.replace(day=1)
+        elif anchor > YEAR_END:
+            anchor = YEAR_END.replace(day=1)
+    return anchor, min(_month_end(anchor), YEAR_END)
+
+
+@router.get("/under-5-lanes")
+async def under_5_lanes(
+    request: Request,
+    month: Optional[str] = Query(None, description="YYYY-MM; default = current CST month"),
+    sub_teams: Optional[str] = Query(None),
+    limit: int = Query(UNDER_5_MAX_ROWS, ge=1, le=5000),
+    user: dict = Depends(require_report_access("kam-performance-dfw")),
+):
+    gold = get_datalake_gold_pool(request)
+    s, e = _resolve_month(month)
+
+    params: list = []
+    where = _dfw_scope_where("b", params)
+    sub_team_list = _parse_sub_teams(sub_teams)
+    if sub_team_list:
+        params.append(sub_team_list)
+        where += f" AND TRIM(b.team) = ANY(${len(params)})"
+    params.extend([s, e, limit])
+    p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
+
+    lane_sql = (
+        "NULLIF(TRIM(b.origin_city_name),'') || ', ' || "
+        "NULLIF(TRIM(b.origin_state_id),'')  || ' - ' || "
+        "NULLIF(TRIM(b.dest_city_name),'')   || ', ' || "
+        "NULLIF(TRIM(b.dest_state_id),'')"
+    )
+
+    rows = await gold.fetch(
+        f"""
+        WITH base AS (
+          SELECT
+            TRIM(b.customer_name) AS customer,
+            {lane_sql}            AS lane,
+            b.total_charge,
+            b.margin_amt
+          FROM public.mcleod_gld_budget_report_v4 b
+          WHERE {where}
+            AND b.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
+            AND COALESCE(b.total_charge, 0) <> 0
+        )
+        SELECT
+          customer,
+          lane,
+          COUNT(*)                   AS loads,
+          SUM(total_charge)::numeric AS revenue,
+          SUM(margin_amt)::numeric   AS profit,
+          SUM(margin_amt)::numeric / SUM(total_charge)::numeric * 100 AS margin_pct
+        FROM base
+        WHERE customer IS NOT NULL AND lane IS NOT NULL
+        GROUP BY customer, lane
+        HAVING SUM(total_charge) > 0
+           AND SUM(margin_amt)::numeric / SUM(total_charge)::numeric * 100 < {UNDER_MARGIN_PCT}
+        ORDER BY margin_pct ASC, profit ASC
+        LIMIT ${p_lim}
+        """,
+        *params,
+    )
+
+    # Same per-user note rows as Worst 10 Lanes — one action plan per lane.
+    notes = await get_pool(request).fetch(
+        "SELECT lane_key, expiration_date, action_plan FROM kam_worst_lane_notes WHERE user_id = $1",
+        user["sub"],
+    )
+    note_map = {
+        n["lane_key"]: {
+            "expiration_date": _iso(n["expiration_date"]),
+            "action_plan": n["action_plan"] or "",
+        }
+        for n in notes
+    }
+
+    data = []
+    for r in rows:
+        lane_key = f"{r['customer']}::{r['lane']}"
+        note = note_map.get(lane_key, {"expiration_date": None, "action_plan": ""})
+        data.append(
+            {
+                "lane_key": lane_key,
+                "customer": r["customer"],
+                "lane": r["lane"],
+                "loads": int(r["loads"] or 0),
+                "revenue": float(r["revenue"] or 0),
+                "profit": float(r["profit"] or 0),
+                "margin_pct": float(r["margin_pct"]) if r["margin_pct"] is not None else None,
+                "expiration_date": note["expiration_date"],
+                "action_plan": note["action_plan"],
+            }
+        )
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "window": {"start": s.isoformat(), "end": e.isoformat()},
+            "month": s.strftime("%Y-%m"),
+            "threshold_pct": UNDER_MARGIN_PCT,
+            "total": len(data),
+            "truncated": len(data) >= limit,
         },
     }
 
