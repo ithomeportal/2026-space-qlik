@@ -53,6 +53,7 @@ from app.routers import (
     podium_dfw,
     podium_top,
     preferences,
+    production_spots_trends,
     reports,
     reports_index,
     rfp_performance,
@@ -1124,17 +1125,26 @@ async def lifespan(app: FastAPI):
     # (the two are separate databases — no dblink/fdw, see §56).
     if settings.PRICING_DATABASE_URL:
         try:
+            # max_size raised 4 -> 8 for Production SPOTS Trends (2026-09-21).
+            # HD Spot fans out 2 queries; the trends page opens with filters +
+            # summary + trend + breakdown + freshness. At 4 the fifth waits, and
+            # a page that queues behind its own panels is how the gold pool was
+            # starved past the proxy's 45s abort (§43.2).
             app.state.pricing_pool = await asyncpg.create_pool(
                 settings.PRICING_DATABASE_URL,
                 min_size=1,
-                max_size=4,
+                max_size=8,
                 command_timeout=40,
                 init=_set_cst_session,
             )
-            logger.info("Pricing portal pool connected — powers HD Spot")
+            logger.info(
+                "Pricing portal pool connected — powers HD Spot + "
+                "Production SPOTS Trends"
+            )
         except Exception as e:
             logger.warning(
-                f"Pricing portal DB connect failed: {e}. HD Spot will 503."
+                f"Pricing portal DB connect failed: {e}. HD Spot and "
+                f"Production SPOTS Trends will 503."
             )
             app.state.pricing_pool = None
     else:
@@ -1567,6 +1577,7 @@ app.include_router(dfw_access_doors_digest.router, prefix="/api")
 app.include_router(podium_dfw.router, prefix="/api")
 app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(hd_spot.router, prefix="/api")
+app.include_router(production_spots_trends.router, prefix="/api")
 app.include_router(division_payment.router, prefix="/api")
 app.include_router(exec_meeting_recruitment.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")

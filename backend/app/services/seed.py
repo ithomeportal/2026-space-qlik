@@ -854,6 +854,48 @@ CUSTOM_REPORTS = [
         # HR division + Daniela's individual HR Manager role + CEO.
         "roles": ["HR", "HR Manager", "CEO"],
     },
+    {
+        "key": "production-spots-trends",  # -> /reports/production-spots-trends
+        "title": "Production SPOTS Trends",
+        "description": "Executive view of the whole spot funnel — presented, quoted, skipped, won, lost, rejected and no-reply — with week-over-week and month-over-month comparatives aligned to the same elapsed business days, a month-end projection, and AUTO-BOT vs each user",
+        "note": (
+            "Source: modern_pricing_portal.spot_report_condensed (role "
+            "spaceqlik_pricing_ro, which can read that ONE table) - the layer "
+            "above the quoting portal's own /spots/manual and /spots/homedepot "
+            "boards. Quoted = price IS NOT NULL AND price <> 0, matching the "
+            "portal's Spot Desk; HD Spot uses buy_rate instead and the two "
+            "differ on ~1.5% of HD rows, so the Channels tab prints both. "
+            "No reply = award_status 'LOST-A', written by a cron that ages off "
+            "an unanswered quote at 30 days - NULL is OPEN and transient, not "
+            "terminal. Profit = price - accessorials - buy_rate (never price - "
+            "buy_rate: that reads ~$862k high over 120 days) and is summed only "
+            "where both legs are known, so its margin divides by the matching "
+            "revenue. Outcomes right-censor - HD's ACCEPT resolves on day 7-10 "
+            "and Manual settles at the 30-day age-off - so activity KPIs "
+            "compare raw aligned windows while win rate and awarded revenue "
+            "compare the last SETTLED periods, and the trend chart shades the "
+            "unsettled tail. Excludes the frozen legacy/legacy_hd imports, so "
+            "data starts 2026-04-01. NOT COVERED: the Emerge/Trane board (it "
+            "has no sync path into this table at all), skip reasons, "
+            "time-to-quote, and portal provenance (e2open / Princeton / "
+            "Transporeon / RXO all arrive as 'lane_analysis') - each needs a "
+            "GRANT on a second table first. The Moved (Actuals) tab is the "
+            "OTHER population - McLeod SPOT loads that actually departed - and "
+            "does not reconcile with the funnel by design."
+        ),
+        "category": "Executive",
+        "tags": [
+            "spot", "spots", "pricing", "quoting", "funnel", "trends",
+            "presented", "quoted", "skipped", "rejected", "no-reply", "won",
+            "lost", "autobot", "bot", "win-rate", "conversion", "projection",
+            "home depot", "lane analysis", "executive",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15; after that
+        # /admin/reports is the sole authority. Same set as HD Spot, the
+        # closest existing report over the same database.
+        "roles": ["CEO", "Executive", "Procurement", "Sales", "Operations"],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

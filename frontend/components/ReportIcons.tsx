@@ -26,6 +26,7 @@ import {
   Medal,
   Percent,
   Phone,
+  PieChart,
   PhoneCall,
   PiggyBank,
   ScanSearch,
@@ -137,6 +138,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Carrier Procurement - Access Log Doors":
                                     { icon: DoorOpen,       family: "procurement" },
   "HD Spot":                        { icon: Store,          family: "operations" },
+  "Production SPOTS Trends":        { icon: PieChart,       family: "executive" },
   "EDI Load Tenders":               { icon: FileInput,      family: "operations" },
   "Podium Set DFW":                 { icon: Trophy,         family: "dfw" },
   "Booker Performance Scorecard":   { icon: ClipboardCheck, family: "dfw" },

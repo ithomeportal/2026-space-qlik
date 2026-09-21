@@ -74,6 +74,10 @@ export interface ReportOverlay {
 }
 
 export const REPORT_OVERLAY: Record<string, ReportOverlay> = {
+  "production-spots-trends": {
+    kpis: "Spot funnel: presented, quoted, skipped, won, lost, no-reply; quote & win rate, WoW/MoM, month projection, AUTO-BOT vs users",
+    related: ["hd-spot", "rfp-performance", "ops-margins"],
+  },
   "esavings-carriers": {
     kpis: "Loads, savings $, overpay $, net variance vs quarterly base lane",
     related: ["carrier-risk", "track-award-loads", "rfp-performance"],

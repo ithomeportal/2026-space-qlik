@@ -387,6 +387,8 @@ LINK_TILES: list[dict[str, Any]] = [
     # follows the 4-place checklist literally goes missing from the Cockpit.
     {"key": "bonus-calculator-dfw", "title": "Bonus Calculator – DFW", "category": "HR",
      "note": "DFW monthly bonus engine (15/16/17/18/19% margin ladder) — open to explore"},
+    {"key": "production-spots-trends", "title": "Production SPOTS Trends", "category": "Executive",
+     "note": "Spot funnel, WoW/MoM comparatives and month projection — open to explore"},
 ]
 
 _CATEGORY_ORDER = ["Executive", "Operations", "DFW", "Finance", "Sales", "HR", "IT", "Admin"]
