@@ -639,6 +639,14 @@ def _base_cte(params: list, start: date, end: date, f: dict) -> str:
       -- and the result is a true timestamptz (2026-06-24 05:00+00), which
       -- matches `(price_date AT TIME ZONE 'America/Chicago')::date BETWEEN s
       -- AND e` to the row while staying sargable.
+      --
+      -- ⚠ The tell is a BARE `::date` right before `AT TIME ZONE`. `date ±
+      -- INTERVAL` is ALREADY a naive timestamp, so interval arithmetic
+      -- accidentally fixes it: the half-open UPPER bound below is correct
+      -- either way, and only the lower bound was ever wrong. The window is
+      -- therefore too WIDE at the start and never short at the end — the error
+      -- can only over-count, which is why it reads as plausible. The same
+      -- idiom is live in /BOT/quoting `spot-desk/sql.ts pushReportDay()`.
       WHERE price_date >= ({lo}::date::timestamp AT TIME ZONE 'America/Chicago')
         AND price_date <  (({hi}::date + 1)::timestamp AT TIME ZONE 'America/Chicago')
         AND (source IS NULL OR source <> ALL({frozen}::text[])){extra}
