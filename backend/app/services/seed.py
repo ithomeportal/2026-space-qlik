@@ -730,8 +730,8 @@ CUSTOM_REPORTS = [
     {
         "key": "kam-performance-dfw",  # -> /reports/kam-performance-dfw
         "title": "KAM Performance - DFW",
-        "description": "Per-KAM scratchpad: scorecard log, current-week service KPIs (OTP/OTD from ops-customer-score), top-10 lanes (xray-dfw-mng), worst 10 lanes, every lane under 5% margin for a month, carrier sales, customer development and team development tables",
-        "note": "Per-user editable rows in kam_scorecards / kam_customer_dev / kam_team_dev / kam_top_lanes_notes / kam_worst_lane_notes / kam_carrier_comments · Tab 1 metadata-only (no file blob) · Tab 2 calls ops-customer-score with division=DFW · Tab 3 calls xray-dfw-mng /by-lane limit=10 · Tab 6 Worst 10 Lanes measures the NEGATIVE-MARGIN SLICE of a lane (ties out to the daily Losses email) while Tab 8 Loads Under 5% measures the WHOLE lane over one calendar month — same lane, different numbers, one shared action plan · scope: TEAM-DFW",
+        "description": "Per-KAM scratchpad: scorecard log, current-week service KPIs (OTP/OTD from ops-customer-score), top-10 lanes (xray-dfw-mng), worst 10 lanes, every load under 5% margin (YTD/MTD/WTD), carrier sales, customer development and team development tables",
+        "note": "Per-user editable rows in kam_scorecards / kam_customer_dev / kam_team_dev / kam_top_lanes_notes / kam_worst_lane_notes / kam_carrier_comments · Tab 1 metadata-only (no file blob) · Tab 2 calls ops-customer-score with division=DFW · Tab 3 calls xray-dfw-mng /by-lane limit=10 · Tab 6 Worst 10 Lanes measures the NEGATIVE-MARGIN SLICE of a lane (ties out to the daily Losses email) while Tab 8 Loads Under 5% lists every LOAD whose own margin is under 5% (YTD/MTD/WTD/Custom, paged + sorted server-side) — per-lane action plan shared by both tabs · scope: TEAM-DFW",
         "category": "Sales",
         "tags": [
             "kam", "dfw", "scorecard", "service", "otp", "otd",

@@ -35,9 +35,9 @@ export function Tab6WorstLanes() {
           daily Losses email (negative-margin loads only). Set an expiration
           date and action plan per lane; they persist as the list reshuffles.
           Loads, Revenue and Profit here count the <strong>losing loads
-          only</strong>, so a lane that also appears under{" "}
-          <em>Loads Under 5%</em> shows larger numbers there — the expiration
-          date and action plan are the same for both.
+          only</strong>. <em>Loads Under 5%</em> lists the individual loads
+          (including thin-but-profitable ones) and shares this tab&apos;s
+          expiration date and action plan — one plan per lane.
         </p>
         <div className="overflow-auto">
           <table className="w-full text-xs">

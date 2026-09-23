@@ -27,10 +27,11 @@ Per-KAM scratchpad layered on top of two existing reports:
                         kam_worst_lane_notes.
 * Tab 7 CARRIER SALES — v4 ⨝ dispatchers. Per-lane carrier intel; comments in
                         kam_carrier_comments.
-* Tab 8 UNDER 5%      — v4 directly. EVERY lane under 5% margin for one
-                        calendar month, measured over the WHOLE lane, sharing
-                        Tab 6's note rows. ⚠ Same lane, different numbers from
-                        Tab 6 — that is the design, see §113.
+* Tab 8 UNDER 5%      — v4 directly. EVERY LOAD whose own margin is under
+                        5% in a YTD / MTD / WTD / Custom window, paged and
+                        sorted in SQL, sharing Tab 6's per-LANE note rows.
+                        ⚠ Not Tab 6's population (a +3% load is listed here,
+                        never there) — see §113.
 
 Per-user scope: every row carries ``user_id = user["sub"]``. List endpoints
 filter on it; create/update/delete enforce ownership server-side, so even
@@ -989,28 +990,30 @@ async def upsert_worst_lane_note(
 
 
 # ---------------------------------------------------------------------------
-# Tab 8 — LOADS UNDER 5% (Bruno PDF 2026-09-21, "space DFW Sept 21")
+# Tab 8 — LOADS UNDER 5% (Bruno PDFs 2026-09-21 and 2026-09-23)
 #
-# "Same information and structure as Worst 10 Lanes, but display ALL lanes with
-# a Margin% under 5% for the selected month."
+# R1 (09-21) listed every LANE under 5% for one calendar month. R2 (09-23):
+# "Don't display the information group by lane, instead show the information
+# by load" + "Add the filter YTD, MTD and WTD". So the row is now ONE LOAD and
+# the window is the same YTD / MTD / WTD / Custom range the other tabs use.
 #
-# ⚠ It is NOT a clone of `/worst-lanes`, and the difference is the whole point.
-# Worst 10 Lanes measures Loads / Revenue / Profit over the NEGATIVE-MARGIN
-# SLICE of each lane, because it exists to tie out to the daily Losses email.
-# A margin PERCENTAGE over that slice is meaningless — it is negative by
-# construction for every row. This tab therefore aggregates EVERY load on the
-# lane and applies the 5% threshold to the resulting ratio, so the same lane
-# prints different numbers in the two tabs (measured 2026-09-21, GM C/O CTSI
-# COLOMA, MI - ARLINGTON, TX in Sept: 7 loads / $19.3K / -$6,613 on Worst
-# Lanes, 13 loads / $33.6K / -$2,848 / -8.48% here). Both captions say so.
+# ⚠ The threshold moved with the grain. It is now a per-row predicate on the
+# load's OWN ratio (margin_amt / total_charge), where R1 had it as a HAVING
+# over the lane's sums — a lane at 6% can hold loads at -30%, and those loads
+# are exactly what this view exists to surface.
 #
-# The threshold is a HAVING over the GROUP, never a per-row predicate: a lane
-# is under 5% when its own revenue earns less than 5%, not when it happens to
-# carry a thin load.
+# ⚠ Still NOT a clone of `/worst-lanes`: that tab measures the NEGATIVE-MARGIN
+# SLICE of each lane (ties out to the daily Losses email). Here a load at +3%
+# is listed too — it is under 5% without losing money.
 #
-# Expiration Date + Action Plan are the SAME per-user rows as Worst 10 Lanes
-# (`kam_worst_lane_notes`, keyed `customer::lane`) — one action plan per lane,
-# whichever tab surfaced it. Both captions say that too.
+# ⚠ Volume: 4,998 DFW loads under 5% YTD (measured 2026-09-23; MTD 175, WTD
+# 19). The list is PAGED and SORTED in SQL; the totals come from their own
+# CTE over the whole population, so the summary line never describes a page
+# (§109) and a page past the end still reports the real count.
+#
+# Expiration Date + Action Plan stay keyed by LANE (`kam_worst_lane_notes`,
+# `customer::lane`) — Bruno's one-plan-per-lane rule from 09-21 and the 154
+# plans already saved. Every load on a lane shows that lane's plan.
 # ---------------------------------------------------------------------------
 
 # Bruno's threshold. A float literal interpolated into the statement, not a
@@ -1019,56 +1022,44 @@ async def upsert_worst_lane_note(
 # never user input.
 UNDER_MARGIN_PCT = 5.0
 
-# A generous runaway guard, NOT a business limit. The request says "all lanes"
-# and the busiest month of 2026 produced 241 (March, measured 2026-09-21), so
-# nothing real is ever truncated — but an unbounded fetch on a report page is
-# how a datalake surprise becomes a browser hang. `meta.truncated` tells the
-# UI when the guard actually bit, so it can never truncate silently (§105).
-UNDER_5_MAX_ROWS = 1000
+UNDER_5_PAGE_SIZE = 50
+UNDER_5_MAX_PAGE_SIZE = 200
 
-_MONTH_RE = _re.compile(r"^(\d{4})-(\d{2})$")
-
-
-def _month_end(d: date) -> date:
-    """Last calendar day of `d`'s month."""
-    return (d.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-
-
-def _resolve_month(month: Optional[str]) -> tuple[date, date]:
-    """``YYYY-MM`` → that month's full window, clamped to the v4 scope year.
-
-    The default is the CURRENT month **in CST** (`cst_today()`), not in the
-    server's UTC or the browser's locale: Render and Aiven both run UTC, so on
-    the 1st of a month a naive `date.today()` would still be serving the
-    previous month for the first 5-6 hours of the CST day.
-    """
-    today = cst_today()
-    anchor = max(YEAR_START, min(YEAR_END, today)).replace(day=1)
-    if month:
-        m = _MONTH_RE.match(month.strip())
-        if not m:
-            raise HTTPException(status_code=422, detail="month must be YYYY-MM")
-        try:
-            anchor = date(int(m.group(1)), int(m.group(2)), 1)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="month must be YYYY-MM")
-        if anchor < YEAR_START:
-            anchor = YEAR_START.replace(day=1)
-        elif anchor > YEAR_END:
-            anchor = YEAR_END.replace(day=1)
-    return anchor, min(_month_end(anchor), YEAR_END)
+# Sort whitelist: public key → the base-CTE column. Interpolated into ORDER BY,
+# so an unknown key is a 400, never a pass-through.
+UNDER_5_SORTS = {
+    "order_id": "order_id",
+    "departure": "departure",
+    "customer": "customer",
+    "lane": "lane",
+    "team": "team",
+    "revenue": "revenue",
+    "profit": "profit",
+    "margin_pct": "margin_pct",
+}
+_SORT_DIRS = {"asc": "ASC", "desc": "DESC"}
 
 
-@router.get("/under-5-lanes")
-async def under_5_lanes(
+@router.get("/under-5-loads")
+async def under_5_loads(
     request: Request,
-    month: Optional[str] = Query(None, description="YYYY-MM; default = current CST month"),
+    range: Optional[str] = Query("mtd"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
     sub_teams: Optional[str] = Query(None),
-    limit: int = Query(UNDER_5_MAX_ROWS, ge=1, le=5000),
+    sort: str = Query("margin_pct"),
+    dir: str = Query("asc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(UNDER_5_PAGE_SIZE, ge=1, le=UNDER_5_MAX_PAGE_SIZE),
     user: dict = Depends(require_report_access("kam-performance-dfw")),
 ):
+    sort_col = UNDER_5_SORTS.get(sort)
+    sort_dir = _SORT_DIRS.get((dir or "").lower())
+    if sort_col is None or sort_dir is None:
+        raise HTTPException(status_code=400, detail="unknown sort or dir")
+
     gold = get_datalake_gold_pool(request)
-    s, e = _resolve_month(month)
+    s, e = _resolve_range(range, start_date, end_date)
 
     params: list = []
     where = _dfw_scope_where("b", params)
@@ -1076,8 +1067,9 @@ async def under_5_lanes(
     if sub_team_list:
         params.append(sub_team_list)
         where += f" AND TRIM(b.team) = ANY(${len(params)})"
-    params.extend([s, e, limit])
-    p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
+    params.extend([s, e, page_size, (page - 1) * page_size])
+    p_s, p_e, p_lim, p_off = (len(params) - 3, len(params) - 2,
+                              len(params) - 1, len(params))
 
     lane_sql = (
         "NULLIF(TRIM(b.origin_city_name),'') || ', ' || "
@@ -1086,36 +1078,51 @@ async def under_5_lanes(
         "NULLIF(TRIM(b.dest_state_id),'')"
     )
 
+    # `total_charge > 0` is both the old zero-charge filter (an unbilled load
+    # has no margin to speak of, §111) and the sign guard: a negative charge
+    # would flip the ratio and a loss would read as a healthy margin.
     rows = await gold.fetch(
         f"""
         WITH base AS (
           SELECT
-            TRIM(b.customer_name) AS customer,
-            {lane_sql}            AS lane,
-            b.total_charge,
-            b.margin_amt
+            TRIM(b.id)                           AS order_id,
+            b.origin_actual_departure::date      AS departure,
+            TRIM(b.customer_name)                AS customer,
+            {lane_sql}                           AS lane,
+            NULLIF(TRIM(b.team),'')              AS team,
+            b.total_charge::numeric              AS revenue,
+            b.margin_amt::numeric                AS profit,
+            b.margin_amt::numeric / b.total_charge::numeric * 100 AS margin_pct
           FROM public.mcleod_gld_budget_report_v4 b
           WHERE {where}
             AND b.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
-            AND COALESCE(b.total_charge, 0) <> 0
+            AND b.total_charge > 0
+            AND b.margin_amt::numeric / b.total_charge::numeric * 100 < {UNDER_MARGIN_PCT}
+        ),
+        scoped AS (
+          SELECT * FROM base WHERE customer IS NOT NULL AND lane IS NOT NULL
+        ),
+        totals AS (
+          SELECT COUNT(*) AS total_loads,
+                 COALESCE(SUM(revenue), 0) AS total_revenue,
+                 COALESCE(SUM(profit), 0)  AS total_profit
+          FROM scoped
+        ),
+        pg AS (
+          SELECT * FROM scoped
+          ORDER BY {sort_col} {sort_dir} NULLS LAST, order_id ASC
+          LIMIT ${p_lim} OFFSET ${p_off}
         )
-        SELECT
-          customer,
-          lane,
-          COUNT(*)                   AS loads,
-          SUM(total_charge)::numeric AS revenue,
-          SUM(margin_amt)::numeric   AS profit,
-          SUM(margin_amt)::numeric / SUM(total_charge)::numeric * 100 AS margin_pct
-        FROM base
-        WHERE customer IS NOT NULL AND lane IS NOT NULL
-        GROUP BY customer, lane
-        HAVING SUM(total_charge) > 0
-           AND SUM(margin_amt)::numeric / SUM(total_charge)::numeric * 100 < {UNDER_MARGIN_PCT}
-        ORDER BY margin_pct ASC, profit ASC
-        LIMIT ${p_lim}
+        SELECT t.total_loads, t.total_revenue, t.total_profit, pg.*
+        FROM totals t
+        LEFT JOIN pg ON TRUE
+        ORDER BY pg.{sort_col} {sort_dir} NULLS LAST, pg.order_id ASC
         """,
         *params,
     )
+
+    head = rows[0] if rows else None
+    total = int(head["total_loads"] or 0) if head else 0
 
     # Same per-user note rows as Worst 10 Lanes — one action plan per lane.
     notes = await get_pool(request).fetch(
@@ -1132,14 +1139,18 @@ async def under_5_lanes(
 
     data = []
     for r in rows:
+        if r["order_id"] is None:  # the LEFT JOIN's empty-page row
+            continue
         lane_key = f"{r['customer']}::{r['lane']}"
         note = note_map.get(lane_key, {"expiration_date": None, "action_plan": ""})
         data.append(
             {
+                "order_id": r["order_id"],
+                "departure": _iso(r["departure"]),
                 "lane_key": lane_key,
                 "customer": r["customer"],
                 "lane": r["lane"],
-                "loads": int(r["loads"] or 0),
+                "team": r["team"],
                 "revenue": float(r["revenue"] or 0),
                 "profit": float(r["profit"] or 0),
                 "margin_pct": float(r["margin_pct"]) if r["margin_pct"] is not None else None,
@@ -1152,10 +1163,18 @@ async def under_5_lanes(
         "data": data,
         "meta": {
             "window": {"start": s.isoformat(), "end": e.isoformat()},
-            "month": s.strftime("%Y-%m"),
+            "range": range or "mtd",
             "threshold_pct": UNDER_MARGIN_PCT,
-            "total": len(data),
-            "truncated": len(data) >= limit,
+            "total": total,
+            "page": page,
+            "limit": page_size,
+            "sort": sort,
+            "dir": sort_dir.lower(),
+            "totals": {
+                "loads": total,
+                "revenue": float(head["total_revenue"] or 0) if head else 0.0,
+                "profit": float(head["total_profit"] or 0) if head else 0.0,
+            },
         },
     }
 

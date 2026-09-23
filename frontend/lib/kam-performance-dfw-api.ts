@@ -1,6 +1,6 @@
 "use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { mutationErrorToast } from "@/lib/mutation-error"
 
 interface ApiResponse<T, M = unknown> {
@@ -633,28 +633,33 @@ export function useUpsertLaneNote() {
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "worst-lanes"] })
-      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "under-5-lanes"] })
+      qc.invalidateQueries({ queryKey: ["kam-performance-dfw", "under-5-loads"] })
     },
     onError: mutationErrorToast("Save lane note"),
   })
 }
 
 // ---------------------------------------------------------------------------
-// Tab 8 — LOADS UNDER 5% (Bruno PDF 2026-09-21). EVERY (customer, lane) pair
-// whose margin is under 5% for the selected month — not a top-N.
+// Tab 8 — LOADS UNDER 5% (Bruno PDFs 2026-09-21 → 2026-09-23). EVERY LOAD whose
+// own margin is under 5% in a YTD / MTD / WTD / Custom window — one row per
+// load, not per lane (R2). 4,998 rows YTD (2026-09-23), so the server pages
+// and sorts; `meta.totals` covers the whole filtered set, never the page.
 //
-// ⚠ Shares the Tab 6 note rows, and deliberately does NOT share its numbers:
-// Worst 10 Lanes measures the negative-margin SLICE of a lane (to tie out to
-// the Losses email), this tab measures the WHOLE lane (or a margin percentage
-// would be meaningless). Same lane, different Loads/Revenue/Profit. Both
-// captions say so.
+// ⚠ Presets go to the server as the `range` KEYWORD, not as browser-computed
+// dates: the backend resolves them in CST (`cst_today()`), where `kamBounds()`
+// would use the browser's clock.
+//
+// ⚠ The expiration date and action plan stay keyed by LANE (the Tab 6 rows):
+// every load on a lane shows — and saves — that lane's one plan.
 // ---------------------------------------------------------------------------
 
-export interface KamUnder5LaneRow {
+export interface KamUnder5LoadRow {
+  order_id: string
+  departure: string | null
   lane_key: string
   customer: string
   lane: string
-  loads: number
+  team: string | null
   revenue: number
   profit: number
   margin_pct: number | null
@@ -662,65 +667,63 @@ export interface KamUnder5LaneRow {
   action_plan: string
 }
 
+export type KamUnder5Sort =
+  | "order_id"
+  | "departure"
+  | "customer"
+  | "lane"
+  | "team"
+  | "revenue"
+  | "profit"
+  | "margin_pct"
+
+export type SortDir = "asc" | "desc"
+
 export interface KamUnder5Meta {
   window: { start: string; end: string }
-  month: string
+  range: string
   threshold_pct: number
+  /** Every matching load, not the page. */
   total: number
-  /** The server cap actually bit. A list that stops silently is §105. */
-  truncated: boolean
+  page: number
+  limit: number
+  sort: KamUnder5Sort
+  dir: SortDir
+  totals: { loads: number; revenue: number; profit: number }
 }
 
-const KAM_MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-]
-
-/**
- * Current month in CST as `YYYY-MM`.
- *
- * ⚠ NOT `new Date().getMonth()`. The backend defaults to the current CST month
- * (`cst_today()`), and a browser one timezone east would seed the picker with
- * the NEXT month for the last hours of the 1st — showing an empty table on a
- * month the report would happily serve.
- */
-export function cstMonthNow(): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-  }).formatToParts(new Date())
-  const y = parts.find((p) => p.type === "year")?.value ?? "2026"
-  const m = parts.find((p) => p.type === "month")?.value ?? "01"
-  return `${y}-${m}`
+export interface KamUnder5Query {
+  range: KamRange
+  start: string
+  end: string
+  subTeams: string[]
+  sort: KamUnder5Sort
+  dir: SortDir
+  page: number
+  pageSize: number
 }
 
-/** Selectable months, newest first. 2026 only — the router's v4 scope year. */
-export function kamMonthOptions(): { value: string; label: string }[] {
-  const [y, m] = cstMonthNow().split("-").map(Number)
-  const year = KAM_YEAR_START.slice(0, 4)
-  const last = y > Number(year) ? 12 : y < Number(year) ? 1 : m
-  const out: { value: string; label: string }[] = []
-  for (let i = last; i >= 1; i--) {
-    out.push({
-      value: `${year}-${String(i).padStart(2, "0")}`,
-      label: `${KAM_MONTH_NAMES[i - 1]} ${year}`,
-    })
-  }
-  return out
+function under5Qs(q: KamUnder5Query): string {
+  const window =
+    q.range === "custom"
+      ? rangeQuery({ start: q.start, end: q.end })
+      : `range=${q.range}`
+  return (
+    `${window}${subTeamsQuery(q.subTeams)}` +
+    `&sort=${q.sort}&dir=${q.dir}&page=${q.page}&page_size=${q.pageSize}`
+  )
 }
 
-export function kamDefaultMonth(): string {
-  return kamMonthOptions()[0].value
-}
-
-export function useUnder5Lanes(month: string, subTeams: string[] = []) {
+export function useUnder5Loads(q: KamUnder5Query) {
+  const qs = under5Qs(q)
   return useQuery({
-    queryKey: ["kam-performance-dfw", "under-5-lanes", month, subTeams.join(",")],
+    // the key IS the query string, so no param can change without a refetch
+    queryKey: ["kam-performance-dfw", "under-5-loads", qs],
     queryFn: () =>
-      apiFetch<KamUnder5LaneRow[], KamUnder5Meta>(
-        `custom/kam-performance-dfw/under-5-lanes?month=${encodeURIComponent(month)}${subTeamsQuery(subTeams)}`,
+      apiFetch<KamUnder5LoadRow[], KamUnder5Meta>(
+        `custom/kam-performance-dfw/under-5-loads?${qs}`,
       ),
+    placeholderData: keepPreviousData,
     staleTime: 60 * 1000,
     ...RETRY,
   })
