@@ -148,14 +148,22 @@ async def _seed_projection_history():
     reconstructible — see services/projection_history.py for the two caveats
     (the MTD clamp, and that a replayed point is approximate).
 
-    Guarded on the table being EMPTY, so a restart never re-runs it, and always
-    launched with `create_task` — never awaited in the lifespan, which would
-    add minutes to every cold start (the favicon-backfill rule).
+    Runs per SCOPE, not per table (2026-09-24): only the tracked scopes that
+    have never been replayed (`unbackfilled_scopes`) are seeded. On the first
+    deploy that is every scope; after that it is only a scope newly added to
+    `SNAPSHOT_SCOPES` — the Executive OPS Portal's `all/*` keys were the first.
+    The old "is the whole table empty" guard would have left them with no
+    history for ever. Once every scope has its backfill rows this is one cheap
+    SELECT per boot and a return.
+
+    Always launched with `create_task` — never awaited in the lifespan, which
+    would add minutes to every cold start (the favicon-backfill rule).
     """
     from app.services.projection_history import (
         BACKFILL_START,
         backfill_projection_history,
         capture_weekly_actuals,
+        unbackfilled_scopes,
     )
 
     hub = getattr(app.state, "pool", None)
@@ -163,27 +171,31 @@ async def _seed_projection_history():
     if hub is None or gold is None:
         return
     try:
-        existing = await hub.fetchval("SELECT COUNT(*) FROM ops_projection_history")
+        missing = await unbackfilled_scopes(hub)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Projection history seed check failed: {e}")
         return
-    # ⚠ The emptiness guard must gate BOTH writes. `capture_weekly_actuals` is
-    # DO UPDATE by design (a week keeps moving as loads post late), so letting
-    # it run on every restart with source='backfill' would relabel — and
-    # rewrite — rows that had been captured live.
-    if existing:
+    # ⚠ The guard must gate BOTH writes, and both must take the SAME scope
+    # list. `capture_weekly_actuals` is DO UPDATE by design (a week keeps
+    # moving as loads post late), so running it over every scope on a restart
+    # with source='backfill' would relabel — and rewrite — rows that had been
+    # captured live.
+    if not missing:
         return
 
-    logger.info("Projection history is empty — seeding from %s (background)...",
-                BACKFILL_START.isoformat())
+    keys = [f"{s[0]}/{s[1]}" for s in missing]
+    logger.info("Projection history: seeding %d scope(s) from %s (background): %s",
+                len(missing), BACKFILL_START.isoformat(), keys)
     try:
-        result = await backfill_projection_history(hub, gold, start=BACKFILL_START)
+        result = await backfill_projection_history(
+            hub, gold, start=BACKFILL_START, scopes=missing,
+        )
         logger.info(f"Projection history seed complete: {result}")
     except Exception as e:
         logger.error(f"Projection history seed failed: {e}")
     try:
         weeks = await capture_weekly_actuals(
-            hub, gold, start=BACKFILL_START, source="backfill",
+            hub, gold, start=BACKFILL_START, source="backfill", scopes=missing,
         )
         logger.info(f"Weekly actuals seed complete: {weeks}")
     except Exception as e:

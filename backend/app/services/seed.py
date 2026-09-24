@@ -656,21 +656,29 @@ CUSTOM_REPORTS = [
     # ReportIcons.tsx — the icon lookup is by title, not by key. The dash is an
     # EN DASH (–), matching the PDF.
     {
+        # Renamed from "CEO Executive Portal" 2026-09-24 (Erick Mendoza: "puede
+        # ser Executive OPS Portal, porque Bruce también debe ver las dos
+        # divisiones"). KEY and URL are unchanged on purpose — favourites,
+        # access_log and role_report_access all hang off custom_path, so only
+        # the label moves. ⚠ The title must stay byte-identical to REPORT_MAP.
         "key": "ceo-executive-portal",  # -> /reports/ceo-executive-portal
-        "title": "CEO Executive Portal",
-        "description": "Ops Portal Overview across BOTH divisions with a Division filter (CORP / DFW) — KPI combo, variances, losses, performance, projection, actuals, by-lane, by-order, unbilled and hold",
-        "note": "Bruno 2026-09-03 · duplicate of Ops Portal - Overview extended to TEAM-DFW · Division filter is a REQUIRED path segment (/{division}/…), never a defaulting query param (§100) · CORP = the live TEAM1-TEAM5 scope, DFW = the live team_id=TEAM-DFW scope, so both views reconcile to the cent with the two portals they duplicate · budget panels 404 under DFW (0 of its 15 YTD customers exist in daily_production_budget_report) · CEO + admins only",
+        "title": "Executive OPS Portal",
+        "description": "Ops Portal Overview across BOTH divisions with a Division filter (CORP / DFW / ALL) — KPI combo, variances, losses, performance, projection, actuals, by-lane, by-order, unbilled and hold, with quick links to every sibling report",
+        "note": "2026-09-24: ALL division (TEAM1-TEAM5 + TEAM-DFW as a 6th team, no budget) + Go-to row + renamed from CEO Executive Portal + granted to Executive · Bruno 2026-09-03 · duplicate of Ops Portal - Overview extended to TEAM-DFW · Division filter is a REQUIRED path segment (/{division}/…), never a defaulting query param (§100) · CORP = the live TEAM1-TEAM5 scope, DFW = the live team_id=TEAM-DFW scope, so both views reconcile to the cent with the two portals they duplicate · budget panels 404 under DFW and ALL (0 of DFW's 15 YTD customers exist in daily_production_budget_report) · CEO + Executive + admins",
         "category": "Executive",
         "tags": [
             "ceo", "executive", "ops", "overview", "portal", "division",
-            "corp", "dfw", "kpi", "projection", "variance", "actuals",
+            "corp", "dfw", "all", "kpi", "projection", "variance", "actuals",
         ],
         "owner_name": "Diego",
         # ⚠ Seed grants apply only on FIRST creation (xmax=0); live access is
         # managed at /admin/reports. "CEO" is held by Erick Mendoza plus two
         # admins (verified 2026-09-03), which is exactly Request 1's
         # "CEO – Erick Mendoza (and Admin users)". Mirrors ceo-executive.
-        "roles": ["CEO"],
+        # "Executive" added 2026-09-24 so Bruce Kimbark (CFO) sees both
+        # divisions — granted LIVE at the same time, since this list does not
+        # reach an existing row.
+        "roles": ["CEO", "Executive"],
     },
     {
         "key": "ops-managers-portal-dfw",  # -> /reports/ops-managers-portal-dfw

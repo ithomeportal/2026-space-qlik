@@ -1,9 +1,13 @@
-"""CEO Executive Portal — Ops Portal Overview across BOTH divisions.
+"""Executive OPS Portal (was "CEO Executive Portal") — Ops Portal Overview across BOTH divisions.
 
-Bruno PDF "BRUNO -- Exec Portal" (2026-09-03).
+Bruno PDF "BRUNO -- Exec Portal" (2026-09-03). Renamed and given an ``all``
+division on Erick Mendoza's request, 2026-09-24 (report key and URL unchanged).
 
 Endpoints:
-    /api/custom/ceo-executive-portal/{division}/*      division ∈ {corp, dfw}
+    /api/custom/ceo-executive-portal/{division}/*      division ∈ {corp, dfw, all}
+
+    ``all`` = CORP's five teams + TEAM-DFW as a sixth (``_scope.ALL_SCOPE``).
+    Like ``dfw`` it has no budget, so the budget routes 404 under it.
 
 Role gate:
     require_report_access("ceo-executive-portal") — DB-backed per-report list,
@@ -74,7 +78,6 @@ from app.routers import ops_portal_overview as opo
 from app.routers import ops_portal_overview_dfw as dfw
 from app.routers.deps import require_report_access
 from app.routers.ops_portal_overview._scope import (
-    DFW_SCOPE,
     DIVISIONS,
     DivisionScope,
     scope_of,
@@ -190,7 +193,7 @@ async def customer_variance(
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(gate),
 ):
-    """CORP: actual − budget. DFW: last month − this month.
+    """CORP: actual − budget. DFW and ALL: last month − this month.
 
     ⚠ This is the one endpoint where the division changes the MEASUREMENT, not
     just the population — and the two have OPPOSITE sign conventions (positive
@@ -206,7 +209,10 @@ async def customer_variance(
     an omission.
     """
     scope = scope_of(request)
-    if scope is DFW_SCOPE:
+    # ⚠ Dispatch on the PROPERTY, not on identity with DFW_SCOPE: ALL (Erick
+    # 2026-09-24) has no budget either, and an `is DFW_SCOPE` test sent it down
+    # the actual − budget path against a CORP-only budget.
+    if not scope.has_budget:
         return await dfw.customer_variance(
             request=request,
             team=_sub_team(scope, team),

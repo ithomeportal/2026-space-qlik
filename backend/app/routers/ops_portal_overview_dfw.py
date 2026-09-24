@@ -65,7 +65,7 @@ from app.routers import ops_portal_overview as opo
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.ops_portal_overview._dates import _month_bounds
 from app.routers.ops_portal_overview._metrics import _safe_float
-from app.routers.ops_portal_overview._scope import DFW_SCOPE, sub_team_of
+from app.routers.ops_portal_overview._scope import DFW_SCOPE, scope_of, sub_team_of
 from app.routers.ops_portal_overview._sql import _v4_scope_where
 
 REPORT_KEY = "ops-managers-portal-dfw"
@@ -216,10 +216,15 @@ async def customer_variance(
     last_end = this_start - timedelta(days=1)
     last_start, _ = _month_bounds(last_end)
 
+    # The scope comes from the request, not a DFW_SCOPE literal: this router's
+    # `_pin_dfw_scope` stamps DFW, and the CEO portal reuses this definition
+    # for every division without a budget (DFW and ALL, 2026-09-24). A literal
+    # here would serve DFW's numbers under an ALL heading.
+    scope = scope_of(request)
     params: list = []
     where = _v4_scope_where(
-        "br4", _sub_team(team), customer, load_type, params,
-        lanes, exclude_lanes, carriers, exclude_carriers, scope=DFW_SCOPE,
+        "br4", sub_team_of(scope, team), customer, load_type, params,
+        lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
     )
     params.extend([last_start, last_end, this_start, this_end, limit])
     n = len(params)

@@ -87,7 +87,37 @@ DFW_SCOPE = DivisionScope(
     has_budget=False,
 )
 
-SCOPES: dict[str, DivisionScope] = {s.key: s for s in (CORP_SCOPE, DFW_SCOPE)}
+# Erick Mendoza (CEO), 2026-09-24: "me falta el de ALL" — both divisions at
+# once, on the CEO Executive (now Executive OPS) Portal ONLY.
+#
+# ⚠ The team column is ``team_id``, and DFW appears as ONE team, ``TEAM-DFW``.
+# There is no single column that names both divisions' sub-teams: ``v4.team``
+# is '' on every CORP row except 20 TEAM3 rows that carry 'TM1'/'TM4'
+# (measured 2026-09-24) — using it would file those 20 CORP loads under a DFW
+# pill. ``team_id`` is clean on both sides, so the rule is: ALL = CORP's teams
+# + DFW as a sixth team. The DFW view is where TM1..TM5 live.
+#
+# ⚠ ``has_budget=False``: the budget table is CORP-only, so under ALL a
+# variance would set CORP+DFW actuals against a CORP-only budget and read as a
+# DFW-sized "over budget" that is not real. Budget panels 404 here exactly as
+# under DFW; the CORP view keeps every one of them (confirmed with Diego).
+#
+# Every leg is a plain SUM over v4, so ALL's volume / revenue / profit equal
+# CORP + DFW to the cent — asserted in tests and replayed live. The one
+# non-additive figure is Team UT (capacity = 500 × team count): DFW counts as
+# ONE team here, not five.
+ALL_SCOPE = DivisionScope(
+    key="all",
+    label="ALL",
+    base_teams=CORP_TEAMS + (DFW_TEAM,),
+    sub_teams=CORP_TEAMS + (DFW_TEAM,),
+    v4_team_col="team_id",
+    sc_team_col="team_id",
+    padded_sub_teams=True,
+    has_budget=False,
+)
+
+SCOPES: dict[str, DivisionScope] = {s.key: s for s in (CORP_SCOPE, DFW_SCOPE, ALL_SCOPE)}
 
 
 def case_variants(values: Sequence[str]) -> list[str]:
@@ -106,7 +136,11 @@ def case_variants(values: Sequence[str]) -> list[str]:
     return out
 
 
-DIVISIONS: dict[str, DivisionScope] = {"corp": CORP_SCOPE, "dfw": DFW_SCOPE}
+DIVISIONS: dict[str, DivisionScope] = {
+    "corp": CORP_SCOPE,
+    "dfw": DFW_SCOPE,
+    "all": ALL_SCOPE,
+}
 """The user-selectable divisions, keyed by URL segment.
 
 Used by the CEO Executive Portal, which is the ONE report where the division is

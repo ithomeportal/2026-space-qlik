@@ -80,7 +80,7 @@ from app.routers.ops_portal_overview._metrics import (
     _safe_float,
     _team_projection_core,
 )
-from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE, DivisionScope
+from app.routers.ops_portal_overview._scope import ALL_SCOPE, CORP_SCOPE, DFW_SCOPE, DivisionScope
 from app.routers.ops_portal_overview._sql import _v4_scope_where
 
 logger = logging.getLogger(__name__)
@@ -107,13 +107,21 @@ DIGEST_KEY = "DIGEST"
 #   corp/DIGEST  the PERFORMANCE CORP e-mail (TEAM1..TEAM4)
 #   dfw/ALL      the Ops Managers Portal DFW default
 #   dfw/TMn      the DFW sub-team pills
+#   all/ALL      the Executive OPS Portal's ALL division (Erick, 2026-09-24)
+#   all/<team>   its six team pills — TEAM1..TEAM5 + TEAM-DFW. The CORP ones
+#                duplicate corp/TEAMn by value; stored anyway so the lookup
+#                stays `(scope.key, team)` with no cross-scope aliasing.
 SNAPSHOT_SCOPES: tuple[tuple[str, str, DivisionScope, tuple[str, ...]], ...] = (
     ("corp", ALL_TEAMS, CORP_SCOPE, ()),
     *tuple((("corp", t, CORP_SCOPE, (t,)) for t in CORP_TEAMS)),
     ("corp", DIGEST_KEY, CORP_SCOPE, DIGEST_CORP_TEAMS),
     ("dfw", ALL_TEAMS, DFW_SCOPE, ()),
     *tuple((("dfw", t, DFW_SCOPE, (t,)) for t in DFW_SUB_TEAMS)),
+    ("all", ALL_TEAMS, ALL_SCOPE, ()),
+    *tuple((("all", t, ALL_SCOPE, (t,)) for t in ALL_SCOPE.sub_teams)),
 )
+
+SnapshotScope = tuple[str, str, DivisionScope, tuple[str, ...]]
 
 # How far back a first-run backfill reaches. v4 holds 2020-12 onward, but two
 # and a half years already answers the seasonality question and keeps the first
@@ -507,10 +515,32 @@ async def capture_projection_snapshots(
     return result
 
 
+async def unbackfilled_scopes(hub_pool) -> tuple[SnapshotScope, ...]:
+    """The tracked scopes that have never been replayed.
+
+    A scope added to ``SNAPSHOT_SCOPES`` after the first deploy (``all/*``,
+    2026-09-24) would otherwise never get history: the startup seed used to run
+    only when the WHOLE table was empty.
+
+    ⚠ Keyed on ``source = 'backfill'``, not on "has any row". The 02:45 live
+    job writes today's row for every tracked scope, so on the first restart
+    after it a new scope already HAS a row — "any row" would mark it done with
+    one day of history, permanently.
+    """
+    rows = await hub_pool.fetch(
+        "SELECT DISTINCT scope_key, team_key FROM ops_projection_history "
+        "WHERE source = 'backfill'"
+    )
+    done = {(r["scope_key"], r["team_key"]) for r in rows}
+    return tuple(s for s in SNAPSHOT_SCOPES if (s[0], s[1]) not in done)
+
+
 async def backfill_projection_history(
     hub_pool, gold_pool, *, start: date = BACKFILL_START, end: Optional[date] = None,
+    scopes: Optional[Sequence[SnapshotScope]] = None,
 ) -> dict[str, Any]:
-    """Replay the projection over ``[start, end]`` for every tracked scope.
+    """Replay the projection over ``[start, end]`` for every tracked scope
+    (or only ``scopes``, when given).
 
     ``DO NOTHING`` on conflict, so this is safe to re-run and can never
     overwrite an observed row. Today is deliberately EXCLUDED — today's value
@@ -524,7 +554,7 @@ async def backfill_projection_history(
         return {"skipped": "empty range"}
 
     total, failed = 0, []
-    for scope_key, team_key, scope, team_ids in SNAPSHOT_SCOPES:
+    for scope_key, team_key, scope, team_ids in (SNAPSHOT_SCOPES if scopes is None else scopes):
         try:
             recs = await _replay_scope(
                 gold_pool, scope=scope, team_ids=team_ids, start=start, end=last,
@@ -607,7 +637,7 @@ def _week_upsert_sql() -> str:
 
 async def capture_weekly_actuals(
     hub_pool, gold_pool, *, start: Optional[date] = None, end: Optional[date] = None,
-    source: str = "live",
+    source: str = "live", scopes: Optional[Sequence[SnapshotScope]] = None,
 ) -> dict[str, Any]:
     """Upsert Mon-Sun weekly actuals for every tracked scope.
 
@@ -623,7 +653,7 @@ async def capture_weekly_actuals(
     first = start or (_week_start_of(today) - timedelta(weeks=7))
     total, failed = 0, []
 
-    for scope_key, team_key, scope, team_ids in SNAPSHOT_SCOPES:
+    for scope_key, team_key, scope, team_ids in (SNAPSHOT_SCOPES if scopes is None else scopes):
         params: list = []
         where = _v4_scope_where(
             "br4", list(team_ids) or None, None, None, params,

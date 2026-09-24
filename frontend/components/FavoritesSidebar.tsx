@@ -104,7 +104,7 @@ function FavoriteRow({
   active: boolean
   collapsed: boolean
 }) {
-  const { icon: Icon, gradient } = getReportIcon(report.title, report.category)
+  const { icon: Icon, gradient, tag, tagBg } = getReportIcon(report.title, report.category)
   // A pinned report always has a `custom_path` (every report is code-made), but
   // a legacy row without one would render a dead link — send it through the
   // resolver instead of nowhere.
@@ -120,14 +120,27 @@ function FavoriteRow({
         collapsed ? "justify-center p-1.5" : "px-2 py-1.5"
       } ${active ? "bg-[#1B3A5C] text-white" : "text-[#374151] hover:bg-[#E5E7EB]"}`}
     >
+      {/* ⚠ The corner tag is part of the icon's IDENTITY, not decoration:
+          XRay DFW TM1..TM4 share icon AND colour and differ only by it, and the
+          collapsed rail shows nothing else (Erick, 2026-09-24: "the two boards
+          have the same logo and the same colour"). Home's tile renders it;
+          this tile must too. */}
       <span
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg shadow-sm"
+        className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg shadow-sm"
         style={{ background: gradient }}
       >
         <Icon
           className="h-4 w-4 text-white"
           style={{ filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.4))" }}
         />
+        {tag && (
+          <span
+            className="absolute -bottom-1 -right-1.5 rounded px-[3px] py-px text-[7px] font-bold leading-none text-white shadow-sm ring-1 ring-white"
+            style={{ backgroundColor: tagBg }}
+          >
+            {tag}
+          </span>
+        )}
       </span>
       {!collapsed && (
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight">

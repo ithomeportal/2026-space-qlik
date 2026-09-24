@@ -129,12 +129,19 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "XRay DFW TM3":                   { icon: Activity,       family: "dfw", tag: "TM3" },
   "XRay DFW TM4":                   { icon: Activity,       family: "dfw", tag: "TM4" },
   "CEO Executive":                  { icon: Crown,          family: "executive" },
-  "CEO Executive Portal":           { icon: Crown,          family: "executive" },
+  // Was "CEO Executive Portal" with the SAME Crown as "CEO Executive" — two
+  // identical tiles side by side in the Favorites rail (Erick, 2026-09-24).
+  // It is the Ops portal family's grid in executive colours, tagged, so it
+  // reads as "the Ops portal, executive edition". Every seeded title must
+  // resolve to a UNIQUE (icon, family, tag): tests/test_report_icons_unique.py.
+  "Executive OPS Portal":           { icon: LayoutGrid,     family: "executive", tag: "EX" },
   "HR - Access Log Doors":          { icon: DoorOpen,       family: "hr" },
   "DFW - Access Log Doors":         { icon: DoorOpen,       family: "dfw" },
   "Admin - Access Log Doors":       { icon: DoorOpen,       family: "admin" },
   "OPS - Access Log Doors":         { icon: DoorOpen,       family: "operations" },
-  "Pricing - Access Log Doors":     { icon: DoorOpen,       family: "operations" },
+  // Was operations — identical to "OPS - Access Log Doors". Pricing sits with
+  // the commercial side of the house.
+  "Pricing - Access Log Doors":     { icon: DoorOpen,       family: "sales" },
   "Carrier Procurement - Access Log Doors":
                                     { icon: DoorOpen,       family: "procurement" },
   "HD Spot":                        { icon: Store,          family: "operations" },

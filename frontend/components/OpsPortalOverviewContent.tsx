@@ -63,6 +63,28 @@ function clampToYear(iso: string) {
   return iso
 }
 
+export interface GoToLink {
+  label: string
+  href: string
+}
+
+/** The "Go to" quick-nav row every CORP Ops portal shows (Bruno R1). Exported
+ *  so the Executive OPS Portal can compose its per-division rows from the
+ *  SAME list rather than a second copy that drifts (§69). */
+export const CORP_GO_TO_LINKS: readonly GoToLink[] = [
+  { label: "Bonus Calculator", href: "/reports/bonus-calculator" },
+  { label: "Ops Customer Score", href: "/reports/ops-customer-score" },
+  { label: "Ops Margins", href: "/reports/ops-margins" },
+  { label: "eSavings from Carriers", href: "/reports/esavings-carriers" },
+  { label: "2026 Official Budget Follow Up", href: "/reports/budget-followup-2026" },
+  { label: "Ops Direct Compare", href: "/reports/ops-direct-compare" },
+  { label: "XRay CORP Mng", href: "/reports/xray-corp-mng" },
+  // Bruno (PDF 2026-08-14) R7. Relative, like every sibling: an absolute
+  // https://space.unilinkportal.com/... would force a full page load and break
+  // on the *.vercel.app alias.
+  { label: "Attrition", href: "/reports/attrition-wow" },
+]
+
 interface Props {
   /** Backend router prefix, e.g. "custom/ops-portal-overview-t1". Defaults to
    *  the cross-team router via the OppApiProvider default. */
@@ -82,6 +104,10 @@ interface Props {
   /** Hides the whole "Go to" quick-nav row (Bruno PDF 2026-08-20, DFW R4).
    *  Every destination in it is a CORP report. */
   hideGoTo?: boolean
+  /** Overrides the destinations in the "Go to" row (default: the CORP list).
+   *  Set by the Executive OPS Portal, whose row follows the selected division
+   *  (Erick Mendoza 2026-09-24: "he don't have several buttons"). */
+  goToLinks?: readonly GoToLink[]
   /** Drops every budget-derived control and panel: the BDGT chart series and
    *  its chip (DFW R5), the Team Budget Monthly Variance panel (R6) and the
    *  All / Budget / Variance-per-Cell modes in Actuals (R8).
@@ -127,6 +153,7 @@ export function OpsPortalOverviewContent({
   badge,
   hideBonusNav = false,
   hideGoTo = false,
+  goToLinks,
   hideBudget = false,
   customerVarianceBasis = "budget",
   divisions,
@@ -141,6 +168,7 @@ export function OpsPortalOverviewContent({
         badge={badge}
         hideBonusNav={hideBonusNav}
         hideGoTo={hideGoTo}
+        goToLinks={goToLinks}
         hideBudget={hideBudget}
         customerVarianceBasis={customerVarianceBasis}
         divisions={divisions}
@@ -157,6 +185,7 @@ function Body({
   badge,
   hideBonusNav,
   hideGoTo,
+  goToLinks,
   hideBudget,
   customerVarianceBasis,
   divisions,
@@ -168,6 +197,7 @@ function Body({
   badge?: string
   hideBonusNav?: boolean
   hideGoTo?: boolean
+  goToLinks?: readonly GoToLink[]
   hideBudget?: boolean
   customerVarianceBasis?: "budget" | "mom"
   divisions?: readonly { key: string; label: string }[]
@@ -596,19 +626,7 @@ function Body({
           {!hideGoTo && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] uppercase tracking-wide text-[#9CA3AF]">Go to</span>
-            {[
-              { label: "Bonus Calculator", href: "/reports/bonus-calculator" },
-              { label: "Ops Customer Score", href: "/reports/ops-customer-score" },
-              { label: "Ops Margins", href: "/reports/ops-margins" },
-              { label: "eSavings from Carriers", href: "/reports/esavings-carriers" },
-              { label: "2026 Official Budget Follow Up", href: "/reports/budget-followup-2026" },
-              { label: "Ops Direct Compare", href: "/reports/ops-direct-compare" },
-              { label: "XRay CORP Mng", href: "/reports/xray-corp-mng" },
-              // Bruno (PDF 2026-08-14) R7. Relative, like every sibling: an
-              // absolute https://space.unilinkportal.com/... would force a full
-              // page load and break on the *.vercel.app alias.
-              { label: "Attrition", href: "/reports/attrition-wow" },
-            ]
+            {(goToLinks ?? CORP_GO_TO_LINKS)
               // Per-team KAM portals hide the Bonus Calculator pill (access
               // managed separately); the main Ops Portal keeps it.
               .filter(({ href }) => !(hideBonusNav && href === "/reports/bonus-calculator"))
