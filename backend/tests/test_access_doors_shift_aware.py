@@ -264,3 +264,20 @@ class TestITExclusionAndPerPersonOverride:
         sql = _squash(FIRST)
         assert "o.include_it" in sql and "'INFORMATION TECHNOLOGY'" in sql
         assert sql.index("o.include_it") < sql.index("'INFORMATION TECHNOLOGY'")
+
+
+class TestExitButtonIsNeverAnArrival:
+    """2026-09-28: the door table carries card punches (4) as well as
+    fingerprints (1). 200 is the exit button pressed from inside; the data team
+    drops it upstream today, so live data cannot prove this guard."""
+
+    def test_every_door_read_excludes_the_exit_button(self):
+        sql = re.sub(r"--[^\n]*", "", FIRST)
+        reads = sql.count("zk_gld_onlyfingerprint")
+        guards = len(re.findall(r"\bz\.verify_mode_no IS DISTINCT FROM 200\b", sql))
+        assert reads >= 1 and guards == reads
+
+    def test_it_excludes_rather_than_allow_lists(self):
+        # An allow-list of 1/4 would silently delete anyone on a new verify mode.
+        sql = _squash(re.sub(r"--[^\n]*", "", FIRST))
+        assert not re.search(r"verify_mode_no\s*(=|IN\s*\()", sql)

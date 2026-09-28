@@ -290,6 +290,12 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
           ON lower(btrim(u.email)) = lower(btrim(e.email))
         WHERE z.event_date BETWEEN ({start_placeholder}::date - 1)
                                AND ({end_placeholder}::date + 1)
+         -- The table holds card punches (4) as well as fingerprints (1) since
+         -- 2026-09-28. 200 is the exit button pressed from inside: never an
+         -- arrival. Excluded rather than allow-listing 1/4, so an unseen verify
+         -- mode adds a person instead of deleting one. Mirrors n8n
+         -- sql/late-arrival-shift-aware.sql.
+         AND z.verify_mode_no IS DISTINCT FROM 200
          -- ⚠ IN THE WHERE, NOT IN THE LEFT JOIN'S ON CLAUSE. It sat there until
          -- 2026-09-11 and therefore excluded nobody — see _EXCLUDE_IT_SQL.
          {_EXCLUDE_IT_SQL}
