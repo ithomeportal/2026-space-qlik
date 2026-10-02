@@ -47,7 +47,7 @@ Performance:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -73,6 +73,12 @@ EXCLUDED_CATEGORIES = (
 )
 
 # Statuses that count as "open / pending" in every KPI Bruno authored.
+# The FreshService sync stopped on 2026-04-15 and the report kept rendering —
+# an empty window read as "a quiet month". /summary now reports the newest
+# write in the UNFILTERED table; older than this ⇒ the page says the feed is
+# stale. 72 h so an ordinary weekend with no ticket activity does not alarm.
+STALE_AFTER = timedelta(hours=72)
+
 PENDING_STATUSES = ("Pending", "Open", "In Progress", "Waiting for user response")
 CLOSED_STATUSES = ("Closed", "Resolved")
 
@@ -159,6 +165,14 @@ def _coerce_type(type_param: Optional[str]) -> str:
 # in one place. Every endpoint starts from this CTE so the filter set stays
 # single-source-of-truth.
 #
+# ⚠ The FreshService sync writes every timestamp as NAIVE UTC (`timestamp
+# without time zone`; tickets peak at 13:00-22:00 = 8 AM-5 PM CST). They are
+# made `timestamptz` HERE, once, so that under the pool's CST session every
+# `::date`, `date_trunc` and window bound below is a CST day, and the API emits
+# offset-qualified ISO strings the browser cannot misread as local time.
+# Before 2026-10-01 a ticket opened after 7 PM CST was bucketed on the next
+# day, and every time in the tables printed 5-6 h late (SPEC-CODE-RULES §116).
+#
 # Placeholders (in order): $1 = Type
 _BASE_CTE = f"""
 WITH t AS (
@@ -177,10 +191,10 @@ WITH t AS (
          WHEN "Status" = '8' THEN 'Waiting for user response'
          ELSE "Status" END                               AS status,
     "ResponderId"                                        AS responder_id,
-    "DueBy"                                              AS due_by,
-    "FirstResponseDueBy"                                 AS first_resp_due,
-    "CreatedDate"                                        AS created_date,
-    "UpdatedDate"                                        AS updated_date
+    ("DueBy" AT TIME ZONE 'UTC')                         AS due_by,
+    ("FirstResponseDueBy" AT TIME ZONE 'UTC')            AS first_resp_due,
+    ("CreatedDate" AT TIME ZONE 'UTC')                   AS created_date,
+    ("UpdatedDate" AT TIME ZONE 'UTC')                   AS updated_date
   FROM "Tickets"
   WHERE "_active_value" = TRUE
     AND "Subject" NOT ILIKE '%test%'
@@ -189,6 +203,23 @@ WITH t AS (
     AND "Type" = $1
 )
 """
+
+
+# Newest write anywhere in "Tickets" — no type / category / _active_value
+# filter, so it measures the FEED, not the slice the page is showing.
+_FRESHNESS_SQL = """
+SELECT max("UpdatedDate") AT TIME ZONE 'UTC' FROM "Tickets"
+"""
+
+
+def _freshness(last_synced: Optional[datetime], now: datetime) -> dict:
+    """`{last_synced, stale}` for the page's "Data as of" pill / stale banner."""
+    if last_synced is None:
+        return {"last_synced": None, "stale": True}
+    return {
+        "last_synced": last_synced.isoformat(),
+        "stale": now - last_synced > STALE_AFTER,
+    }
 
 
 def _type_only_params(type_value: str) -> list:
@@ -246,7 +277,7 @@ async def summary(
         + """
         SELECT
           to_char(date_trunc('month', created_date), 'Mon YYYY') AS month_label,
-          date_trunc('month', created_date)                       AS month_start,
+          date_trunc('month', created_date)::date                 AS month_start,
           COALESCE(NULLIF(category, ''), 'Other')                AS category,
           COUNT(*) AS cnt
         FROM t
@@ -292,7 +323,7 @@ async def summary(
           COUNT(*)                                            AS cnt
         FROM t
         WHERE status IN ('Pending','Open','In Progress','Waiting for user response')
-          AND created_date >= $2 AND created_date < $3
+          AND created_date >= $2::date AND created_date < $3::date
         GROUP BY 1, 2
         ORDER BY 1, 2
         """
@@ -307,7 +338,7 @@ async def summary(
           COUNT(*)                                            AS cnt
         FROM t
         WHERE status IN ('Pending','Open','In Progress','Waiting for user response')
-          AND created_date >= $2 AND created_date < $3
+          AND created_date >= $2::date AND created_date < $3::date
         GROUP BY 1, 2
         ORDER BY 1, 2
         """
@@ -337,7 +368,7 @@ async def summary(
           status,
           COUNT(*)           AS cnt
         FROM t
-        WHERE created_date >= $2 AND created_date < $3
+        WHERE created_date >= $2::date AND created_date < $3::date
         GROUP BY 1, 2
         ORDER BY 1, 2
         """
@@ -350,7 +381,7 @@ async def summary(
           COALESCE(NULLIF(category, ''), 'Other') AS category,
           COUNT(*)                                AS cnt
         FROM t
-        WHERE created_date >= $2 AND created_date < $3
+        WHERE created_date >= $2::date AND created_date < $3::date
         GROUP BY 1
         ORDER BY 2 DESC
         """
@@ -369,6 +400,7 @@ async def summary(
         by_agent = await conn.fetch(by_agent_sql, *p_type)
         history_status = await conn.fetch(history_status_sql, *p_window)
         history_category = await conn.fetch(history_category_sql, *p_window)
+        last_synced = await conn.fetchval(_FRESHNESS_SQL)
 
     pending_now = kpi["pending_now"] or 0
     closed = kpi["closed"] or 0
@@ -382,6 +414,7 @@ async def summary(
         "data": {
             "type": type_value,
             "range": {"start": s.isoformat(), "end": e.isoformat()},
+            "freshness": _freshness(last_synced, datetime.now(timezone.utc)),
             "kpis": {
                 "pending_now": pending_now,
                 "closed": closed,
@@ -391,7 +424,7 @@ async def summary(
             },
             "by_month": [
                 {
-                    "month_start": r["month_start"].date().isoformat(),
+                    "month_start": r["month_start"].isoformat(),
                     "month_label": r["month_label"],
                     "category": r["category"],
                     "cnt": r["cnt"],
@@ -502,7 +535,7 @@ async def _fetch_table(
           COUNT(*) OVER () AS total_count
         FROM t
         LEFT JOIN "Agents" a ON t.responder_id = a."Id"
-        WHERE t.created_date >= $2 AND t.created_date < $3
+        WHERE t.created_date >= $2::date AND t.created_date < $3::date
           AND t.status IN ({status_in})
         ORDER BY {sort_col} {sort_dir}, t.id DESC
         LIMIT {int(page_size)} OFFSET {int(offset)}

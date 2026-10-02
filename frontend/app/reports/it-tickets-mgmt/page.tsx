@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import Link from "next/link"
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
@@ -35,6 +36,7 @@ import {
   type ItTicketsType,
 } from "@/lib/it-tickets-api"
 import { ReportGuard } from "@/components/ReportGuard"
+import { parseLocalDate } from "@/lib/local-date"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -164,6 +166,7 @@ function ItTicketsMgmtContent() {
   const summary = summaryQ.data?.data
   const kpis = summary?.kpis
   const window = summary?.range
+  const freshness = summary?.freshness
 
   const pendingRows = pendingQ.data?.data ?? []
   const closedRows = closedQ.data?.data ?? []
@@ -223,8 +226,36 @@ function ItTicketsMgmtContent() {
           <h1 className="text-sm font-semibold text-[#1B3A5C]">IT Tickets Mgmt</h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1E40AF]">IT</span>
         </div>
-        <div className="ml-auto text-xs text-[#6B7280]">{windowLabel}</div>
+        <div className="ml-auto flex items-center gap-3 text-xs text-[#6B7280]">
+          {freshness && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] ${
+                freshness.stale ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#F3F4F6] text-[#374151]"
+              }`}
+              title="Newest write in the FreshService feed (all tickets, unfiltered)"
+            >
+              Data as of {fmtDateTime(freshness.last_synced)}
+            </span>
+          )}
+          {windowLabel}
+        </div>
       </div>
+
+      {freshness?.stale && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-[#FECACA] bg-[#FEF2F2] px-4 py-2 text-xs text-[#991B1B]"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            <strong>FreshService data is not syncing.</strong>{" "}
+            {freshness.last_synced
+              ? `The newest ticket data is from ${fmtDateTime(freshness.last_synced)}`
+              : "No sync time is available"}
+            {" "}— tickets opened or updated after that are missing from every panel below.
+          </span>
+        </div>
+      )}
 
       {/* Sticky filter bar */}
       <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
@@ -681,8 +712,9 @@ function pivotByKey(
 }
 
 function prettyKey(keyField: string, k: string): string {
+  // Keys are date-only "YYYY-MM-DD" — parse as LOCAL, never the native UTC parse (§116).
   if (keyField === "day" || keyField === "week_start") {
-    const d = new Date(k)
+    const d = parseLocalDate(k)
     if (Number.isNaN(d.getTime())) return k
     return `${(d.getMonth() + 1).toString().padStart(2, "0")}/${d
       .getDate()
@@ -690,7 +722,7 @@ function prettyKey(keyField: string, k: string): string {
       .padStart(2, "0")}`
   }
   if (keyField === "month_start") {
-    const d = new Date(k)
+    const d = parseLocalDate(k)
     if (Number.isNaN(d.getTime())) return k
     return d.toLocaleDateString("en-US", { month: "short", year: "numeric" })
   }

@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { parseLocalDate } from "@/lib/local-date"
 
 interface ApiResponse<T> {
   success: boolean
@@ -124,9 +125,18 @@ export interface ItHistoryCategoryRow {
   cnt: number
 }
 
+/** Newest write in the UNFILTERED FreshService "Tickets" table. `stale` once
+ *  it is older than 72 h — the sync stopped on 2026-04-15 and the page kept
+ *  rendering an empty window as if it were a quiet month. */
+export interface ItFreshness {
+  last_synced: string | null
+  stale: boolean
+}
+
 export interface ItTicketsSummary {
   type: string
   range: { start: string; end: string }
+  freshness?: ItFreshness
   kpis: ItTicketsKpis
   by_month: ItByMonthRow[]
   status: ItStatusRow[]
@@ -215,7 +225,9 @@ export function fmtDateTime(iso: string | null): string {
 
 export function fmtIsoDay(iso: string | null): string {
   if (!iso) return "—"
-  const d = new Date(iso)
+  // A date-only "YYYY-MM-DD" must not use the native Date parse — UTC midnight is
+  // the previous day in CST (§116). Full timestamps arrive with an offset.
+  const d = parseLocalDate(iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString("en-US", {
     year: "numeric",
