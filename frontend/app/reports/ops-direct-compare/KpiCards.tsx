@@ -36,6 +36,9 @@ interface Props {
   variant: Variant
   values: KpiValues | null
   loading?: boolean
+  /** Panel cards append the window they are based on: "Panel 1 MTD"
+   *  (Bruno 2026-10-01 R1/R3). Ignored by the Differential card. */
+  period?: string
 }
 
 const ACCENT_TONES = {
@@ -44,7 +47,8 @@ const ACCENT_TONES = {
   delta: {
     ring: "border-[#FCD34D]",
     chip: "bg-[#FEF3C7] text-[#92400E]",
-    title: "Δ Panel 1 − Panel 2",
+    // Bruno 2026-10-01 R2 (was "Δ Panel 1 − Panel 2"). Still Panel 1 − Panel 2.
+    title: "Differential",
   },
 }
 
@@ -76,9 +80,10 @@ function fmtSigned(
   return `${sign}${formatter(Math.abs(n))}`
 }
 
-export function KpiCards({ variant, values, loading }: Props) {
+export function KpiCards({ variant, values, loading, period }: Props) {
   const tone = ACCENT_TONES[variant]
   const isDelta = variant === "delta"
+  const title = !isDelta && period ? `${tone.title} ${period}` : tone.title
 
   const bdg = !isDelta && values?.budget?.applicable ? values.budget : undefined
   const cards: Array<{
@@ -157,7 +162,7 @@ export function KpiCards({ variant, values, loading }: Props) {
     <div className={`rounded-xl border ${tone.ring} bg-white p-3 shadow-sm`}>
       <div className="mb-2 flex items-center gap-2">
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tone.chip}`}>
-          {tone.title}
+          {title}
         </span>
         {loading && <span className="text-[10px] text-[#9CA3AF]">loading…</span>}
       </div>

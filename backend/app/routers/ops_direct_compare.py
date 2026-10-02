@@ -17,24 +17,28 @@ Scope (matches OPs Margins / Top Losses Lanes / Sales-Attrition):
 Performance notes:
 - Reuses ``_scope_where`` + ``_pad_variants`` from ops_margins so the
   sargable padded-variants pattern stays single-source.
-- ``/trend-12m`` is filter-less (per Bruno's spec "should not change with
+- ``/trend-yoy`` is filter-less (per Bruno's spec "should not change with
   any filter panel") — cached in-process for 10 min so every viewer
   shares one DB hit.
-- Diff tables use FULL OUTER JOIN on customer_name / lane key. Sign
-  convention follows Bruno's PDF verbatim: ``data2 - data1``.
-- ``/orders-window`` returns the last-year + this-year window scoped to
-  team/division only (ignores the panel's date filter) and is paginated
-  (default 200/page) since it's the only non-aggregated panel.
+- The compare tables (customer / lane / customer→lane pivot) compute BOTH
+  panels in one SQL via FULL OUTER JOIN of two CTEs (one per panel). Diff
+  sign: ``data1 - data2`` (Bruno 2026-10-01; the 2026-04 tables used
+  ``data2 - data1``).
+- Bruno 2026-10-01 removed the profit-only trend, the customer revenue/margin
+  combo and the orders table; their endpoints (/trend-12m,
+  /customer-revenue-margin, /orders-window) and the single-panel /by-customer
+  + /by-lane went with them.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
@@ -49,9 +53,7 @@ from app.routers.ops_margins import (
     YEAR_END,
     YEAR_START,
     _bind_scope,
-    _dest_expr,
     _lane_expr,
-    _origin_expr,
     _parse_csv,
     _resolve_division,
     _resolve_range,
@@ -321,14 +323,53 @@ async def concentration(
 
 
 # ---------------------------------------------------------------------------
-# /by-customer — single-panel customer table
+# Compare tables — Bruno PDF "BRUNO -- DIRECT COMPARE UPDATES" (2026-10-01).
+#
+# The four single-panel / "with Diff vs Panel 1" tables became TWO combined
+# tables (Details by Customer, Details by Lane) plus a Customer → Lane pivot.
+# Every row carries BOTH panels and the P1 − P2 diffs (⚠ the old diff tables
+# printed P2 − P1; Bruno's new spec spells "Panel 1 − Panel 2" for every Diff
+# column, which also matches the "Differential" KPI card).
+#
+# One definition, three grains: `_grouped_select` aggregates one panel at a
+# grain, `_merged_cte` FULL OUTER JOINs the two panels, `_derived` adds margin /
+# avg / diffs. Rows AND the Totals row run through the same `_derived`, and the
+# totals are computed over the WHOLE population, never the visible page (§109).
 # ---------------------------------------------------------------------------
 
+_BASES = ("loads", "load_ids", "revenue", "profit")
 
-def _customer_select(where: str) -> str:
+# The lane key is COALESCEd, never NULL: a NULL key would not match itself in
+# the FULL OUTER JOIN (and `IS NOT DISTINCT FROM` is not hash/merge-joinable,
+# so Postgres refuses it in a FULL JOIN). 0 rows hit this on 2026-10-01 — it is
+# a join guard, not a population change.
+NO_LANE = "(no lane)"
+_DIM_EXPR = {
+    "customer": "TRIM(br4.customer_name)",
+    "lane": f"COALESCE({_lane_expr('br4')}, '{NO_LANE}')",
+}
+
+# Every column the combined tables can sort by. Anything else is a 400 — a
+# client-supplied key must never reach ORDER BY unvetted.
+SORT_COLUMNS: tuple[str, ...] = tuple(
+    f"{side}_{m}"
+    for m in ("loads", "revenue", "profit", "margin", "avg_p")
+    for side in ("p1", "p2", "diff")
+)
+DEFAULT_SORT = "p1_profit_desc"
+
+
+def _grouped_select(where: str, dims: tuple[str, ...]) -> str:
+    """One panel aggregated at `dims` grain (customer / lane / customer+lane).
+
+    Same metric definitions as /panel-summary: loads + revenue skip zero-charge
+    rows, profit sums ALL in-scope rows (accessorial margin is real profit).
+    """
+    keys = ",\n          ".join(f"{_DIM_EXPR[d]} AS {d}" for d in dims)
+    group = ", ".join(str(i + 1) for i in range(len(dims)))
     return f"""
         SELECT
-          TRIM(br4.customer_name) AS customer,
+          {keys},
           COUNT(*) FILTER (WHERE br4.total_charge <> 0) AS loads,
           COUNT(DISTINCT br4.id) FILTER (WHERE br4.total_charge <> 0) AS load_ids,
           COALESCE(SUM(br4.total_charge) FILTER (
@@ -339,84 +380,162 @@ def _customer_select(where: str) -> str:
         WHERE {where}
           AND br4.customer_name IS NOT NULL
           AND TRIM(br4.customer_name) <> ''
-        GROUP BY TRIM(br4.customer_name)
+        GROUP BY {group}
     """
 
 
-@router.get("/by-customer")
-async def by_customer(
-    request: Request,
-    range: Optional[str] = Query("mtd"),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    division: Optional[str] = Query(None),
-    teams: Optional[str] = Query(None),
-    sub_teams: Optional[str] = Query(None),
-    sort: str = Query("profit_desc"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
-):
-    pool = get_datalake_gold_pool(request)
-    params: list = []
-    where, _s, _e, _t, _sub = _bind_panel(
-        range, start_date, end_date, division, teams, sub_teams, params,
+def _merged_cte(w1: str, w2: str, dims: tuple[str, ...]) -> str:
+    """`d1`, `d2` and `merged` CTE bodies: both panels side by side, 0-filled."""
+    keys = ", ".join(f"COALESCE(d1.{d}, d2.{d}) AS {d}" for d in dims)
+    on = " AND ".join(f"d1.{d} = d2.{d}" for d in dims)
+    bases = ",\n               ".join(
+        f"COALESCE({p}.{b}, 0) AS {p.replace('d', 'p')}_{b}"
+        for p in ("d1", "d2")
+        for b in _BASES
     )
-    offset = (page - 1) * limit
-    order_by = {
-        "profit_desc":  "profit DESC NULLS LAST, customer ASC",
-        "profit_asc":   "profit ASC NULLS LAST, customer ASC",
-        "revenue_desc": "revenue DESC NULLS LAST",
-        "loads_desc":   "loads DESC, profit DESC NULLS LAST",
-        "margin_desc":  "margin_pct DESC NULLS LAST, profit DESC",
-        "margin_asc":   "margin_pct ASC NULLS LAST, profit DESC",
-        "customer_asc": "customer ASC",
-    }.get(sort, "profit DESC NULLS LAST, customer ASC")
-    params.extend([limit, offset])
-    lim_p, off_p = len(params) - 1, len(params)
+    return f"""
+        d1 AS ({_grouped_select(w1, dims)}),
+        d2 AS ({_grouped_select(w2, dims)}),
+        merged AS (
+          SELECT {keys},
+               {bases}
+          FROM d1 FULL OUTER JOIN d2 ON {on}
+        )"""
 
-    rows = await pool.fetch(
-        f"""
-        WITH agg AS ({_customer_select(where)})
-        SELECT
-          customer, loads, load_ids, revenue, profit,
-          CASE WHEN revenue <> 0 THEN profit / revenue ELSE NULL END AS margin_pct,
-          CASE WHEN load_ids > 0 THEN profit / load_ids ELSE NULL END AS avg_p_per_l,
-          COUNT(*) OVER() AS total_count
-        FROM agg
-        ORDER BY {order_by}
-        LIMIT ${lim_p} OFFSET ${off_p}
-        """,
-        *params,
+
+def _derived(src: str) -> str:
+    """Margin % / Avg $P per load per side + the five P1 − P2 diffs.
+
+    The ONE definition for rows and totals. A side with no revenue has no
+    margin; a diff with a missing side is NULL ("—"), never a fake ±100%.
+    """
+    def margin(p: str) -> str:
+        return (
+            f"CASE WHEN {src}.{p}_revenue <> 0 "
+            f"THEN {src}.{p}_profit / {src}.{p}_revenue * 100 END"
+        )
+
+    def avg_p(p: str) -> str:
+        return (
+            f"CASE WHEN {src}.{p}_load_ids > 0 "
+            f"THEN {src}.{p}_profit / {src}.{p}_load_ids END"
+        )
+
+    return ",\n          ".join([
+        f"{margin('p1')} AS p1_margin",
+        f"{margin('p2')} AS p2_margin",
+        f"{avg_p('p1')} AS p1_avg_p",
+        f"{avg_p('p2')} AS p2_avg_p",
+        f"{src}.p1_loads - {src}.p2_loads AS diff_loads",
+        f"{src}.p1_revenue - {src}.p2_revenue AS diff_revenue",
+        f"{src}.p1_profit - {src}.p2_profit AS diff_profit",
+        f"({margin('p1')}) - ({margin('p2')}) AS diff_margin",
+        f"({avg_p('p1')}) - ({avg_p('p2')}) AS diff_avg_p",
+    ])
+
+
+def _sum_bases(src: str, extra: str = "") -> str:
+    sums = ", ".join(
+        f"SUM({p}_{b}) AS {p}_{b}" for p in ("p1", "p2") for b in _BASES
     )
+    return f"SELECT COUNT(*) AS n_rows, {sums}{extra} FROM {src}"
 
-    total = int(rows[0]["total_count"]) if rows else 0
-    data = [
-        {
-            "customer": r["customer"],
-            "loads": int(r["loads"] or 0),
-            "revenue": float(r["revenue"] or 0),
-            "profit": float(r["profit"] or 0),
-            "margin_pct": (
-                float(r["margin_pct"]) * 100.0 if r["margin_pct"] is not None else None
-            ),
-            "avg_p_per_l": (
-                float(r["avg_p_per_l"]) if r["avg_p_per_l"] is not None else None
-            ),
-        }
-        for r in rows
-    ]
+
+def _order_by(sort: str, name_col: str) -> tuple[str, str]:
+    """Validate `sort` → (ORDER BY body, column). Unknown key = 400."""
+    col, _, direction = sort.rpartition("_")
+    if direction not in ("asc", "desc") or col not in (*SORT_COLUMNS, name_col):
+        raise HTTPException(status_code=400, detail=f"unknown sort: {sort}")
+    d = direction.upper()
+    if col == name_col:
+        return f"{name_col} {d}", col
+    return f"{col} {d} NULLS LAST, {name_col} ASC", col
+
+
+def _side(j: dict, p: str) -> dict:
     return {
-        "success": True,
-        "data": data,
-        "meta": {"total": total, "page": page, "limit": limit},
+        "loads": int(j[f"{p}_loads"] or 0),
+        "revenue": float(j[f"{p}_revenue"] or 0),
+        "profit": float(j[f"{p}_profit"] or 0),
+        "margin_pct": _f(j[f"{p}_margin"]),
+        "avg_p_per_l": _f(j[f"{p}_avg_p"]),
     }
 
 
-# ---------------------------------------------------------------------------
-# /by-customer-diff — both panels in one query, diff = data2 - data1
-# (Bruno's spec verbatim — diff sign matches the PDF)
-# ---------------------------------------------------------------------------
+def _f(v) -> Optional[float]:
+    return None if v is None else float(v)
+
+
+def _shape(j: dict, dims: tuple[str, ...]) -> dict:
+    out = {d: j[d] for d in dims}
+    out["p1"] = _side(j, "p1")
+    out["p2"] = _side(j, "p2")
+    out["diff"] = {
+        "loads": int(j["diff_loads"] or 0),
+        "revenue": float(j["diff_revenue"] or 0),
+        "profit": float(j["diff_profit"] or 0),
+        "margin_pct": _f(j["diff_margin"]),
+        "avg_p_per_l": _f(j["diff_avg_p"]),
+    }
+    return out
+
+
+def _load_json(v):
+    return json.loads(v) if isinstance(v, str) else v
+
+
+async def _compare_table(
+    request: Request,
+    dim: str,
+    panels: tuple[tuple, tuple],
+    sort: str,
+    page: int,
+    limit: int,
+) -> dict:
+    """Flat combined table (Details by Customer / Details by Lane)."""
+    order, _col = _order_by(sort, dim)
+    pool = get_datalake_gold_pool(request)
+    params: list = []
+    w1, *_ = _bind_panel(*panels[0], params)
+    w2, *_ = _bind_panel(*panels[1], params)
+    params.extend([(page - 1) * limit, limit])
+    off_p, lim_p = len(params) - 1, len(params)
+    dims = (dim,)
+
+    rows = await pool.fetch(
+        f"""
+        WITH {_merged_cte(w1, w2, dims)},
+        calc AS (SELECT merged.*, {_derived("merged")} FROM merged),
+        ranked AS (SELECT calc.*, ROW_NUMBER() OVER (ORDER BY {order}) AS rn FROM calc),
+        tot AS ({_sum_bases("merged")}),
+        tot_calc AS (SELECT tot.*, {_derived("tot")} FROM tot)
+        SELECT 0 AS lvl, r.rn AS rn, row_to_json(r) AS j
+        FROM ranked r
+        WHERE r.rn > ${off_p} AND r.rn <= ${off_p} + ${lim_p}
+        UNION ALL
+        SELECT 2 AS lvl, 0 AS rn, row_to_json(t) AS j FROM tot_calc t
+        ORDER BY lvl, rn
+        """,
+        *params,
+    )
+    data, totals = [], None
+    for r in rows:
+        j = _load_json(r["j"])
+        if r["lvl"] == 2:
+            totals = j
+        else:
+            data.append(_shape(j, dims))
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "total": int(totals["n_rows"] or 0) if totals else 0,
+            "page": page,
+            "limit": limit,
+            "sort": sort,
+            "totals": _shape({**totals, dim: None}, dims) if totals else None,
+        },
+    }
 
 
 @router.get("/by-customer-diff")
@@ -434,200 +553,20 @@ async def by_customer_diff(
     p2_division: Optional[str] = Query(None),
     p2_teams: Optional[str] = Query(None),
     p2_sub_teams: Optional[str] = Query(None),
-    sort: str = Query("p2_profit_desc"),
+    sort: str = Query(DEFAULT_SORT),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
-    pool = get_datalake_gold_pool(request)
-    params: list = []
-    w1, _, _, _, _ = _bind_panel(
-        p1_range, p1_start_date, p1_end_date, p1_division, p1_teams, p1_sub_teams,
-        params,
+    """Details by Customer — both panels + P1 − P2 diffs, one row per customer."""
+    return await _compare_table(
+        request, "customer",
+        (
+            (p1_range, p1_start_date, p1_end_date, p1_division, p1_teams, p1_sub_teams),
+            (p2_range, p2_start_date, p2_end_date, p2_division, p2_teams, p2_sub_teams),
+        ),
+        sort, page, limit,
     )
-    w2, _, _, _, _ = _bind_panel(
-        p2_range, p2_start_date, p2_end_date, p2_division, p2_teams, p2_sub_teams,
-        params,
-    )
-    offset = (page - 1) * limit
-    order_by = {
-        "p2_profit_desc":  "p2_profit DESC NULLS LAST, customer ASC",
-        "p2_profit_asc":   "p2_profit ASC NULLS LAST, customer ASC",
-        "p2_revenue_desc": "p2_revenue DESC NULLS LAST",
-        "p2_loads_desc":   "p2_loads DESC NULLS LAST",
-        "diff_profit_desc": "diff_profit DESC NULLS LAST",
-        "diff_profit_asc":  "diff_profit ASC NULLS LAST",
-        "diff_revenue_desc": "diff_revenue DESC NULLS LAST",
-        "diff_revenue_asc":  "diff_revenue ASC NULLS LAST",
-        "margin_desc":  "p2_margin_pct DESC NULLS LAST",
-        "margin_asc":   "p2_margin_pct ASC NULLS LAST",
-        "customer_asc": "customer ASC",
-    }.get(sort, "p2_profit DESC NULLS LAST, customer ASC")
-    params.extend([limit, offset])
-    lim_p, off_p = len(params) - 1, len(params)
-
-    rows = await pool.fetch(
-        f"""
-        WITH d1 AS ({_customer_select(w1)}),
-             d2 AS ({_customer_select(w2)}),
-             merged AS (
-               SELECT
-                 COALESCE(d2.customer, d1.customer) AS customer,
-                 COALESCE(d1.loads, 0)    AS p1_loads,
-                 COALESCE(d1.load_ids, 0) AS p1_load_ids,
-                 COALESCE(d1.revenue, 0)  AS p1_revenue,
-                 COALESCE(d1.profit, 0)   AS p1_profit,
-                 COALESCE(d2.loads, 0)    AS p2_loads,
-                 COALESCE(d2.load_ids, 0) AS p2_load_ids,
-                 COALESCE(d2.revenue, 0)  AS p2_revenue,
-                 COALESCE(d2.profit, 0)   AS p2_profit
-               FROM d2 FULL OUTER JOIN d1 ON d1.customer = d2.customer
-             )
-        SELECT
-          customer,
-          p1_loads, p1_load_ids, p1_revenue, p1_profit,
-          p2_loads, p2_load_ids, p2_revenue, p2_profit,
-          CASE WHEN p2_revenue <> 0 THEN p2_profit / p2_revenue ELSE NULL END
-            AS p2_margin_pct,
-          CASE WHEN p2_load_ids > 0 THEN p2_profit / p2_load_ids ELSE NULL END
-            AS p2_avg_p_per_l,
-          (p2_revenue - p1_revenue) AS diff_revenue,
-          (p2_profit  - p1_profit)  AS diff_profit,
-          COUNT(*) OVER() AS total_count
-        FROM merged
-        ORDER BY {order_by}
-        LIMIT ${lim_p} OFFSET ${off_p}
-        """,
-        *params,
-    )
-
-    total = int(rows[0]["total_count"]) if rows else 0
-    data = [
-        {
-            "customer": r["customer"],
-            "loads": int(r["p2_loads"] or 0),
-            "revenue": float(r["p2_revenue"] or 0),
-            "profit": float(r["p2_profit"] or 0),
-            "margin_pct": (
-                float(r["p2_margin_pct"]) * 100.0
-                if r["p2_margin_pct"] is not None else None
-            ),
-            "avg_p_per_l": (
-                float(r["p2_avg_p_per_l"])
-                if r["p2_avg_p_per_l"] is not None else None
-            ),
-            "diff_profit":  float(r["diff_profit"]  or 0),
-            "diff_revenue": float(r["diff_revenue"] or 0),
-        }
-        for r in rows
-    ]
-    return {
-        "success": True,
-        "data": data,
-        "meta": {"total": total, "page": page, "limit": limit},
-    }
-
-
-# ---------------------------------------------------------------------------
-# /by-lane — single panel
-# ---------------------------------------------------------------------------
-
-
-def _lane_select(where: str) -> str:
-    return f"""
-        SELECT
-          {_lane_expr("br4")}     AS lane,
-          {_origin_expr("br4")}   AS origin,
-          {_dest_expr("br4")}     AS destination,
-          COUNT(*) FILTER (WHERE br4.total_charge <> 0) AS loads,
-          COUNT(DISTINCT br4.id) FILTER (WHERE br4.total_charge <> 0) AS load_ids,
-          COALESCE(SUM(br4.total_charge) FILTER (
-            WHERE br4.total_charge <> 0
-          ), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {where}
-          AND br4.origin_city_name IS NOT NULL
-          AND br4.dest_city_name   IS NOT NULL
-        GROUP BY {_lane_expr("br4")}, {_origin_expr("br4")}, {_dest_expr("br4")}
-    """
-
-
-@router.get("/by-lane")
-async def by_lane(
-    request: Request,
-    range: Optional[str] = Query("mtd"),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    division: Optional[str] = Query(None),
-    teams: Optional[str] = Query(None),
-    sub_teams: Optional[str] = Query(None),
-    sort: str = Query("profit_desc"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
-):
-    pool = get_datalake_gold_pool(request)
-    params: list = []
-    where, _s, _e, _t, _sub = _bind_panel(
-        range, start_date, end_date, division, teams, sub_teams, params,
-    )
-    offset = (page - 1) * limit
-    order_by = {
-        "profit_desc":  "profit DESC NULLS LAST, lane ASC",
-        "profit_asc":   "profit ASC NULLS LAST, lane ASC",
-        "revenue_desc": "revenue DESC NULLS LAST",
-        "loads_desc":   "loads DESC NULLS LAST",
-        "margin_desc":  "margin_pct DESC NULLS LAST",
-        "margin_asc":   "margin_pct ASC NULLS LAST",
-        "lane_asc":     "lane ASC",
-    }.get(sort, "profit DESC NULLS LAST, lane ASC")
-    params.extend([limit, offset])
-    lim_p, off_p = len(params) - 1, len(params)
-
-    rows = await pool.fetch(
-        f"""
-        WITH agg AS ({_lane_select(where)})
-        SELECT
-          lane, origin, destination, loads, load_ids, revenue, profit,
-          CASE WHEN revenue <> 0 THEN profit / revenue ELSE NULL END AS margin_pct,
-          CASE WHEN load_ids > 0 THEN profit / load_ids ELSE NULL END AS avg_p_per_l,
-          COUNT(*) OVER() AS total_count
-        FROM agg
-        ORDER BY {order_by}
-        LIMIT ${lim_p} OFFSET ${off_p}
-        """,
-        *params,
-    )
-
-    total = int(rows[0]["total_count"]) if rows else 0
-    data = [
-        {
-            "lane": r["lane"],
-            "origin": r["origin"],
-            "destination": r["destination"],
-            "loads": int(r["loads"] or 0),
-            "revenue": float(r["revenue"] or 0),
-            "profit": float(r["profit"] or 0),
-            "margin_pct": (
-                float(r["margin_pct"]) * 100.0 if r["margin_pct"] is not None else None
-            ),
-            "avg_p_per_l": (
-                float(r["avg_p_per_l"]) if r["avg_p_per_l"] is not None else None
-            ),
-        }
-        for r in rows
-    ]
-    return {
-        "success": True,
-        "data": data,
-        "meta": {"total": total, "page": page, "limit": limit},
-    }
-
-
-# ---------------------------------------------------------------------------
-# /by-lane-diff — both panels in one query
-# ---------------------------------------------------------------------------
 
 
 @router.get("/by-lane-diff")
@@ -645,362 +584,230 @@ async def by_lane_diff(
     p2_division: Optional[str] = Query(None),
     p2_teams: Optional[str] = Query(None),
     p2_sub_teams: Optional[str] = Query(None),
-    sort: str = Query("p2_profit_desc"),
+    sort: str = Query(DEFAULT_SORT),
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=1000),
     _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
+    """Details by Lane — both panels + P1 − P2 diffs, one row per lane.
+
+    ~3.6k lanes YTD, so this one is genuinely paged — the UI shows a pager.
+    """
+    return await _compare_table(
+        request, "lane",
+        (
+            (p1_range, p1_start_date, p1_end_date, p1_division, p1_teams, p1_sub_teams),
+            (p2_range, p2_start_date, p2_end_date, p2_division, p2_teams, p2_sub_teams),
+        ),
+        sort, page, limit,
+    )
+
+
+@router.get("/by-customer-lane-diff")
+async def by_customer_lane_diff(
+    request: Request,
+    p1_range: Optional[str] = Query("mtd"),
+    p1_start_date: Optional[date] = Query(None),
+    p1_end_date: Optional[date] = Query(None),
+    p1_division: Optional[str] = Query(None),
+    p1_teams: Optional[str] = Query(None),
+    p1_sub_teams: Optional[str] = Query(None),
+    p2_range: Optional[str] = Query("last_month"),
+    p2_start_date: Optional[date] = Query(None),
+    p2_end_date: Optional[date] = Query(None),
+    p2_division: Optional[str] = Query(None),
+    p2_teams: Optional[str] = Query(None),
+    p2_sub_teams: Optional[str] = Query(None),
+    sort: str = Query(DEFAULT_SORT),
+    page: int = Query(1, ge=1),
+    limit: int = Query(200, ge=1, le=1000),
+    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
+):
+    """Customer → Lane pivot. Customers are paged + sorted; each carries ALL its
+    lanes (sorted by the same column). A customer row is the SUM of its lanes —
+    aggregated from the lane grain, never re-queried — so the parent always
+    reconciles with its children and with Details by Customer.
+    """
+    order, col = _order_by(sort, "customer")
+    lane_order = "lane ASC" if col == "customer" else _order_by(f"{col}_{sort.rpartition('_')[2]}", "lane")[0]
     pool = get_datalake_gold_pool(request)
     params: list = []
-    w1, _, _, _, _ = _bind_panel(
-        p1_range, p1_start_date, p1_end_date, p1_division, p1_teams, p1_sub_teams,
-        params,
+    w1, *_ = _bind_panel(
+        p1_range, p1_start_date, p1_end_date, p1_division, p1_teams, p1_sub_teams, params,
     )
-    w2, _, _, _, _ = _bind_panel(
-        p2_range, p2_start_date, p2_end_date, p2_division, p2_teams, p2_sub_teams,
-        params,
+    w2, *_ = _bind_panel(
+        p2_range, p2_start_date, p2_end_date, p2_division, p2_teams, p2_sub_teams, params,
     )
-    offset = (page - 1) * limit
-    order_by = {
-        "p2_profit_desc":  "p2_profit DESC NULLS LAST, lane ASC",
-        "p2_profit_asc":   "p2_profit ASC NULLS LAST, lane ASC",
-        "p2_revenue_desc": "p2_revenue DESC NULLS LAST",
-        "p2_loads_desc":   "p2_loads DESC NULLS LAST",
-        "diff_profit_desc": "diff_profit DESC NULLS LAST",
-        "diff_profit_asc":  "diff_profit ASC NULLS LAST",
-        "diff_revenue_desc": "diff_revenue DESC NULLS LAST",
-        "diff_revenue_asc":  "diff_revenue ASC NULLS LAST",
-        "margin_desc":  "p2_margin_pct DESC NULLS LAST",
-        "margin_asc":   "p2_margin_pct ASC NULLS LAST",
-        "lane_asc":     "lane ASC",
-    }.get(sort, "p2_profit DESC NULLS LAST, lane ASC")
-    params.extend([limit, offset])
-    lim_p, off_p = len(params) - 1, len(params)
+    params.extend([(page - 1) * limit, limit])
+    off_p, lim_p = len(params) - 1, len(params)
+    dims = ("customer", "lane")
+    cust_sums = ", ".join(
+        f"SUM({p}_{b}) AS {p}_{b}" for p in ("p1", "p2") for b in _BASES
+    )
 
     rows = await pool.fetch(
         f"""
-        WITH d1 AS ({_lane_select(w1)}),
-             d2 AS ({_lane_select(w2)}),
-             merged AS (
-               SELECT
-                 COALESCE(d2.lane, d1.lane)                 AS lane,
-                 COALESCE(d2.origin, d1.origin)             AS origin,
-                 COALESCE(d2.destination, d1.destination)   AS destination,
-                 COALESCE(d1.loads, 0)    AS p1_loads,
-                 COALESCE(d1.load_ids, 0) AS p1_load_ids,
-                 COALESCE(d1.revenue, 0)  AS p1_revenue,
-                 COALESCE(d1.profit, 0)   AS p1_profit,
-                 COALESCE(d2.loads, 0)    AS p2_loads,
-                 COALESCE(d2.load_ids, 0) AS p2_load_ids,
-                 COALESCE(d2.revenue, 0)  AS p2_revenue,
-                 COALESCE(d2.profit, 0)   AS p2_profit
-               FROM d2 FULL OUTER JOIN d1 ON d1.lane = d2.lane
-             )
-        SELECT
-          lane, origin, destination,
-          p1_loads, p1_load_ids, p1_revenue, p1_profit,
-          p2_loads, p2_load_ids, p2_revenue, p2_profit,
-          CASE WHEN p2_revenue <> 0 THEN p2_profit / p2_revenue ELSE NULL END
-            AS p2_margin_pct,
-          CASE WHEN p2_load_ids > 0 THEN p2_profit / p2_load_ids ELSE NULL END
-            AS p2_avg_p_per_l,
-          (p2_revenue - p1_revenue) AS diff_revenue,
-          (p2_profit  - p1_profit)  AS diff_profit,
-          COUNT(*) OVER() AS total_count
-        FROM merged
-        ORDER BY {order_by}
-        LIMIT ${lim_p} OFFSET ${off_p}
+        WITH {_merged_cte(w1, w2, dims)},
+        merged_c AS (
+          SELECT customer, COUNT(*) AS lane_count, {cust_sums}
+          FROM merged GROUP BY customer
+        ),
+        calc_c AS (SELECT merged_c.*, {_derived("merged_c")} FROM merged_c),
+        ranked AS (SELECT calc_c.*, ROW_NUMBER() OVER (ORDER BY {order}) AS rn FROM calc_c),
+        pg AS (SELECT * FROM ranked WHERE rn > ${off_p} AND rn <= ${off_p} + ${lim_p}),
+        calc_l AS (
+          SELECT x.*, ROW_NUMBER() OVER (PARTITION BY x.customer ORDER BY {lane_order}) AS sub_rn
+          FROM (
+            SELECT merged.*, {_derived("merged")}
+            FROM merged WHERE merged.customer IN (SELECT customer FROM pg)
+          ) x
+        ),
+        tot AS ({_sum_bases("merged_c")}),
+        tot_calc AS (SELECT tot.*, {_derived("tot")} FROM tot)
+        SELECT 0 AS lvl, p.rn AS rn, 0::bigint AS sub_rn, row_to_json(p) AS j FROM pg p
+        UNION ALL
+        SELECT 1, p.rn, l.sub_rn, row_to_json(l)
+        FROM calc_l l JOIN pg p ON p.customer = l.customer
+        UNION ALL
+        SELECT 2, 0, 0, row_to_json(t) FROM tot_calc t
+        ORDER BY rn, lvl, sub_rn
         """,
         *params,
     )
-
-    total = int(rows[0]["total_count"]) if rows else 0
-    data = [
-        {
-            "lane": r["lane"],
-            "origin": r["origin"],
-            "destination": r["destination"],
-            "loads": int(r["p2_loads"] or 0),
-            "revenue": float(r["p2_revenue"] or 0),
-            "profit": float(r["p2_profit"] or 0),
-            "margin_pct": (
-                float(r["p2_margin_pct"]) * 100.0
-                if r["p2_margin_pct"] is not None else None
-            ),
-            "avg_p_per_l": (
-                float(r["p2_avg_p_per_l"])
-                if r["p2_avg_p_per_l"] is not None else None
-            ),
-            "diff_profit":  float(r["diff_profit"]  or 0),
-            "diff_revenue": float(r["diff_revenue"] or 0),
-        }
-        for r in rows
-    ]
+    data: list[dict] = []
+    totals = None
+    for r in rows:
+        j = _load_json(r["j"])
+        if r["lvl"] == 2:
+            totals = j
+        elif r["lvl"] == 0:
+            data.append({**_shape(j, ("customer",)),
+                         "lane_count": int(j["lane_count"] or 0), "lanes": []})
+        else:
+            data[-1]["lanes"].append(_shape(j, ("lane",)))
     return {
         "success": True,
         "data": data,
-        "meta": {"total": total, "page": page, "limit": limit},
+        "meta": {
+            "total": int(totals["n_rows"] or 0) if totals else 0,
+            "page": page,
+            "limit": limit,
+            "sort": sort,
+            "totals": _shape({**totals, "customer": None}, ("customer",)) if totals else None,
+        },
     }
 
 
 # ---------------------------------------------------------------------------
-# /trend-12m — last 12 months, NO filters (per Bruno: "all division and all
-# teams. It should not change with any filter panel."). In-process TTL cache.
+# /trend-yoy — Jan..Dec, previous year vs current year (Bruno 2026-10-01 R4).
+# Replaces /trend-12m. Revenue = Σ total_charge, Profit = Σ margin_amt,
+# Margin = ΣProfit / ΣRevenue. Filter-less like the chart it replaces (all
+# teams; the per-team clones pass their one team). Months the current year has
+# not reached are NULL, so the chart shows the previous year's bar alone.
+# ⚠ The x-axis is the month NUMBER from SQL — the old chart did
+# `new Date("2025-11-01")`, parsed it as UTC, and labelled every bar one month
+# early in CST.
 # ---------------------------------------------------------------------------
 
 _TREND_TTL_S = 600.0  # 10 minutes
-_trend_cache: dict[str, tuple[float, list[dict]]] = {}
-_trend_lock = asyncio.Lock()
+_trend_cache: dict[tuple, tuple[float, dict]] = {}
+# One lock per cache key: a cold TEAM1 chart must not queue behind ALL teams.
+_trend_locks: dict[tuple, asyncio.Lock] = {}
+MONTH_LABELS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def _last_12m_bounds(today: date) -> tuple[date, date]:
-    end = today
-    y, m = today.year, today.month - 11
-    while m <= 0:
-        y -= 1
-        m += 12
-    return date(y, m, 1), end
+def _yoy_bounds(today: date) -> tuple[datetime, datetime]:
+    """[Jan 1 of last year, tomorrow) — gold is already CST, so naive bounds
+    against the raw column (sargable; no cast on the column)."""
+    return datetime(today.year - 1, 1, 1), datetime.combine(
+        today + timedelta(days=1), datetime.min.time(),
+    )
 
 
-@router.get("/trend-12m")
-async def trend_12m(
-    request: Request,
-    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
-):
+def _yoy_point(rev: float, prof: float) -> dict:
+    return {
+        "revenue": rev,
+        "profit": prof,
+        "margin_pct": (prof / rev * 100.0) if rev else None,
+    }
+
+
+def _yoy_series(rows, today: date) -> dict:
+    by_key = {
+        (int(r["yr"]), int(r["mo"])): _yoy_point(
+            float(r["revenue"] or 0), float(r["profit"] or 0),
+        )
+        for r in rows
+    }
+    prev_y, cur_y = today.year - 1, today.year
+    months = [
+        {
+            "month": m,
+            "label": MONTH_LABELS[m - 1],
+            "prev": by_key.get((prev_y, m)),
+            "cur": by_key.get((cur_y, m)) if m <= today.month else None,
+        }
+        for m in range(1, 13)
+    ]
+    return {"prev_year": prev_y, "cur_year": cur_y, "months": months}
+
+
+async def trend_yoy_for_teams(request: Request, teams: list[str]) -> dict:
+    """Shared by the cross-team router and the per-team clones."""
     today = cst_today()
-    cache_key = today.isoformat()
-    now_ts = time.monotonic()
+    cache_key = (today.isoformat(), tuple(teams))
     cached = _trend_cache.get(cache_key)
-    if cached and (now_ts - cached[0]) < _TREND_TTL_S:
+    if cached and (time.monotonic() - cached[0]) < _TREND_TTL_S:
         return {"success": True, "data": cached[1], "meta": {"cached": True}}
 
-    async with _trend_lock:
+    async with _trend_locks.setdefault(cache_key, asyncio.Lock()):
         cached = _trend_cache.get(cache_key)
-        if cached and (now_ts - cached[0]) < _TREND_TTL_S:
+        if cached and (time.monotonic() - cached[0]) < _TREND_TTL_S:
             return {"success": True, "data": cached[1], "meta": {"cached": True}}
 
         pool = get_datalake_gold_pool(request)
-        start, end = _last_12m_bounds(today)
-
+        start, end = _yoy_bounds(today)
         params: list = []
         where = _scope_where(
-            "br4", list(ALL_TEAMS), list(ALL_COMPANIES), None, None, None, None,
-            params,
+            "br4", list(teams), list(ALL_COMPANIES), None, None, None, None, params,
         )
         params.extend([start, end])
         rows = await pool.fetch(
             f"""
             SELECT
-              DATE_TRUNC('month', br4.origin_actual_departure)::date AS bucket,
+              EXTRACT(YEAR  FROM br4.origin_actual_departure)::int AS yr,
+              EXTRACT(MONTH FROM br4.origin_actual_departure)::int AS mo,
               COALESCE(SUM(br4.total_charge) FILTER (
                 WHERE br4.total_charge <> 0
               ), 0)::numeric AS revenue,
               COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
             FROM public.mcleod_gld_budget_report_v4 br4
             WHERE {where}
-              AND br4.origin_actual_departure::date
-                  BETWEEN ${len(params) - 1} AND ${len(params)}
-            GROUP BY DATE_TRUNC('month', br4.origin_actual_departure)::date
-            ORDER BY bucket
+              AND br4.origin_actual_departure >= ${len(params) - 1}
+              AND br4.origin_actual_departure <  ${len(params)}
+            GROUP BY 1, 2
+            ORDER BY 1, 2
             """,
             *params,
         )
-
-        out = []
-        for r in rows:
-            rev = float(r["revenue"] or 0)
-            prof = float(r["profit"] or 0)
-            out.append({
-                "bucket": r["bucket"].isoformat() if r["bucket"] else None,
-                "revenue": rev,
-                "profit": prof,
-                "margin_pct": (prof / rev * 100.0) if rev else None,
-            })
+        out = _yoy_series(rows, today)
+        now_ts = time.monotonic()
         _trend_cache[cache_key] = (now_ts, out)
         # Drop other-day keys to keep the cache from growing forever
         for k in list(_trend_cache.keys()):
-            if k != cache_key:
+            if k[0] != cache_key[0]:
                 _trend_cache.pop(k, None)
+                _trend_locks.pop(k, None)
         return {"success": True, "data": out, "meta": {"cached": False}}
 
 
-# ---------------------------------------------------------------------------
-# /customer-revenue-margin — combo chart (data2 panel)
-# Bars: revenue, Line: margin %. Sorted by revenue DESC, top N customers.
-# ---------------------------------------------------------------------------
-
-
-@router.get("/customer-revenue-margin")
-async def customer_revenue_margin(
+@router.get("/trend-yoy")
+async def trend_yoy(
     request: Request,
-    range: Optional[str] = Query("mtd"),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    division: Optional[str] = Query(None),
-    teams: Optional[str] = Query(None),
-    sub_teams: Optional[str] = Query(None),
-    top: int = Query(20, ge=5, le=50),
     _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
-    pool = get_datalake_gold_pool(request)
-    params: list = []
-    where, _s, _e, _t, _sub = _bind_panel(
-        range, start_date, end_date, division, teams, sub_teams, params,
-    )
-    params.append(top)
-    p_top = len(params)
-
-    rows = await pool.fetch(
-        f"""
-        WITH cust AS (
-          SELECT
-            TRIM(br4.customer_name) AS customer,
-            COALESCE(SUM(br4.total_charge) FILTER (
-              WHERE br4.total_charge <> 0
-            ), 0)::numeric AS revenue,
-            COALESCE(SUM(br4.margin_amt), 0)::numeric AS profit
-          FROM public.mcleod_gld_budget_report_v4 br4
-          WHERE {where}
-            AND br4.customer_name IS NOT NULL
-            AND TRIM(br4.customer_name) <> ''
-          GROUP BY TRIM(br4.customer_name)
-        )
-        SELECT
-          customer, revenue, profit,
-          CASE WHEN revenue <> 0 THEN profit / revenue ELSE NULL END AS margin_pct
-        FROM cust
-        ORDER BY revenue DESC NULLS LAST
-        LIMIT ${p_top}
-        """,
-        *params,
-    )
-    return {
-        "success": True,
-        "data": [
-            {
-                "customer": r["customer"],
-                "revenue": float(r["revenue"] or 0),
-                "profit": float(r["profit"] or 0),
-                "margin_pct": (
-                    float(r["margin_pct"]) * 100.0
-                    if r["margin_pct"] is not None else None
-                ),
-            }
-            for r in rows
-        ],
-    }
-
-
-# ---------------------------------------------------------------------------
-# /orders-window — Details by Order (this year + last year)
-# Filter: team/division ONLY (date filter ignored, per Bruno's spec).
-# Paginated since it spans 2 years.
-# ---------------------------------------------------------------------------
-
-
-@router.get("/orders-window")
-async def orders_window(
-    request: Request,
-    division: Optional[str] = Query(None),
-    teams: Optional[str] = Query(None),
-    sub_teams: Optional[str] = Query(None),
-    sort: str = Query("date_desc"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(200, ge=1, le=500),
-    _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
-):
-    pool = get_datalake_gold_pool(request)
-    today = cst_today()
-    start = date(today.year - 1, 1, 1)
-    end = today
-
-    params: list = []
-    division_teams, is_dfw = _resolve_division(division)
-    requested_teams = _parse_csv(teams, ALL_TEAMS) if teams else None
-    team_list = (
-        [t for t in requested_teams if t in division_teams]
-        if requested_teams is not None
-        else division_teams
-    )
-    if not team_list:
-        team_list = division_teams
-    sub_team_list = (
-        _parse_csv(sub_teams, DFW_SUB_TEAMS) if (is_dfw and sub_teams) else None
-    )
-    where = _scope_where(
-        "br4", team_list, list(ALL_COMPANIES), None, None, None, sub_team_list, params,
-    )
-    params.extend([start, end])
-    p_s, p_e = len(params) - 1, len(params)
-
-    offset = (page - 1) * limit
-    order_by = {
-        "date_desc":   "actual_day DESC NULLS LAST, id DESC",
-        "date_asc":    "actual_day ASC NULLS LAST, id ASC",
-        "profit_desc": "profit DESC NULLS LAST",
-        "profit_asc":  "profit ASC NULLS LAST",
-        "revenue_desc": "revenue DESC NULLS LAST",
-        "margin_desc": "margin_pct DESC NULLS LAST",
-        "margin_asc":  "margin_pct ASC NULLS LAST",
-    }.get(sort, "actual_day DESC NULLS LAST, id DESC")
-    params.extend([limit, offset])
-    lim_p, off_p = len(params) - 1, len(params)
-
-    rows = await pool.fetch(
-        f"""
-        SELECT
-          br4.origin_actual_departure        AS actual_day,
-          TRIM(br4.id)                        AS id,
-          TRIM(br4.customer_id)               AS cust_id,
-          TRIM(br4.customer_name)             AS customer,
-          TRIM(br4.team_id)                   AS team,
-          {_origin_expr("br4")} || '-' || {_dest_expr("br4")} AS lane,
-          br4.total_charge::numeric           AS revenue,
-          br4.margin_amt::numeric             AS profit,
-          CASE WHEN br4.total_charge <> 0
-               THEN br4.margin_amt::numeric / br4.total_charge::numeric
-               ELSE NULL END                  AS margin_pct,
-          COUNT(*) OVER()                     AS total_count
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {where}
-          AND br4.origin_actual_departure::date BETWEEN ${p_s} AND ${p_e}
-        ORDER BY {order_by}
-        LIMIT ${lim_p} OFFSET ${off_p}
-        """,
-        *params,
-    )
-
-    total = int(rows[0]["total_count"]) if rows else 0
-    data = []
-    for r in rows:
-        rev = float(r["revenue"] or 0)
-        prof = float(r["profit"] or 0)
-        data.append({
-            "actual_day": r["actual_day"].isoformat() if r["actual_day"] else None,
-            "id": r["id"],
-            "cust_id": r["cust_id"],
-            "customer": r["customer"],
-            "team": r["team"],
-            "lane": r["lane"],
-            "revenue": rev,
-            "profit": prof,
-            "margin_pct": (
-                float(r["margin_pct"]) * 100.0
-                if r["margin_pct"] is not None else None
-            ),
-            "avg_r_per_l": rev,  # one row = one load → same as revenue
-            "avg_p_per_l": prof,
-        })
-    return {
-        "success": True,
-        "data": data,
-        "meta": {
-            "total": total,
-            "page": page,
-            "limit": limit,
-            "window": {"start": start.isoformat(), "end": end.isoformat()},
-        },
-    }
+    return await trend_yoy_for_teams(request, list(ALL_TEAMS))
 
 
 # ---------------------------------------------------------------------------

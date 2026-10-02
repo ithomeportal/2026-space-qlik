@@ -7,6 +7,7 @@ import { ArrowLeft, GitCompareArrows, Loader2 } from "lucide-react"
 import {
   DcApiProvider,
   computeDelta,
+  periodLabel,
   useDCFilters,
   useDCFreshness,
   useDCPanelSummary,
@@ -17,12 +18,11 @@ import {
 import { fmtTimestamp } from "@/app/reports/ops-margins/format"
 import { KpiCards } from "@/app/reports/ops-direct-compare/KpiCards"
 import { PanelFilters } from "@/app/reports/ops-direct-compare/PanelFilters"
+import { CompareTable } from "@/app/reports/ops-direct-compare/sections/CompareTable"
+import { compareColumns } from "@/app/reports/ops-direct-compare/sections/compareColumns"
 import { ConcentrationPie } from "@/app/reports/ops-direct-compare/sections/ConcentrationPie"
-import { CustomerRevMarginCombo } from "@/app/reports/ops-direct-compare/sections/CustomerRevMarginCombo"
-import { CustomerTable } from "@/app/reports/ops-direct-compare/sections/CustomerTable"
-import { LaneTable } from "@/app/reports/ops-direct-compare/sections/LaneTable"
-import { OrdersTable } from "@/app/reports/ops-direct-compare/sections/OrdersTable"
-import { Trend12m } from "@/app/reports/ops-direct-compare/sections/Trend12m"
+import { CustomerLanePivot } from "@/app/reports/ops-direct-compare/sections/CustomerLanePivot"
+import { TrendYoY } from "@/app/reports/ops-direct-compare/sections/TrendYoY"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -246,6 +246,13 @@ function Body({
   const sum2 = useDCPanelSummary("p2", f2)
   const delta = computeDelta(sum1.data?.data, sum2.data?.data)
 
+  // Bruno 2026-10-01: every panel-derived title / column names its window.
+  const period1 = periodLabel(f1)
+  const period2 = periodLabel(f2)
+  const columns = useMemo(() => compareColumns(period1, period2), [period1, period2])
+  // Remount the paged tables on any filter change so they restart at page 1.
+  const tablesKey = JSON.stringify([f1, f2])
+
   const { data: freshnessRes } = useDCFreshness()
   const fr = freshnessRes?.data
 
@@ -349,15 +356,25 @@ function Body({
             />
           </div>
 
-          {/* KPI row: panel1 / delta / panel2 */}
+          {/* KPI row: panel1 / Differential / panel2 */}
           <div className="grid grid-cols-3 gap-4">
-            <KpiCards variant="p1" values={sum1.data?.data ?? null} loading={sum1.isLoading} />
+            <KpiCards
+              variant="p1"
+              period={period1}
+              values={sum1.data?.data ?? null}
+              loading={sum1.isLoading}
+            />
             <KpiCards variant="delta" values={delta} loading={sum1.isLoading || sum2.isLoading} />
-            <KpiCards variant="p2" values={sum2.data?.data ?? null} loading={sum2.isLoading} />
+            <KpiCards
+              variant="p2"
+              period={period2}
+              values={sum2.data?.data ?? null}
+              loading={sum2.isLoading}
+            />
           </div>
 
-          {/* Always-on 12-month trend (filter-less / team-scoped when locked) */}
-          <Trend12m variant="full" title="Monthly end-to-Month — $Profit, $Revenue, % Margin · last 12 months" />
+          {/* Jan–Dec, previous year vs current year (filter-less / team-scoped when locked) */}
+          <TrendYoY scopeLabel={lockedTeam ? `${lockedTeam} only` : "All teams"} />
 
           {/* Concentration pies side-by-side */}
           <div className="grid grid-cols-2 gap-4">
@@ -365,43 +382,29 @@ function Body({
             <ConcentrationPie panel="p2" filters={f2} title="(2) % Customer concentration by Profit — Top 5" />
           </div>
 
-          {/* Customer detail tables */}
-          <div className="grid grid-cols-2 gap-4">
-            <CustomerTable
-              title="(1) Details by Customer"
-              panel="p1"
-              panelFilters={f1}
-            />
-            <CustomerTable
-              title="(2) Details by Customer · with Diff vs Panel 1"
-              panel="p2"
-              panelFilters={f2}
-              diffAgainst={f1}
-            />
-          </div>
-
-          {/* Lane detail tables */}
-          <div className="grid grid-cols-2 gap-4">
-            <LaneTable title="(1) Details by Lane" panel="p1" panelFilters={f1} />
-            <LaneTable
-              title="(2) Details by Lane · with Diff vs Panel 1"
-              panel="p2"
-              panelFilters={f2}
-              diffAgainst={f1}
-            />
-          </div>
-
-          {/* Trend (panel-2 view) + Combo */}
-          <Trend12m variant="profit-only" title="Monthly end-to-Month — $Profit & % Margin · last 12 months" />
-          <CustomerRevMarginCombo
-            filters={f2}
-            title="(2) By Customer Details — $Revenue & % Margin"
+          {/* Combined compare tables — Panel 1 (gray) · Panel 2 (blue) · Diff = P1 − P2 */}
+          <CompareTable
+            key={`cust-${tablesKey}`}
+            title="Details by Customer"
+            dim="customer"
+            p1={f1}
+            p2={f2}
+            columns={columns}
           />
-
-          {/* Orders detail (this year + last year) */}
-          <OrdersTable
-            filters={f2}
-            title="(2) Details by Order — this year + last year (filter: Panel 2 division/team)"
+          <CompareTable
+            key={`lane-${tablesKey}`}
+            title="Details by Lane"
+            dim="lane"
+            p1={f1}
+            p2={f2}
+            columns={columns}
+          />
+          <CustomerLanePivot
+            key={`pivot-${tablesKey}`}
+            title="Details by Customer → Lane"
+            p1={f1}
+            p2={f2}
+            columns={columns}
           />
         </div>
       )}

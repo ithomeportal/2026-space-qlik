@@ -16,6 +16,8 @@ interface ApiResponse<T> {
     total_profit?: number
     total_revenue?: number
     window?: { start: string; end: string }
+    sort?: string
+    totals?: DCCompareRow | null
   }
 }
 
@@ -162,56 +164,55 @@ export interface DCConcentrationSlice {
   is_others: boolean
 }
 
-export interface DCCustomerRow {
-  customer: string
+/** One panel's figures for a compare row. */
+export interface DCSide {
   loads: number
   revenue: number
   profit: number
   margin_pct: number | null
   avg_p_per_l: number | null
-  diff_profit?: number
-  diff_revenue?: number
 }
 
-export interface DCLaneRow {
-  lane: string
-  origin: string | null
-  destination: string | null
-  loads: number
-  revenue: number
-  profit: number
-  margin_pct: number | null
-  avg_p_per_l: number | null
-  diff_profit?: number
-  diff_revenue?: number
+/** Combined row: both panels + Panel 1 − Panel 2 (Bruno 2026-10-01). */
+export interface DCCompareRow {
+  customer?: string | null
+  lane?: string | null
+  p1: DCSide
+  p2: DCSide
+  diff: DCSide
 }
 
-export interface DCTrendPoint {
-  bucket: string | null
-  revenue: number
-  profit: number
-  margin_pct: number | null
-}
-
-export interface DCCustRevMargin {
+export interface DCPivotRow extends DCCompareRow {
   customer: string
+  lane_count: number
+  lanes: DCCompareRow[]
+}
+
+export interface DCCompareMeta {
+  total: number
+  page: number
+  limit: number
+  sort: string
+  totals: DCCompareRow | null
+}
+
+export interface DCYoYPoint {
   revenue: number
   profit: number
   margin_pct: number | null
 }
 
-export interface DCOrderRow {
-  actual_day: string | null
-  id: string
-  cust_id: string | null
-  customer: string | null
-  team: string | null
-  lane: string | null
-  revenue: number
-  profit: number
-  margin_pct: number | null
-  avg_r_per_l: number
-  avg_p_per_l: number
+export interface DCYoYMonth {
+  month: number
+  label: string
+  prev: DCYoYPoint | null
+  cur: DCYoYPoint | null
+}
+
+export interface DCYoY {
+  prev_year: number
+  cur_year: number
+  months: DCYoYMonth[]
 }
 
 export interface DCFreshness {
@@ -268,54 +269,34 @@ export function useDCConcentration(panel: "p1" | "p2", f: DCPanelFilters, top = 
   })
 }
 
-export function useDCByCustomer(
-  panel: "p1" | "p2",
-  f: DCPanelFilters,
-  opts: { sort?: string; page?: number; limit?: number } = {},
-) {
-  const prefix = useApiPrefix()
-  const sort = opts.sort ?? "profit_desc"
-  const page = opts.page ?? 1
-  const limit = opts.limit ?? 200
-  return useQuery({
-    queryKey: [prefix, "dc", "by-customer", panel, sort, page, limit, ...panelKey(f)],
-    queryFn: () =>
-      apiFetch<DCCustomerRow[]>(
-        `${prefix}/by-customer${singleQs(f, {
-          sort,
-          page: String(page),
-          limit: String(limit),
-        })}`,
-      ),
-    staleTime: 30_000,
-    ...RETRY,
-  })
+export type DCCompareDim = "customer" | "lane"
+
+const COMPARE_PATH: Record<DCCompareDim, string> = {
+  customer: "by-customer-diff",
+  lane: "by-lane-diff",
 }
 
-export function useDCByCustomerDiff(
+export const DC_DEFAULT_SORT = "p1_profit_desc"
+
+/** Details by Customer / Details by Lane — both panels in one row. */
+export function useDCCompare(
+  dim: DCCompareDim,
   p1: DCPanelFilters,
   p2: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
   const prefix = useApiPrefix()
-  const sort = opts.sort ?? "p2_profit_desc"
+  const sort = opts.sort ?? DC_DEFAULT_SORT
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
     queryKey: [
-      prefix,
-      "dc",
-      "by-customer-diff",
-      sort,
-      page,
-      limit,
-      ...panelKey(p1),
-      "|",
-      ...panelKey(p2),
+      prefix, "dc", COMPARE_PATH[dim], sort, page, limit,
+      ...panelKey(p1), "|", ...panelKey(p2),
     ],
     queryFn: () =>
-      apiFetch<DCCustomerRow[]>(
-        `${prefix}/by-customer-diff${diffQs(p1, p2, {
+      apiFetch<DCCompareRow[]>(
+        `${prefix}/${COMPARE_PATH[dim]}${diffQs(p1, p2, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -326,54 +307,24 @@ export function useDCByCustomerDiff(
   })
 }
 
-export function useDCByLane(
-  panel: "p1" | "p2",
-  f: DCPanelFilters,
-  opts: { sort?: string; page?: number; limit?: number } = {},
-) {
-  const prefix = useApiPrefix()
-  const sort = opts.sort ?? "profit_desc"
-  const page = opts.page ?? 1
-  const limit = opts.limit ?? 200
-  return useQuery({
-    queryKey: [prefix, "dc", "by-lane", panel, sort, page, limit, ...panelKey(f)],
-    queryFn: () =>
-      apiFetch<DCLaneRow[]>(
-        `${prefix}/by-lane${singleQs(f, {
-          sort,
-          page: String(page),
-          limit: String(limit),
-        })}`,
-      ),
-    staleTime: 30_000,
-    ...RETRY,
-  })
-}
-
-export function useDCByLaneDiff(
+/** Customer → Lane pivot: customers paged, each with ALL its lanes. */
+export function useDCPivot(
   p1: DCPanelFilters,
   p2: DCPanelFilters,
   opts: { sort?: string; page?: number; limit?: number } = {},
 ) {
   const prefix = useApiPrefix()
-  const sort = opts.sort ?? "p2_profit_desc"
+  const sort = opts.sort ?? DC_DEFAULT_SORT
   const page = opts.page ?? 1
   const limit = opts.limit ?? 200
   return useQuery({
     queryKey: [
-      prefix,
-      "dc",
-      "by-lane-diff",
-      sort,
-      page,
-      limit,
-      ...panelKey(p1),
-      "|",
-      ...panelKey(p2),
+      prefix, "dc", "by-customer-lane-diff", sort, page, limit,
+      ...panelKey(p1), "|", ...panelKey(p2),
     ],
     queryFn: () =>
-      apiFetch<DCLaneRow[]>(
-        `${prefix}/by-lane-diff${diffQs(p1, p2, {
+      apiFetch<DCPivotRow[]>(
+        `${prefix}/by-customer-lane-diff${diffQs(p1, p2, {
           sort,
           page: String(page),
           limit: String(limit),
@@ -384,65 +335,37 @@ export function useDCByLaneDiff(
   })
 }
 
-export function useDCTrend12m() {
+/** Jan–Dec, previous year vs current year. Ignores both panels' filters. */
+export function useDCTrendYoY() {
   const prefix = useApiPrefix()
   return useQuery({
-    queryKey: [prefix, "dc", "trend-12m"],
-    queryFn: () =>
-      apiFetch<DCTrendPoint[]>(`${prefix}/trend-12m`),
-    staleTime: 5 * 60_000, // matches backend TTL roughly
+    queryKey: [prefix, "dc", "trend-yoy"],
+    queryFn: () => apiFetch<DCYoY>(`${prefix}/trend-yoy`),
+    staleTime: 5 * 60_000, // backend caches 10 min
     ...RETRY,
   })
 }
 
-export function useDCCustomerRevMargin(f: DCPanelFilters, top = 20) {
-  const prefix = useApiPrefix()
-  return useQuery({
-    queryKey: [prefix, "dc", "cust-rev-margin", top, ...panelKey(f)],
-    queryFn: () =>
-      apiFetch<DCCustRevMargin[]>(
-        `${prefix}/customer-revenue-margin${singleQs(f, {
-          top: String(top),
-        })}`,
-      ),
-    staleTime: 30_000,
-    ...RETRY,
-  })
+// ---------------------------------------------------------------------------
+// Period label — "MTD" / "Last Month" / "YTD" / "09/01–09/15" (custom). Shared
+// by the panel KPI cards and every period-suffixed column header, so the card
+// and the column it feeds can never name the window differently.
+// ---------------------------------------------------------------------------
+
+const RANGE_LABEL: Record<Exclude<DCRange, "custom">, string> = {
+  mtd: "MTD",
+  last_month: "Last Month",
+  ytd: "YTD",
 }
 
-export function useDCOrdersWindow(
-  f: DCPanelFilters,
-  opts: { sort?: string; page?: number; limit?: number } = {},
-) {
-  const prefix = useApiPrefix()
-  const sort = opts.sort ?? "date_desc"
-  const page = opts.page ?? 1
-  const limit = opts.limit ?? 200
-  // orders-window only consumes division/team/sub-teams (date is hard-coded
-  // to last+this year on the server). Strip the date keys from the cache key
-  // so changing the panel's date doesn't refetch this expensive query.
-  const teamKey = [
-    f.division,
-    (f.teams ?? []).slice().sort().join(","),
-    (f.subTeams ?? []).slice().sort().join(","),
-  ]
-  // Build a slim query — only team/division.
-  const slim = new URLSearchParams()
-  if (f.division && f.division !== "All") slim.set("division", f.division)
-  if (f.teams && f.teams.length) slim.set("teams", f.teams.join(","))
-  if (f.subTeams && f.subTeams.length) slim.set("sub_teams", f.subTeams.join(","))
-  slim.set("sort", sort)
-  slim.set("page", String(page))
-  slim.set("limit", String(limit))
-  return useQuery({
-    queryKey: [prefix, "dc", "orders-window", sort, page, limit, ...teamKey],
-    queryFn: () =>
-      apiFetch<DCOrderRow[]>(
-        `${prefix}/orders-window?${slim.toString()}`,
-      ),
-    staleTime: 60_000,
-    ...RETRY,
-  })
+function mmdd(iso: string | undefined) {
+  if (!iso || iso.length < 10) return "?"
+  return `${iso.slice(5, 7)}/${iso.slice(8, 10)}`
+}
+
+export function periodLabel(f: DCPanelFilters): string {
+  if (f.range !== "custom") return RANGE_LABEL[f.range]
+  return `${mmdd(f.startDate)}–${mmdd(f.endDate)}`
 }
 
 // ---------------------------------------------------------------------------
