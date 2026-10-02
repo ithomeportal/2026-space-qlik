@@ -125,9 +125,9 @@ export interface ItHistoryCategoryRow {
   cnt: number
 }
 
-/** Newest write in the UNFILTERED FreshService "Tickets" table. `stale` once
- *  it is older than 72 h — the sync stopped on 2026-04-15 and the page kept
- *  rendering an empty window as if it were a quiet month. */
+/** Newest write in the UNFILTERED IT ROUTE "Ticket" table. `stale` once it is
+ *  older than 72 h — the old FreshService mirror stopped on 2026-04-15 and the
+ *  page kept rendering an empty window as if it were a quiet month. */
 export interface ItFreshness {
   last_synced: string | null
   stale: boolean
@@ -149,7 +149,8 @@ export interface ItTicketsSummary {
 }
 
 export interface ItTicketRow {
-  id: number
+  /** IT ROUTE display id, e.g. "INC-18951" / "SR-20412" (was FreshService's numeric id). */
+  id: string
   created: string | null
   category: string | null
   sub_category: string | null
@@ -221,6 +222,14 @@ export function fmtDateTime(iso: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+/** IT ROUTE — the ticketing app this report reads (replaced FreshService 2026-08-24). */
+export const IT_ROUTE_URL = "https://route.unilinkportal.com"
+
+/** Deep link to a ticket in IT ROUTE's agent view. */
+export function itRouteTicketUrl(displayId: string): string {
+  return `${IT_ROUTE_URL}/agent/tickets/${encodeURIComponent(displayId)}`
 }
 
 export function fmtIsoDay(iso: string | null): string {

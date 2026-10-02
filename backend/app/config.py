@@ -8,9 +8,11 @@ class Settings(BaseSettings):
     # Aiven automations_db — source for n8n-produced tables
     # (e.g. contract_performance_analysis powering Track Award Loads)
     AUTOMATIONS_DATABASE_URL: str = ""
-    # Aiven fresh_services_unlk — FreshService Tickets/Agents mirror
-    # populated by an external Spark ETL. Powers the IT Tickets Mgmt report.
-    FRESHSERVICE_DATABASE_URL: str = ""
+    # Aiven it_route — IT ROUTE, the in-house ticketing app that replaced
+    # FreshService on 2026-08-24 (all FS history imported). Read-only role
+    # spaceqlik_itroute_ro, SELECT on "Ticket" + "User" only. Powers IT Tickets
+    # Mgmt. (fresh_services_unlk, the old FreshService mirror, froze 2026-04-15.)
+    IT_ROUTE_DATABASE_URL: str = ""
     # Aiven unilink_portal_ap — the AP_module app's own DB (carriers +
     # fmcsa_sms_data). Read-only. Powers the Carrier SMS Score report.
     # Percent-encode $ -> %24 in the URL (Render strips $$).

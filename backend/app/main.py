@@ -1109,27 +1109,26 @@ async def lifespan(app: FastAPI):
     else:
         app.state.automations_pool = None
 
-    # Fourth pool for fresh_services_unlk (FreshService Tickets/Agents mirror,
-    # populated by an external Spark ETL). Powers IT Tickets Mgmt report.
-    if settings.FRESHSERVICE_DATABASE_URL:
+    # Fourth pool for it_route — IT ROUTE, which replaced FreshService on
+    # 2026-08-24. Powers IT Tickets Mgmt. (Was fresh_services_unlk, frozen
+    # 2026-04-15 when the FreshService relationship ended.)
+    if settings.IT_ROUTE_DATABASE_URL:
         try:
-            app.state.freshservice_pool = await asyncpg.create_pool(
-                settings.FRESHSERVICE_DATABASE_URL,
+            app.state.itroute_pool = await asyncpg.create_pool(
+                settings.IT_ROUTE_DATABASE_URL,
                 min_size=1,
                 max_size=4,
                 command_timeout=40,
                 init=_set_cst_session,
             )
-            logger.info(
-                "FreshService pool connected — powers IT Tickets Mgmt"
-            )
+            logger.info("IT ROUTE pool connected — powers IT Tickets Mgmt")
         except Exception as e:
             logger.warning(
-                f"FreshService DB connect failed: {e}. IT Tickets Mgmt will 503."
+                f"IT ROUTE DB connect failed: {e}. IT Tickets Mgmt will 503."
             )
-            app.state.freshservice_pool = None
+            app.state.itroute_pool = None
     else:
-        app.state.freshservice_pool = None
+        app.state.itroute_pool = None
 
     # Pool for modern_pricing_portal (the quoting portal's own DB). Read-only,
     # SELECT on spot_report_condensed only. Powers the HD Spot report's funnel
@@ -1517,8 +1516,8 @@ async def lifespan(app: FastAPI):
         await app.state.savings_pool.close()
     if getattr(app.state, "automations_pool", None):
         await app.state.automations_pool.close()
-    if getattr(app.state, "freshservice_pool", None):
-        await app.state.freshservice_pool.close()
+    if getattr(app.state, "itroute_pool", None):
+        await app.state.itroute_pool.close()
     if getattr(app.state, "pricing_pool", None):
         await app.state.pricing_pool.close()
     if getattr(app.state, "recruit_pool", None):

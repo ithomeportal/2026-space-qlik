@@ -197,7 +197,7 @@ export const REPORT_OVERLAY: Record<string, ReportOverlay> = {
     related: ["esavings-carriers", "track-award-loads", "rfp-performance"],
   },
   "it-tickets-mgmt": {
-    kpis: "FreshService tickets — volume, status, SLA, resolution time by agent/category",
+    kpis: "IT ROUTE tickets (incl. FreshService history) — volume, status, SLA, resolution time by agent/category",
     related: ["voip-calls-logs"],
   },
   "ops-portal-overview": {

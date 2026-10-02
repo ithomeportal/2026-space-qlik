@@ -46,14 +46,14 @@ def get_automations_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
-def get_freshservice_pool(request: Request) -> asyncpg.Pool:
-    """Pool for fresh_services_unlk — FreshService Tickets/Agents mirror
-    populated by an external Spark ETL. Powers the IT Tickets Mgmt report."""
-    pool = getattr(request.app.state, "freshservice_pool", None)
+def get_itroute_pool(request: Request) -> asyncpg.Pool:
+    """Pool for it_route — IT ROUTE, the ticketing app that replaced
+    FreshService (2026-08-24). Powers the IT Tickets Mgmt report."""
+    pool = getattr(request.app.state, "itroute_pool", None)
     if pool is None:
         raise HTTPException(
             status_code=503,
-            detail="FreshService data source not configured",
+            detail="IT ROUTE data source not configured",
         )
     return pool
 

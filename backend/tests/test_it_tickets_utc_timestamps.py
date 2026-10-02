@@ -1,7 +1,8 @@
-"""IT Tickets — FreshService timestamps are NAIVE UTC; the report must speak CST.
+"""IT Tickets — source timestamps are NAIVE UTC; the report must speak CST.
 
-Found 2026-10-01 (§116 follow-up). The four timestamp columns are
-`timestamp without time zone` and hold UTC (tickets peak 13:00-22:00 = the
+Found 2026-10-01 (§116 follow-up) on the FreshService mirror, and true again of
+IT ROUTE (`it_route."Ticket"`, Prisma `DateTime`), which replaced it the same
+day. The four timestamp columns are `timestamp without time zone` and hold UTC (tickets peak 13:00-22:00 = the
 8 AM-5 PM CST working day). Before the fix:
 
 * `created_date::date` bucketed every ticket opened after 7 PM CST on the NEXT
@@ -11,11 +12,12 @@ Found 2026-10-01 (§116 follow-up). The four timestamp columns are
   every Created / Due / Updated cell printed 5-6 h late, and the aging band
   started the clock late.
 
-And the feed itself stopped on 2026-04-15 while the page kept rendering — so
-/summary now carries an unfiltered freshness stamp.
+And the FreshService mirror stopped on 2026-04-15 while the page kept
+rendering — so /summary carries an unfiltered freshness stamp, kept after the
+move to IT ROUTE.
 
 Three layers: SQL linters over the emitted statements, the freshness unit
-contract, and `test_live_*` (skipped unless FRESHSERVICE_DATABASE_URL is set)
+contract, and `test_live_*` (skipped unless IT_ROUTE_DATABASE_URL is set)
 that recomputes the day buckets independently from the raw UTC column.
 """
 
@@ -33,21 +35,21 @@ import pytest
 
 from app.routers import it_tickets as it
 
-_COLS = (("CreatedDate", "created_date"), ("UpdatedDate", "updated_date"),
-         ("DueBy", "due_by"), ("FirstResponseDueBy", "first_resp_due"))
+_COLS = (("createdAt", "created_date"), ("updatedAt", "updated_date"),
+         ("dueBy", "due_by"), ("frDueBy", "first_resp_due"))
 
 
 @pytest.mark.parametrize("col,alias", _COLS)
 def test_every_timestamp_is_converted_from_utc_once_in_the_base_cte(col, alias):
     assert re.search(
-        rf'\("{col}" AT TIME ZONE \'UTC\'\)\s+AS {alias}\b', it._BASE_CTE
+        rf'\(tk\."{col}" AT TIME ZONE \'UTC\'\)\s+AS {alias}\b', it._BASE_CTE
     ), f"{col} is still read as a naive local timestamp"
 
 
 def test_no_raw_timestamp_column_is_read_outside_the_base_cte():
     """Every endpoint must go through the converted alias — a raw
-    "CreatedDate" in a SELECT would bring the UTC bug straight back.
-    (The CTE's own `"CreatedDate" >= '2025-01-01'` history floor is the one
+    "createdAt" in a SELECT would bring the UTC bug straight back.
+    (The CTE's own `"createdAt" >= '2025-01-01'` history floor is the one
     allowed raw read, as is the freshness probe.)"""
     src = open(it.__file__, encoding="utf-8").read()
     body = src
@@ -97,29 +99,29 @@ class _Pool:
 
 
 def _drive_summary(pool):
-    orig = it.get_freshservice_pool
-    it.get_freshservice_pool = lambda request: pool
+    orig = it.get_itroute_pool
+    it.get_itroute_pool = lambda request: pool
     try:
         return asyncio.run(it.summary(
             request=types.SimpleNamespace(), type=None, range="last_30d",
             start=None, end=None, user={},
         ))
     finally:
-        it.get_freshservice_pool = orig
+        it.get_itroute_pool = orig
 
 
 def test_every_window_bound_is_a_cst_date():
     """`$2::date` against a timestamptz = CST midnight under the session TZ."""
     pool = _Pool()
     _drive_summary(pool)
-    orig = it.get_freshservice_pool
+    orig = it.get_itroute_pool
     asyncio.run(it._fetch_table(pool, "Incident", date(2026, 4, 1), date(2026, 4, 2),
                                 it.PENDING_STATUSES, 1, 50, None, "created"))
     windowed = [s for s in pool.conn.sqls if "$2" in s and "$3" in s]
     assert len(windowed) == 5
     for sql in windowed:
         assert re.search(r"created_date >= \$2::date AND (t\.)?created_date < \$3::date", sql)
-    assert orig is it.get_freshservice_pool
+    assert orig is it.get_itroute_pool
 
 
 def test_summary_reports_freshness_from_the_unfiltered_table():
@@ -142,8 +144,8 @@ def test_freshness_staleness_threshold():
 # Live — recompute the CST day buckets from the raw UTC column, independently
 # ---------------------------------------------------------------------------
 
-_FS = os.environ.get("FRESHSERVICE_DATABASE_URL", "")
-live = pytest.mark.skipif(not _FS, reason="FRESHSERVICE_DATABASE_URL not set")
+_FS = os.environ.get("IT_ROUTE_DATABASE_URL", "")
+live = pytest.mark.skipif(not _FS, reason="IT_ROUTE_DATABASE_URL not set")
 _CST = ZoneInfo("America/Chicago")
 
 
@@ -160,24 +162,25 @@ async def _live_pool():
 @live
 def test_live_day_buckets_are_cst_days():
     """history_status per-day counts == the raw UTC timestamps converted to
-    America/Chicago in Python. Window: the feed's last live fortnight."""
-    s, e = date(2026, 4, 1), date(2026, 4, 14)
+    America/Chicago in Python, over the last 30 days of live IT ROUTE data."""
+    e = date.today()
+    s = e - timedelta(days=30)
 
     async def run():
         pool = await _live_pool()
         try:
-            orig = it.get_freshservice_pool
-            it.get_freshservice_pool = lambda request: pool
+            orig = it.get_itroute_pool
+            it.get_itroute_pool = lambda request: pool
             try:
                 resp = await it.summary(
                     request=types.SimpleNamespace(), type="incident", range="custom",
                     start=s, end=e, user={},
                 )
             finally:
-                it.get_freshservice_pool = orig
+                it.get_itroute_pool = orig
             raw = await pool.fetch(
                 it._BASE_CTE.replace(
-                    '("CreatedDate" AT TIME ZONE \'UTC\')', '"CreatedDate"'
+                    '(tk."createdAt" AT TIME ZONE \'UTC\')', 'tk."createdAt"'
                 ) + "SELECT created_date FROM t",
                 it.TYPE_INCIDENT,
             )
@@ -204,7 +207,7 @@ def test_live_table_rows_carry_an_offset():
         pool = await _live_pool()
         try:
             return await it._fetch_table(
-                pool, it.TYPE_INCIDENT, date(2026, 4, 1), date(2026, 4, 14),
+                pool, it.TYPE_INCIDENT, date.today() - timedelta(days=60), date.today(),
                 it.CLOSED_STATUSES, 1, 5, None, "updated",
             )
         finally:
@@ -214,6 +217,48 @@ def test_live_table_rows_carry_an_offset():
     assert total > 0
     for r in rows:
         assert r["created"].endswith("+00:00"), r["created"]
+
+
+
+@live
+def test_live_every_statement_runs_under_the_read_only_role():
+    """The report's REAL SQL, both types, every sort key, under
+    spaceqlik_itroute_ro (SELECT on "Ticket" + "User" only) — a table the role
+    lacks would be 42501 here, not in production. Also: agents resolve to
+    names, the display id is IT ROUTE's, and the source is fresh."""
+    async def run():
+        pool = await _live_pool()
+        out = []
+        try:
+            orig = it.get_itroute_pool
+            it.get_itroute_pool = lambda request: pool
+            try:
+                for ty in ("incident", "service_request"):
+                    out.append(await it.summary(
+                        request=types.SimpleNamespace(), type=ty, range="ytd",
+                        start=None, end=None, user={},
+                    ))
+            finally:
+                it.get_itroute_pool = orig
+            for key in it._TABLE_COLUMNS:
+                for status in (it.PENDING_STATUSES, it.CLOSED_STATUSES):
+                    rows, _ = await it._fetch_table(
+                        pool, it.TYPE_SERVICE_REQUEST, date(2026, 1, 1), date.today(),
+                        status, 1, 5, f"-{key}", "created",
+                    )
+                    out.append(rows)
+            return out
+        finally:
+            await pool.close()
+
+    out = asyncio.run(run())
+    inc, sr = out[0]["data"], out[1]["data"]
+    assert (inc["type"], sr["type"]) == ("Incident", "Service Request")
+    assert sr["kpis"]["total"] > 0 and inc["kpis"]["total"] > 0
+    assert not sr["freshness"]["stale"], sr["freshness"]
+    closed_rows = [r for rows in out[2:] for r in rows]
+    assert closed_rows and all(re.fullmatch(r"(INC|SR)-\d+", r["id"]) for r in closed_rows)
+    assert any(r["agent"] for r in closed_rows), "agent names did not resolve"
 
 
 # ---------------------------------------------------------------------------

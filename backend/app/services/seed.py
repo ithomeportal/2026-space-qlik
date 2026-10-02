@@ -620,11 +620,11 @@ CUSTOM_REPORTS = [
     {
         "key": "it-tickets-mgmt",  # -> /reports/it-tickets-mgmt
         "title": "IT Tickets Mgmt",
-        "description": "FreshService IT tickets — Service Request / Incident KPIs, status & priority mix, agent assignments, pending/closed details",
+        "description": "IT ROUTE tickets (FreshService history included) — Service Request / Incident KPIs, status & priority mix, agent assignments, pending/closed details",
         "note": "Type tabs (Service Request / Incident) · default Last 30d (Today / WTD / Last 7d / MTD / Last Month / YTD / Custom) · excludes Onboarding/Offboarding/Cancelled/Test (IT) · status code 6→In Progress, 8→Waiting for user response · agents joined via ResponderId (Bruno's PDF JOIN was on Id=Id which matches 0 rows — corrected) · source: fresh_services_unlk.\"Tickets\" + \"Agents\" (Spark ETL) · replaces Qlik 86da731f-… · available to everyone",
         "category": "IT",
         "tags": [
-            "it", "service-desk", "incidents", "tickets", "freshservice",
+            "it", "service-desk", "incidents", "tickets", "it-route", "freshservice",
             "agents", "categories", "priority", "sla",
         ],
         "owner_name": "admin",

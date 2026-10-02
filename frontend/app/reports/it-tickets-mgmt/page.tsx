@@ -29,8 +29,10 @@ import {
   fmtInt,
   fmtIsoDay,
   fmtPct,
+  itRouteTicketUrl,
   useItTicketsSummary,
   useItTicketsTable,
+  type ItTicketRow,
   type ItTicketsFilters,
   type ItTicketsRange,
   type ItTicketsType,
@@ -232,7 +234,7 @@ function ItTicketsMgmtContent() {
               className={`rounded-full px-2 py-0.5 text-[10px] ${
                 freshness.stale ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#F3F4F6] text-[#374151]"
               }`}
-              title="Newest write in the FreshService feed (all tickets, unfiltered)"
+              title="Newest write in IT ROUTE (all tickets, unfiltered)"
             >
               Data as of {fmtDateTime(freshness.last_synced)}
             </span>
@@ -248,7 +250,7 @@ function ItTicketsMgmtContent() {
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span>
-            <strong>FreshService data is not syncing.</strong>{" "}
+            <strong>IT ROUTE ticket data looks stale.</strong>{" "}
             {freshness.last_synced
               ? `The newest ticket data is from ${fmtDateTime(freshness.last_synced)}`
               : "No sync time is available"}
@@ -860,19 +862,8 @@ interface ColumnDef {
   render?: (row: TicketRow) => React.ReactNode
 }
 
-interface TicketRow {
-  id: number
-  created: string | null
-  category: string | null
-  sub_category: string | null
-  item_category: string | null
-  agent: string | null
-  name: string | null
-  subject: string | null
-  status: string | null
-  due_by: string | null
-  updated: string | null
-}
+// The row shape is the API's — one definition in lib/it-tickets-api.ts.
+type TicketRow = ItTicketRow
 
 function TicketTable({
   rows,
@@ -888,7 +879,22 @@ function TicketTable({
   onSort: (s: string) => void
 }) {
   const columns: ColumnDef[] = [
-    { key: "id", label: "Id", width: "w-[6%]" },
+    {
+      key: "id",
+      label: "Id",
+      width: "w-[6%]",
+      render: (r) => (
+        <a
+          href={itRouteTicketUrl(r.id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="whitespace-nowrap text-[#1E40AF] hover:underline"
+          title="Open in IT ROUTE"
+        >
+          {r.id}
+        </a>
+      ),
+    },
     {
       key: "created",
       label: "Created",

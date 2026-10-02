@@ -4,9 +4,17 @@ Portal-native replacement for Bruno's Qlik app
 ``86da731f-577f-45d3-9d40-c416649a4937`` ("IT Managed Services" — sheets
 ``RqXzx`` Incidents and ``8aae69c7-…`` Service Request).
 
-Source: ``fresh_services_unlk."Tickets" ⨝ "Agents"`` -- own pool via
-``get_freshservice_pool`` (env var ``FRESHSERVICE_DATABASE_URL``). The
-table is loaded by an external Spark ETL (not n8n).
+Source: ``it_route."Ticket" ⨝ "User"`` -- own pool via ``get_itroute_pool``
+(env var ``IT_ROUTE_DATABASE_URL``, role ``spaceqlik_itroute_ro``, SELECT on
+those two tables only). IT ROUTE is the in-house ticketing app
+(/BOT/ticket-system, route.unilinkportal.com) that replaced FreshService on
+2026-08-24 with the full FreshService history imported.
+
+⚠ Until 2026-10-01 this report read ``fresh_services_unlk."Tickets"``, the
+Spark mirror of FreshService, which froze on 2026-04-15 when the FreshService
+relationship ended — so it showed nothing after that date. Re-pointed here; on
+the overlap (2025-01-01..2026-04-14) both sources select the same population
+to within 0.5% (1,306 vs 1,303 incidents; 4,037 vs 4,015 service requests).
 
 Access: any authenticated user (gated only by ``require_user``); seed.py
 grants the report to every TagRole so it surfaces for everyone.
@@ -27,19 +35,16 @@ Bruno's PDF visuals (preserved):
     respects the date filter)
   * Two paginated detail tables: Pending and Closed
 
-Bruno's PDF SQL had a JOIN bug (``ON t.Id = a.Id`` matches 0 rows since
-ticket IDs are 17xxx and agent IDs are 21000xxx). Corrected here to
-``ON t."ResponderId" = a."Id"``.
+Agents: ``"Ticket"."responderId" = "User".id``, shown by first name.
 
-Status code mapping (mirrors Bruno's CASE):
-  '6' -> 'In Progress'
-  '8' -> 'Waiting for user response'
-  others (Pending/Open/Closed/Resolved) pass through.
+Status mapping — IT ROUTE's enum to the FreshService labels the page always
+used: OPEN Open · IN_PROGRESS In Progress · PENDING Pending · WAITING_ON_USER
+Waiting for user response · RESOLVED Resolved · CLOSED Closed. CANCELLED is
+dropped, as FreshService's "Cancelled" category always was.
 
 Performance:
-  * Indexes added 2026-04-28 via avnadmin: ``idx_tickets_created``,
-    ``idx_tickets_type_status_active`` (partial), ``idx_tickets_responder``,
-    ``idx_tickets_updated``.
+  * ``"Ticket"`` is ~20k rows with IT ROUTE's own indexes (type, status,
+    createdAt, responderId).
   * Half-open date range (``>= $s AND < $e + 1d``) keeps queries sargable.
   * Single ``/summary`` endpoint returns all KPIs + chart data in one
     round-trip — avoids 8 separate API hits per page load.
@@ -53,14 +58,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.clock import cst_today
-from app.routers.deps import get_freshservice_pool, require_user
+from app.routers.deps import get_itroute_pool, require_user
 
 router = APIRouter(tags=["it-tickets"], prefix="/custom/it-tickets")
 
 HISTORY_FLOOR = date(2025, 1, 1)
 
-TYPE_SERVICE_REQUEST = "Service Request"
-TYPE_INCIDENT = "Incident"
+# IT ROUTE's TicketType enum values; TYPE_LABELS keeps the API's human label.
+TYPE_SERVICE_REQUEST = "SERVICE_REQUEST"
+TYPE_INCIDENT = "INCIDENT"
+TYPE_LABELS = {TYPE_SERVICE_REQUEST: "Service Request", TYPE_INCIDENT: "Incident"}
 TYPES = (TYPE_SERVICE_REQUEST, TYPE_INCIDENT)
 
 # Bruno's exclusion lists — kept in source SQL since they're domain rules.
@@ -73,10 +80,10 @@ EXCLUDED_CATEGORIES = (
 )
 
 # Statuses that count as "open / pending" in every KPI Bruno authored.
-# The FreshService sync stopped on 2026-04-15 and the report kept rendering —
-# an empty window read as "a quiet month". /summary now reports the newest
-# write in the UNFILTERED table; older than this ⇒ the page says the feed is
-# stale. 72 h so an ordinary weekend with no ticket activity does not alarm.
+# The FreshService mirror stopped on 2026-04-15 and the report kept rendering
+# — an empty window read as "a quiet month". /summary reports the newest write
+# in the UNFILTERED source table; older than this ⇒ the page says the source
+# is stale. 72 h so an ordinary weekend with no ticket activity does not alarm.
 STALE_AFTER = timedelta(hours=72)
 
 PENDING_STATUSES = ("Pending", "Open", "In Progress", "Waiting for user response")
@@ -165,50 +172,64 @@ def _coerce_type(type_param: Optional[str]) -> str:
 # in one place. Every endpoint starts from this CTE so the filter set stays
 # single-source-of-truth.
 #
-# ⚠ The FreshService sync writes every timestamp as NAIVE UTC (`timestamp
-# without time zone`; tickets peak at 13:00-22:00 = 8 AM-5 PM CST). They are
+# ⚠ IT ROUTE (Prisma `DateTime`) stores every timestamp as NAIVE UTC
+# (`timestamp without time zone`; tickets peak at 13:00-22:00 = 8 AM-5 PM CST)
+# — exactly as the FreshService mirror before it did. They are
 # made `timestamptz` HERE, once, so that under the pool's CST session every
 # `::date`, `date_trunc` and window bound below is a CST day, and the API emits
 # offset-qualified ISO strings the browser cannot misread as local time.
 # Before 2026-10-01 a ticket opened after 7 PM CST was bucketed on the next
 # day, and every time in the tables printed 5-6 h late (SPEC-CODE-RULES §116).
 #
-# Placeholders (in order): $1 = Type
+# Placeholders (in order): $1 = Type (IT ROUTE enum value, compared as text)
+_STATUS_LABEL = """CASE tk.status::text
+      WHEN 'OPEN'            THEN 'Open'
+      WHEN 'IN_PROGRESS'     THEN 'In Progress'
+      WHEN 'PENDING'         THEN 'Pending'
+      WHEN 'WAITING_ON_USER' THEN 'Waiting for user response'
+      WHEN 'RESOLVED'        THEN 'Resolved'
+      WHEN 'CLOSED'          THEN 'Closed'
+      ELSE initcap(tk.status::text) END"""
+
+# An agent is an IT ROUTE "User"; FreshService's FirstName is "firstName"
+# here, which is null on some accounts — fall back to the first word of name.
+_AGENT_FIRST_NAME = """COALESCE(NULLIF(a."firstName", ''), split_part(a.name, ' ', 1))"""
+
 _BASE_CTE = f"""
 WITH t AS (
   SELECT
-    "Id"                                                 AS id,
-    "Subject"                                            AS subject,
-    "Name"                                               AS name,
-    "Email"                                              AS email,
-    "Category"                                           AS category,
-    "SubCategory"                                        AS sub_category,
-    "ItemCategory"                                       AS item_category,
-    "Priority"                                           AS priority,
-    "Source"                                             AS source,
-    "Type"                                               AS type,
-    CASE WHEN "Status" = '6' THEN 'In Progress'
-         WHEN "Status" = '8' THEN 'Waiting for user response'
-         ELSE "Status" END                               AS status,
-    "ResponderId"                                        AS responder_id,
-    ("DueBy" AT TIME ZONE 'UTC')                         AS due_by,
-    ("FirstResponseDueBy" AT TIME ZONE 'UTC')            AS first_resp_due,
-    ("CreatedDate" AT TIME ZONE 'UTC')                   AS created_date,
-    ("UpdatedDate" AT TIME ZONE 'UTC')                   AS updated_date
-  FROM "Tickets"
-  WHERE "_active_value" = TRUE
-    AND "Subject" NOT ILIKE '%test%'
-    AND "Category" NOT IN ({", ".join(f"'{c}'" for c in EXCLUDED_CATEGORIES)})
-    AND "CreatedDate" >= '2025-01-01'
-    AND "Type" = $1
+    tk."displayId"                                       AS id,
+    tk.sequence                                          AS seq,
+    tk.subject                                           AS subject,
+    tk."requesterName"                                   AS name,
+    tk."requesterEmail"                                  AS email,
+    tk.category                                          AS category,
+    tk."subCategory"                                     AS sub_category,
+    tk."itemCategory"                                    AS item_category,
+    initcap(tk.priority::text)                           AS priority,
+    tk.type::text                                        AS type,
+    {_STATUS_LABEL}                                      AS status,
+    tk."responderId"                                     AS responder_id,
+    (tk."dueBy" AT TIME ZONE 'UTC')                      AS due_by,
+    (tk."frDueBy" AT TIME ZONE 'UTC')                    AS first_resp_due,
+    (tk."createdAt" AT TIME ZONE 'UTC')                  AS created_date,
+    (tk."updatedAt" AT TIME ZONE 'UTC')                  AS updated_date
+  FROM "Ticket" tk
+  WHERE NOT tk."isDeleted"
+    AND tk.status::text <> 'CANCELLED'
+    AND tk.subject NOT ILIKE '%test%'
+    AND tk.category NOT IN ({", ".join(f"'{c}'" for c in EXCLUDED_CATEGORIES)})
+    AND tk."createdAt" >= '2025-01-01'
+    AND tk.type::text = $1
 )
 """
 
 
-# Newest write anywhere in "Tickets" — no type / category / _active_value
-# filter, so it measures the FEED, not the slice the page is showing.
+# Newest write anywhere in "Ticket" — no type / category / isDeleted filter,
+# so it measures the SOURCE, not the slice the page is showing. Kept after the
+# move to IT ROUTE: the FreshService mirror died silently for 5½ months.
 _FRESHNESS_SQL = """
-SELECT max("UpdatedDate") AT TIME ZONE 'UTC' FROM "Tickets"
+SELECT max("updatedAt") AT TIME ZONE 'UTC' FROM "Ticket"
 """
 
 
@@ -256,7 +277,7 @@ async def summary(
     s, e = _clamp(*_resolve_range(range, start, end))
     e_plus = e + timedelta(days=1)
 
-    pool = get_freshservice_pool(request)
+    pool = get_itroute_pool(request)
 
     # ------------------------------------------------------------------ KPIs
     kpi_sql = (
@@ -347,12 +368,12 @@ async def summary(
     # --------------------------------------------------- Agents (pending only)
     by_agent_sql = (
         _BASE_CTE
-        + """
+        + f"""
         SELECT
-          COALESCE(a."FirstName", 'Unassigned') AS first_name,
+          COALESCE({_AGENT_FIRST_NAME}, 'Unassigned') AS first_name,
           COUNT(*)                              AS cnt
         FROM t
-        LEFT JOIN "Agents" a ON t.responder_id = a."Id"
+        LEFT JOIN "User" a ON t.responder_id = a.id
         WHERE t.status IN ('Pending','Open','In Progress','Waiting for user response')
         GROUP BY 1
         ORDER BY 2 DESC
@@ -412,7 +433,7 @@ async def summary(
     return {
         "success": True,
         "data": {
-            "type": type_value,
+            "type": TYPE_LABELS[type_value],
             "range": {"start": s.isoformat(), "end": e.isoformat()},
             "freshness": _freshness(last_synced, datetime.now(timezone.utc)),
             "kpis": {
@@ -474,12 +495,12 @@ async def summary(
 
 
 _TABLE_COLUMNS = {
-    "id": "t.id",
+    "id": "t.seq",  # display id INC-1234 sorts by its number
     "created": "t.created_date",
     "category": "t.category",
     "sub_category": "t.sub_category",
     "item_category": "t.item_category",
-    "agent": 'a."FirstName"',
+    "agent": _AGENT_FIRST_NAME,
     "name": "t.name",
     "subject": "t.subject",
     "status": "t.status",
@@ -530,14 +551,14 @@ async def _fetch_table(
         + f"""
         SELECT
           t.id, t.created_date, t.category, t.sub_category, t.item_category,
-          a."FirstName" AS agent_first_name,
+          {_AGENT_FIRST_NAME} AS agent_first_name,
           t.name, t.subject, t.status, t.due_by, t.updated_date,
           COUNT(*) OVER () AS total_count
         FROM t
-        LEFT JOIN "Agents" a ON t.responder_id = a."Id"
+        LEFT JOIN "User" a ON t.responder_id = a.id
         WHERE t.created_date >= $2::date AND t.created_date < $3::date
           AND t.status IN ({status_in})
-        ORDER BY {sort_col} {sort_dir}, t.id DESC
+        ORDER BY {sort_col} {sort_dir}, t.seq DESC
         LIMIT {int(page_size)} OFFSET {int(offset)}
         """
     )
@@ -576,7 +597,7 @@ async def pending_table(
 ) -> dict:
     type_value = _coerce_type(type)
     s, e = _clamp(*_resolve_range(range, start, end))
-    pool = get_freshservice_pool(request)
+    pool = get_itroute_pool(request)
 
     rows, total = await _fetch_table(
         pool,
@@ -610,7 +631,7 @@ async def closed_table(
 ) -> dict:
     type_value = _coerce_type(type)
     s, e = _clamp(*_resolve_range(range, start, end))
-    pool = get_freshservice_pool(request)
+    pool = get_itroute_pool(request)
 
     rows, total = await _fetch_table(
         pool,
