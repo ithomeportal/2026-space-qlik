@@ -22,6 +22,7 @@ import {
 } from "@/lib/xray-dfw-api"
 import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
+import { parseLocalDate } from "@/lib/local-date"
 
 interface Props {
   filters: XrayDfwFilters
@@ -55,7 +56,7 @@ export function Risk({
   const wlTot = r?.totals?.worst_lanes
 
   const fmtBucket = (s: string) => {
-    const d = new Date(s)
+    const d = parseLocalDate(s)
     if (Number.isNaN(d.getTime())) return s
     return `${d.toLocaleString("en-US", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`
   }

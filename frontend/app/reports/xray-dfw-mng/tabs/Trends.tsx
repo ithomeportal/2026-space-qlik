@@ -27,6 +27,7 @@ import {
 } from "@/lib/xray-dfw-api"
 import { useSortable, SortableTh } from "@/components/SortableTable"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
+import { parseLocalDate } from "@/lib/local-date"
 
 interface Props {
   filters: XrayDfwFilters
@@ -314,7 +315,7 @@ function avgFromBucket(
   const cur = today.getMonth()
   const year = today.getFullYear()
   const filtered = data.filter((d) => {
-    const b = new Date(d.bucket)
+    const b = parseLocalDate(d.bucket)
     if (which === "current") return b.getFullYear() === year && b.getMonth() === cur
     const prevYear = cur === 0 ? year - 1 : year
     const prevMonth = cur === 0 ? 11 : cur - 1
@@ -326,7 +327,7 @@ function avgFromBucket(
 }
 
 function fmtBucket(bucket: string) {
-  const d = new Date(bucket)
+  const d = parseLocalDate(bucket)
   if (Number.isNaN(d.getTime())) return bucket
   return `${d.toLocaleString("en-US", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`
 }

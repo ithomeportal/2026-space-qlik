@@ -22,13 +22,14 @@ import {
   type XrayFilters,
 } from "@/lib/xray-api"
 import { XrayErrorBanner } from "../ErrorBanner"
+import { parseLocalDate } from "@/lib/local-date"
 
 interface Props {
   filters: XrayFilters
 }
 
 const fmtBucket = (s: string) => {
-  const d = new Date(s)
+  const d = parseLocalDate(s)
   if (Number.isNaN(d.getTime())) return s
   return `${d.toLocaleString("en-US", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`
 }

@@ -26,6 +26,7 @@ import { useSortable, SortableTh } from "@/components/SortableTable"
 import { AllOrdersTable } from "./AllOrdersTable"
 import { ClickName } from "./ClickName"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
+import { parseLocalDate } from "@/lib/local-date"
 
 interface Props {
   filters: XrayDfwFilters
@@ -35,7 +36,7 @@ interface Props {
 }
 
 const fmtBucket = (s: string) => {
-  const d = new Date(s)
+  const d = parseLocalDate(s)
   if (Number.isNaN(d.getTime())) return s
   return `${d.toLocaleString("en-US", { month: "short" })} ${String(d.getDate()).padStart(2, "0")}`
 }
