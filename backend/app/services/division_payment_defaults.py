@@ -69,7 +69,7 @@ def _date(value: Optional[str]) -> Optional[date]:
 
 
 async def seed_division_payment(pool) -> int:
-    """Idempotently seed months, GL rows and approved archives.
+    """Idempotently seed months and GL rows.
 
     Returns the number of month rows the portal knows about afterwards. Safe to
     call on every startup: existing rows are left exactly as the user left them.
@@ -120,20 +120,14 @@ async def seed_division_payment(pool) -> int:
                         row["amount"], row["included"], row["sort_order"],
                     )
 
-            for s in data["snapshots"]:
-                await conn.execute(
-                    """
-                    INSERT INTO dpc_snapshots
-                      (year, month, month_label, revenue, carrier_cost, profit, margin_pct,
-                       gl_deductions, penalty_fee, corporate_gain, net_payment,
-                       snapshot_date, approved_by)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-                    ON CONFLICT (year, month) DO NOTHING
-                    """,
-                    s["year"], s["month"], s["month_label"], s["revenue"], s["carrier_cost"],
-                    s["profit"], s["margin_pct"], s["gl_deductions"], s["penalty_fee"],
-                    s["corporate_gain"], s["net_payment"], _date(s["snapshot_date"]), "seed",
-                )
+            # Approved archives are NOT seeded (2026-10-05, Diego: "it's a
+            # production site"). The 17 prototype archives were invented figures
+            # shown as "the original approved calculations that were paid", and
+            # they marked 17 months approved that nobody approved. Deleted from
+            # the live DB the same day (approved_by = 'seed'); only the JSON keeps
+            # them, as fixtures for the arithmetic tests. ⚠ Re-adding this loop
+            # would RE-CREATE them on the next deploy — ON CONFLICT DO NOTHING
+            # re-inserts a deleted row.
 
             # The five vendor demo recalculations (rec-jan … rec-apr, rec-jan-2)
             # are NOT seeded any more (Bruno PDF 2026-10-05, Recalculations R1-R3):

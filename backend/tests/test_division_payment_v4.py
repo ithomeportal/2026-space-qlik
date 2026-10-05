@@ -325,10 +325,16 @@ def test_the_seeder_counts_deleted_rows_before_refilling():
     assert "deleted_at" not in src.split("SELECT COUNT(*)")[1].split("\n")[0]
 
 
-def test_vendor_recalcs_are_no_longer_seeded():
+def test_vendor_demo_data_is_no_longer_seeded():
+    """Recalcs AND approved archives were the prototype's invented records; a
+    production finance page must not show them as paid history. ON CONFLICT DO
+    NOTHING would re-create a deleted row on every deploy."""
     from app.services import division_payment_defaults as d
 
-    assert "INSERT INTO dpc_recalcs" not in inspect.getsource(d.seed_division_payment)
+    src = inspect.getsource(d.seed_division_payment)
+    assert "INSERT INTO dpc_recalcs" not in src
+    assert "INSERT INTO dpc_audit_loads" not in src
+    assert "INSERT INTO dpc_snapshots" not in src
 
 
 # --------------------------------------------------------------------------
