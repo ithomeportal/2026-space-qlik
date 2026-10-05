@@ -513,3 +513,18 @@ class TestEscapingAndSigns:
         s = copy.deepcopy(UNILINK)
         s["margin_pct"]["diff_lw_vs_l8w"]["diff"] = 0.000001
         assert "Margin was flat 0.00pp" in highlight(s)
+
+
+class TestSurvivesOutlookPrint:
+    """Test send 2026-10-05, printed from Outlook: every fill vanished and the
+    white scope titles became unreadable; TEAM-DFW wrapped onto two lines."""
+
+    def test_every_filled_element_asks_to_print_its_colour(self, digest):
+        html = digest[0]["html"]
+        for tag in re.findall(r"<[^>]*background-color:[^>]*>", html):
+            assert "print-color-adjust:exact" in tag, tag[:120]
+
+    def test_team_dfw_cannot_wrap(self, digest):
+        html = digest[0]["html"]
+        assert "TEAM&#8209;DFW" in html
+        assert re.search(r"<td [^>]*nowrap>TEAM&#8209;DFW</td>", html)

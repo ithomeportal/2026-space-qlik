@@ -40,6 +40,12 @@ LINK = "#2563EB"
 SCOPE_BAR = {"UNILINK": "#000000", "CORP": "#C00000", "DFW": "#002060"}
 DASH = "&mdash;"
 
+# Outlook's print / "save as PDF" drops every background by default — the scope
+# bars turned into invisible white-on-white text and the red/green week cells
+# went blank (test send 2026-10-05). Ask the renderer to keep them. Inherited,
+# but repeated on each filled element because Outlook strips <body> styles.
+PRINT_EXACT = "-webkit-print-color-adjust:exact;print-color-adjust:exact;"
+
 METRICS = (
     ("loads", "# Loads"),
     ("revenue", "$ Revenue"),
@@ -109,13 +115,14 @@ def _range(w: dict) -> str:
 
 def _td(content: str, *, align: str = "left", bg: str = "", color: str = INK,
         mono: bool = False, bold: bool = False, size: int = 12,
-        extra: str = "") -> str:
+        extra: str = "", nowrap: bool = False) -> str:
     font = MONO_STACK if mono else FONT_STACK
     style = (f"font-family:{font};font-size:{size}px;color:{color};"
              f"text-align:{align};padding:6px 8px;border-bottom:1px solid {BORDER};"
              f"{'font-weight:700;' if bold else ''}"
-             f"{f'background-color:{bg};' if bg else ''}{extra}")
+             f"{f'background-color:{bg};{PRINT_EXACT}' if bg else ''}{extra}")
     attr = f' bgcolor="{bg}"' if bg else ""
+    attr += " nowrap" if nowrap else ""
     return f'<td style="{style}"{attr}>{content}</td>'
 
 
@@ -123,7 +130,7 @@ def _th(content: str, *, align: str = "right", bg: str = "", extra: str = "") ->
     style = (f"font-family:{FONT_STACK};font-size:10px;color:{MUTED};"
              f"text-transform:uppercase;letter-spacing:0.5px;font-weight:700;"
              f"text-align:{align};padding:6px 8px;border-bottom:1px solid {BORDER};"
-             f"{f'background-color:{bg};' if bg else ''}{extra}")
+             f"{f'background-color:{bg};{PRINT_EXACT}' if bg else ''}{extra}")
     attr = f' bgcolor="{bg}"' if bg else ""
     return f'<th style="{style}"{attr}>{content}</th>'
 
@@ -143,7 +150,7 @@ def _scope_bar(name: str) -> str:
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;margin:28px 0 12px 0;"><tr>'
-        f'<td bgcolor="{SCOPE_BAR[name]}" style="background-color:{SCOPE_BAR[name]};'
+        f'<td bgcolor="{SCOPE_BAR[name]}" style="background-color:{SCOPE_BAR[name]};{PRINT_EXACT}'
         f'font-family:{FONT_STACK};font-size:26px;font-weight:800;color:#FFFFFF;'
         f'padding:8px 12px;">{escape(name)}</td></tr></table>'
     )
@@ -151,7 +158,7 @@ def _scope_bar(name: str) -> str:
 
 def _chips(windows: dict) -> str:
     chip = (f'<span style="font-family:{FONT_STACK};font-size:11px;color:{INK};'
-            f'background-color:{CHIP_BG};padding:3px 8px;margin-right:8px;'
+            f'background-color:{CHIP_BG};{PRINT_EXACT}padding:3px 8px;margin-right:8px;'
             f'border-radius:10px;">')
     return (
         f'<div style="font-family:{FONT_STACK};font-size:11px;margin:0 0 10px 0;">'
@@ -173,7 +180,7 @@ def _card(title: str, block: dict) -> str:
     )
     tds = "".join(
         f'<td width="25%" style="font-family:{FONT_STACK};padding:6px 8px;'
-        f'background-color:#F9FAFB;border:1px solid {BORDER};" bgcolor="#F9FAFB">'
+        f'background-color:#F9FAFB;{PRINT_EXACT}border:1px solid {BORDER};" bgcolor="#F9FAFB">'
         f'<div style="font-family:{FONT_STACK};font-size:9px;color:{MUTED};'
         f'text-transform:uppercase;">{label}</div>'
         f'<div style="font-family:{FONT_STACK};font-size:20px;font-weight:600;'
@@ -298,8 +305,10 @@ def _customer_table(rows: list[dict], weeks: list[date]) -> str:
                                  bg=CELL_BAD_BG, color=BAD))
         body.append(
             "<tr>"
-            + _td(escape(r["team"] or ""), size=11, color=MUTED,
-                  extra="white-space:nowrap;")
+            # Outlook ignores CSS nowrap: the attribute plus a NON-BREAKING
+            # hyphen keep "TEAM-DFW" on one line.
+            + _td(escape(r["team"] or "").replace("-", "&#8209;"), size=11,
+                  color=MUTED, extra="white-space:nowrap;", nowrap=True)
             + _td(escape(r["customer"]), size=11, color=LINK)
             + _td(_num(r["ref"]), align="right", mono=True, bold=True, size=11)
             + _td(_num(r["diff"]), align="right", mono=True, size=11, color=BAD,
@@ -379,7 +388,7 @@ def render_html(*, subject: str, week_no: int, windows: dict, scopes: dict,
     return (
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
         f"<title>{escape(subject)}</title></head>"
-        f'<body style="margin:0;padding:0;background-color:#FFFFFF;" bgcolor="#FFFFFF">'
+        f'<body style="margin:0;padding:0;background-color:#FFFFFF;{PRINT_EXACT}" bgcolor="#FFFFFF">'
         f'<table role="presentation" width="{PAGE_WIDTH}" cellpadding="0" cellspacing="0" '
         f'style="width:{PAGE_WIDTH}px;border-collapse:collapse;"><tr>'
         f'<td style="font-family:{FONT_STACK};padding:16px;color:{INK};">'
