@@ -1,24 +1,25 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { ChevronDown, ChevronRight, Info, Plus, Trash2, X } from "lucide-react"
+import { useState } from "react"
+import { ChevronDown, ChevronRight, Info, Plus, X } from "lucide-react"
 
 import {
   formatCurrency,
   useAddExpense,
-  useDeleteExpense,
-  usePatchAccount,
   useToggleCategory,
   type GLCategory,
   type Summary,
 } from "@/lib/division-payment-api"
+import { CategorySelect, GlAccountRow, GL_CATEGORY_OPTIONS, Toggle } from "./GlAccountRow"
 import { DPC, MONO } from "./theme"
 
 /**
  * "GL Account Deductions" — PDF Calculator Request 5.
  *
  * Grouped by category, expand/collapse per group, an Include toggle at both the
- * category and the row level, and an Add Expense form.
+ * category and the row level, and an Add Expense form. Every row — template or
+ * added — can be edited inline and deleted (Bruno PDF 2026-10-05); the row
+ * itself lives in `GlAccountRow.tsx`.
  *
  * Amounts are typed here, not fed from any system: A&O's GL lines live in the
  * accounting system. Every GL Code therefore starts at $0.00 (Bruno PDF
@@ -34,17 +35,15 @@ import { DPC, MONO } from "./theme"
  * two can never drift.
  */
 export function GlDeductionsTable({ summary }: { summary: Summary }) {
-  const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set(summary.gl_categories.map((c) => c.category)),
-  )
+  // Track COLLAPSED groups, not expanded ones: a row edited into a category
+  // that had no rows creates a new group, and it should appear open.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [showAdd, setShowAdd] = useState(false)
 
-  const patch = usePatchAccount()
-  const del = useDeleteExpense()
   const toggleCat = useToggleCategory(summary.year, summary.month)
 
   const toggleExpanded = (cat: string) =>
-    setExpanded((prev) => {
+    setCollapsed((prev) => {
       const next = new Set(prev)
       if (next.has(cat)) next.delete(cat)
       else next.add(cat)
@@ -94,13 +93,13 @@ export function GlDeductionsTable({ summary }: { summary: Summary }) {
               <th className="px-3 py-2 text-left font-semibold">GL Code</th>
               <th className="px-3 py-2 text-left font-semibold">Description</th>
               <th className="px-3 py-2 text-right font-semibold">Amount (USD)</th>
-              <th className="w-20 px-3 py-2 text-right font-semibold">Include</th>
+              <th className="w-32 px-3 py-2 text-right font-semibold">Include</th>
             </tr>
           </thead>
           <tbody>
             {summary.gl_categories.map((cat) => {
               const rows = summary.gl_accounts.filter((a) => a.category === cat.category)
-              const open = expanded.has(cat.category)
+              const open = !collapsed.has(cat.category)
               return (
                 <CategoryGroup
                   key={cat.category}
@@ -111,9 +110,6 @@ export function GlDeductionsTable({ summary }: { summary: Summary }) {
                   onToggleAll={(included) =>
                     toggleCat.mutate({ category: cat.category, included })
                   }
-                  onToggleRow={(id, included) => patch.mutate({ id, included })}
-                  onSaveAmount={(id, amount) => patch.mutate({ id, amount })}
-                  onDelete={(id) => del.mutate(id)}
                 />
               )
             })}
@@ -144,16 +140,13 @@ export function GlDeductionsTable({ summary }: { summary: Summary }) {
 }
 
 function CategoryGroup({
-  cat, rows, open, onToggleExpanded, onToggleAll, onToggleRow, onSaveAmount, onDelete,
+  cat, rows, open, onToggleExpanded, onToggleAll,
 }: {
   cat: GLCategory
   rows: Summary["gl_accounts"]
   open: boolean
   onToggleExpanded: () => void
   onToggleAll: (included: boolean) => void
-  onToggleRow: (id: string, included: boolean) => void
-  onSaveAmount: (id: string, amount: number) => void
-  onDelete: (id: string) => void
 }) {
   return (
     <>
@@ -197,148 +190,16 @@ function CategoryGroup({
         </td>
       </tr>
 
-      {open
-        ? rows.map((r) => (
-            <tr
-              key={r.id}
-              className="border-b last:border-0"
-              style={{ borderColor: "#f1f5f9", opacity: r.included ? 1 : 0.5 }}
-            >
-              <td />
-              <td className={`px-3 py-2 text-[#475569] ${MONO}`}>{r.code}</td>
-              <td className="px-3 py-2 text-[#334155]">
-                {r.description}
-                {r.is_custom ? (
-                  <span
-                    className="ml-2 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase"
-                    style={{ background: `${DPC.gold}22`, color: DPC.gold }}
-                  >
-                    added
-                  </span>
-                ) : null}
-              </td>
-              <td className="px-3 py-2 text-right">
-                <AmountInput
-                  value={r.amount}
-                  label={`Amount for ${r.description}`}
-                  onSave={(amount) => onSaveAmount(r.id, amount)}
-                />
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex items-center justify-end gap-1.5">
-                  {r.is_custom ? (
-                    <button
-                      type="button"
-                      onClick={() => onDelete(r.id)}
-                      aria-label="Delete added expense"
-                      className="rounded p-1 text-[#94a3b8] hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
-                  <Toggle
-                    checked={r.included}
-                    onChange={(v) => onToggleRow(r.id, v)}
-                    label={`Include ${r.description}`}
-                  />
-                </div>
-              </td>
-            </tr>
-          ))
-        : null}
+      {open ? rows.map((r) => <GlAccountRow key={r.id} row={r} />) : null}
     </>
-  )
-}
-
-/**
- * The editable Amount (USD) cell — Bruno PDF 2026-08-24 R2.
- *
- * String state rather than a number so a half-typed value ("12.", "") survives
- * keystrokes, re-seeded from the server whenever the row's amount changes (a
- * month switch would otherwise leave the previous month's typed value sitting
- * over the new month's row — the bug `CalculatorCard` documents at its own
- * `useEffect`).
- *
- * Commits on blur and on Enter, and ONLY when the parsed value actually differs
- * from what the server holds — otherwise merely tabbing across the table would
- * fire a PATCH per row. Anything not a finite number ≥ 0 reverts to the server
- * value and is never sent: "only positive values are permitted" is enforced
- * here for the typist and again by `GLPatch.amount` (`ge=0`) for everyone else.
- */
-function AmountInput({
-  value, label, onSave,
-}: {
-  value: number
-  label: string
-  onSave: (amount: number) => void
-}) {
-  const [draft, setDraft] = useState(String(value))
-
-  useEffect(() => {
-    setDraft(String(value))
-  }, [value])
-
-  const commit = () => {
-    const n = Number(draft)
-    if (!Number.isFinite(n) || n < 0 || draft.trim() === "") {
-      setDraft(String(value))
-      return
-    }
-    const rounded = Math.round(n * 100) / 100
-    if (rounded === value) {
-      setDraft(String(value))
-      return
-    }
-    onSave(rounded)
-  }
-
-  return (
-    <input
-      type="number"
-      min={0}
-      step="0.01"
-      value={draft}
-      aria-label={label}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur()
-        if (e.key === "Escape") setDraft(String(value))
-      }}
-      className={`w-32 rounded-md border px-2 py-1 text-right ${MONO} focus:outline-none focus:ring-1`}
-      style={{ borderColor: DPC.border, color: DPC.secondary }}
-    />
-  )
-}
-
-function Toggle({
-  checked, onChange, label,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-5 w-9 items-center rounded-full transition"
-      style={{ background: checked ? DPC.navy : "#cbd5e1" }}
-    >
-      <span
-        className="inline-block h-3.5 w-3.5 rounded-full bg-white transition"
-        style={{ transform: checked ? "translateX(20px)" : "translateX(3px)" }}
-      />
-    </button>
   )
 }
 
 function AddExpenseForm({ summary, onDone }: { summary: Summary; onDone: () => void }) {
   const [code, setCode] = useState("")
-  const [category, setCategory] = useState(summary.gl_categories[0]?.category ?? "other")
+  const [category, setCategory] = useState(
+    summary.gl_categories[0]?.category ?? GL_CATEGORY_OPTIONS[GL_CATEGORY_OPTIONS.length - 1].value,
+  )
   const [description, setDescription] = useState("")
   const [amount, setAmount] = useState("")
   const add = useAddExpense(summary.year, summary.month)
@@ -380,19 +241,11 @@ function AddExpenseForm({ summary, onDone }: { summary: Summary; onDone: () => v
           className="rounded-md border px-2.5 py-1.5 text-sm"
           style={{ borderColor: DPC.border }}
         />
-        <select
+        <CategorySelect
           value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          aria-label="Category"
-          className="rounded-md border bg-white px-2.5 py-1.5 text-sm"
-          style={{ borderColor: DPC.border }}
-        >
-          {summary.gl_categories.map((c) => (
-            <option key={c.category} value={c.category}>
-              {c.label}
-            </option>
-          ))}
-        </select>
+          onChange={setCategory}
+          className="rounded-md border px-2.5 py-1.5 text-sm"
+        />
         <input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -424,7 +277,7 @@ function AddExpenseForm({ summary, onDone }: { summary: Summary; onDone: () => v
         </button>
         <span className="flex items-center gap-1 text-[10px] text-[#94a3b8]">
           <Info className="h-3 w-3" />
-          Added rows can be deleted; template rows can only be excluded.
+          Every row can be edited, excluded or deleted.
         </span>
       </div>
     </form>

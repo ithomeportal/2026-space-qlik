@@ -69,7 +69,7 @@ def _date(value: Optional[str]) -> Optional[date]:
 
 
 async def seed_division_payment(pool) -> int:
-    """Idempotently seed months, GL rows, approved archives, recalcs and loads.
+    """Idempotently seed months, GL rows and approved archives.
 
     Returns the number of month rows the portal knows about afterwards. Safe to
     call on every startup: existing rows are left exactly as the user left them.
@@ -95,6 +95,9 @@ async def seed_division_payment(pool) -> int:
             # GL rows hang off the month row. Seed only when the month has no
             # rows at all — a month the user has edited (rows deleted, custom
             # rows added) must not have the template pushed back into it.
+            # ⚠ The COUNT deliberately includes soft-deleted rows: since Bruno
+            # PDF 2026-10-05 every row is deletable, and a month whose rows were
+            # ALL deleted would otherwise be refilled on the next deploy.
             for m in months:
                 key = f"{m['year']}-{m['month']}"
                 month_id = await conn.fetchval(
@@ -132,38 +135,88 @@ async def seed_division_payment(pool) -> int:
                     s["corporate_gain"], s["net_payment"], _date(s["snapshot_date"]), "seed",
                 )
 
-            for r in data["recalcs"]:
-                await conn.execute(
-                    """
-                    INSERT INTO dpc_recalcs
-                      (recalc_key, year, month, month_label, applied_to_month,
-                       applied_to_month_label, recalc_date, status, previously_recalculated,
-                       prior_recalc_net_payment, snapshot, tms_update, diff)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-                    ON CONFLICT (recalc_key) DO NOTHING
-                    """,
-                    r["recalc_key"], r["year"], r["month"], r["month_label"],
-                    r["applied_to_month"], r["applied_to_month_label"], _date(r["recalc_date"]),
-                    r["status"], r["previously_recalculated"], r["prior_recalc_net_payment"],
-                    json.dumps(r["snapshot"]), json.dumps(r["tms_update"]), json.dumps(r["diff"]),
-                )
-
-            for a in data["audit_loads"]:
-                await conn.execute(
-                    """
-                    INSERT INTO dpc_audit_loads
-                      (recalc_key, load_number, client, change_type, change_description,
-                       original_revenue, updated_revenue, original_carrier_cost,
-                       updated_carrier_cost, revenue_delta, cost_delta, audit_date)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-                    ON CONFLICT (recalc_key, load_number) DO NOTHING
-                    """,
-                    a["recalc_key"], a["load_number"], a["client"], a["change_type"],
-                    a["change_description"], a["original_revenue"], a["updated_revenue"],
-                    a["original_carrier_cost"], a["updated_carrier_cost"],
-                    a["revenue_delta"], a["cost_delta"], _date(a["audit_date"]),
-                )
+            # The five vendor demo recalculations (rec-jan … rec-apr, rec-jan-2)
+            # are NOT seeded any more (Bruno PDF 2026-10-05, Recalculations R1-R3):
+            # they were the prototype's invented records, they silently moved the
+            # Feb-May 2026 net payments, and the tab now lists real post-cutoff
+            # order changes from v4 instead. Kept in the JSON only as fixtures for
+            # the 25/75 arithmetic tests.
 
     total = await pool.fetchval("SELECT COUNT(*) FROM dpc_months")
     logger.info(f"Division Payment Calculator seeded — {total} months on file")
     return total
+
+
+async def ensure_months_through(pool, today: date) -> int:
+    """Create every missing month row from Jan 2025 through ``today``'s month.
+
+    Bruno PDF 2026-10-05 R2: the Month filter stopped at July 2026 because the
+    month rows only ever came from the seed. Called by ``/periods`` and
+    ``/summary`` so a month rollover needs no deploy. Normally one SELECT.
+
+    A new month inherits the GL sheet of the most recent earlier month that has
+    one — same codes, categories, descriptions and Include flags — at **$0.00**
+    (the sheet starts blank, PDF 2026-08-24 R1). Soft-deleted rows are not
+    carried. ``ON CONFLICT DO NOTHING … RETURNING`` means only the request that
+    actually created the month copies the sheet, so two concurrent requests
+    cannot double it.
+    """
+    from app.services.division_payment_v4 import (
+        FIRST_MONTH, MONTH_ORDER, month_label, months_between,
+    )
+
+    wanted = months_between(FIRST_MONTH, (today.year, today.month))
+    have = {
+        (r["year"], r["month"])
+        for r in await pool.fetch("SELECT year, month FROM dpc_months")
+    }
+    missing = [(y, m) for y, m in wanted if (y, MONTH_ORDER[m - 1]) not in have]
+    if not missing:
+        return 0
+
+    created = 0
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for y, m in missing:
+                month = MONTH_ORDER[m - 1]
+                new_id = await conn.fetchval(
+                    """
+                    INSERT INTO dpc_months (year, month, month_label, sort_order)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (year, month) DO NOTHING
+                    RETURNING id
+                    """,
+                    y, month, month_label(y, m), y * 100 + m,
+                )
+                if new_id is None:
+                    continue
+                created += 1
+                source = await conn.fetchval(
+                    """
+                    SELECT dm.id
+                      FROM dpc_months dm
+                     WHERE (dm.year * 100 + array_position($1::text[], dm.month)) < $2
+                       AND EXISTS (SELECT 1 FROM dpc_gl_accounts g
+                                    WHERE g.month_id = dm.id AND g.deleted_at IS NULL)
+                     ORDER BY dm.year DESC, array_position($1::text[], dm.month) DESC
+                     LIMIT 1
+                    """,
+                    MONTH_ORDER, y * 100 + m,
+                )
+                if source is None:
+                    continue
+                await conn.execute(
+                    """
+                    INSERT INTO dpc_gl_accounts
+                      (month_id, code, category, description, amount, included,
+                       is_custom, sort_order, created_by)
+                    SELECT $1, code, category, description, 0, included,
+                           is_custom, sort_order, 'month-rollover'
+                      FROM dpc_gl_accounts
+                     WHERE month_id = $2 AND deleted_at IS NULL
+                    """,
+                    new_id, source,
+                )
+    if created:
+        logger.info("Division Payment: created %d new month(s) through %s", created, today)
+    return created

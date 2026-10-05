@@ -54,11 +54,17 @@ export interface PeriodMonth {
   month_label: string
   approved: boolean
   has_recalc: boolean
+  /** A manual override sits over at least one datalake figure (Bruno PDF
+   *  2026-10-05) — the month dropdown marks it with " ✎". */
+  overridden: boolean
 }
 
 export interface Periods {
   years: number[]
   months: PeriodMonth[]
+  /** The month to open on — chosen by the BACKEND: the PREVIOUS CST month,
+   *  the one being paid. `null` only when that month does not exist. */
+  default: { year: number; month: string } | null
 }
 
 export interface GLAccount {
@@ -129,7 +135,37 @@ export interface Summary {
   approved: boolean
   approved_at: string | null
   approved_by: string | null
+  /** What v4 (TEAM-DFW, by origin_actual_departure) says for this month —
+   *  shown beside an override so the typist can see what they replaced. */
+  datalake: DatalakeFigures
+  /** Per-field manual overrides; `null` = that field follows the datalake.
+   *  `inputs.*` already holds the EFFECTIVE value (override ?? datalake). */
+  overrides: Overrides
+  overridden: boolean
 }
+
+export interface DatalakeFigures {
+  revenue: number
+  carrier_cost: number
+  profit: number
+  order_count: number
+  /** False when the datalake could not be read — the card then shows the
+   *  last saved values with a warning rather than zeros. */
+  available: boolean
+}
+
+export interface Overrides {
+  revenue: number | null
+  carrier_cost: number | null
+  profit: number | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+/** Only the keys SENT are written: `null` resets a field to the datalake, an
+ *  absent key is left alone server-side (`model_fields_set`). Sending all three
+ *  from a stale cache would overwrite another user's just-saved override. */
+export type OverrideBody = Partial<Pick<Overrides, "revenue" | "carrier_cost" | "profit">>
 
 export interface Archive {
   year: number
@@ -198,6 +234,65 @@ export interface Recalc {
   loads: AuditLoad[]
 }
 
+// --- Cutoffs (Bruno PDF 2026-10-05) ----------------------------------------
+// A month closes on the 10th of the following month; its v4 orders are frozen
+// as the cutoff snapshot and every later change is listed against it. These
+// replace the vendor's fake `/recalcs` records on the Recalculations tab.
+export type CutoffStatus = "open" | "before_tracking" | "snapshot_pending" | "tracked"
+
+export interface CutoffFigures {
+  revenue: number
+  carrier_cost: number
+  profit: number
+  order_count: number
+}
+
+export interface CutoffMonth {
+  year: number
+  month: string
+  month_label: string
+  /** Date-only "YYYY-MM-DD" — format with `parseLocalDate`, never `new Date()` (§116). */
+  period_start: string
+  cutoff_date: string
+  status: CutoffStatus
+  live: CutoffFigures
+  snapshot: (CutoffFigures & { captured_at: string }) | null
+  delta: { revenue: number; carrier_cost: number; profit: number } | null
+  ao_share: number | null
+  corporate_share: number | null
+  changed_count: number | null
+  note: string
+}
+
+export interface Cutoffs {
+  tracking_start: { year: number; month: string }
+  months: CutoffMonth[]
+}
+
+export interface OrderMoney {
+  total_charge: number
+  total_carrier_pay: number
+  margin_amt: number
+}
+
+export interface CutoffOrderChange {
+  order_id: string
+  company_id: string
+  customer_name: string
+  change_type: "modified" | "added" | "removed"
+  before: OrderMoney | null
+  after: OrderMoney | null
+  delta: OrderMoney
+}
+
+export interface CutoffOrders {
+  year: number
+  month: string
+  captured_at: string
+  changes: CutoffOrderChange[]
+  totals: OrderMoney
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -239,6 +334,26 @@ export function useRecalcs() {
   })
 }
 
+export function useCutoffs() {
+  return useQuery({
+    queryKey: ["dpc", "cutoffs"],
+    queryFn: () => apiFetch<Cutoffs>("cutoffs"),
+    ...RETRY,
+  })
+}
+
+/** Lazy — only fetched once a tracked month is expanded (a 404 means the month
+ *  is not tracked, so it is never requested for any other status). */
+export function useCutoffOrders(year: number, month: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["dpc", "cutoff-orders", year, month],
+    queryFn: () =>
+      apiFetch<CutoffOrders>(`cutoffs/${year}/${encodeURIComponent(month)}/orders`),
+    enabled,
+    ...RETRY,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Mutations — every one carries an onError toast (§46), or a rejected save
 // looks identical to a successful one.
@@ -250,11 +365,13 @@ function useInvalidate() {
   }
 }
 
-export function useSaveInputs(year: number, month: string) {
+/** PUT all three overrides at once — `null` clears a field back to the
+ *  datalake value. Replaces the removed `PUT months/{y}/{m}` inputs save. */
+export function useSaveOverrides(year: number, month: string) {
   const invalidate = useInvalidate()
   return useMutation({
-    mutationFn: (body: { revenue: number; carrier_cost: number; profit?: number }) =>
-      apiFetch<unknown>(`months/${year}/${encodeURIComponent(month)}`, {
+    mutationFn: (body: OverrideBody) =>
+      apiFetch<unknown>(`months/${year}/${encodeURIComponent(month)}/overrides`, {
         method: "PUT",
         body: JSON.stringify(body),
       }),
@@ -266,10 +383,19 @@ export function useSaveInputs(year: number, month: string) {
   })
 }
 
+export interface GLPatchBody {
+  id: string
+  amount?: number
+  included?: boolean
+  code?: string
+  description?: string
+  category?: string
+}
+
 export function usePatchAccount() {
   const invalidate = useInvalidate()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; amount?: number; included?: boolean }) =>
+    mutationFn: ({ id, ...body }: GLPatchBody) =>
       apiFetch<unknown>(`gl/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: invalidate,
     onError: mutationErrorToast("Update expense"),
@@ -353,6 +479,22 @@ export function useSaveRecalcNote() {
   })
 }
 
+export function useSaveCutoffNote() {
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: ({ year, month, note }: { year: number; month: string; note: string }) =>
+      apiFetch<unknown>(`cutoffs/${year}/${encodeURIComponent(month)}/note`, {
+        method: "PUT",
+        body: JSON.stringify({ note }),
+      }),
+    onSuccess: () => {
+      invalidate()
+      mutationSuccessToast("Note saved")()
+    },
+    onError: mutationErrorToast("Save note"),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Formatting — one implementation, imported everywhere. The prototype had three
 // slightly different ones and they disagreed on negative zero.
@@ -372,4 +514,12 @@ export function formatCurrency(value: number | null | undefined): string {
 export function formatPct(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—"
   return `${value.toFixed(digits)}%`
+}
+
+/** Signed money for a delta — "+$1.00" / "−$1.00" (true minus sign) / "$0.00".
+ *  Formatting only: the value itself always comes from the backend. */
+export function formatSignedCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—"
+  const sign = value > 0 ? "+" : value < 0 ? "−" : ""
+  return `${sign}${formatCurrency(Math.abs(value))}`
 }

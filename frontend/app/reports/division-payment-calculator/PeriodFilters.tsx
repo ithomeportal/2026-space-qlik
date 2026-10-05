@@ -2,8 +2,22 @@
 
 import { Calendar } from "lucide-react"
 
-import type { Periods } from "@/lib/division-payment-api"
+import type { PeriodMonth, Periods } from "@/lib/division-payment-api"
 import { DPC } from "./theme"
+
+// Bruno PDF 2026-10-05: RGB(47,61,80) background, white year/month text. The
+// <option>s carry the same colours — Chrome/Edge paint the open list from the
+// option styles, so styling only the <select> left white text on white.
+const SELECT_CLASS =
+  "rounded-md border px-2.5 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/40"
+const SELECT_STYLE = { background: DPC.filterBg, borderColor: DPC.filterBg, color: "#ffffff" }
+const OPTION_STYLE = { background: DPC.filterBg, color: "#ffffff" }
+
+/** " ✎" = a manual override sits over the datalake figures; " •" = the month
+ *  carries a recalculation (normally false since the cutoff model replaced it). */
+function monthOptionLabel(m: PeriodMonth): string {
+  return `${m.month_label}${m.overridden ? " ✎" : ""}${m.has_recalc ? " •" : ""}`
+}
 
 interface Props {
   periods: Periods | undefined
@@ -48,10 +62,11 @@ export function PeriodFilters({ periods, year, month, onChange, label }: Props) 
         aria-label="Year"
         value={year ?? ""}
         onChange={(e) => handleYear(Number(e.target.value))}
-        className="rounded-md border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-sm font-medium"
+        className={SELECT_CLASS}
+        style={SELECT_STYLE}
       >
         {years.map((y) => (
-          <option key={y} value={y}>
+          <option key={y} value={y} style={OPTION_STYLE}>
             {y}
           </option>
         ))}
@@ -61,12 +76,12 @@ export function PeriodFilters({ periods, year, month, onChange, label }: Props) 
         aria-label="Month"
         value={month ?? ""}
         onChange={(e) => onChange(year!, e.target.value)}
-        className="rounded-md border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-sm font-medium"
+        className={SELECT_CLASS}
+        style={SELECT_STYLE}
       >
         {monthsInYear.map((m) => (
-          <option key={m.month} value={m.month}>
-            {m.month_label}
-            {m.has_recalc ? " •" : ""}
+          <option key={m.month} value={m.month} style={OPTION_STYLE}>
+            {monthOptionLabel(m)}
           </option>
         ))}
       </select>

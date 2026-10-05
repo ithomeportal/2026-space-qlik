@@ -31,6 +31,13 @@ export const DPC = {
   profit: "#FFFFFF",
   /** RGB(255, 251, 235) — the tariff explainer panel. */
   tariffPanel: "#FFFBEB",
+  /** RGB(47, 61, 80) — the Year / Month filter background, white text
+   *  (Bruno PDF 2026-10-05). Also applied to each <option> so the OPEN list
+   *  stays legible rather than white-on-white. */
+  filterBg: "#2F3D50",
+  /** Manual-override badge — amber text on a pale amber chip. */
+  overrideText: "#b45309",
+  overrideBg: "#fef3c7",
   offWhite: "#faf9f7",
   border: "#e2e8f0",
   muted: "#64748b",

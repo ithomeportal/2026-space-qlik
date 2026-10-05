@@ -26,15 +26,23 @@ Dashboard netted the documented 75 %. We serve 75 %. If Finance rules that the
 50 % behaviour was intentional, flip :data:`RECALC_AO_SHARE` to ``0.50`` — it is
 the single place the rule is expressed.
 
-Data source: portal-owned tables in ``analytics_hub`` (``dpc_*``), created in
-``main.py``'s lifespan and seeded by ``services/division_payment_defaults.py``.
-No datalake pool — A&O's GL lines come from the accounting system and the PDF
-specifies Revenue / Carrier Cost as operator inputs.
+Data sources (Bruno PDF 2026-10-05):
+
+* **A&O inputs** — Revenue / Carrier Cost / Profit are ``SUM(total_charge /
+  total_carrier_pay / margin_amt)`` over v4 ``TEAM-DFW`` for the month
+  (``services/division_payment_v4.py``). An operator may override any of the
+  three; the override lives in ``dpc_months.*_override`` (NULL = use v4) and the
+  UI flags the month. Profit is ``SUM(margin_amt)`` — NOT revenue − cost; the two
+  differ by a few dollars a month in v4 and the PDF names margin_amt.
+* **GL deductions, archives, notes** — portal-owned ``dpc_*`` tables in
+  ``analytics_hub``, created in ``main.py``'s lifespan. A&O's GL lines live in the
+  accounting system, which no portal database can reach.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
@@ -42,7 +50,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.clock import cst_today
 from app.routers.deps import get_pool, require_report_access
+from app.services.division_payment_defaults import ensure_months_through
+from app.services.division_payment_v4 import (
+    MonthTotals,
+    add_months,
+    fetch_month_totals,
+    month_index,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/custom/division-payment", tags=["division-payment"])
 
@@ -87,6 +105,10 @@ def _money(v: Decimal) -> float:
 
 def _pct(v: Decimal) -> float:
     return float(round(v, 4))
+
+
+def _opt_money(v: Any) -> Optional[float]:
+    return None if v is None else _money(_d(v))
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +212,55 @@ async def _month_row(pool, year: int, month: str):
 
 
 async def _gl_rows(pool, month_id) -> list:
+    """Live GL rows — soft-deleted rows (``deleted_at``) never count."""
     return await pool.fetch(
         """
         SELECT id, code, category, description, amount, included, is_custom
-        FROM dpc_gl_accounts WHERE month_id = $1
+        FROM dpc_gl_accounts WHERE month_id = $1 AND deleted_at IS NULL
         ORDER BY sort_order, created_at
         """,
         month_id,
+    )
+
+
+def _gold_pool(request: Request):
+    """The datalake pool, or a 503 — never a page of $0 that reads as a quiet month."""
+    pool = getattr(request.app.state, "savings_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Datalake (gold) not configured")
+    return pool
+
+
+async def _v4_totals(request: Request, year: int, month: str, span: int = 0) -> dict:
+    """v4 TEAM-DFW totals for ``(year, month)`` and the ``span`` months before it."""
+    end = (year, month_index(month))
+    start = add_months(*end, -span)
+    try:
+        return await fetch_month_totals(_gold_pool(request), start, end)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — surfaced as a 503, never as $0
+        # Logged here, generic to the browser: a connection error names the host.
+        logger.error("Division Payment v4 read failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=503, detail="Datalake unavailable") from e
+
+
+def _effective(m, totals: MonthTotals) -> dict[str, Decimal]:
+    """Override when set, else the v4 figure — per field, independently."""
+    def pick(override, v4):
+        return _d(override) if override is not None else v4
+
+    return {
+        "revenue": pick(m["revenue_override"], totals.revenue),
+        "carrier_cost": pick(m["carrier_cost_override"], totals.carrier_cost),
+        "profit": pick(m["profit_override"], totals.profit),
+    }
+
+
+def _is_overridden(m) -> bool:
+    return any(
+        m[k] is not None
+        for k in ("revenue_override", "carrier_cost_override", "profit_override")
     )
 
 
@@ -248,8 +312,17 @@ async def _recalc_adjustment(pool, year: int, month: str) -> tuple[Decimal, Deci
 async def periods(request: Request, user: dict = Depends(_access)):
     """Year filter + month/year filter options (PDF Dashboard Request 1)."""
     pool = get_pool(request)
+    today = cst_today()
+    await ensure_months_through(pool, today)
     rows = await pool.fetch(
-        "SELECT year, month, month_label, sort_order FROM dpc_months ORDER BY sort_order"
+        """
+        SELECT year, month, month_label,
+               (revenue_override IS NOT NULL OR carrier_cost_override IS NOT NULL
+                OR profit_override IS NOT NULL) AS overridden
+          FROM dpc_months
+         ORDER BY year, array_position($1::text[], month)
+        """,
+        MONTH_ORDER,
     )
     approved = {
         f"{r['year']}-{r['month']}"
@@ -263,9 +336,18 @@ async def periods(request: Request, user: dict = Depends(_access)):
         "year": r["year"], "month": r["month"], "month_label": r["month_label"],
         "approved": f"{r['year']}-{r['month']}" in approved,
         "has_recalc": f"{r['year']}-{r['month']}" in has_recalc,
+        "overridden": r["overridden"],
     } for r in rows]
     years = sorted({m["year"] for m in months}, reverse=True)
-    return {"success": True, "data": {"years": years, "months": months}}
+    # Default to the month being PAID — the previous one — not the month in
+    # progress, whose v4 total is still a partial month-to-date.
+    py, pm = add_months(today.year, today.month, -1)
+    default = next(
+        ({"year": m["year"], "month": m["month"]} for m in months
+         if m["year"] == py and m["month"] == MONTH_ORDER[pm - 1]),
+        None,
+    )
+    return {"success": True, "data": {"years": years, "months": months, "default": default}}
 
 
 @router.get("/summary")
@@ -281,16 +363,22 @@ async def summary(
     if month not in MONTH_ORDER:
         raise HTTPException(status_code=422, detail="Unknown month")
 
+    await ensure_months_through(pool, cst_today())
     m = await _month_row(pool, year, month)
     rows = await _gl_rows(pool, m["id"])
     gl_total, categories, gl_rows = _gl_rollup(rows)
 
-    base = compute_summary(m["revenue"], m["carrier_cost"], m["profit"], gl_total)
+    # One v4 scan covers this month AND the previous one.
+    totals = await _v4_totals(request, year, month, span=1)
+    v4 = totals[(year, month_index(month))]
+    eff = _effective(m, v4)
+
+    base = compute_summary(eff["revenue"], eff["carrier_cost"], eff["profit"], gl_total)
     ao_adj, corp_adj, recalcs = await _recalc_adjustment(pool, year, month)
 
     # Prior month, for the Dashboard's "vs previous month" line. Compared on the
     # SAME basis (adjusted net vs adjusted net) so the delta is honest.
-    prev = await _previous_net(pool, year, month)
+    prev = await _previous_net(pool, year, month, totals)
 
     net_adjusted = _d(base["net_payment"]) + ao_adj
     delta = net_adjusted - prev["net"] if prev else None
@@ -304,10 +392,27 @@ async def summary(
     return {"success": True, "data": {
         "year": year, "month": month, "month_label": m["month_label"],
         "inputs": {
-            "revenue": _money(_d(m["revenue"])),
-            "carrier_cost": _money(_d(m["carrier_cost"])),
-            "profit": _money(_d(m["profit"])),
+            "revenue": _money(eff["revenue"]),
+            "carrier_cost": _money(eff["carrier_cost"]),
+            "profit": _money(eff["profit"]),
         },
+        "datalake": {
+            "revenue": _money(v4.revenue),
+            "carrier_cost": _money(v4.carrier_cost),
+            "profit": _money(v4.profit),
+            "order_count": v4.order_count,
+            "available": True,
+        },
+        "overrides": {
+            "revenue": _opt_money(m["revenue_override"]),
+            "carrier_cost": _opt_money(m["carrier_cost_override"]),
+            "profit": _opt_money(m["profit_override"]),
+            "updated_at": (
+                m["override_updated_at"].isoformat() if m["override_updated_at"] else None
+            ),
+            "updated_by": m["override_updated_by"],
+        },
+        "overridden": _is_overridden(m),
         **base,
         "corporate_gain_total": _money(_d(base["corporate_gain"]) + corp_adj),
         "net_payment_adjusted": _money(net_adjusted),
@@ -330,10 +435,14 @@ async def summary(
     }}
 
 
-async def _previous_net(pool, year: int, month: str) -> Optional[dict]:
-    """The month immediately before ``(year, month)``, on the adjusted basis."""
-    idx = MONTH_ORDER.index(month)
-    p_year, p_month = (year, MONTH_ORDER[idx - 1]) if idx else (year - 1, "december")
+async def _previous_net(pool, year: int, month: str, totals: dict) -> Optional[dict]:
+    """The month immediately before ``(year, month)``, on the adjusted basis.
+
+    ``totals`` must already hold the previous month's v4 figures — the caller
+    fetched both months in one scan.
+    """
+    p_year, p_num = add_months(year, month_index(month), -1)
+    p_month = MONTH_ORDER[p_num - 1]
     row = await pool.fetchrow(
         "SELECT * FROM dpc_months WHERE year = $1 AND month = $2", p_year, p_month
     )
@@ -341,7 +450,8 @@ async def _previous_net(pool, year: int, month: str) -> Optional[dict]:
         return None
     rows = await _gl_rows(pool, row["id"])
     gl_total, _, _ = _gl_rollup(rows)
-    base = compute_summary(row["revenue"], row["carrier_cost"], row["profit"], gl_total)
+    eff = _effective(row, totals[(p_year, p_num)])
+    base = compute_summary(eff["revenue"], eff["carrier_cost"], eff["profit"], gl_total)
     ao_adj, _, _ = await _recalc_adjustment(pool, p_year, p_month)
     return {"label": row["month_label"], "net": _d(base["net_payment"]) + ao_adj}
 
@@ -436,15 +546,42 @@ async def recalcs(request: Request, user: dict = Depends(_access)):
 # ---------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------
-class MonthInputs(BaseModel):
-    revenue: float = Field(ge=0, le=1e12)
-    carrier_cost: float = Field(ge=0, le=1e12)
+class MonthOverrides(BaseModel):
+    """Manual A&O values (Bruno PDF 2026-10-05 R3). ``null`` clears a field back
+    to the v4 figure; a key that is not SENT is left as it is (``model_fields_set``)."""
+    revenue: Optional[float] = Field(default=None, ge=0, le=1e12)
+    carrier_cost: Optional[float] = Field(default=None, ge=0, le=1e12)
     profit: Optional[float] = Field(default=None, ge=-1e12, le=1e12)
 
 
+def _known_category(v: str) -> str:
+    v = v.strip().lower()
+    if v not in CATEGORY_LABELS:
+        raise ValueError("Unknown category")
+    return v
+
+
 class GLPatch(BaseModel):
+    """Edit any field of ANY row, template or added (Bruno PDF 2026-10-05 R1)."""
     amount: Optional[float] = Field(default=None, ge=0, le=1e12)
     included: Optional[bool] = None
+    code: Optional[str] = Field(default=None, max_length=40)
+    description: Optional[str] = Field(default=None, min_length=1, max_length=300)
+    category: Optional[str] = Field(default=None, min_length=1, max_length=40)
+
+    @field_validator("category")
+    @classmethod
+    def _category(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else _known_category(v)
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not v.strip():
+            raise ValueError("Description is required")
+        return v.strip()
 
 
 class GLCreate(BaseModel):
@@ -455,11 +592,8 @@ class GLCreate(BaseModel):
 
     @field_validator("category")
     @classmethod
-    def _known_category(cls, v: str) -> str:
-        v = v.strip().lower()
-        if v not in CATEGORY_LABELS:
-            raise ValueError("Unknown category")
-        return v
+    def _category(cls, v: str) -> str:
+        return _known_category(v)
 
 
 class CategoryToggle(BaseModel):
@@ -467,36 +601,45 @@ class CategoryToggle(BaseModel):
     included: bool
 
 
-@router.put("/months/{year}/{month}")
-async def save_inputs(
-    year: int, month: str, body: MonthInputs,
+_OVERRIDE_COLS = {
+    "revenue": "revenue_override",
+    "carrier_cost": "carrier_cost_override",
+    "profit": "profit_override",
+}
+
+
+@router.put("/months/{year}/{month}/overrides")
+async def save_overrides(
+    year: int, month: str, body: MonthOverrides,
     request: Request, user: dict = Depends(_access),
 ):
-    """Save Revenue / Carrier Cost. Profit defaults to Revenue − Carrier Cost.
+    """Set or clear the manual A&O values (Bruno PDF 2026-10-05 R3).
 
-    The prototype let profit drift from its own inputs (it was a third free
-    field, never recomputed). Here it defaults to the identity the UI prints and
-    can only be overridden explicitly.
+    Replaces the old ``PUT /months/{y}/{m}``, which overwrote the inputs
+    outright. A value here never touches the v4 figure — it sits beside it, so
+    the UI can show both and "Reset to datalake" is a plain ``null``.
     """
     pool = get_pool(request)
     month = month.strip().lower()
     if month not in MONTH_ORDER:
         raise HTTPException(status_code=422, detail="Unknown month")
-    profit = body.profit if body.profit is not None else body.revenue - body.carrier_cost
+    fields = [f for f in ("revenue", "carrier_cost", "profit") if f in body.model_fields_set]
+    if not fields:
+        raise HTTPException(status_code=422, detail="Nothing to update")
+    params: list[Any] = [year, month, user.get("email") or user.get("sub")]
+    sets = []
+    for f in fields:
+        params.append(getattr(body, f))
+        sets.append(f"{_OVERRIDE_COLS[f]} = ${len(params)}")
     updated = await pool.fetchval(
-        """
-        UPDATE dpc_months
-           SET revenue = $3, carrier_cost = $4, profit = $5,
-               updated_at = NOW(), updated_by = $6
-         WHERE year = $1 AND month = $2
-        RETURNING id
-        """,
-        year, month, body.revenue, body.carrier_cost, profit,
-        user.get("email") or user.get("sub"),
+        f"UPDATE dpc_months SET {', '.join(sets)}, override_updated_by = $3, "
+        f"override_updated_at = NOW(), updated_at = NOW() "
+        f"WHERE year = $1 AND month = $2 RETURNING id",
+        *params,
     )
     if not updated:
         raise HTTPException(status_code=404, detail=f"No data for {month} {year}")
-    return {"success": True, "data": {"year": year, "month": month, "profit": profit}}
+    return {"success": True, "data": {"year": year, "month": month, "fields": fields}}
 
 
 @router.post("/months/{year}/{month}/gl")
@@ -528,20 +671,28 @@ async def add_expense(
 async def patch_expense(
     gl_id: UUID, body: GLPatch, request: Request, user: dict = Depends(_access),
 ):
-    """Toggle the Include switch or edit an amount."""
-    if body.amount is None and body.included is None:
+    """Edit any field of a row — template or added — or toggle Include.
+
+    Column names come from this fixed tuple, never from the request; only the
+    VALUES are bound.
+    """
+    changes = {
+        col: getattr(body, col)
+        for col in ("amount", "included", "code", "description", "category")
+        if getattr(body, col) is not None
+    }
+    if not changes:
         raise HTTPException(status_code=422, detail="Nothing to update")
+    if "code" in changes:
+        changes["code"] = changes["code"].strip() or "—"
     pool = get_pool(request)
     sets, params = [], [gl_id]
-    if body.amount is not None:
-        params.append(body.amount)
-        sets.append(f"amount = ${len(params)}")
-    if body.included is not None:
-        params.append(body.included)
-        sets.append(f"included = ${len(params)}")
+    for col, value in changes.items():
+        params.append(value)
+        sets.append(f"{col} = ${len(params)}")
     updated = await pool.fetchval(
         f"UPDATE dpc_gl_accounts SET {', '.join(sets)}, updated_at = NOW() "
-        f"WHERE id = $1 RETURNING id",
+        f"WHERE id = $1 AND deleted_at IS NULL RETURNING id",
         *params,
     )
     if not updated:
@@ -551,16 +702,21 @@ async def patch_expense(
 
 @router.delete("/gl/{gl_id}")
 async def delete_expense(gl_id: UUID, request: Request, user: dict = Depends(_access)):
-    """Only user-added rows are deletable; template rows are excluded, not removed."""
+    """Delete ANY row, template or added (Bruno PDF 2026-10-05 R1).
+
+    ⚠ A SOFT delete. The startup seeder refills a month that has zero GL rows,
+    so a hard delete of a month's last row would bring the whole template back
+    on the next deploy. The row stays, stamped ``deleted_at``, and every read
+    filters it out.
+    """
     pool = get_pool(request)
     deleted = await pool.fetchval(
-        "DELETE FROM dpc_gl_accounts WHERE id = $1 AND is_custom = TRUE RETURNING id", gl_id
+        "UPDATE dpc_gl_accounts SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW() "
+        "WHERE id = $1 AND deleted_at IS NULL RETURNING id",
+        gl_id, user.get("email") or user.get("sub"),
     )
     if not deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Row not found, or it is a template row — exclude it instead of deleting it",
-        )
+        raise HTTPException(status_code=404, detail="GL account not found")
     return {"success": True, "data": {"id": str(gl_id)}}
 
 
@@ -574,7 +730,7 @@ async def toggle_category(
     m = await _month_row(pool, year, month.strip().lower())
     rows = await pool.fetch(
         "UPDATE dpc_gl_accounts SET included = $3, updated_at = NOW() "
-        "WHERE month_id = $1 AND category = $2 RETURNING id",
+        "WHERE month_id = $1 AND category = $2 AND deleted_at IS NULL RETURNING id",
         m["id"], body.category.strip().lower(), body.included,
     )
     return {"success": True, "data": {"updated": len(rows)}}
@@ -593,7 +749,11 @@ async def approve(year: int, month: str, request: Request, user: dict = Depends(
     m = await _month_row(pool, year, month)
     rows = await _gl_rows(pool, m["id"])
     gl_total, _, _ = _gl_rollup(rows)
-    s = compute_summary(m["revenue"], m["carrier_cost"], m["profit"], gl_total)
+    # Archive exactly what the Calculator shows: the override where one is set,
+    # the live v4 figure otherwise.
+    totals = await _v4_totals(request, year, month)
+    eff = _effective(m, totals[(year, month_index(month))])
+    s = compute_summary(eff["revenue"], eff["carrier_cost"], eff["profit"], gl_total)
     await pool.execute(
         """
         INSERT INTO dpc_snapshots

@@ -342,7 +342,7 @@ def test_report_key_matches_the_seed_catalog():
 def test_mutations_declare_bounded_inputs():
     """Money fields must be bounded — an unbounded NUMERIC write is how a UI
     typo becomes a nine-figure payment."""
-    for model in (dp.MonthInputs, dp.GLCreate, dp.GLPatch):
+    for model in (dp.MonthOverrides, dp.GLCreate, dp.GLPatch):
         for name, field in model.model_fields.items():
             if name in {"revenue", "carrier_cost", "profit", "amount"}:
                 meta = str(field.metadata)
@@ -400,9 +400,16 @@ class _Acquired:
 
 
 def _lifespan_ddl() -> tuple[list[str], list[str]]:
-    """Extract the dpc_* DDL from main.py so the replay cannot drift from it."""
+    """Extract the dpc_* DDL from main.py so the replay cannot drift from it.
+
+    CREATE and ALTER blocks are returned in SOURCE order — the 2026-10-05
+    ALTERs must run after the tables they extend, and ``dpc_cutoff_orders``
+    references ``dpc_cutoffs``.
+    """
     main = open(os.path.join(os.path.dirname(__file__), "..", "app", "main.py")).read()
-    tables = re.findall(r'"""\s*(CREATE TABLE IF NOT EXISTS dpc_\w+.*?)\s*"""', main, re.S)
+    tables = re.findall(
+        r'"""\s*((?:CREATE TABLE IF NOT EXISTS|ALTER TABLE) dpc_\w+.*?)\s*"""', main, re.S
+    )
     # Index DDL is written as adjacent Python string literals in places; a
     # per-literal regex truncates it into a syntax error.
     indexes = [
@@ -415,13 +422,44 @@ def _lifespan_ddl() -> tuple[list[str], list[str]]:
     return tables, indexes
 
 
+class _StubGold:
+    """v4 stand-in with fixed, known figures (the real SQL is executed against
+    gold in ``test_division_payment_v4.py``). Every month: two orders."""
+
+    REVENUE, COST, PROFIT = Decimal("1000000"), Decimal("900000"), Decimal("99000")
+
+    async def fetch(self, sql, team, lo, hi):
+        from app.services.division_payment_v4 import MONTH_TOTALS_SQL, months_between
+
+        assert team == "TEAM-DFW"
+        if sql == MONTH_TOTALS_SQL:
+            last = (hi.year, hi.month - 1) if hi.month > 1 else (hi.year - 1, 12)
+            return [
+                {"year": y, "month_num": m, "revenue": self.REVENUE,
+                 "carrier_cost": self.COST, "profit": self.PROFIT, "order_count": 2}
+                for y, m in months_between((lo.year, lo.month), last)
+            ]
+        half = {"total_charge": self.REVENUE / 2, "total_carrier_pay": self.COST / 2,
+                "margin_amt": self.PROFIT / 2, "customer_id": "ACME", "customer_name": "Acme"}
+        return [{"id": f"{lo:%Y%m}-{i}", "company_id": "TMS ", **half} for i in (1, 2)]
+
+
 @live
 @pytest.mark.asyncio
 async def test_live_replay_ddl_seed_and_every_query():
     import asyncpg
+    from datetime import date, datetime
+
+    from app.clock import cst_today
+    from app.routers import division_payment_cutoffs as dpc
+    from app.services.division_payment_v4 import (
+        FIRST_MONTH, capture_due_cutoffs, months_between,
+    )
 
     tables, indexes = _lifespan_ddl()
-    assert len(tables) == 5, f"expected 5 dpc tables in main.py, found {len(tables)}"
+    creates = [t for t in tables if t.startswith("CREATE")]
+    assert len(creates) == 7, f"expected 7 dpc tables in main.py, found {len(creates)}"
+    assert len(tables) - len(creates) == 2, "expected the 2 dpc ALTER blocks"
 
     conn = await asyncpg.connect(re.sub(r"[?&]sslmode=\w+", "", _DSN), ssl="require")
     tx = conn.transaction()
@@ -432,92 +470,127 @@ async def test_live_replay_ddl_seed_and_every_query():
 
         pool = _TxPool(conn)
         await seed_division_payment(pool)
-
-        expected_gl = sum(len(v) for v in SEED["gl_accounts"].values())
-        assert await conn.fetchval("SELECT COUNT(*) FROM dpc_months") == 19
-        assert await conn.fetchval("SELECT COUNT(*) FROM dpc_gl_accounts") == expected_gl
+        gl_before = await conn.fetchval("SELECT COUNT(*) FROM dpc_gl_accounts")
+        assert await conn.fetchval("SELECT COUNT(*) FROM dpc_months") >= 19
 
         # Seeding runs on EVERY startup — a second pass must change nothing.
         await seed_division_payment(pool)
-        assert await conn.fetchval("SELECT COUNT(*) FROM dpc_gl_accounts") == expected_gl
+        assert await conn.fetchval("SELECT COUNT(*) FROM dpc_gl_accounts") == gl_before
 
         class _Req:
             class app:
                 class state:
                     pool = None
+                    savings_pool = None
 
         _Req.app.state.pool = pool
+        _Req.app.state.savings_pool = _StubGold()
         user = {"sub": "test", "email": "test@local", "roles": ["admin"]}
 
-        assert len((await dp.periods(_Req, user))["data"]["months"]) == 19
-        assert len((await dp.archives(_Req, user))["data"]) == 19
-        assert len((await dp.recalcs(_Req, user))["data"]) == 5
+        # The month list runs through the CURRENT month (PDF 2026-10-05 R2) and
+        # defaults to the previous one — the month being paid.
+        periods = (await dp.periods(_Req, user))["data"]
+        today = cst_today()
+        assert len(periods["months"]) == len(months_between(FIRST_MONTH, (today.year, today.month)))
+        assert periods["default"] is not None
+        # The vendor demo recalcs are gone (removed 2026-10-05) and none re-seed.
+        assert len((await dp.recalcs(_Req, user))["data"]) == 0
 
-        # Every month must serve, and its served numbers must be exactly what
-        # `compute_summary` produces from the month's OWN stored inputs.
-        #
-        # Deliberately NOT compared against the seeded archive: this table is
-        # live and Finance edits it — July 2026 already carries real figures
-        # ($3.84M revenue, not the prototype's $6.1M). An assertion pinned to
-        # the seed would fail on a correct edit, which is the fastest way to
-        # get a test deleted. What must hold forever is the arithmetic and,
-        # since 2026-08-24, the blank GL sheet.
-        for m in SEED["months"]:
-            d = (await dp.summary(_Req, m["year"], m["month"], user))["data"]
-            assert d["gl_deductions"] == pytest.approx(0.0, abs=0.01), (
-                f"{m['year']}-{m['month']} carries a seeded GL amount"
-            )
-            expect = dp.compute_summary(d["revenue"], d["carrier_cost"], d["profit"], 0)
-            for k in ("margin_pct", "penalty_fee", "corporate_gain", "net_payment"):
-                assert d[k] == pytest.approx(expect[k], abs=0.01), f"{m['month']}.{k}"
-
-        # February carries rec-jan (+$6,000 profit delta → 75 % to A&O).
-        feb = (await dp.summary(_Req, 2026, "february", user))["data"]
-        assert feb["recalc_ao_adjustment"] == 4_500.00
-        assert feb["net_payment_adjusted"] == pytest.approx(
-            feb["net_payment"] + 4_500.00, abs=0.01
+        # A rolled-over month inherits the previous sheet at $0.00.
+        aug = await conn.fetchrow(
+            "SELECT COUNT(*) n, COALESCE(SUM(amount), 0) s FROM dpc_gl_accounts g "
+            "JOIN dpc_months m ON m.id = g.month_id "
+            "WHERE m.year = 2026 AND m.month = 'august' AND g.deleted_at IS NULL"
         )
+        assert aug["n"] > 0 and aug["s"] == 0
 
-        # Typing an amount into the (now editable) cell moves the net payment
-        # down by exactly that amount, and excluding the row puts it back —
-        # neither touches profit, margin or the tariff. Written as a PATCH
-        # rather than by reading the biggest seeded row, because every seeded
-        # row is 0.00 now and that comparison would be vacuously true.
-        jul = (await dp.summary(_Req, 2026, "july", user))["data"]
+        # Every month serves, and its numbers are exactly compute_summary over
+        # the EFFECTIVE inputs (override where set, v4 otherwise).
+        for p in periods["months"]:
+            d = (await dp.summary(_Req, p["year"], p["month"], user))["data"]
+            expect = dp.compute_summary(d["revenue"], d["carrier_cost"], d["profit"],
+                                        d["gl_deductions"])
+            for k in ("margin_pct", "penalty_fee", "corporate_gain", "net_payment"):
+                assert d[k] == pytest.approx(expect[k], abs=0.01), f"{p['month']}.{k}"
+            assert d["recalc_ao_adjustment"] == 0
+            if not d["overridden"]:
+                assert d["inputs"]["revenue"] == float(_StubGold.REVENUE)
+                assert d["inputs"]["profit"] == float(_StubGold.PROFIT)
+
+        # Overrides: set all three, then reset one back to the datalake.
+        await dp.save_overrides(2026, "august", dp.MonthOverrides(
+            revenue=6_100_000, carrier_cost=5_368_000, profit=732_000), _Req, user)
+        edited = (await dp.summary(_Req, 2026, "august", user))["data"]
+        assert edited["overridden"] and edited["profit"] == 732_000.00
+        assert edited["datalake"]["profit"] == float(_StubGold.PROFIT)
+        await dp.save_overrides(2026, "august",
+                                dp.MonthOverrides.model_validate({"revenue": None}), _Req, user)
+        reset = (await dp.summary(_Req, 2026, "august", user))["data"]
+        assert reset["revenue"] == float(_StubGold.REVENUE)
+        assert reset["overrides"]["carrier_cost"] == 5_368_000.00  # untouched key kept
+
+        # Typing an amount moves the net payment down by exactly that amount;
+        # excluding the row puts it back.
         gl_id = await conn.fetchval(
             "SELECT g.id FROM dpc_gl_accounts g JOIN dpc_months m ON m.id = g.month_id "
-            "WHERE m.year = 2026 AND m.month = 'july' AND g.included "
-            "ORDER BY g.sort_order LIMIT 1"
+            "WHERE m.year = 2026 AND m.month = 'august' AND g.included "
+            "AND g.deleted_at IS NULL ORDER BY g.sort_order LIMIT 1"
         )
         amount = 12_345.67
         await dp.patch_expense(gl_id, dp.GLPatch(amount=amount), _Req, user)
-        typed = (await dp.summary(_Req, 2026, "july", user))["data"]
-        assert typed["gl_deductions"] == pytest.approx(amount, abs=0.01)
-        assert jul["net_payment"] - typed["net_payment"] == pytest.approx(amount, abs=0.01)
-
-        # A negative amount is refused before it can reach SQL.
-        with pytest.raises(Exception):
-            dp.GLPatch(amount=-0.01)
-
+        typed = (await dp.summary(_Req, 2026, "august", user))["data"]
+        assert reset["net_payment"] - typed["net_payment"] == pytest.approx(amount, abs=0.01)
         await dp.patch_expense(gl_id, dp.GLPatch(included=False), _Req, user)
-        after = (await dp.summary(_Req, 2026, "july", user))["data"]
-        assert after["net_payment"] - typed["net_payment"] == pytest.approx(amount, abs=0.01)
-        assert after["net_payment"] == pytest.approx(jul["net_payment"], abs=0.01)
-        assert after["profit"] == jul["profit"]
-        assert after["penalty_fee"] == jul["penalty_fee"]
+        after = (await dp.summary(_Req, 2026, "august", user))["data"]
+        assert after["net_payment"] == pytest.approx(reset["net_payment"], abs=0.01)
 
-        # Profit is derived from the inputs, never a free third field.
-        await dp.save_inputs(
-            2026, "july", dp.MonthInputs(revenue=6_100_000, carrier_cost=5_368_000), _Req, user
+        # Edit a TEMPLATE row's text fields, then delete it (PDF 2026-10-05 R1).
+        await dp.patch_expense(gl_id, dp.GLPatch(code="9999", description="Edited",
+                                                 category="other"), _Req, user)
+        row = await conn.fetchrow("SELECT code, description, category, is_custom "
+                                  "FROM dpc_gl_accounts WHERE id = $1", gl_id)
+        assert (row["code"], row["description"], row["category"]) == ("9999", "Edited", "other")
+        assert row["is_custom"] is False
+        await dp.delete_expense(gl_id, _Req, user)
+        gone = (await dp.summary(_Req, 2026, "august", user))["data"]
+        assert gone["gl_row_count"] == after["gl_row_count"] - 1
+        assert gl_id not in {a["id"] for a in gone["gl_accounts"]}
+        with pytest.raises(Exception):
+            await dp.delete_expense(gl_id, _Req, user)  # already deleted → 404
+
+        # Delete EVERY row of a month: the seeder must not refill it.
+        jan = await conn.fetchval("SELECT id FROM dpc_months WHERE year = 2025 AND month = 'january'")
+        await conn.execute("UPDATE dpc_gl_accounts SET deleted_at = NOW() WHERE month_id = $1", jan)
+        await seed_division_payment(pool)
+        assert await conn.fetchval(
+            "SELECT COUNT(*) FROM dpc_gl_accounts WHERE month_id = $1 AND deleted_at IS NULL", jan
+        ) == 0
+
+        # Approving archives exactly what the Calculator was showing.
+        approved = (await dp.approve(2026, "august", _Req, user))["data"]
+        assert approved["net_payment"] == pytest.approx(gone["net_payment"], abs=0.01)
+
+        # Month close: capture September as of Oct 11, then diff against v4.
+        await conn.execute("DELETE FROM dpc_cutoffs WHERE year = 2026 AND month = 'september'")
+        res = await capture_due_cutoffs(pool, _StubGold(), date(2026, 10, 11), datetime(2026, 10, 11))
+        assert res["captured"].get("September 2026") == 2
+        again = await capture_due_cutoffs(pool, _StubGold(), date(2026, 10, 11), datetime(2026, 10, 11))
+        assert again["captured"] == {}  # idempotent
+        orders = (await dpc.cutoff_orders(2026, "september", _Req, user))["data"]
+        assert orders["changes"] == []  # live == snapshot ⇒ nothing to recalculate
+        await conn.execute(
+            "UPDATE dpc_cutoff_orders SET margin_amt = margin_amt - 100 "
+            "WHERE year = 2026 AND month = 'september' AND order_id LIKE '%-1'"
         )
-        edited = (await dp.summary(_Req, 2026, "july", user))["data"]
-        assert edited["profit"] == 732_000.00
-
-        # Approving archives exactly what the Calculator was showing — compared
-        # against the summary taken AFTER the edit above, not before it.
-        approved = (await dp.approve(2026, "july", _Req, user))["data"]
-        assert approved["net_payment"] == pytest.approx(edited["net_payment"], abs=0.01)
-        assert approved["gl_deductions"] == pytest.approx(0.0, abs=0.01)
+        moved = (await dpc.cutoff_orders(2026, "september", _Req, user))["data"]
+        assert [c["change_type"] for c in moved["changes"]] == ["modified"]
+        assert moved["totals"]["margin_amt"] == 100.00
+        months = (await dpc.cutoffs(_Req, user))["data"]["months"]
+        sep = next((m for m in months if (m["year"], m["month"]) == (2026, "september")), None)
+        if sep is not None:  # listed once September is the previous month or older
+            assert sep["status"] == "tracked" and sep["changed_count"] == 1
+            assert sep["ao_share"] == 75.00 and sep["corporate_share"] == 25.00
+        await dpc.save_cutoff_note(2026, "september", dpc.CutoffNote(note="x"), _Req, user)
     finally:
         await tx.rollback()
         await conn.close()

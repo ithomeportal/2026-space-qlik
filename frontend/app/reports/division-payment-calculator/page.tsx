@@ -42,11 +42,18 @@ function DivisionPaymentCalculator() {
   const periodsQ = usePeriods()
   const periods = periodsQ.data
 
-  // Default to the most recent month the portal has data for. Deriving it from
-  // the payload rather than hardcoding is what stops the prototype's cold-open
-  // bug, where the dropdown said "July 2026" over May's numbers.
+  // Open on the month the BACKEND names as `default` — it creates months through
+  // the current CST month, so the list grows on its own (Bruno PDF 2026-10-05)
+  // and the browser's clock never picks the period. Fallback (no default): the
+  // most recent month in the payload. Deriving it from the payload rather than
+  // hardcoding is what stops the prototype's cold-open bug, where the dropdown
+  // said "July 2026" over May's numbers.
   const latest = useMemo(() => {
     const months = periods?.months ?? []
+    const def = periods?.default ?? null
+    if (def && months.some((m) => m.year === def.year && m.month === def.month)) {
+      return def
+    }
     if (months.length === 0) return null
     const newestYear = Math.max(...months.map((m) => m.year))
     const inYear = months.filter((m) => m.year === newestYear)

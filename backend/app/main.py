@@ -34,6 +34,7 @@ from app.routers import (
     dfw_access_doors_digest,
     dfw_losses,
     division_payment,
+    division_payment_cutoffs,
     edi_load_tenders,
     exec_meeting_recruitment,
     hd_spot,
@@ -138,6 +139,43 @@ async def _scheduled_projection_snapshot():
         logger.info(f"Weekly actuals complete: {result}")
     except Exception as e:
         logger.error(f"Weekly actuals failed: {e}")
+
+
+async def _scheduled_dpc_cutoff_snapshot():
+    """Background job: freeze each closed month's TEAM-DFW orders (Bruno PDF
+    2026-10-05, Division Payment Recalculations R3).
+
+    A month closes on the 10th of the following month; this runs daily at
+    00:15 CST and captures every closed month (September 2026 onward) that has
+    no snapshot yet, so a missed night is caught up the next one. The snapshot
+    cannot be rebuilt later — v4 holds only an order's current state.
+
+    ⚠ Logs AND re-raises: APScheduler records a job that returned as a success,
+    so a swallowed exception would read as a healthy run (cron-job-debug §5).
+    """
+    from app.clock import cst_now, cst_today
+    from app.services.division_payment_v4 import capture_due_cutoffs
+
+    try:
+        result = await capture_due_cutoffs(
+            getattr(app.state, "pool", None),
+            getattr(app.state, "savings_pool", None),
+            cst_today(), cst_now(),
+        )
+        logger.info(f"Division Payment cutoff snapshot: {result}")
+    except Exception as e:
+        logger.error(f"Division Payment cutoff snapshot FAILED: {e}", exc_info=True)
+        raise
+
+
+async def _startup_dpc_cutoff_catchup():
+    """Fire-and-forget startup run. The scheduled job re-raises so APScheduler
+    records the failure; an unawaited task has nobody to raise TO, so here the
+    failure (already logged with its traceback) stops at this boundary."""
+    try:
+        await _scheduled_dpc_cutoff_snapshot()
+    except Exception:  # noqa: BLE001 — logged inside; next 00:15 run retries
+        pass
 
 
 async def _seed_projection_history():
@@ -991,6 +1029,70 @@ async def lifespan(app: FastAPI):
                 )
                 """
             )
+            # Bruno PDF 2026-10-05 — A&O inputs now come from v4 (TEAM-DFW), so
+            # the stored revenue/carrier_cost/profit columns are legacy. A
+            # manual value lives in its own *_override column (NULL = use v4),
+            # which is what lets the UI flag an overridden month and reset it.
+            # GL rows are soft-deleted (`deleted_at`) because every row is now
+            # deletable and the seeder refills a month that has ZERO rows.
+            await app.state.pool.execute(
+                """
+                ALTER TABLE dpc_months
+                  ADD COLUMN IF NOT EXISTS revenue_override      NUMERIC(16,2),
+                  ADD COLUMN IF NOT EXISTS carrier_cost_override NUMERIC(16,2),
+                  ADD COLUMN IF NOT EXISTS profit_override       NUMERIC(16,2),
+                  ADD COLUMN IF NOT EXISTS override_updated_by   TEXT,
+                  ADD COLUMN IF NOT EXISTS override_updated_at   TIMESTAMPTZ
+                """
+            )
+            await app.state.pool.execute(
+                """
+                ALTER TABLE dpc_gl_accounts
+                  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+                  ADD COLUMN IF NOT EXISTS deleted_by TEXT
+                """
+            )
+            # Month close (10th of the following month): one row per closed
+            # month + every TEAM-DFW order frozen at that moment. Written by
+            # `daily_dpc_cutoff_snapshot`; the Recalculations tab diffs live v4
+            # against it. Like the headcount snapshot, it CANNOT be rebuilt
+            # later — v4 only holds the current state of an order.
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_cutoffs (
+                  year         INTEGER NOT NULL,
+                  month        TEXT    NOT NULL,
+                  month_label  TEXT    NOT NULL,
+                  cutoff_date  DATE    NOT NULL,
+                  captured_at  TIMESTAMPTZ NOT NULL,
+                  revenue      NUMERIC(16,2) NOT NULL,
+                  carrier_cost NUMERIC(16,2) NOT NULL,
+                  profit       NUMERIC(16,2) NOT NULL,
+                  order_count  INTEGER NOT NULL,
+                  note             TEXT NOT NULL DEFAULT '',
+                  note_updated_by  TEXT,
+                  note_updated_at  TIMESTAMPTZ,
+                  PRIMARY KEY (year, month)
+                )
+                """
+            )
+            await app.state.pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpc_cutoff_orders (
+                  year              INTEGER NOT NULL,
+                  month             TEXT    NOT NULL,
+                  order_id          TEXT    NOT NULL,
+                  company_id        TEXT    NOT NULL,
+                  customer_id       TEXT,
+                  customer_name     TEXT,
+                  total_charge      NUMERIC(16,2) NOT NULL,
+                  total_carrier_pay NUMERIC(16,2) NOT NULL,
+                  margin_amt        NUMERIC(16,2) NOT NULL,
+                  PRIMARY KEY (year, month, order_id, company_id),
+                  FOREIGN KEY (year, month) REFERENCES dpc_cutoffs(year, month) ON DELETE CASCADE
+                )
+                """
+            )
             # Monthly headcount snapshot (Exec Meeting – Recruitment turnover).
             # Portal-owned, like dpc_* — the time-off DB is read-only to us and
             # is a CURRENT-STATE table that drops departed staff, so a past
@@ -1306,6 +1408,18 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
         asyncio.create_task(_seed_projection_history())
+
+        # Division Payment month close at 00:15 CST — the first slot after the
+        # 10th has fully passed. Plus a startup catch-up, so a deploy that
+        # straddles the cutoff night still captures the month.
+        scheduler.add_job(
+            _scheduled_dpc_cutoff_snapshot,
+            CronTrigger(hour=0, minute=15, timezone="America/Chicago"),
+            id="daily_dpc_cutoff_snapshot",
+            name="Freeze Division Payment closed-month orders (10th cutoff)",
+            replace_existing=True,
+        )
+        asyncio.create_task(_startup_dpc_cutoff_catchup())
     else:
         logger.warning(
             "Projection snapshot NOT scheduled — SAVINGS_DATABASE_URL unset; "
@@ -1491,6 +1605,7 @@ async def lifespan(app: FastAPI):
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
         "daily_projection_snapshot": "Team Monthly Projection history, 02:45 CST",
         "daily_dfw_bonus_roster_sync": "Bonus DFW roster from Time-off, 05:00 CST",
+        "daily_dpc_cutoff_snapshot": "Division Payment month-close snapshot, 00:15 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
@@ -1591,6 +1706,7 @@ app.include_router(booker_scorecard.router, prefix="/api")
 app.include_router(hd_spot.router, prefix="/api")
 app.include_router(production_spots_trends.router, prefix="/api")
 app.include_router(division_payment.router, prefix="/api")
+app.include_router(division_payment_cutoffs.router, prefix="/api")
 app.include_router(exec_meeting_recruitment.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
