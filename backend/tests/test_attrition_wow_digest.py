@@ -528,3 +528,25 @@ class TestSurvivesOutlookPrint:
         html = digest[0]["html"]
         assert "TEAM&#8209;DFW" in html
         assert re.search(r"<td [^>]*nowrap>TEAM&#8209;DFW</td>", html)
+
+
+class TestScopeBarsSurviveAPrintWithoutBackgrounds:
+    """Test send 2: Outlook print ignored print-color-adjust — the bars must not
+    depend on a background to be visible."""
+
+    def test_each_bar_is_outlined_in_its_own_colour(self, digest):
+        from app.services.attrition_wow_digest_html import SCOPE_BAR
+
+        html = digest[0]["html"]
+        for name, colour in SCOPE_BAR.items():
+            tag = re.search(rf'<td class="aw-bar aw-bar-{name.lower()}"[^>]*>', html).group(0)
+            assert f"border-left:14px solid {colour}" in tag
+            assert f"border:2px solid {colour}" in tag
+
+    def test_print_rule_recolours_every_title(self, digest):
+        from app.services.attrition_wow_digest_html import SCOPE_BAR
+
+        html = digest[0]["html"]
+        style = re.search(r"<style>@media print\{(.*?)\}</style>", html).group(1)
+        for name, colour in SCOPE_BAR.items():
+            assert f".aw-bar-{name.lower()}{{color:{colour} !important;}}" in style

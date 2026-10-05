@@ -147,13 +147,31 @@ def _p(content: str, *, size: int = 14, bold: bool = False, margin: str = "0 0 1
 
 
 def _scope_bar(name: str) -> str:
+    """Filled bar on screen; still a coloured, readable bar when PRINTED.
+
+    Test send 2 (2026-10-05): Outlook's print path ignored print-color-adjust,
+    so the fill vanished and the white title printed as faint grey. Borders DO
+    print, so the bar is also outlined in its own colour (invisible on screen —
+    same colour as the fill), and a print-only rule recolours the title. Both
+    survive a renderer that drops backgrounds.
+    """
+    c = SCOPE_BAR[name]
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;margin:28px 0 12px 0;"><tr>'
-        f'<td bgcolor="{SCOPE_BAR[name]}" style="background-color:{SCOPE_BAR[name]};{PRINT_EXACT}'
+        f'<td class="aw-bar aw-bar-{name.lower()}" bgcolor="{c}" '
+        f'style="background-color:{c};{PRINT_EXACT}border:2px solid {c};'
+        f'border-left:14px solid {c};'
         f'font-family:{FONT_STACK};font-size:26px;font-weight:800;color:#FFFFFF;'
         f'padding:8px 12px;">{escape(name)}</td></tr></table>'
     )
+
+
+# Print-only: a renderer that drops backgrounds leaves white-on-white titles.
+# Outlook may strip <style>; then the outlined bar still prints (see above).
+PRINT_STYLE = "<style>@media print{" + "".join(
+    f".aw-bar-{n.lower()}{{color:{c} !important;}}" for n, c in SCOPE_BAR.items()
+) + "}</style>"
 
 
 def _chips(windows: dict) -> str:
@@ -387,6 +405,7 @@ def render_html(*, subject: str, week_no: int, windows: dict, scopes: dict,
     )
     return (
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        f"{PRINT_STYLE}"
         f"<title>{escape(subject)}</title></head>"
         f'<body style="margin:0;padding:0;background-color:#FFFFFF;{PRINT_EXACT}" bgcolor="#FFFFFF">'
         f'<table role="presentation" width="{PAGE_WIDTH}" cellpadding="0" cellspacing="0" '
