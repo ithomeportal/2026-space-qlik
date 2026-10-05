@@ -20,6 +20,7 @@ from app.routers import (
     admin,
     admin_cashflow,
     attrition_wow,
+    attrition_wow_digest,
     attrition_wow_team,
     auth_email,
     bonus_calculator,
@@ -1600,6 +1601,8 @@ app.include_router(attrition_wow.router, prefix="/api")
 # Per-CORP-team scope-locked clones of Attrition WoW (Bruno 2026-08-14).
 for _aw_team_router in attrition_wow_team.team_routers:
     app.include_router(_aw_team_router, prefix="/api")
+# Weekly "Atrition WOW -Week N" e-mail — same prefix, own module. Pulled by n8n.
+app.include_router(attrition_wow_digest.router, prefix="/api")
 app.include_router(ops_margins.router, prefix="/api")
 app.include_router(ops_direct_compare.router, prefix="/api")
 for _odc_team_router in ops_direct_compare_team.team_routers:
