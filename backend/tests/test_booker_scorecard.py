@@ -188,7 +188,8 @@ def test_summary_and_orders_share_one_threshold_definition() -> None:
     src = open(bs.__file__).read()
     helper = inspect.getsource(bs._threshold_stats)
 
-    for endpoint in (bs.summary, bs.orders, bs.rank):
+    # /rank and /rank/last-week fold it through `_rank_payload` (2026-10-06).
+    for endpoint in (bs.summary, bs.orders, bs._rank_payload):
         assert "_threshold_stats(" in inspect.getsource(endpoint), (
             f"{endpoint.__name__} does not fold the shared helper"
         )

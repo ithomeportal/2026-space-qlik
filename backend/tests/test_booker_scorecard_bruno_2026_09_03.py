@@ -42,7 +42,7 @@ from datetime import date, datetime, timedelta
 
 from app.routers import booker_scorecard as bs
 
-from test_booker_scorecard_bruno_2026_08_31 import _SCOPE, _drive
+from test_booker_scorecard_bruno_2026_08_31 import _RANK, _drive
 
 
 _SOURCE = inspect.getsource(bs)
@@ -58,70 +58,16 @@ def _row(order_id, name, when, carrier_cost=500.0):
 
 
 # ==========================================================================
-# R2 — the week is Saturday → Friday
+# R2 — the week is Saturday → Friday  (⚠ SUPERSEDED 2026-10-06)
 # ==========================================================================
-
-
-def test_the_rank_week_starts_on_saturday_and_ends_on_friday():
-    """Every day of the week, not one sample: the modulo that finds "the most
-    recent Saturday" is the identity on a Saturday and 6 on a Sunday, and an
-    off-by-one there is invisible on any single weekday."""
-    for offset in range(14):
-        today = PINNED + timedelta(days=offset)
-        prev_s, prev_e, cur_s, cur_e = bs._rank_weeks(today)
-        for d in (prev_s, cur_s):
-            assert d.weekday() == 5, f"{d} is not a Saturday (today={today})"
-        for d in (prev_e, cur_e):
-            assert d.weekday() == 4, f"{d} is not a Friday (today={today})"
-        assert (cur_e - cur_s).days == 6 and (prev_e - prev_s).days == 6
-        assert prev_e + timedelta(days=1) == cur_s
-
-
-def test_the_in_progress_week_is_still_never_ranked():
-    """⚠ The rule that survived the Sat-Fri move. Ranking a 1-day week against
-    a full one produced +13-position moves for a booker who started early."""
-    for offset in range(14):
-        today = PINNED + timedelta(days=offset)
-        _, _, _, cur_e = bs._rank_weeks(today)
-        this_saturday = today - timedelta(days=(today.weekday() - 5) % 7)
-        assert cur_e < this_saturday, (
-            f"the in-progress week leaked into the ranking (today={today})"
-        )
-        # …and it is never more than one week stale either: the compared week
-        # must be the one that just closed, not an older one.
-        assert cur_e == this_saturday - timedelta(days=1)
-
-
-def test_the_pinned_week_is_the_one_that_was_measured():
-    """The exact windows the live figures in this file's docstring came from —
-    so a future change to the boundary invalidates the measurement loudly."""
-    prev_s, prev_e, cur_s, cur_e = bs._rank_weeks(PINNED)
-    assert (cur_s, cur_e) == (date(2026, 8, 22), date(2026, 8, 28))
-    assert (prev_s, prev_e) == (date(2026, 8, 15), date(2026, 8, 21))
-
-
-def test_only_the_rank_tab_moved_to_sat_fri():
-    """⚠ §95 — one label, two metrics. `wtd` on the Scorecard tab and the
-    10-week /weekly trend are read beside other portal reports that all use the
-    ISO week, so they stay Mon-Sun. The divergence is deliberate and confined.
-    """
-    # `_resolve_range` owns `wtd`; `weekly` owns the 10-week trend axis. Both
-    # subtract a RAW `weekday()` — the Monday anchor — with no offset and no
-    # modulo, which is exactly what the Sat-Fri helper adds.
-    for fn in (bs._resolve_range, bs.weekly):
-        src = inspect.getsource(fn)
-        assert re.search(r"timedelta\(days=\w+\.weekday\(\)\)", src), fn.__name__
-        assert "_RANK_WEEK_START_WEEKDAY" not in src, (
-            f"the Saturday boundary leaked into {fn.__name__}"
-        )
-        assert "% 7" not in src, fn.__name__
-
-    # And it IS reachable from the rank helper — otherwise the checks above are
-    # vacuous and would pass on a build where nothing is Sat-Fri at all (§91).
-    rank_src = inspect.getsource(bs._rank_weeks)
-    assert "_RANK_WEEK_START_WEEKDAY" in rank_src
-    assert "% 7" in rank_src
-    assert bs._RANK_WEEK_START_WEEKDAY == 5
+#
+# Bruno's 2026-10-06 PDF replaced the Sat-Fri calendar week with the BOOKING
+# WEEK (Fri 17:01 → Fri 17:00) and made the in-progress week the default. The
+# guards that lived here — the boundary, "only the Rank tab moved", "never
+# rank the in-progress week" — are rewritten against the new rule in
+# test_booker_scorecard_bruno_2026_10_06.py rather than kept green against a
+# helper that no longer exists. The R1/R3 assertions below still hold; their
+# rank calls pin the 22-28 Aug window as a custom range (`_RANK`).
 
 
 # ==========================================================================
@@ -155,7 +101,7 @@ def _mixed_rows():
 
 
 def test_a_non_booker_gets_no_row():
-    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_RANK)
     names = {r["booker"] for r in resp["data"]["rows"]}
     assert names == {"EUGENIO MIRANDA", "DANIEL SALAZAR", "JUAN REYNA"}
     assert "ARMANDO CALVILLO" not in names
@@ -166,7 +112,7 @@ def test_the_restriction_runs_before_ranking_so_ranks_have_no_gaps():
     ranks computed over the full population: 1, 3, 4, 6 … with the winners
     missing, under an "of N" counting people the table refuses to show. Every
     individual number would still be correct."""
-    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_RANK)
     rows = resp["data"]["rows"]
     assert [r["rank"] for r in rows] == [1, 2, 3]
     assert [r["booker"] for r in rows] == [
@@ -182,7 +128,7 @@ def test_the_restriction_applies_to_the_previous_week_too():
     every one of them still renders plausibly. Here the non-roster pair sit
     above Eugenio last week: unrestricted, his previous rank is 3 and the tab
     would claim he climbed two places for doing exactly the same work."""
-    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_RANK)
     top = resp["data"]["rows"][0]
     assert top["booker"] == "EUGENIO MIRANDA"
     assert top["prev_rank"] == 1
@@ -192,7 +138,7 @@ def test_the_restriction_applies_to_the_previous_week_too():
 def test_the_picker_only_offers_names_the_table_can_show():
     """A picker listing somebody the table refuses to render is a control that
     empties its own table."""
-    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_RANK)
     data = resp["data"]
     assert "ARMANDO CALVILLO" not in data["bookers"]
     assert set(data["bookers"]) == {r["booker"] for r in data["rows"]}
@@ -207,7 +153,7 @@ def test_the_roster_restriction_is_not_pushed_into_the_sql():
 
     The second half proves the scan can see a known positive (§91).
     """
-    pool, _ = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_SCOPE)
+    pool, _ = _drive(bs.rank, rows=_mixed_rows(), today=PINNED, **_RANK)
     rank_sql = "\n".join(pool.sqls)
     assert "TRIM(rp.posted_by_name) = ANY(" not in rank_sql
     for name in bs.RANK_ROSTER:
@@ -230,7 +176,7 @@ def test_the_roster_match_survives_mcleods_spellings():
         _row("B", "Montoya, Anthares", datetime(2026, 8, 25, 9, 0)),
         _row("C", "eugenio miranda", datetime(2026, 8, 25, 9, 0)),
     ]
-    _, resp = _drive(bs.rank, rows=rows, today=PINNED, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=rows, today=PINNED, **_RANK)
     assert len(resp["data"]["rows"]) == 3
     # ⚠ Normalisation is a MATCH KEY, never a display value — the table shows
     # what McLeod actually recorded.
@@ -267,7 +213,7 @@ def test_the_rank_row_carries_compliance_not_just_broken():
     ]
     thresholds = {"A": 1000.0, "B": 1000.0, "C": 1000.0, "D": 1000.0}
     _, resp = _drive(bs.rank, rows=rows, today=PINNED,
-                     thresholds=thresholds, **_SCOPE)
+                     thresholds=thresholds, **_RANK)
     row = resp["data"]["rows"][0]
     assert row["threshold_orders"] == 4
     assert row["broken_threshold"] == 2
@@ -310,7 +256,7 @@ def test_compliance_stays_none_on_the_rank_row_when_ap_is_down():
     rows = [_row("A", "EUGENIO MIRANDA", datetime(2026, 8, 25, 9, 0))]
     # `None`, not `{}` — the AP source being DOWN is a different answer from it
     # knowing nothing about these orders.
-    _, resp = _drive(bs.rank, rows=rows, today=PINNED, thresholds=None, **_SCOPE)
+    _, resp = _drive(bs.rank, rows=rows, today=PINNED, thresholds=None, **_RANK)
     row = resp["data"]["rows"][0]
     assert row["bookings"] == 1, "the ranking must survive an AP outage"
     for key in ("compliance_threshold_pct", "compliant_threshold",
@@ -345,5 +291,6 @@ def test_the_ui_renders_compliance_and_never_broken_on_this_tab():
 
     # The caption states the window and the population — a table that silently
     # disagrees with the filter bar above it reads as a bug.
-    assert "Sat–Fri" in src and "Mon–Sun" not in src
+    # Since 2026-10-06 the window is the booking week, stated to the minute.
+    assert "Fri 5:01 PM" in src and "Sat–Fri" not in src and "Mon–Sun" not in src
     assert "Bookers only" in src or "bookers only" in src

@@ -1,30 +1,25 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { ArrowDown, ArrowUp, Loader2, Minus } from "lucide-react"
 import {
   fmtCount,
   fmtPct,
   fmtUsd,
   useBookerRank,
+  useBookerRankLastWeek,
+  type BookerRank,
   type BookerRankRow,
   type BookerScopeFilters,
+  type RankWindow,
 } from "@/lib/booker-scorecard-api"
 import { MultiSelectChips } from "@/components/MultiSelectChips"
 
-interface Props {
-  scope: BookerScopeFilters
-  /** The page's Posted By selection, so the tab shares one picker with the
-   *  rest of the report rather than inventing a second, divergent one. */
-  postedBy: string[]
-  onPostedByChange: (next: string[]) => void
-}
-
-/** Rank movement against the previous week.
+/** Rank movement against the comparison window.
  *
- * ⚠ null (a booker with no previous week) is NOT zero. A first appearance
- * renders as "new", because a flat dash beside it would claim the person held
- * their position — a position they never had.
+ * ⚠ null (a booker absent from the comparison window) is NOT zero. A first
+ * appearance renders as "new", because a flat dash beside it would claim the
+ * person held their position — a position they never had.
  */
 function Movement({ delta }: { delta: number | null }) {
   if (delta === null) {
@@ -45,7 +40,7 @@ function Movement({ delta }: { delta: number | null }) {
       }`}
       title={`${up ? "Up" : "Down"} ${Math.abs(delta)} position${
         Math.abs(delta) === 1 ? "" : "s"
-      } vs the previous week`}
+      } vs the comparison window`}
     >
       {up ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
       {Math.abs(delta)}
@@ -54,15 +49,36 @@ function Movement({ delta }: { delta: number | null }) {
 }
 
 type SortKey = "rank" | "booker" | "compliance" | "saving" | "bookings"
+type SortDir = "asc" | "desc"
 
-export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
-  const { data, isLoading, error } = useBookerRank(scope)
-  const [sortKey, setSortKey] = useState<SortKey>("rank")
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+interface ViewProps {
+  title: string
+  caption: ReactNode
+  data: BookerRank | undefined
+  isLoading: boolean
+  error: unknown
+  emptyText: string
+  initialSort: { key: SortKey; dir: SortDir }
+  /** Only the main table carries the Booker Name picker; both tables follow it. */
+  picker?: ReactNode
+}
 
-  // apiFetch returns the {success, data} envelope; BookerRank is the inner
-  // payload, so this unwraps exactly one level (house pattern).
-  const d = data?.data
+/** The table both "Rank" and "Rank Last Week" render (Bruno 2026-10-06 R2:
+ *  "duplicate the Rank table"). One component, so the two cannot drift apart
+ *  on what a column means. */
+function RankTableView({
+  title,
+  caption,
+  data: d,
+  isLoading,
+  error,
+  emptyText,
+  initialSort,
+  picker,
+}: ViewProps) {
+  const [sortKey, setSortKey] = useState<SortKey>(initialSort.key)
+  const [sortDir, setSortDir] = useState<SortDir>(initialSort.dir)
+
   const rows: BookerRankRow[] = useMemo(() => d?.rows ?? [], [d])
   const total = d?.total_bookers ?? 0
 
@@ -71,13 +87,11 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
     // `null` means "no answer", and is handled by the comparator rather than
     // by a sentinel number.
     //
-    // ⚠ The sentinel form this replaced (`?? POSITIVE_INFINITY`) claimed in a
-    // comment to sort nulls last in BOTH directions, and did not: +Infinity
-    // sorts last ascending and FIRST descending. Harmless while the column was
-    // "Broken Threshold" and read ascending; with the 2026-09-03 rename the
-    // column inverted and its default sort is descending, so every booker with
-    // no threshold coverage would have led the table under a heading that now
-    // means "most compliant" — a verdict this data cannot support (§4).
+    // ⚠ The sentinel form this replaced (`?? POSITIVE_INFINITY`) sorted nulls
+    // last ascending and FIRST descending. Compliance and Cost Saving read
+    // descending, so every booker with no threshold coverage would lead the
+    // table under a heading that means "best" — a verdict this data cannot
+    // support (§4, §104).
     const val = (r: BookerRankRow): number | string | null => {
       switch (sortKey) {
         case "booker":
@@ -89,7 +103,7 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
         case "bookings":
           return r.bookings
         default:
-          // An unranked booker (nothing booked this week) always sorts last.
+          // An unranked booker (nothing booked in the window) sorts last.
           return r.rank
       }
     }
@@ -121,7 +135,7 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
     label,
     k,
     align = "left",
-    title,
+    title: tip,
   }: {
     label: string
     k: SortKey
@@ -130,7 +144,7 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
   }) => (
     <th
       onClick={() => toggle(k)}
-      title={title}
+      title={tip}
       className={`cursor-pointer select-none px-3 py-2 font-semibold text-[#374151] ${
         align === "right" ? "text-right" : "text-left"
       } hover:text-[#111827]`}
@@ -147,36 +161,11 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
   return (
     <div className="rounded-lg border border-[#E5E7EB] bg-white">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[#E5E7EB] px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-[#111827]">Rank</h2>
-          {/* ⚠ The window is stated on screen. This tab ignores the Date
-              filter in the bar above it, and an unlabelled table that quietly
-              disagrees with the filter above it reads as a bug. */}
-          <p className="mt-0.5 text-xs text-[#6B7280]">
-            {d ? (
-              <>
-                Bookings for{" "}
-                <span className="font-medium text-[#374151]">{d.week.label}</span>{" "}
-                — the last complete Sat–Fri week — with movement against{" "}
-                <span className="font-medium text-[#374151]">
-                  {d.prev_week.label}
-                </span>
-                . Bookers only. Not affected by the Date filter.
-              </>
-            ) : (
-              "The last complete Sat–Fri week, bookers only. Not affected by the Date filter."
-            )}
-          </p>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-[#111827]">{title}</h2>
+          <p className="mt-0.5 text-xs text-[#6B7280]">{caption}</p>
         </div>
-        <MultiSelectChips
-          label="Booker Name"
-          options={d?.bookers ?? []}
-          selected={postedBy}
-          onChange={onPostedByChange}
-          placeholder="All bookers"
-          width={240}
-          disabled={isLoading}
-        />
+        {picker}
       </div>
 
       {noThresholds && (
@@ -192,20 +181,20 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
               <Th
                 label="Rank"
                 k="rank"
-                title="Position by # of Bookings this week, out of every roster booker who booked, and the positions moved since last week."
+                title="Position by # of Bookings in the window, out of every roster booker who booked, and the positions moved against the comparison window."
               />
               <Th label="Booker Name" k="booker" />
               <Th
                 label="Compliance Threshold"
                 k="compliance"
                 align="right"
-                title="Share of this week's bookings whose Carrier Cost came in AT or UNDER the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold count in neither half."
+                title="Share of the window's bookings whose Carrier Cost came in AT or UNDER the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold count in neither half."
               />
               <Th
                 label="Cost Saving"
                 k="saving"
                 align="right"
-                title="Σ (threshold − Carrier Cost) over this week's bookings that came in UNDER their threshold."
+                title="Σ (threshold − Carrier Cost) over the window's bookings that came in UNDER their threshold."
               />
               <Th label="# of Bookings" k="bookings" align="right" />
             </tr>
@@ -221,23 +210,17 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
             {!!error && !isLoading && (
               <tr>
                 <td colSpan={5} className="px-3 py-8 text-center text-[#B91C1C]">
-                  Could not load the ranking.
+                  {/* The backend's 400 says WHY (e.g. "end must be after
+                      start" for a Custom window) — show it. */}
+                  Could not load the ranking
+                  {error instanceof Error && error.message ? ` — ${error.message}` : "."}
                 </td>
               </tr>
             )}
             {!isLoading && !error && sorted.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-3 py-8 text-center text-[#6B7280]">
-                  {/* ⚠ The Posted By selection is SHARED with the Scorecard
-                      tab, whose picker lists everyone who posts Rate Confs.
-                      This tab shows bookers only, so a name picked over there
-                      can empty this table — say which of the two it is rather
-                      than reporting "no bookings" for a week that had them. */}
-                  {postedBy.length > 0
-                    ? `None of the selected names are bookers with bookings in ${
-                        d?.week.label ?? "the selected week"
-                      }.`
-                    : `No bookings in ${d?.week.label ?? "the selected week"}.`}
+                  {emptyText}
                 </td>
               </tr>
             )}
@@ -260,9 +243,9 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
                   {/* ⚠ compliance, NOT broken: the two are 1 − each other, so
                       rendering the wrong field looks entirely plausible and
                       inverts every verdict on the tab. The sub-count is the
-                      server's `compliant_threshold`, never `threshold_orders −
-                      broken_threshold` re-derived here — the count and the
-                      percentage must come off one population (§96). */}
+                      server's `compliant_threshold`, never re-derived here —
+                      the count and the percentage must come off one
+                      population (§96). */}
                   {r.compliance_threshold_pct === null ? (
                     <span className="text-[#9CA3AF]">—</span>
                   ) : (
@@ -294,5 +277,115 @@ export function RankTable({ scope, postedBy, onPostedByChange }: Props) {
         </table>
       </div>
     </div>
+  )
+}
+
+interface Props {
+  scope: BookerScopeFilters
+  /** The Rank tab's own date control (Bruno 2026-10-06 R1). */
+  win: RankWindow
+  /** The page's Posted By selection, so the tab shares one picker with the
+   *  rest of the report rather than inventing a second, divergent one. */
+  postedBy: string[]
+  onPostedByChange: (next: string[]) => void
+}
+
+/** "Rank" — FOLLOWS the date filter; default the booking week
+ *  (Fri 5:01 PM → Fri 5:00 PM CST) containing now. */
+export function RankTable({ scope, win, postedBy, onPostedByChange }: Props) {
+  const { data, isLoading, error } = useBookerRank(scope, win)
+  // apiFetch returns the {success, data} envelope; BookerRank is the inner
+  // payload, so this unwraps exactly one level (house pattern).
+  const d = data?.data
+
+  // ⚠ The window is stated on screen — to the minute, because the booking
+  // week turns over at Friday 5:01 PM, not at midnight.
+  const caption = d ? (
+    <>
+      Bookings for{" "}
+      <span className="font-medium text-[#374151]">{d.week.label}</span>, with
+      movement against{" "}
+      <span className="font-medium text-[#374151]">{d.prev_week.label}</span>
+      {d.like_for_like ? " (the same point in the previous window)" : ""}.
+      Bookers only. Follows the Date filter; the booking week runs Fri 5:01 PM →
+      Fri 5:00 PM CST.
+    </>
+  ) : (
+    "Bookers only. Follows the Date filter; the booking week runs Fri 5:01 PM → Fri 5:00 PM CST."
+  )
+
+  return (
+    <RankTableView
+      title="Rank"
+      caption={caption}
+      data={d}
+      isLoading={isLoading}
+      error={error}
+      initialSort={{ key: "rank", dir: "asc" }}
+      // ⚠ The Posted By selection is SHARED with the Scorecard tab, whose
+      // picker lists everyone who posts Rate Confs. This tab shows bookers
+      // only, so a name picked over there can empty this table — say which of
+      // the two it is rather than reporting "no bookings" for a window that
+      // had them.
+      emptyText={
+        postedBy.length > 0
+          ? `None of the selected names are bookers with bookings in ${
+              d?.week.label ?? "the selected window"
+            }.`
+          : `No bookings in ${d?.week.label ?? "the selected window"}.`
+      }
+      picker={
+        <MultiSelectChips
+          label="Booker Name"
+          options={d?.bookers ?? []}
+          selected={postedBy}
+          onChange={onPostedByChange}
+          placeholder="All bookers"
+          width={240}
+          disabled={isLoading}
+        />
+      }
+    />
+  )
+}
+
+/** "Rank Last Week" (Bruno 2026-10-06 R2) — the previous booking week, never
+ *  the Date filter; ≥ 35 bookings; Cost Saving high → low. The cut and the
+ *  order come from the server; the default sort here only mirrors it. */
+export function RankLastWeekTable({
+  scope,
+  postedBy,
+}: Pick<Props, "scope" | "postedBy">) {
+  const { data, isLoading, error } = useBookerRankLastWeek(scope)
+  const d = data?.data
+  const min = d?.min_bookings ?? 35
+
+  const caption = (
+    <>
+      {d ? (
+        <span className="font-medium text-[#374151]">{d.week.label}</span>
+      ) : (
+        "The previous booking week"
+      )}{" "}
+      — bookers with {min} or more bookings, highest Cost Saving first. Rank is
+      the position by # of Bookings among all bookers that week. Not affected by
+      the Date filter.
+    </>
+  )
+
+  return (
+    <RankTableView
+      title="Rank Last Week"
+      caption={caption}
+      data={d}
+      isLoading={isLoading}
+      error={error}
+      initialSort={{ key: "saving", dir: "desc" }}
+      emptyText={
+        postedBy.length > 0
+          ? `None of the selected bookers had ${min} or more bookings last week.`
+          : `No booker had ${min} or more bookings last week.`
+      }
+    />
   )
 }

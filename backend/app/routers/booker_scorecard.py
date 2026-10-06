@@ -88,7 +88,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.clock import cst_today
+from app.clock import CST, cst_now, cst_today
 from app.booker_names import (
     matches_roster as _matches_roster,
     roster_keys as _roster_keys,
@@ -227,6 +227,21 @@ def _parse_multi(raw: Optional[list[str]]) -> list[str]:
     return out
 
 
+def _lower_bound(v: date) -> datetime:
+    """A date means "from its first instant"; a datetime is used as given.
+
+    ⚠ `datetime` IS a `date` subclass, so the isinstance order matters: testing
+    `date` first would truncate the Rank tab's Friday 17:01 bound to midnight.
+    """
+    return v if isinstance(v, datetime) else datetime.combine(v, time.min)
+
+
+def _upper_bound(v: date) -> datetime:
+    """A date means "through its last instant" (inclusive, like before); a
+    datetime is an INCLUSIVE upper bound used as given."""
+    return v if isinstance(v, datetime) else datetime.combine(v, time.max)
+
+
 def _base_sql(
     params: list,
     *,
@@ -242,13 +257,17 @@ def _base_sql(
     so the KPI cards, the table, the Totals row and the drill-through can never
     apply a different scope to the same question (§16).
 
+    `start` / `end` are calendar dates for every endpoint except /rank, which
+    passes naive-CST datetimes (Bruno PDF 2026-10-06: the booking week turns
+    over at Friday 17:01). Both bounds are inclusive either way.
+
     Returns the CTE text; the caller appends its own ``SELECT ... FROM base``.
     """
     params.append(_pad_variants(list(BOOKER_TEAMS), width=8))
     p_teams = len(params)
-    params.append(datetime.combine(start, time.min))
+    params.append(_lower_bound(start))
     p_start = len(params)
-    params.append(datetime.combine(end, time.max))
+    params.append(_upper_bound(end))
     p_end = len(params)
 
     # Optional filters. An empty selection means "no predicate", so the
@@ -1354,37 +1373,142 @@ RANK_ROSTER: tuple[str, ...] = (
 _RANK_ROSTER_KEYS = _roster_keys(RANK_ROSTER)
 
 
-# Bruno (PDF 2026-09-03) R2 — the Rank tab's week runs SATURDAY → FRIDAY.
+# Bruno (PDF 2026-10-06) R1 — the Rank tab's week is the BOOKING WEEK:
+# Friday 17:01 → the next Friday 17:00 (CST), and the tab now FOLLOWS a date
+# filter whose default is the booking week that contains "now".
 #
-# ⚠ This tab ONLY. Every other window in this report — /summary's `wtd`, the
-# 10-week /weekly trend, the Scorecard tab — stays Mon-Sun, because they are
-# read beside other portal reports that all use the ISO week. Changing the
-# shared definition to satisfy one tab is the §95 class: one label, two
-# metrics. The divergence is therefore deliberate, confined to `_rank_weeks`,
-# and captioned on screen.
+# ⚠ This REVERSES two earlier rules, both deliberately:
+#   * 2026-09-03 R2 "Sat → Fri, whole days" — superseded by the 17:01 boundary.
+#   * 2026-08-31 "never rank the in-progress week" — Bruno's default IS the
+#     in-progress week now. The defect that rule prevented (a 1-day-old week
+#     ranked against a full one gave +13-position swings) is handled instead by
+#     comparing LIKE-FOR-LIKE: while the window is still open, the previous
+#     window is clipped to the same elapsed time (Diego, 2026-10-06).
 #
-# Python's `weekday()` is Mon=0 … Sat=5, so the most recent Saturday is
-# `today - (today.weekday() - 5) % 7` — the identity for a Saturday itself.
-_RANK_WEEK_START_WEEKDAY = 5  # Saturday
+# ⚠ This tab ONLY. /summary's `wtd`, the 10-week /weekly trend and the
+# Scorecard tab stay Mon-Sun calendar days — they are read beside other portal
+# reports that use the ISO week (§95: one label, two metrics).
+#
+# Every bound here is a NAIVE CST datetime: `mcleod_gld_order_post_hist`
+# .posted_date is stored naive in CST at minute precision (verified on live gold
+# 2026-10-06 — the first posting after the boundary sits at exactly 17:01). So
+# the half-open [Fri 17:01, next Fri 17:01) is precisely Bruno's "5:01 PM
+# through 5:00 PM", with no minute lost or double-counted between two weeks.
+_BOOKING_WEEK_WEEKDAY = 4  # Friday (Mon=0)
+_BOOKING_WEEK_TURNOVER = time(17, 1)
+_BOOKING_WEEK = timedelta(days=7)
+_ONE_MINUTE = timedelta(minutes=1)
+
+# Bruno 2026-10-06 R2 — "Rank Last Week" shows only bookers with at least this
+# many bookings in the week. INCLUSIVE: measured on live gold for 25 Sep - 2 Oct,
+# Eugenio Miranda sat at exactly 35.
+RANK_LAST_WEEK_MIN_BOOKINGS = 35
+
+# The Rank tab's own date presets. Resolved SERVER-side from the CST clock, so a
+# viewer whose browser is in another timezone still gets Friday 17:01 Chicago.
+RANK_PERIODS = ("week", "last", "mtd", "custom")
+
+_YEAR_FIRST_INSTANT = datetime.combine(YEAR_START, time.min)
+_YEAR_END_EXCLUSIVE = datetime.combine(YEAR_END + timedelta(days=1), time.min)
 
 
-def _rank_weeks(today: date) -> tuple[date, date, date, date]:
-    """The last COMPLETED Sat-Fri week and the one before it.
+def _naive_cst(v: datetime) -> datetime:
+    """A tz-aware value is converted to Chicago wall time; a naive one is
+    already CST (the UI sends `YYYY-MM-DDTHH:MM`). Seconds are dropped — the
+    column has minute precision and the bounds are minutes."""
+    if v.tzinfo is not None:
+        v = v.astimezone(CST).replace(tzinfo=None)
+    return v.replace(second=0, microsecond=0)
 
-    ⚠ The in-progress week is never included. Shipped Monday 2026-08-31: the
-    current week held ONE day of bookings, and ranking it against a full
-    previous week produced movements of +13 positions for a booker who simply
-    started early. Same rule `app/attrition_core.py` states for its own weekly
-    windows — a comparison is only meaningful between two windows of equal
-    length. That rule survives the Sat-Fri move unchanged; only the day the
-    week turns over has changed (Bruno PDF 2026-09-03 R2).
+
+def _booking_week(now: datetime) -> tuple[datetime, datetime]:
+    """The booking week CONTAINING `now`, half-open: [Fri 17:01, Fri 17:01).
+
+    Friday 17:00 still belongs to the week that is closing; 17:01 opens the
+    next one. `now` is naive CST.
     """
-    this_saturday = today - timedelta(
-        days=(today.weekday() - _RANK_WEEK_START_WEEKDAY) % 7
-    )
-    cur_start = this_saturday - timedelta(days=7)
-    prev_start = this_saturday - timedelta(days=14)
-    return prev_start, prev_start + timedelta(days=6), cur_start, cur_start + timedelta(days=6)
+    friday = now.date() - timedelta(days=(now.weekday() - _BOOKING_WEEK_WEEKDAY) % 7)
+    start = datetime.combine(friday, _BOOKING_WEEK_TURNOVER)
+    if start > now:
+        start -= _BOOKING_WEEK
+    return start, start + _BOOKING_WEEK
+
+
+def _resolve_rank_window(
+    period: Optional[str],
+    start: Optional[datetime],
+    end: Optional[datetime],
+    now: datetime,
+) -> tuple[datetime, datetime]:
+    """The Rank tab's window as a half-open [start, end) of naive CST.
+
+    `end` on the wire is the INCLUSIVE last minute — what a person types
+    ("…5:00 PM") — and becomes exclusive here by adding one minute.
+    """
+    p = period or "week"
+    if p not in RANK_PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail="period must be one of " + ", ".join(RANK_PERIODS),
+        )
+    if p == "week":
+        return _booking_week(now)
+    if p == "last":
+        cur_start, _ = _booking_week(now)
+        return cur_start - _BOOKING_WEEK, cur_start
+    if p == "mtd":
+        first = datetime.combine(now.date().replace(day=1), time.min)
+        return first, datetime.combine(now.date() + timedelta(days=1), time.min)
+    # custom
+    if start is None or end is None:
+        raise HTTPException(
+            status_code=400, detail="period=custom needs both start and end"
+        )
+    s = max(_YEAR_FIRST_INSTANT, _naive_cst(start))
+    e = min(_YEAR_END_EXCLUSIVE, _naive_cst(end) + _ONE_MINUTE)
+    if e <= s:
+        raise HTTPException(status_code=400, detail="end must be after start")
+    return s, e
+
+
+def _comparison_window(
+    start: datetime, end: datetime, now: datetime
+) -> tuple[datetime, datetime]:
+    """The window the movement arrows compare against: the equal-length window
+    immediately before, CLIPPED to the same elapsed time while `[start, end)`
+    is still open (Diego 2026-10-06, like-for-like).
+
+    Tuesday 09:00 inside Fri 17:01 → Fri 17:01 compares against the previous
+    Friday 17:01 → Tuesday 09:00, never the previous WHOLE week — 3½ days of
+    bookings against 7 is the +13-position artefact of 2026-08-31.
+    """
+    length = end - start
+    prev_start = start - length
+    if start <= now < end:
+        return prev_start, prev_start + (now - start)
+    return prev_start, start
+
+
+def _window_label(start: datetime, end: datetime) -> str:
+    """"Fri Oct 02, 5:01 PM → Fri Oct 09, 5:00 PM" — the END printed is the last
+    INCLUDED minute, the way Bruno writes it, not the exclusive bound."""
+    last = end - _ONE_MINUTE
+
+    def fmt(d: datetime) -> str:
+        hour = d.hour % 12 or 12
+        ampm = "AM" if d.hour < 12 else "PM"
+        return f"{d:%a %b %d}, {hour}:{d.minute:02d} {ampm}"
+
+    return f"{fmt(start)} → {fmt(last)}"
+
+
+def _window_payload(start: datetime, end: datetime) -> dict:
+    return {
+        "start": start.isoformat(timespec="minutes"),
+        # Inclusive last minute — the value the Custom inputs are prefilled with.
+        "end": (end - _ONE_MINUTE).isoformat(timespec="minutes"),
+        "label": _window_label(start, end),
+    }
 
 
 def _rank_rows(per_booker: dict[str, dict]) -> dict[str, int]:
@@ -1406,69 +1530,58 @@ def _rank_rows(per_booker: dict[str, dict]) -> dict[str, int]:
     return ranks
 
 
-@router.get("/rank")
-async def rank(
+def _cost_saving_desc_key(r: dict):
+    """Cost Saving high → low, nulls LAST (no threshold coverage is not a
+    saving of zero, and must not outrank one), then rank, then name."""
+    saving = r["cost_saving"]
+    return (saving is None, -(saving or 0.0), r["rank"] is None, r["rank"] or 0, r["booker"])
+
+
+async def _rank_payload(
     request: Request,
-    contract_type: Optional[list[str]] = Query(None),
-    customer_name: Optional[list[str]] = Query(None),
-    posted_by: Optional[list[str]] = Query(None),
-    _user: dict = Depends(require_report_access(REPORT_KEY)),
-):
-    """Bruno PDF 2026-08-31 page 1 — the Rank tab. Revised 2026-09-03.
+    *,
+    cur: tuple[datetime, datetime],
+    prev: tuple[datetime, datetime],
+    contracts: list[str],
+    customers: list[str],
+    posters: list[str],
+    min_bookings: int = 0,
+    sort_by_cost_saving: bool = False,
+) -> dict:
+    """The ranking shared by /rank and /rank/last-week.
 
-    Bookers ranked by # of Bookings in the last COMPLETED Sat-Fri week, with
-    the positions each moved against the week before, plus Compliance Threshold
-    and Cost Saving over the same week.
+    `cur` and `prev` are half-open naive-CST windows; `prev` ends at or before
+    `cur` starts (it is clipped while `cur` is open, so there may be a gap).
 
-    ⚠ Bruno PDF 2026-09-03 R3 — the table shows **BOOKERS ONLY**: the rows are
-    restricted to `RANK_ROSTER`, his own 15-name list. `posted_by_name` is
-    whoever pressed the button in McLeod, so the unrestricted population also
-    carried night-shift, coverage and management users; over the week 22-28 Aug
-    the table ranked 26 names, 15 of them not bookers.
+    ⚠ ONE scan over [prev.start, cur.end), bucketed in Python. `_base_sql` is a
+    full sequential scan of `mcleod_gld_order_post_hist` (1.9M rows, no usable
+    index — §73), and over one window each order has exactly ONE winning
+    posting (its latest), so it is credited to at most one bucket. Two separate
+    scans would credit an order re-confirmed in both windows twice. A winning
+    posting that falls in the clipping GAP belongs to neither bucket — the same
+    "latest posting wins" rule the rest of the report applies.
 
-    ⚠ The restriction is applied to the ROW SET of BOTH weeks, BEFORE ranking —
-    it is a population definition, not the §75 display filter `posted_by` is.
-    Ranking first and hiding afterwards would leave gaps (1, 3, 4, 6 …) and an
-    "of N" counting people the table refuses to show; restricting one week only
-    would make every `rank_delta` a comparison between two different leagues.
-    Decision: Diego, 2026-09-03 — this DROPS the week's #2 by volume (ARMANDO
-    CALVILLO, 37 loads), who is on neither this roster nor
-    `podium_top.BOOKER_NAMES`. Adding somebody back is a roster
-    edit, made HERE, never a second filter somewhere downstream.
+    ⚠ The roster restriction runs on the row set of BOTH windows BEFORE ranking
+    (Bruno 2026-09-03 R3, §104) — ranking first and hiding afterwards leaves
+    gaps (1, 3, 4, 6 …) and an "of N" counting people the table refuses to
+    show; restricting one window only compares two different leagues.
 
-    ⚠ Takes **no date parameters at all**, exactly like `/weekly`: the window is
-    a fixed pair of completed weeks computed here, so no hand-crafted URL can
-    widen it (§55 in reverse). The UI captions the window on screen — a table
-    that ignores the filter bar above it reads as a bug otherwise.
-
-    ⚠ ONE scan, not two. `_base_sql` runs a full sequential scan of
-    `mcleod_gld_order_post_hist` (1.9M rows, no usable index — §73), so both
-    weeks are fetched in a single 14-day pass and bucketed in Python. That also
-    fixes the double-count the report's own docstring warns about: over one
-    14-day window each order has exactly one winning posting and therefore
-    belongs to exactly one week, whereas two separate 7-day scans would credit
-    an order re-confirmed in both weeks twice.
-
-    ⚠ `posted_by` filters the DISPLAYED rows, never the ranking. Rank is a rule
-    computed over the whole booker population; filtering before ranking would
-    make every single-name selection show "rank 1 of 1" (§75 — a filter over a
-    rule deletes the answer). `customer_name` / `contract_type` DO narrow the
-    population, because they change which bookings exist at all. The roster is
-    neither of those: it is the definition of who the league is about, fixed in
-    code and identical on every request.
+    ⚠ `posters` and `min_bookings` filter the DISPLAYED rows, never the
+    ranking (§75): rank is a rule over the whole booker population, so a
+    single-name selection must not read "rank 1 of 1", and the ≥35 cut must not
+    renumber the bookers it keeps. `contracts` / `customers` DO narrow the
+    population — they change which bookings exist at all.
     """
     pool = get_datalake_gold_pool(request)
-    contracts = _parse_multi(contract_type)
-    customers = _parse_multi(customer_name)
-    posters = _parse_multi(posted_by)
-
-    prev_start, prev_end, cur_start, cur_end = _rank_weeks(cst_today())
+    (cur_start, cur_end), (prev_start, prev_end) = cur, prev
 
     params: list = []
     cte = _base_sql(
         params,
-        start=max(YEAR_START, prev_start),
-        end=min(YEAR_END, cur_end),
+        start=max(_YEAR_FIRST_INSTANT, prev_start),
+        # `_base_sql` bounds are inclusive; the posted_date column has minute
+        # precision, so "one microsecond before the exclusive end" is exact.
+        end=min(_YEAR_END_EXCLUSIVE, cur_end) - timedelta(microseconds=1),
         contract_types=contracts,
         customers=customers,
         # NOT `posters` — see the docstring.
@@ -1490,8 +1603,7 @@ async def rank(
     # Bruno 2026-09-03 R3 — bookers only. Matched through the shared normaliser
     # (§69), never string equality: three of the 15 roster spellings differ from
     # McLeod's byte-for-byte, and a strict compare would silently drop them.
-    # `_matches_roster` is cheap but the same handful of names repeats across
-    # thousands of rows, so the verdict is memoised per distinct spelling.
+    # The verdict is memoised per distinct spelling.
     is_booker: dict[str, bool] = {}
     for r in rows:
         name = (r["posted_by"] or "").strip()
@@ -1504,10 +1616,16 @@ async def rank(
         if not keep:
             continue
         pd = r["posted_date"]
-        d = pd.date() if isinstance(pd, datetime) else pd
-        if d is None:
+        if pd is None:
             continue
-        bucket = cur_rows if d >= cur_start else prev_rows
+        # A bare date (stub rows) counts as its first instant.
+        when = _lower_bound(pd)
+        if cur_start <= when < cur_end:
+            bucket = cur_rows
+        elif prev_start <= when < prev_end:
+            bucket = prev_rows
+        else:
+            continue
         bucket.setdefault(name, []).append(r)
 
     cur_agg = {n: {"bookings": len(rs)} for n, rs in cur_rows.items()}
@@ -1515,10 +1633,9 @@ async def rank(
     cur_ranks = _rank_rows(cur_agg)
     prev_ranks = _rank_rows(prev_agg)
 
-    # Every booker seen in EITHER week gets a row: someone who booked last week
-    # and nothing this week has fallen to the bottom, which is information. An
-    # inner join on "booked both weeks" would render that as a missing row
-    # instead of a red one (§91, §75).
+    # Every booker seen in EITHER window gets a row: someone who booked last
+    # time and nothing now has fallen to the bottom, which is information. An
+    # inner join would render that as a missing row instead of a red one (§91).
     all_names = sorted(set(cur_agg) | set(prev_agg))
     out = []
     for name in all_names:
@@ -1529,20 +1646,14 @@ async def rank(
             "booker": name,
             "rank": cur_rank,
             "prev_rank": prev_rank,
-            # Positive = moved UP the table. None when the booker did not
-            # appear last week — "new" is not the same as "unchanged", and a 0
-            # would print as a flat arrow beside a first-ever appearance.
+            # Positive = moved UP. None when the booker did not appear in the
+            # comparison window — "new" is not "unchanged".
             "rank_delta": (prev_rank - cur_rank)
             if (cur_rank is not None and prev_rank is not None) else None,
             "bookings": cur_agg.get(name, {}).get("bookings", 0),
             "prev_bookings": prev_agg.get(name, {}).get("bookings", 0),
-            # Bruno 2026-09-03 R1 — the tab now reads "Compliance Threshold".
             # FORWARDED from `_threshold_stats`, never recomputed here: the
-            # Scorecard tab's KPI card folds the very same helper, so the two
-            # tabs cannot end up disagreeing about one person's compliance
-            # (§69). `broken_threshold` stays on the wire because the Orders
-            # table still flags individual broken orders — a ROW fact that
-            # keeps its own wording.
+            # Scorecard tab's KPI card folds the very same helper (§69).
             "broken_threshold": stats["broken_threshold"],
             "threshold_orders": stats["threshold_orders"],
             "broken_threshold_pct": stats["broken_threshold_pct"],
@@ -1551,40 +1662,115 @@ async def rank(
             "cost_saving": stats["cost_saving"],
             "under_threshold": stats["under_threshold"],
         })
-    # Unranked bookers (none this week) sort last, not first.
-    out.sort(key=lambda r: (r["rank"] is None, r["rank"] or 0, r["booker"]))
+    if sort_by_cost_saving:
+        out.sort(key=_cost_saving_desc_key)
+    else:
+        # Unranked bookers (none in the window) sort last, not first.
+        out.sort(key=lambda r: (r["rank"] is None, r["rank"] or 0, r["booker"]))
 
+    if min_bookings:
+        out = [r for r in out if r["bookings"] >= min_bookings]
     if posters:
         wanted = {p.strip() for p in posters}
         out = [r for r in out if r["booker"] in wanted]
 
-    # Picker options. `all_names` is already roster-only, so this IS the list
-    # of bookers who booked in either week — offering a name the table cannot
-    # show would be a picker that empties its own table.
+    # Picker options: the roster members who booked in either window. Not
+    # narrowed by `min_bookings` — that is a display cut on one table.
     in_roster = list(all_names)
 
     return {
-        "success": True,
-        "data": {
-            "rows": out,
-            "bookers": in_roster,
-            "roster": in_roster,
-            # `total_bookers` is the ranked population — the "of N" in "3 of N".
-            # It is deliberately the count BEFORE the posted_by display filter,
-            # so selecting one name does not renumber the league (§75).
-            "total_bookers": len(cur_agg),
-            # Sat-Fri (Bruno 2026-09-03 R2), and this tab only — the caption
-            # on screen says so, because a table that silently disagrees with
-            # the rest of the report about what "a week" is reads as a bug.
-            "week": {
-                "start": cur_start.isoformat(),
-                "end": cur_end.isoformat(),
-                "label": f"{cur_start.day:02d}/{cur_start.month:02d} - {cur_end.day:02d}/{cur_end.month:02d}",
-            },
-            "prev_week": {
-                "start": prev_start.isoformat(),
-                "end": prev_end.isoformat(),
-                "label": f"{prev_start.day:02d}/{prev_start.month:02d} - {prev_end.day:02d}/{prev_end.month:02d}",
-            },
-        },
+        "rows": out,
+        "bookers": in_roster,
+        "roster": in_roster,
+        # The ranked population — the "of N" in "3 of N". Counted BEFORE the
+        # display filters, so neither the picker nor the ≥35 cut renumbers the
+        # league (§75).
+        "total_bookers": len(cur_agg),
+        "min_bookings": min_bookings,
+        "week": _window_payload(cur_start, cur_end),
+        "prev_week": _window_payload(prev_start, prev_end),
+        # True while the window is still open and the comparison is clipped —
+        # the UI says "vs the same point last week" instead of "vs last week".
+        "like_for_like": prev_end < cur_start,
     }
+
+
+@router.get("/rank")
+async def rank(
+    request: Request,
+    period: Optional[str] = Query(None),
+    start: Optional[datetime] = Query(None),
+    end: Optional[datetime] = Query(None),
+    contract_type: Optional[list[str]] = Query(None),
+    customer_name: Optional[list[str]] = Query(None),
+    posted_by: Optional[list[str]] = Query(None),
+    _user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """The Rank tab — Bruno PDF 2026-08-31, revised 2026-09-03 and 2026-10-06.
+
+    Bookers (RANK_ROSTER only) ranked by # of Bookings inside the selected
+    window, with the positions each moved against the comparison window, plus
+    Compliance Threshold and Cost Saving over the same window.
+
+    Bruno 2026-10-06 R1 — the tab now FOLLOWS a date filter:
+      * `period=week` (default) — the booking week containing now,
+        Fri 17:01 → Fri 17:00 CST.
+      * `period=last` — the booking week before it.
+      * `period=mtd` — the 1st of the month 00:00 → now.
+      * `period=custom` — `start` / `end` as `YYYY-MM-DDTHH:MM`, naive = CST,
+        `end` INCLUSIVE to the minute. Clamped to 2026.
+    `start` / `end` are read for `custom` only; the presets are resolved here
+    from the CST clock so a browser in another timezone cannot shift Friday.
+    """
+    now = _naive_cst(cst_now())
+    cur = _resolve_rank_window(period, start, end, now)
+    prev = _comparison_window(*cur, now)
+    data = await _rank_payload(
+        request,
+        cur=cur,
+        prev=prev,
+        contracts=_parse_multi(contract_type),
+        customers=_parse_multi(customer_name),
+        posters=_parse_multi(posted_by),
+    )
+    return {"success": True, "data": data}
+
+
+@router.get("/rank/last-week")
+async def rank_last_week(
+    request: Request,
+    contract_type: Optional[list[str]] = Query(None),
+    customer_name: Optional[list[str]] = Query(None),
+    posted_by: Optional[list[str]] = Query(None),
+    _user: dict = Depends(require_report_access(REPORT_KEY)),
+):
+    """"Rank Last Week" — Bruno PDF 2026-10-06 R2.
+
+    A copy of the Rank table pinned to the PREVIOUS booking week (on Tue 6 Oct:
+    Fri 25 Sep 17:01 → Fri 2 Oct 17:00), showing only bookers with
+    ≥ RANK_LAST_WEEK_MIN_BOOKINGS bookings, sorted by Cost Saving high → low.
+
+    ⚠ Declares NO date parameters at all, like /weekly: "not affected by the
+    date filter" is enforced by the signature, so no hand-crafted URL can move
+    it. The scope filters (customer, contract, booker) still apply, exactly as
+    they always did on the Rank tab.
+
+    Movement compares against the week before it — two COMPLETE weeks, so no
+    clipping. `rank` is still the position by # of Bookings among every roster
+    booker that week; the ≥35 cut and the Cost Saving order are display only.
+    """
+    now = _naive_cst(cst_now())
+    cur_start, _ = _booking_week(now)
+    cur = (cur_start - _BOOKING_WEEK, cur_start)
+    prev = (cur[0] - _BOOKING_WEEK, cur[0])
+    data = await _rank_payload(
+        request,
+        cur=cur,
+        prev=prev,
+        contracts=_parse_multi(contract_type),
+        customers=_parse_multi(customer_name),
+        posters=_parse_multi(posted_by),
+        min_bookings=RANK_LAST_WEEK_MIN_BOOKINGS,
+        sort_by_cost_saving=True,
+    )
+    return {"success": True, "data": data}

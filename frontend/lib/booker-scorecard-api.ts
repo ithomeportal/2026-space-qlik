@@ -276,8 +276,8 @@ export interface BookerFreshness {
 /** One row of the Rank tab (Bruno PDF 2026-08-31, page 1). */
 export interface BookerRankRow {
   booker: string
-  /** Competition rank (1,2,2,4) by bookings in the last completed week.
-   *  null when the booker did not book at all that week. */
+  /** Competition rank (1,2,2,4) by bookings inside the window.
+   *  null when the booker did not book at all in it. */
   rank: number | null
   prev_rank: number | null
   /** prev_rank − rank. POSITIVE = moved UP. null = not present last week,
@@ -303,10 +303,25 @@ export interface BookerRankRow {
   under_threshold: number | null
 }
 
+/** A Rank window, naive CST to the minute (`YYYY-MM-DDTHH:MM`). `end` is the
+ *  LAST INCLUDED minute ("…5:00 PM"), exactly what the Custom inputs take. */
 export interface BookerRankWeek {
   start: string
   end: string
   label: string
+}
+
+/** The Rank tab's own date control (Bruno 2026-10-06 R1). Presets are resolved
+ *  SERVER-side from the CST clock — a browser in another timezone must not
+ *  move Friday 5:01 PM. Default "week" = Fri 5:01 PM → Fri 5:00 PM. */
+export type RankPeriod = "week" | "last" | "mtd" | "custom"
+
+export interface RankWindow {
+  period: RankPeriod
+  /** `YYYY-MM-DDTHH:MM`, custom only. */
+  start?: string
+  /** `YYYY-MM-DDTHH:MM`, INCLUSIVE, custom only. */
+  end?: string
 }
 
 /** ⚠ The INNER payload — apiFetch<T> already unwraps the {success, data}
@@ -323,8 +338,14 @@ export interface BookerRank {
    *  counted BEFORE the Posted By display filter, so selecting one name does
    *  not renumber the league (§75). */
   total_bookers: number
+  /** The ranked window, and the window the movement arrows compare against. */
   week: BookerRankWeek
   prev_week: BookerRankWeek
+  /** True while the window is still open: prev_week is the previous window
+   *  clipped to the same elapsed time, so the caption says "same point". */
+  like_for_like: boolean
+  /** Rank Last Week's display cut (35); 0 on the main Rank table. */
+  min_bookings: number
 }
 
 // ---------------------------------------------------------------------------
@@ -418,21 +439,59 @@ export function useBookerWeekly(scope: BookerScopeFilters) {
   })
 }
 
-/** The Rank tab. Scope filters only — it takes NO date params, exactly like
- *  useBookerWeekly: the window is a fixed pair of completed weeks resolved
- *  server-side, and the tab captions it on screen.
- *
- *  ⚠ Those weeks run SATURDAY → FRIDAY (Bruno 2026-09-03 R2) on this tab ONLY.
- *  Every other window in this report is Mon-Sun. Do not "harmonise" them. */
-export function useBookerRank(scope: BookerScopeFilters) {
+function rankWindowParams(q: URLSearchParams, w: RankWindow) {
+  q.set("period", w.period)
+  if (w.period === "custom") {
+    if (w.start) q.set("start", w.start)
+    if (w.end) q.set("end", w.end)
+  }
+}
+
+/** The Rank table. Bruno 2026-10-06 R1 — it FOLLOWS the Rank tab's own date
+ *  control (period / start / end), never the Scorecard tab's range: that one is
+ *  calendar days on a Mon-Sun week, the booking week turns at Fri 5:01 PM. */
+export function useBookerRank(
+  scope: BookerScopeFilters,
+  win: RankWindow,
+  /** The page reads the same query (same key ⇒ one request) to prefill the
+   *  Custom inputs; it passes false off the Rank tab so the 1.9M-row scan
+   *  never runs for a tab nobody is looking at. */
+  enabled = true,
+) {
+  const q = new URLSearchParams()
+  rankWindowParams(q, win)
+  scopeParams(q, scope)
+  const qs = q.toString()
+  return useQuery({
+    // §50 — the key covers every field the URL builder serialises.
+    queryKey: [
+      "booker-scorecard",
+      "rank",
+      win.period,
+      win.period === "custom" ? win.start ?? "" : "",
+      win.period === "custom" ? win.end ?? "" : "",
+      ...scopeKey(scope),
+    ],
+    queryFn: () =>
+      apiFetch<BookerRank>(`custom/booker-performance-scorecard/rank?${qs}`),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    ...RETRY,
+  })
+}
+
+/** "Rank Last Week" (Bruno 2026-10-06 R2) — scope filters ONLY. The endpoint
+ *  declares no date params, so the previous booking week cannot be moved. */
+export function useBookerRankLastWeek(scope: BookerScopeFilters) {
   const q = new URLSearchParams()
   scopeParams(q, scope)
   const qs = q.toString()
   return useQuery({
-    queryKey: ["booker-scorecard", "rank", ...scopeKey(scope)],
+    queryKey: ["booker-scorecard", "rank-last-week", ...scopeKey(scope)],
     queryFn: () =>
       apiFetch<BookerRank>(
-        `custom/booker-performance-scorecard/rank${qs ? `?${qs}` : ""}`,
+        `custom/booker-performance-scorecard/rank/last-week${qs ? `?${qs}` : ""}`,
       ),
     staleTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,

@@ -39,11 +39,12 @@ import asyncio
 import inspect
 import re
 import types
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
 from app.booker_names import matches_roster, name_key, roster_keys
+from app.clock import CST
 from app.routers import booker_scorecard as bs
 
 
@@ -136,13 +137,18 @@ class _StubPool:
 _NO_THRESHOLDS: dict = {}
 
 
-def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, **kwargs):
+def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, now=None,
+           **kwargs):
     """Drive an endpoint against a stub pool.
 
     ⚠ `today` pins the clock. /rank resolves its own window from `cst_today()`,
     so a stub row dated in August lands in a DIFFERENT week each time the real
     calendar advances — a test that passes today and goes red next Saturday for
     no code change. Every rank test that asserts on bucketing passes it.
+
+    ⚠ `now` pins `cst_now()` too — /rank resolves its booking week from the CST
+    wall clock since Bruno 2026-10-06. When only `today` is given, `now` is
+    noon of that day in Chicago.
 
     ⚠ `thresholds` is what `_thresholds` returns: `{}` (the default — the AP
     source is up and knows none of these orders), a dict, or `None` (the source
@@ -155,6 +161,7 @@ def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, **kwargs):
     orig_pool = bs.get_datalake_gold_pool
     orig_thresh = bs._thresholds
     orig_clock = bs.cst_today
+    orig_now = bs.cst_now
     bs.get_datalake_gold_pool = lambda request: pool
 
     async def _stub_thresholds(request, order_ids):
@@ -163,6 +170,10 @@ def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, **kwargs):
     bs._thresholds = _stub_thresholds
     if today is not None:
         bs.cst_today = lambda: today
+        if now is None:
+            now = datetime.combine(today, time(12, 0), tzinfo=CST)
+    if now is not None:
+        bs.cst_now = lambda: now
     try:
         request = types.SimpleNamespace(
             app=types.SimpleNamespace(state=types.SimpleNamespace())
@@ -172,18 +183,27 @@ def _drive(fn, rows=None, today=None, thresholds=_NO_THRESHOLDS, **kwargs):
         bs.get_datalake_gold_pool = orig_pool
         bs._thresholds = orig_thresh
         bs.cst_today = orig_clock
+        bs.cst_now = orig_now
     return pool, resp
 
 
 _SCOPE = dict(contract_type=None, customer_name=None, posted_by=None)
 _DATED = dict(range="mtd", start_date=None, end_date=None, **_SCOPE)
+# /rank follows a date filter since Bruno 2026-10-06. The rank tests below were
+# written against the window Mon 2026-08-31 used to rank — 22-28 Aug, compared
+# against 15-21 Aug — so they pin exactly that window as a CUSTOM range. Its
+# end is in the past, so the comparison window is the whole previous week.
+_RANK_WINDOW = dict(period="custom", start=datetime(2026, 8, 22, 0, 0),
+                    end=datetime(2026, 8, 28, 23, 59))
+_RANK = dict(_SCOPE, **_RANK_WINDOW)
 
 _EVERY_ENDPOINT = (
     ("summary", dict(_DATED, adjustment=0.0)),
     ("orders", dict(_DATED, adjustment=0.0, sort="profit_desc", page=0, limit=200)),
     ("filters", dict(range="mtd", start_date=None, end_date=None)),
     ("weekly", dict(_SCOPE)),
-    ("rank", dict(_SCOPE)),
+    ("rank", dict(_RANK)),
+    ("rank_last_week", dict(_SCOPE)),
 )
 
 
@@ -281,7 +301,8 @@ def test_summary_and_orders_share_one_compliance_definition():
         "a second `1 - broken` derivation exists outside _threshold_stats"
     )
 
-    for endpoint in (bs.summary, bs.orders, bs.rank):
+    # /rank and /rank/last-week fold the helper through `_rank_payload`.
+    for endpoint in (bs.summary, bs.orders, bs._rank_payload):
         assert "_threshold_stats(" in inspect.getsource(endpoint), endpoint.__name__
 
 
@@ -290,27 +311,10 @@ def test_summary_and_orders_share_one_compliance_definition():
 # ==========================================================================
 
 
-def test_the_rank_window_is_two_completed_weeks():
-    """⚠ Never the in-progress week. Shipped on Monday 2026-08-31, when the
-    current week held ONE day: ranking it against a full previous week produced
-    +13-position moves for a booker who merely started early. Same rule
-    `attrition_core` states for its own weekly windows.
-
-    The week turned Sat-Fri on 2026-09-03; the rule did not move. The
-    weekday-agnostic half of this assertion is deliberately kept here, and the
-    Saturday boundary itself is pinned in the 09-03 file.
-    """
-    for weekday in range(7):
-        today = date(2026, 8, 31) + timedelta(days=weekday)
-        prev_s, prev_e, cur_s, cur_e = bs._rank_weeks(today)
-        assert cur_s.weekday() == prev_s.weekday()
-        assert (cur_e - cur_s).days == 6 and (prev_e - prev_s).days == 6
-        assert prev_e + timedelta(days=1) == cur_s, "the two weeks must be adjacent"
-        # The whole compared week is in the past, on every day of the week.
-        assert cur_e < today, "the in-progress week leaked into the ranking"
-        assert (today - cur_e).days <= 7, (
-            "the ranked week is more than one week stale"
-        )
+# ⚠ "The rank window is two COMPLETED weeks" lived here until 2026-10-06, when
+# Bruno made the in-progress booking week the default. Its intent — never rank a
+# partial week against a whole one — survives as the like-for-like comparison,
+# pinned in test_booker_scorecard_bruno_2026_10_06.py.
 
 
 def test_rank_is_competition_ranked_so_ties_consume_slots():
@@ -361,11 +365,24 @@ def test_the_rank_roster_is_not_the_podium_roster():
     assert len(bs.RANK_ROSTER) == 15
 
 
-def test_rank_takes_no_date_parameters():
-    """⚠ Like /weekly. Declaring them and ignoring them would let a
-    hand-crafted URL widen a window the UI captions as two fixed weeks (§55)."""
+def test_rank_takes_only_its_own_date_parameters():
+    """Bruno 2026-10-06 R1 — /rank follows the Rank tab's OWN date control
+    (`period` / `start` / `end`). It must never accept the Scorecard tab's
+    `range` / `start_date` / `end_date`: those are calendar days on a Mon-Sun
+    week, and a shared name would carry one tab's window into the other."""
     params = inspect.signature(bs.rank).parameters
+    for own in ("period", "start", "end"):
+        assert own in params, own
     for forbidden in ("range", "start_date", "end_date"):
+        assert forbidden not in params, forbidden
+
+
+def test_rank_last_week_takes_no_date_parameters():
+    """⚠ Bruno 2026-10-06 R2 — "Rank Last Week" is not affected by the date
+    filter. Enforced by the signature, like /weekly (§55): declaring a date
+    param and ignoring it would let a hand-crafted URL move the table."""
+    params = inspect.signature(bs.rank_last_week).parameters
+    for forbidden in ("period", "start", "end", "range", "start_date", "end_date"):
         assert forbidden not in params, forbidden
 
 
@@ -374,7 +391,7 @@ def test_rank_scans_the_bookings_table_once():
     every execution is a full sequential scan. Both weeks come from ONE 14-day
     pass, which also gives each order exactly one week instead of crediting a
     re-confirmed order to both."""
-    pool, _ = _drive(bs.rank, today=date(2026, 8, 31), **_SCOPE)
+    pool, _ = _drive(bs.rank, today=date(2026, 8, 31), **_RANK)
     assert len(pool.sqls) == 1
 
 
@@ -390,10 +407,10 @@ def test_posted_by_filters_the_rows_but_never_the_ranking():
         for name, n in (("EUGENIO MIRANDA", 5), ("JUAN REYNA", 1))
         for i in range(n)
     ]
-    _, unfiltered = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_SCOPE)
+    _, unfiltered = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_RANK)
     _, filtered = _drive(bs.rank, rows=rows, today=date(2026, 8, 31),
                          contract_type=None, customer_name=None,
-                         posted_by=["JUAN REYNA"])
+                         posted_by=["JUAN REYNA"], **_RANK_WINDOW)
 
     assert unfiltered["data"]["total_bookers"] == 2
     # The population, and therefore the rank, is unchanged by the picker.
@@ -414,7 +431,7 @@ def test_posted_by_never_reaches_the_rank_query():
     the second half proves the scan can see a known positive (§91).
     """
     pool, _ = _drive(bs.rank, contract_type=None, customer_name=None,
-                     posted_by=["JUAN REYNA"])
+                     posted_by=["JUAN REYNA"], **_RANK_WINDOW)
     rank_sql = "\n".join(pool.sqls)
     assert "TRIM(rp.posted_by_name) = ANY(" not in rank_sql, (
         "/rank pushed the Posted By picker into the query, which re-ranks a "
@@ -441,7 +458,7 @@ def test_a_booker_who_stopped_still_gets_a_row():
     ]
     # Pin the clock so the two stub dates land in the intended weeks: with
     # today = Mon 2026-08-31 the Sat-Fri pair is 15-21 Aug and 22-28 Aug.
-    _, resp = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_SCOPE)
+    _, resp = _drive(bs.rank, rows=rows, today=date(2026, 8, 31), **_RANK)
     by_name = {r["booker"]: r for r in resp["data"]["rows"]}
     assert set(by_name) == {"OSCAR MACIAS", "DANIEL SALAZAR"}
     assert by_name["OSCAR MACIAS"]["rank"] is None
@@ -473,7 +490,7 @@ def test_rank_survives_an_ap_outage():
         request = types.SimpleNamespace(
             app=types.SimpleNamespace(state=types.SimpleNamespace())
         )
-        resp = asyncio.run(bs.rank(request=request, _user={}, **_SCOPE))
+        resp = asyncio.run(bs.rank(request=request, _user={}, **_RANK))
     finally:
         bs.get_datalake_gold_pool = orig_pool
         bs._thresholds = orig_thresh

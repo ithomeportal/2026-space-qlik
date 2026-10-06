@@ -7,6 +7,7 @@ import { ArrowLeft, ClipboardCheck, FlaskConical, Loader2, Trophy } from "lucide
 import {
   SCENARIO_STEPS,
   useBookerFilterOptions,
+  useBookerRank,
   type BookerFilters,
   type BookerRange,
   type BookerScopeFilters,
@@ -20,7 +21,8 @@ import { OrdersTable } from "./OrdersTable"
 import { ActionPlan } from "./ActionPlan"
 import { DataFreshness } from "./DataFreshness"
 import { ScenarioPanel } from "./ScenarioPanel"
-import { RankTable } from "./RankTable"
+import { RankLastWeekTable, RankTable } from "./RankTable"
+import { RankDateFilter, parseRankWindow } from "./RankDateFilter"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -113,6 +115,17 @@ function BookerScorecardContent() {
     () => parseList(searchParams.get("poster")),
     [searchParams],
   )
+  // Bruno 2026-10-06 R1 — the Rank tab's OWN date state (rr / rs / re), so the
+  // Scorecard tab keeps its MTD default and the Rank tab its booking week.
+  const rankWin = useMemo(
+    () =>
+      parseRankWindow(
+        searchParams.get("rr"),
+        searchParams.get("rs"),
+        searchParams.get("re"),
+      ),
+    [searchParams],
+  )
 
   const updateUrl = useCallback(
     (patch: Record<string, string | null | undefined>) => {
@@ -154,10 +167,16 @@ function BookerScorecardContent() {
 
   const { data: optRes, isLoading: loadingFilters } =
     useBookerFilterOptions(filters)
+  // Same query key as <RankTable> ⇒ one request. Read here only to caption the
+  // top bar and prefill Custom; disabled off the Rank tab (§73 — full scan).
+  const { data: rankRes } = useBookerRank(scope, rankWin, tab === "rank")
+  const rankWeek = rankRes?.data?.week
   const opts = optRes?.data
   const win = opts?.window
 
-  const windowLabel = win
+  const windowLabel = tab === "rank"
+    ? rankWeek?.label ?? ""
+    : win
     ? `${win.start} → ${win.end}`
     : range === "custom"
       ? `${clampToYear(startDate)} → ${clampToYear(endDate)}`
@@ -193,47 +212,55 @@ function BookerScorecardContent() {
       {/* Filter bar */}
       <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-              Date
-            </label>
-            <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
-              {RANGES.map((opt) => (
-                <button
-                  key={opt.k}
-                  onClick={() => setRange(opt.k)}
-                  className={`px-3 py-1.5 ${
-                    range === opt.k
-                      ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
-                      : "text-[#6B7280] hover:text-[#111827]"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            {range === "custom" && (
-              <div className="flex items-center gap-1 text-xs">
-                <input
-                  type="date"
-                  min={YEAR_START}
-                  max={YEAR_END}
-                  value={startDate}
-                  onChange={(e) => updateUrl({ s: e.target.value })}
-                  className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
-                />
-                <span className="text-[#6B7280]">→</span>
-                <input
-                  type="date"
-                  min={YEAR_START}
-                  max={YEAR_END}
-                  value={endDate}
-                  onChange={(e) => updateUrl({ e: e.target.value })}
-                  className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
-                />
+          {tab === "rank" ? (
+            <RankDateFilter
+              win={rankWin}
+              resolved={rankWeek}
+              onChange={updateUrl}
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+                Date
+              </label>
+              <div className="flex rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] text-xs">
+                {RANGES.map((opt) => (
+                  <button
+                    key={opt.k}
+                    onClick={() => setRange(opt.k)}
+                    className={`px-3 py-1.5 ${
+                      range === opt.k
+                        ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
+                        : "text-[#6B7280] hover:text-[#111827]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-            )}
-          </div>
+              {range === "custom" && (
+                <div className="flex items-center gap-1 text-xs">
+                  <input
+                    type="date"
+                    min={YEAR_START}
+                    max={YEAR_END}
+                    value={startDate}
+                    onChange={(e) => updateUrl({ s: e.target.value })}
+                    className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+                  />
+                  <span className="text-[#6B7280]">→</span>
+                  <input
+                    type="date"
+                    min={YEAR_START}
+                    max={YEAR_END}
+                    value={endDate}
+                    onChange={(e) => updateUrl({ e: e.target.value })}
+                    className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <MultiSelectChips
             label="Customer"
@@ -291,11 +318,16 @@ function BookerScorecardContent() {
         </div>
 
         {tab === "rank" && (
-          <RankTable
-            scope={scope}
-            postedBy={postedBy}
-            onPostedByChange={setList("poster")}
-          />
+          <>
+            <RankTable
+              scope={scope}
+              win={rankWin}
+              postedBy={postedBy}
+              onPostedByChange={setList("poster")}
+            />
+            {/* Bruno 2026-10-06 R2 — always the previous booking week. */}
+            <RankLastWeekTable scope={scope} postedBy={postedBy} />
+          </>
         )}
 
         {tab === "scorecard" && (
