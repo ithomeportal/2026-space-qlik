@@ -1,7 +1,8 @@
 """Weekly "Recruitment Status" e-mail digest (data layer).
 
 Requested 2026-10-12: a recruitment status report to Erick Mendoza (CEO) and
-Daniela Nava (HR Director), Bcc dfrodriguez, every Monday 16:00 CST, built from
+Daniela Nava (HR Director), Bcc dfrodriguez — now Monday + Thursday 16:00 CST and
+also Christian Mendoza + Jaime Anaya (n8n holds the list) — built from
 the Exec Meeting – Recruitment report plus the Jobs portal's /dashboard/reports
 indicators, with a week-by-week count of screened / valid candidates.
 

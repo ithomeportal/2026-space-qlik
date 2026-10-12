@@ -4,7 +4,7 @@ Own router file so the report router stays untouched; same prefix as the
 report, so a user who can see ``exec-meeting-recruitment`` can open the URL to
 preview the e-mail.
 
-The consumer is an external n8n workflow (Mondays 16:00 CST) that GETs this
+The consumer is an external n8n workflow (Monday + Thursday 16:00 CST) that GETs this
 and mails the HTML — it does NOT send anything itself. Response envelope:
 
     {"success": true,

@@ -1,7 +1,7 @@
 """Exec Meeting – Recruitment · PIPELINE — weekly funnel + live pipeline status.
 
 Added 2026-10-12 for the weekly "Recruitment Status" e-mail (Erick Mendoza +
-Daniela Nava, Mondays 16:00 CST via n8n). Own file so the 629-line report
+Daniela Nava, Mon + Thu 16:00 CST via n8n). Own file so the 629-line report
 router stays untouched; same prefix and the same report gate, so anyone who can
 open Exec Meeting – Recruitment can open this.
 
@@ -198,7 +198,7 @@ async def _stage_orders(pool, since_utc: datetime) -> tuple[dict[str, int], list
 
     Only a stage that is IN USE is reported unknown — one a candidate is in now
     or moved into during the window. A stray custom stage on a long-closed
-    position must not 503 the e-mail every Monday forever.
+    position must not 503 the e-mail on every send forever.
     """
     rows = await pool.fetch(
         """
