@@ -11,6 +11,8 @@ What these pin:
   * the previous leg counts the SAME population as the current one (same
     where-builder params, same Losses / Unbilled clauses — §96);
   * variance sign, previous-only customers, and a TOTAL that sums the rows;
+  * an MTD window ALSO gets the previous month WHOLE (``*_prev_full``) — user
+    2026-10-12: "what is missing to the end of the month" — same population;
   * DFW gets it pinned server-side, while CORP / CEO keep the exact payload
     they had (no previous statement, no ``*_prev`` keys).
 """
@@ -76,6 +78,32 @@ def test_prior_month_window(start: date, end: date, today: date, want: tuple[dat
     assert _prior_month.prior_month_window(start, end, today) == want
 
 
+@pytest.mark.parametrize(
+    "start,end,today,want",
+    [
+        # MTD on 10-12 → the whole of September.
+        (date(2026, 10, 1), date(2026, 10, 12), date(2026, 10, 12), (date(2026, 9, 1), date(2026, 9, 30))),
+        # "This Month" (10-01..10-31) is MTD once capped at today.
+        (date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 12), (date(2026, 9, 1), date(2026, 9, 30))),
+        # March MTD → the whole 28-day February, never "Feb 1-30".
+        (date(2026, 3, 1), date(2026, 3, 10), date(2026, 3, 10), (date(2026, 2, 1), date(2026, 2, 28))),
+        # January MTD → December 2025 (no YEAR_START clamp).
+        (date(2026, 1, 1), date(2026, 1, 12), date(2026, 1, 12), (date(2025, 12, 1), date(2025, 12, 31))),
+        # Multi-month window ending mid-month → whole months behind it.
+        (date(2026, 9, 1), date(2026, 10, 12), date(2026, 10, 12), (date(2026, 8, 1), date(2026, 9, 30))),
+        # A whole month already compares whole months — no second leg.
+        (date(2026, 9, 1), date(2026, 9, 30), _FAR, None),
+        # The last day of the month: MTD IS the whole month.
+        (date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 31), None),
+        # A mid-month start has no month-end target.
+        (date(2026, 10, 5), date(2026, 10, 12), date(2026, 10, 12), None),
+        (date(2026, 10, 11), date(2026, 10, 11), date(2026, 10, 12), None),
+    ],
+)
+def test_full_month_window(start: date, end: date, today: date, want) -> None:
+    assert _prior_month.full_month_window(start, end, today) == want
+
+
 # ---------------------------------------------------------------------------
 # Harness — a pool that answers the two legs and records every statement
 # ---------------------------------------------------------------------------
@@ -89,6 +117,13 @@ _PREVIOUS = [
     # Shipped last month, nothing this month — must still be a row.
     {"customer_name": "CHARLIE", "vol": 4, "rev": 400, "prof": 40},
 ]
+_FULL = [  # the whole previous month — a superset of _PREVIOUS
+    {"customer_name": "ALPHA", "vol": 50, "rev": 4000, "prof": 600},
+    {"customer_name": "CHARLIE", "vol": 9, "rev": 900, "prof": 90},
+    # Shipped only in Sep 13-30 — in neither of the other legs.
+    {"customer_name": "DELTA", "vol": 3, "rev": 300, "prof": 30},
+]
+_FULL_END = date(2026, 9, 30)
 
 
 class _Pool:
@@ -98,7 +133,7 @@ class _Pool:
     async def fetch(self, sql, *params):
         self.calls.append((sql, params))
         if sql.startswith(PREV_TAG):
-            return _PREVIOUS
+            return _FULL if params[-1] == _FULL_END else _PREVIOUS
         if "WITH otp AS" in sql:
             return _CURRENT
         return []
@@ -144,7 +179,12 @@ def _dfw(**over):
 
 
 def _prev_calls(pool):
-    return [(s, p) for s, p in pool.calls if s.startswith(PREV_TAG)]
+    """The same-days leg (the whole-month leg is ``_full_calls``)."""
+    return [(s, p) for s, p in pool.calls if s.startswith(PREV_TAG) and p[-1] != _FULL_END]
+
+
+def _full_calls(pool):
+    return [(s, p) for s, p in pool.calls if s.startswith(PREV_TAG) and p[-1] == _FULL_END]
 
 
 def _cur_calls(pool):
@@ -164,7 +204,10 @@ def test_dfw_queries_the_same_days_of_the_previous_month(pool) -> None:
     assert prev_params[-2:] == (date(2026, 9, 1), date(2026, 9, 12))
     assert out["meta"]["compare"] == {
         "basis": "prior_month", "start": "2026-09-01", "end": "2026-09-12",
+        "full_start": "2026-09-01", "full_end": "2026-09-30",
     }
+    (_, full_params), = _full_calls(pool)
+    assert full_params[-2:] == (date(2026, 9, 1), _FULL_END)
 
 
 def test_variance_is_current_minus_previous(pool) -> None:
@@ -197,7 +240,8 @@ def test_the_total_is_the_sum_of_the_rows(pool) -> None:
     # The TOTAL margin is Σprofit ÷ Σrevenue, never a mean of row margins.
     assert t["margin_prev_pct"] == pytest.approx(340 / 1900 * 100)
     assert t["margin_vs_prev_pct"] == pytest.approx(50 / 1500 * 100 - 340 / 1900 * 100)
-    assert out["meta"]["total"] == 3
+    # ALPHA, BRAVO, CHARLIE + DELTA (whole-month leg only).
+    assert out["meta"]["total"] == 4
 
 
 @pytest.mark.parametrize(
@@ -210,13 +254,61 @@ def test_the_total_is_the_sum_of_the_rows(pool) -> None:
 def test_both_legs_count_one_population(pool, over, clause) -> None:
     """§96: a filter on one leg only would compare two different load sets."""
     _dfw(carriers=["CARRIER X"], team="TM2", **over)
-    (prev_sql, prev_params), = _prev_calls(pool)
     (cur_sql, cur_params), = _cur_calls(pool)
-    assert clause in prev_sql and clause in cur_sql
-    # Same where-builder output: every bound filter value identical.
-    assert prev_params[:-2] == cur_params[:-2]
-    # Same COUNT definition as the current leg's `vol`.
-    assert "total_charge IS NOT NULL AND br4.total_charge <> 0" in prev_sql
+    for leg in (_prev_calls(pool), _full_calls(pool)):
+        (prev_sql, prev_params), = leg
+        assert clause in prev_sql and clause in cur_sql
+        # Same where-builder output: every bound filter value identical.
+        assert prev_params[:-2] == cur_params[:-2]
+        # Same COUNT definition as the current leg's `vol`.
+        assert "total_charge IS NOT NULL AND br4.total_charge <> 0" in prev_sql
+
+
+# ---------------------------------------------------------------------------
+# MTD — the previous month WHOLE (user 2026-10-12)
+# ---------------------------------------------------------------------------
+
+
+def test_mtd_gap_to_the_whole_previous_month(pool) -> None:
+    rows = {r["customer_name"]: r for r in _dfw()["data"]}
+    a = rows["ALPHA"]
+    # Current 10 / $1000 vs Sep whole 50 / $4000: 40 loads still missing.
+    assert (a["vol_prev_full"], a["vol_vs_prev_full"]) == (50, -40)
+    assert (a["rev_prev_full"], a["rev_vs_prev_full"]) == (4000, -3000)
+    assert a["margin_prev_full_pct"] == pytest.approx(15.0)
+    # Both legs live side by side on one row.
+    assert (a["vol_prev"], a["vol_vs_prev"]) == (20, -10)
+    # A customer with no Sep activity at all has zero in the full leg too.
+    assert rows["BRAVO"]["vol_prev_full"] == 0
+
+
+def test_a_full_month_only_customer_is_a_row_with_every_leg(pool) -> None:
+    d = {r["customer_name"]: r for r in _dfw()["data"]}["DELTA"]
+    assert (d["vol"], d["vol_prev"], d["vol_prev_full"], d["vol_vs_prev_full"]) == (0, 0, 3, -3)
+    assert d["margin_vs_prev_pct"] == 0.0
+
+
+def test_the_full_total_is_the_sum_of_the_rows(pool) -> None:
+    out = _dfw()
+    t, rows = out["meta"]["totals"], out["data"]
+    for k in ("vol_prev_full", "rev_prev_full", "prof_prev_full",
+              "vol_vs_prev_full", "rev_vs_prev_full", "prof_vs_prev_full",
+              "vol_prev", "vol_vs_prev"):
+        assert t[k] == pytest.approx(sum(r[k] for r in rows)), k
+    assert t["margin_prev_full_pct"] == pytest.approx(720 / 5200 * 100)
+    assert out["meta"]["total"] == 4
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [(date(2026, 9, 1), date(2026, 9, 30)), (date(2026, 10, 5), date(2026, 10, 12))],
+)
+def test_no_full_leg_outside_mtd(pool, start, end) -> None:
+    out = _dfw(start_date=start, end_date=end)
+    assert len([c for c in pool.calls if c[0].startswith(PREV_TAG)]) == 1
+    assert out["meta"]["compare"]["full_start"] is None
+    assert not any("_prev_full" in k for r in out["data"] for k in r)
+    assert not any("_prev_full" in k for k in out["meta"]["totals"])
 
 
 # ---------------------------------------------------------------------------

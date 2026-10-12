@@ -12,7 +12,8 @@ import {
 // Bruno round 3 (2026-05-19): per-cell display mode toggle —
 // only the chosen sub-row renders inside each Volume/Revenue/Profit/Margin cell.
 // Bruno R4 (2026-05-27): added "all" — Production / Budget / Variance stacked.
-export type Mode = "production" | "budget" | "variance" | "all"
+// User 2026-10-12: "full" — an MTD window vs the previous month WHOLE.
+export type Mode = "production" | "budget" | "variance" | "all" | "full"
 
 /** What the cells compare the selected window against.
  *  "budget" — CORP: the daily budget table.
@@ -29,6 +30,15 @@ export interface Leg {
   actual: number
   base: number
   variance: number
+  /** The previous month WHOLE and actual − it; only on an MTD prior-month
+   *  window (user 2026-10-12). Negative = still missing by month-end. */
+  full?: number
+  fullVariance?: number
+}
+
+/** The whole-previous-month pair, when the payload carries it. */
+function fullOf(total?: number, variance?: number): Pick<Leg, "full" | "fullVariance"> {
+  return total === undefined ? {} : { full: total, fullVariance: variance ?? 0 }
 }
 
 export function legOf(
@@ -40,25 +50,30 @@ export function legOf(
   switch (m) {
     case "vol":
       return prior
-        ? { actual: r.vol, base: r.vol_prev ?? 0, variance: r.vol_vs_prev ?? 0 }
+        ? { actual: r.vol, base: r.vol_prev ?? 0, variance: r.vol_vs_prev ?? 0,
+            ...fullOf(r.vol_prev_full, r.vol_vs_prev_full) }
         : { actual: r.vol, base: r.vol_budget, variance: r.vol_var }
     case "rev":
       return prior
-        ? { actual: r.rev, base: r.rev_prev ?? 0, variance: r.rev_vs_prev ?? 0 }
+        ? { actual: r.rev, base: r.rev_prev ?? 0, variance: r.rev_vs_prev ?? 0,
+            ...fullOf(r.rev_prev_full, r.rev_vs_prev_full) }
         : { actual: r.rev, base: r.rev_budget, variance: r.rev_var }
     case "prof":
       return prior
-        ? { actual: r.prof, base: r.prof_prev ?? 0, variance: r.prof_vs_prev ?? 0 }
+        ? { actual: r.prof, base: r.prof_prev ?? 0, variance: r.prof_vs_prev ?? 0,
+            ...fullOf(r.prof_prev_full, r.prof_vs_prev_full) }
         : { actual: r.prof, base: r.prof_budget, variance: r.prof_var }
     case "margin":
       return prior
-        ? { actual: r.margin_pct, base: r.margin_prev_pct ?? 0, variance: r.margin_vs_prev_pct ?? 0 }
+        ? { actual: r.margin_pct, base: r.margin_prev_pct ?? 0, variance: r.margin_vs_prev_pct ?? 0,
+            ...fullOf(r.margin_prev_full_pct, r.margin_vs_prev_full_pct) }
         : { actual: r.margin_pct, base: r.margin_budget_pct, variance: r.margin_var_pct }
   }
 }
 
 /** The value a column sorts on under `mode` — the leg the cell shows on top. */
 export function sortValue(leg: Leg, mode: Mode): number {
+  if (mode === "full") return leg.fullVariance ?? 0
   return mode === "budget" ? leg.base : mode === "variance" ? leg.variance : leg.actual
 }
 
@@ -80,6 +95,8 @@ const PRIOR_MONTH_PILLS: readonly { k: Mode; label: string }[] = [
   { k: "production", label: "Actuals" },
   { k: "variance",   label: "Variances" },
 ]
+// User 2026-10-12: offered only while the window is month-to-date.
+const FULL_MONTH_PILL = { k: "full" as Mode, label: "vs Full Prev. Month" }
 
 /** The mode the table opens on. "all" whenever it has a comparison; with the
  *  budget hidden and nothing else to compare, Production is the only mode
@@ -93,16 +110,18 @@ export function ModePills({
   setMode,
   hideBudget = false,
   compare = "budget",
+  hasFull = false,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
   hideBudget?: boolean
   compare?: ActualsCompare
+  hasFull?: boolean
 }) {
   // Bruno PDF 2026-08-20 DFW R8 removes All / Budget / Variance per Cell
   // when the comparison is the budget — on DFW they would render empty sub-rows.
   const opts = compare === "prior_month"
-    ? PRIOR_MONTH_PILLS
+    ? (hasFull ? [...PRIOR_MONTH_PILLS, FULL_MONTH_PILL] : PRIOR_MONTH_PILLS)
     : BUDGET_PILLS.filter((o) => !(hideBudget && o.k !== "production"))
   // One pill left is a label, not a control — hide the whole strip.
   if (opts.length <= 1) return null
@@ -172,7 +191,7 @@ export function ModeCell({
   kind: "count" | "usd" | "pct"
   leg: Leg
 }) {
-  const { actual, base, variance } = leg
+  const { actual, base, variance, full, fullVariance } = leg
   const fmt = (v: number) =>
     kind === "count" ? fmtCount(v)
     : kind === "pct" ? `${v.toFixed(2)}%`
@@ -187,6 +206,9 @@ export function ModeCell({
     // Bruno R5 #10: actual ÷ base % beside the cell (budget on CORP, the
     // previous month's same days on DFW — Bruno PDF 2026-10-12).
     const pct = base !== 0 ? (actual / base) * 100 : null
+    // User 2026-10-12: on an MTD window, a 2nd line — the previous month WHOLE,
+    // actual − it (what is still missing by month-end) and actual ÷ it.
+    const fullPct = full !== undefined && full !== 0 ? (actual / full) * 100 : null
     return (
       <td className="px-2 py-1.5 text-center tabular-nums">
         <div className="flex items-center justify-center gap-1.5">
@@ -201,10 +223,28 @@ export function ModeCell({
                 {fmtSigned(variance)}
               </span>
             </div>
+            {full !== undefined && (
+              <div
+                className="mt-0.5 flex items-center justify-between gap-2 border-t border-dashed border-[#E5E7EB] pt-0.5 text-[10px]"
+                title="Previous month, whole · current − whole previous month (negative = still missing)"
+              >
+                <span className="text-[#9CA3AF]">{fmt(full)}</span>
+                <span className={(fullVariance ?? 0) < 0 ? "text-[#B45309]" : "text-[#16A34A]"}>
+                  {fmtSigned(fullVariance ?? 0)}
+                </span>
+              </div>
+            )}
           </div>
           {/* R15: actual ÷ base % value now black. */}
-          {pct !== null && (
-            <span className="text-[10px] font-semibold text-[#111827]">{Math.round(pct)}%</span>
+          {(pct !== null || fullPct !== null) && (
+            <div className="flex flex-col items-start text-[10px] font-semibold leading-tight">
+              {pct !== null && <span className="text-[#111827]">{Math.round(pct)}%</span>}
+              {fullPct !== null && (
+                <span className="text-[#9CA3AF]" title="Current ÷ whole previous month">
+                  {Math.round(fullPct)}%
+                </span>
+              )}
+            </div>
           )}
         </div>
       </td>
@@ -226,10 +266,11 @@ export function ModeCell({
       </td>
     )
   }
+  const v = mode === "full" ? fullVariance ?? 0 : variance
   return (
     <td className="px-2 py-1.5 text-center tabular-nums">
-      <span className={variance < 0 ? "font-semibold text-[#DC2626]" : "font-semibold text-[#16A34A]"}>
-        {fmtSigned(variance)}
+      <span className={v < 0 ? "font-semibold text-[#DC2626]" : "font-semibold text-[#16A34A]"}>
+        {fmtSigned(v)}
       </span>
     </td>
   )

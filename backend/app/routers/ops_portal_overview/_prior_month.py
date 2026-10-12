@@ -58,9 +58,35 @@ def prior_month_window(start: date, end: date, today: date) -> tuple[date, date]
       day-for-day, so "Yesterday" on Oct 1 (Sep 30) compares with Aug 30, not
       Aug 31 (code review 2026-10-12).
     """
-    end = min(end, max(today, start))
-    whole_months = start.day == 1 and end.day == _last_day(end.year, end.month)
+    end = _capped_end(start, end, today)
+    whole_months = start.day == 1 and _is_month_end(end)
     return _shift_back_one_month(start), _shift_back_one_month(end, whole_months)
+
+
+def full_month_window(start: date, end: date, today: date) -> tuple[date, date] | None:
+    """The previous month(s) WHOLE, for a month-to-date window — else None.
+
+    User 2026-10-12: an MTD window shows two comparisons — the same days of the
+    previous month (``prior_month_window``) AND the previous month's full total,
+    so the gap reads as "what is still missing to match last month by month-end".
+    Oct 1-12 → Sep 1-30.
+
+    Only a window that starts on the 1st and stops short of a month-end (after
+    the today cap) has one. A whole-month window already compares whole months,
+    and a window starting mid-month ("Last 7 Days") has no month-end target.
+    """
+    end = _capped_end(start, end, today)
+    if start.day != 1 or _is_month_end(end):
+        return None
+    return _shift_back_one_month(start), _shift_back_one_month(end, to_month_end=True)
+
+
+def _capped_end(start: date, end: date, today: date) -> date:
+    return min(end, max(today, start))
+
+
+def _is_month_end(d: date) -> bool:
+    return d.day == _last_day(d.year, d.month)
 
 
 def prior_month_sql(where: str, p_s: int, p_e: int, extra_clauses: str) -> str:
@@ -87,9 +113,14 @@ def prior_month_sql(where: str, p_s: int, p_e: int, extra_clauses: str) -> str:
     """
 
 
+PREV = "prev"            # the same days of the previous month
+PREV_FULL = "prev_full"  # the previous month whole (MTD windows only)
+
+
 def prior_fields(vol: int, rev: float, prof: float,
-                 vol_p: int, rev_p: float, prof_p: float) -> dict:
-    """The ``*_prev`` / ``*_vs_prev`` wire fields for one row (or the TOTAL).
+                 vol_p: int, rev_p: float, prof_p: float, tag: str = PREV) -> dict:
+    """The ``*_<tag>`` / ``*_vs_<tag>`` wire fields for one row (or the TOTAL);
+    ``tag`` is ``PREV`` (same days) or ``PREV_FULL`` (whole previous month).
 
     Margin variance is in percentage POINTS (15.28% − 18.34% = −3.06), as in
     Bruno's mock. The "current ÷ previous" percent beside each cell is computed
@@ -98,12 +129,12 @@ def prior_fields(vol: int, rev: float, prof: float,
     margin = (prof / rev * 100.0) if rev else 0.0
     margin_p = (prof_p / rev_p * 100.0) if rev_p else 0.0
     return {
-        "vol_prev": vol_p,
-        "vol_vs_prev": vol - vol_p,
-        "rev_prev": rev_p,
-        "rev_vs_prev": rev - rev_p,
-        "prof_prev": prof_p,
-        "prof_vs_prev": prof - prof_p,
-        "margin_prev_pct": margin_p,
-        "margin_vs_prev_pct": margin - margin_p,
+        f"vol_{tag}": vol_p,
+        f"vol_vs_{tag}": vol - vol_p,
+        f"rev_{tag}": rev_p,
+        f"rev_vs_{tag}": rev - rev_p,
+        f"prof_{tag}": prof_p,
+        f"prof_vs_{tag}": prof - prof_p,
+        f"margin_{tag}_pct": margin_p,
+        f"margin_vs_{tag}_pct": margin - margin_p,
     }

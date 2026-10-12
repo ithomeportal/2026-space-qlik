@@ -318,13 +318,22 @@ export interface OppPriorMonthLeg {
   rev_prev?: number; rev_vs_prev?: number
   prof_prev?: number; prof_vs_prev?: number
   margin_prev_pct?: number; margin_vs_prev_pct?: number
+  // User 2026-10-12: on an MTD window, the previous month WHOLE too —
+  // `*_vs_prev_full` = current − full previous month (negative = still missing).
+  vol_prev_full?: number; vol_vs_prev_full?: number
+  rev_prev_full?: number; rev_vs_prev_full?: number
+  prof_prev_full?: number; prof_vs_prev_full?: number
+  margin_prev_full_pct?: number; margin_vs_prev_full_pct?: number
 }
 
-/** `meta.compare` — which window the previous leg covered (ISO dates). */
+/** `meta.compare` — which windows the previous legs covered (ISO dates).
+ *  `full_*` is null unless the window is month-to-date. */
 export interface OppActualsCompareMeta {
   basis: "prior_month"
   start: string
   end: string
+  full_start: string | null
+  full_end: string | null
 }
 
 export interface OppLaneRow {

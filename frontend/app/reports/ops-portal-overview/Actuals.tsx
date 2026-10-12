@@ -119,20 +119,25 @@ export function Actuals({
   const compareWindow = compare === "prior_month"
     ? (data?.meta?.compare as OppActualsCompareMeta | undefined)
     : undefined
+  // User 2026-10-12: the whole-previous-month leg exists only on an MTD window.
+  // A filter change can take it away under the "full" pill — fall back to All
+  // rather than render a column of zeros.
+  const hasFull = Boolean(compareWindow?.full_start)
+  const viewMode: Mode = mode === "full" && !hasFull ? "all" : mode
 
   const rows = useMemo(() => {
     const col = COLUMNS.find((c) => c.k === sortKey)
     if (!col) return rawRows
     const mult = sortDir === "asc" ? 1 : -1
     return [...rawRows].sort((a, b) => {
-      const va = col.accessor(a, mode, compare)
-      const vb = col.accessor(b, mode, compare)
+      const va = col.accessor(a, viewMode, compare)
+      const vb = col.accessor(b, viewMode, compare)
       if (typeof va === "string" || typeof vb === "string") {
         return String(va).localeCompare(String(vb)) * mult
       }
       return ((va as number) - (vb as number)) * mult
     })
-  }, [rawRows, sortKey, sortDir, mode, compare])
+  }, [rawRows, sortKey, sortDir, viewMode, compare])
 
   const onSort = (k: ColumnKey) => {
     if (k === sortKey) {
@@ -149,7 +154,7 @@ export function Actuals({
     <ActualsTable
       rows={rows}
       totals={totals}
-      mode={mode}
+      mode={viewMode}
       compare={compare}
       sortKey={sortKey}
       sortDir={sortDir}
@@ -173,7 +178,7 @@ export function Actuals({
         <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
           Actuals
         </span>
-        <ModePills mode={mode} setMode={setMode} hideBudget={hideBudget} compare={compare} />
+        <ModePills mode={viewMode} setMode={setMode} hideBudget={hideBudget} compare={compare} hasFull={hasFull} />
         <CompareCaption range={compareWindow} />
         <div className="ml-auto flex items-center gap-2 text-[10px] text-[#6B7280]">
           {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -215,7 +220,7 @@ export function Actuals({
               <span className="rounded-md bg-[#1B3A5C] px-2 py-0.5 text-xs font-semibold uppercase text-white">
                 Actuals
               </span>
-              <ModePills mode={mode} setMode={setMode} hideBudget={hideBudget} compare={compare} />
+              <ModePills mode={viewMode} setMode={setMode} hideBudget={hideBudget} compare={compare} hasFull={hasFull} />
               <CompareCaption range={compareWindow} />
               <button
                 type="button"
@@ -346,9 +351,9 @@ const METRIC_CELLS: readonly [Metric, "count" | "usd" | "pct"][] = [
   ["margin", "pct"],
 ]
 
-/** "vs Sep 1 – Sep 12": which days the previous-month leg covered. Built with
- *  parseLocalDate — `new Date("2026-09-01")` is UTC midnight and would label
- *  the window one day early in CST (§116). */
+/** "vs Sep 1 – Sep 12 · full: Sep 1 – Sep 30": which days each previous-month
+ *  leg covered. Built with parseLocalDate — `new Date("2026-09-01")` is UTC
+ *  midnight and would label the window one day early in CST (§116). */
 function CompareCaption({ range }: { range?: OppActualsCompareMeta }) {
   if (!range) return null
   const fmt = (iso: string) =>
@@ -359,6 +364,11 @@ function CompareCaption({ range }: { range?: OppActualsCompareMeta }) {
       title="Previous month, same days. Variance = current − previous; % = current ÷ previous."
     >
       vs {fmt(range.start)} – {fmt(range.end)}
+      {range.full_start && range.full_end && (
+        <span title="Previous month, whole. 2nd line in All = current − whole previous month (negative = still missing by month-end).">
+          {" · full month "}{fmt(range.full_start)} – {fmt(range.full_end)}
+        </span>
+      )}
     </span>
   )
 }

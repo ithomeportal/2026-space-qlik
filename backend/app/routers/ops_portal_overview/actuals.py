@@ -19,7 +19,9 @@ from ._dates import _count_workdays, _month_bounds, _resolve_range
 from ._scope import scope_of
 from ._sql import _parse_team_scope, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
-from ._prior_month import prior_fields, prior_month_sql, prior_month_window
+from ._prior_month import (
+    PREV, PREV_FULL, full_month_window, prior_fields, prior_month_sql, prior_month_window,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -153,16 +155,20 @@ async def actuals(
     # both legs count one population (§96) — see _prior_month.py.
     with_prior = compare == "prior_month"
     prev_s, prev_e = prior_month_window(s, e, today)
-    if with_prior:
-        prev_params: list = []
-        prev_where = _v4_scope_where("br4", team_scope, customer, load_type, prev_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-        prev_params.extend([prev_s, prev_e])
-        prev_sql = prior_month_sql(
-            prev_where, len(prev_params) - 1, len(prev_params),
-            f"{losses_clause}{unbilled_clause}",
-        )
+    # User 2026-10-12: an MTD window ALSO compares with the previous month whole
+    # ("what is still missing by month-end") — a third leg, same population.
+    full_win = full_month_window(s, e, today) if with_prior else None
 
-    prod_rows, bud_rows, proj_rows, proj_all, prev_rows = await asyncio.gather(
+    def _prior_leg(w_s: date, w_e: date):
+        params: list = []
+        where = _v4_scope_where("br4", team_scope, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
+        params.extend([w_s, w_e])
+        sql = prior_month_sql(
+            where, len(params) - 1, len(params), f"{losses_clause}{unbilled_clause}",
+        )
+        return pool.fetch(sql, *params)
+
+    prod_rows, bud_rows, proj_rows, proj_all, prev_rows, full_rows = await asyncio.gather(
         pool.fetch(prod_sql, *p_params),
         pool.fetch(bud_sql, *b_params) if scope.has_budget else _empty_rows(),
         pool.fetch(proj_by_cust_sql, *proj_params_l),
@@ -171,7 +177,8 @@ async def actuals(
             lanes=lanes, exclude_lanes=exclude_lanes,
             carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
         ),
-        pool.fetch(prev_sql, *prev_params) if with_prior else _empty_rows(),
+        _prior_leg(prev_s, prev_e) if with_prior else _empty_rows(),
+        _prior_leg(*full_win) if full_win else _empty_rows(),
     )
 
     # team_count is irrelevant per customer — only the volume/profit legs are
@@ -263,9 +270,11 @@ async def actuals(
             "proj_eom_vol": 0.0, "proj_eom_prof": 0.0,
         })
 
-    prev_tot = {"vol": 0, "rev": 0.0, "prof": 0.0}
+    prev_tot = full_tot = {"vol": 0, "rev": 0.0, "prof": 0.0}
     if with_prior:
-        out, prev_tot = _attach_prior(out, prev_rows)
+        out, prev_tot = _attach_prior(out, prev_rows, PREV)
+    if full_win:
+        out, full_tot = _attach_prior(out, full_rows, PREV_FULL, absent_tags=(PREV,))
 
     sort_key = {
         "revenue_desc":  lambda r: -r["rev"],
@@ -315,25 +324,40 @@ async def actuals(
         # The TOTAL's previous leg is the sum over the FULL row set (before the
         # limit slice), like every other TOTAL here — and its margin is
         # Σprofit ÷ Σrevenue, never an average of row margins.
+        cur = (t_vol, _safe_float(t_rev), _safe_float(t_prof))
         meta["totals"] = {**totals, **prior_fields(
-            t_vol, _safe_float(t_rev), _safe_float(t_prof),
-            prev_tot["vol"], _safe_float(prev_tot["rev"]), _safe_float(prev_tot["prof"]),
+            *cur, prev_tot["vol"], _safe_float(prev_tot["rev"]), _safe_float(prev_tot["prof"]),
         )}
         meta["compare"] = {
             "basis": "prior_month",
             "start": prev_s.isoformat(),
             "end": prev_e.isoformat(),
+            "full_start": None,
+            "full_end": None,
+        }
+    if full_win:
+        meta["totals"] = {**meta["totals"], **prior_fields(
+            *cur, full_tot["vol"], _safe_float(full_tot["rev"]), _safe_float(full_tot["prof"]),
+            tag=PREV_FULL,
+        )}
+        meta["compare"] = {
+            **meta["compare"],
+            "full_start": full_win[0].isoformat(),
+            "full_end": full_win[1].isoformat(),
         }
     return {"success": True, "data": out, "meta": meta}
 
 
-def _attach_prior(rows: list[dict], prev_rows) -> tuple[list[dict], dict]:
-    """Add the previous-month fields to every row; append previous-only customers.
+def _attach_prior(rows: list[dict], prev_rows, tag: str,
+                  absent_tags: tuple[str, ...] = ()) -> tuple[list[dict], dict]:
+    """Add one comparison leg's ``*_<tag>`` fields to every row; append the
+    customers only that leg has.
 
     A customer that shipped last month but not this month is a real row of a
     month-over-month table (its whole volume is the variance), so it is added
-    with a zero current leg — and its previous leg counts in the TOTAL either
-    way. Returns NEW dicts; the input rows are not mutated.
+    with a zero current leg — and zeros for every leg in ``absent_tags`` already
+    attached — and its previous leg counts in the TOTAL either way. Returns NEW
+    dicts; the input rows are not mutated.
     """
     prev_map = {
         r["customer_name"]: (int(r["vol"] or 0), _safe_float(r["rev"]), _safe_float(r["prof"]))
@@ -350,10 +374,12 @@ def _attach_prior(rows: list[dict], prev_rows) -> tuple[list[dict], dict]:
     }
     merged = [
         {**r, **prior_fields(r["vol"], r["rev"], r["prof"],
-                             *prev_map.get(r["customer_name"], (0, 0.0, 0.0)))}
+                             *prev_map.get(r["customer_name"], (0, 0.0, 0.0)), tag=tag)}
         for r in rows
     ] + [
-        {"customer_name": name, **zero_current, **prior_fields(0, 0.0, 0.0, *leg)}
+        {"customer_name": name, **zero_current,
+         **{k: v for t in absent_tags for k, v in prior_fields(0, 0.0, 0.0, 0, 0.0, 0.0, tag=t).items()},
+         **prior_fields(0, 0.0, 0.0, *leg, tag=tag)}
         for name, leg in prev_map.items() if name not in seen
     ]
     tot = {
