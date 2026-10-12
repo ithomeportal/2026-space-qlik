@@ -11,3 +11,11 @@ GRANT SELECT ("applicationId", "toStageId", "createdAt") ON "StageTransition" TO
 GRANT SELECT (status) ON "Offer" TO spaceqlik_recruit_ro;
 GRANT SELECT (id, "firstName", "paternalLastName") ON "Candidate" TO spaceqlik_recruit_ro;
 COMMIT;
+
+-- Added 2026-10-12 (later the same day): rejection events per week / per stage.
+-- ActivityLog.details carries the free-text rejection reason (internal only).
+BEGIN;
+SET LOCAL ROLE recruit_app;
+GRANT SELECT (entity, "entityId", details, "createdAt") ON "ActivityLog" TO spaceqlik_recruit_ro;
+GRANT SELECT ("fromStageId") ON "StageTransition" TO spaceqlik_recruit_ro;
+COMMIT;

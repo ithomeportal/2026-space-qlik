@@ -51,6 +51,11 @@ WEEKLY_ROWS: tuple[tuple[str, str, str], ...] = (
     ("valid", "Valid candidates", "passed screening: first reached HR Interview or later"),
     ("panel", "Panel interview", "first reached Panel Interview or later"),
     ("offer", "Offer stage", "first reached Send Offer or later"),
+    ("rejected_screening", "Rejected · sourcing & screening",
+     "rejected at Candidates, Phone Sourcing, Phone Screening (or Bench)"),
+    ("rejected_interview", "Rejected · interviews", "rejected at HR or Panel Interview"),
+    ("rejected_final", "Rejected · approval / offer", "rejected at CEO/VP Approval or later"),
+    ("rejected_total", "Rejected · total", "all rejections that week (incl. Kanban)"),
     ("hires", "Hires (accepted offer)", "Jobs portal HIRED, by hire date"),
     ("onboarding_tickets", "Onboarding tickets", "IT ROUTE onboarding tickets"),
     ("offboarding_tickets", "Exits (offboarding)", "IT ROUTE offboarding tickets"),
@@ -58,6 +63,9 @@ WEEKLY_ROWS: tuple[tuple[str, str, str], ...] = (
 TICKET_ROWS = ("onboarding_tickets", "offboarding_tickets")
 # Rows where a RISE is bad news (colour of the delta is a claim).
 INVERTED_ROWS = ("offboarding_tickets",)
+# Rows whose direction is NOT good or bad (screening out more people can be a
+# healthy funnel) — the delta prints in a neutral colour, making no claim.
+NEUTRAL_ROWS = ("rejected_screening", "rejected_interview", "rejected_final", "rejected_total")
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +172,8 @@ def _tiles(summary: dict, snapshot: dict, last_week: dict) -> str:
         ("Active candidates", _n(snapshot.get("active_candidates")),
          f"{_n(snapshot.get('in_pipeline'))} in pipeline incl. applying"),
         ("Valid candidates LW", _n(last_week.get("valid")),
-         f"{_n(last_week.get('screened'))} phone screened"),
+         (f"{_n(last_week.get('screened'))} phone screened &middot; "
+          f"{_n(last_week.get('rejected_screening'))} rejected in screening")),
         ("Hires LW", _n(last_week.get("hires")),
          f"{_n(snapshot.get('at_offer_stage'))} at approval / offer stage"),
         ("Stalled > 7 days", _n(snapshot.get("stalled_excl_bench")),
@@ -198,6 +207,8 @@ def _weekly(weeks: list[dict], tickets_are_stale: bool) -> str:
         stale = key in TICKET_ROWS and tickets_are_stale
         avg = baseline(values)
         text, colour = _delta(None if avg is None else values[0] - avg, key in INVERTED_ROWS)
+        if key in NEUTRAL_ROWS and avg is not None:
+            colour = MUTED
         cells = "".join(
             _td(_n(v), bg=LW_BG if i == 0 else "", bold=i == 0,
                 color=MUTED if stale else INK,
@@ -207,6 +218,11 @@ def _weekly(weeks: list[dict], tickets_are_stale: bool) -> str:
         label_html = (f"{escape(label)}"
                       f'<div style="font-family:{FONT_STACK};font-size:10px;color:{MUTED};">'
                       f"{escape(hint)}{' &middot; feed is stale' if stale else ''}</div>")
+        if key == NEUTRAL_ROWS[0]:
+            body += (f'<tr><td colspan="{len(weeks) + 3}" style="font-family:{FONT_STACK};'
+                     f"font-size:10px;color:{MUTED};font-weight:700;letter-spacing:0.5px;"
+                     f'padding:10px 8px 2px 8px;border-bottom:1px solid {BORDER};">'
+                     f"REJECTIONS &mdash; by the stage the candidate was rejected at</td></tr>")
         body += ("<tr>" + _td(label_html, align="left", bold=True) + cells
                  + _td(DASH if avg is None else f"{avg:,.1f}", color=MUTED)
                  + _td(text, color=colour, bold=True) + "</tr>")
@@ -299,9 +315,10 @@ def _roles(roles: list[dict]) -> str:
     if not roles:
         return _div("No ACTIVE positions on the Jobs portal.", color=MUTED)
     head = (_th("Role", align="left") + _th("Department", align="left") + _th("Days open")
-            + _th("Open vac.") + _th("In pipeline") + _th("Sourcing") + _th("Screening")
+            + _th("Open vac.") + _th("Active now") + _th("Sourcing") + _th("Screening")
             + _th("Interviews") + _th("Final / offer") + _th("New apps LW")
-            + _th("Valid LW") + _th("Furthest stage", align="left"))
+            + _th("Valid LW") + _th("Rejected LW screening") + _th("Rejected LW later")
+            + _th("Furthest stage", align="left"))
     body = ""
     for r in roles:
         aged = r["days_open"] > AGED_DAYS
@@ -317,6 +334,8 @@ def _roles(roles: list[dict]) -> str:
             + _td(_n(r["sourcing"])) + _td(_n(r["screening"]))
             + _td(_n(r["interviews"])) + _td(_n(r["final"]))
             + _td(_n(r["new_last_week"])) + _td(_n(r["valid_last_week"]))
+            + _td(_n(r.get("rejected_screening_last_week", 0)))
+            + _td(_n(r.get("rejected_later_last_week", 0)))
             + _td(escape(r["furthest_stage"] or "—"), align="left", color=MUTED)
             + "</tr>"
         )
@@ -416,8 +435,10 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
         _section("OPEN ROLES",
                  f"{len(roles)} active roles, oldest first &middot; "
                  f"{aged} open more than {AGED_DAYS} days (red) &middot; "
-                 f"{empty} with nobody in the pipeline. Pipeline columns are candidates "
-                 "in process or applying, right now."),
+                 f"{empty} with nobody active. <b>Active now</b> and the four stage columns "
+                 "are candidates still in process today (rejected candidates are not in them); "
+                 "the <b>Rejected LW</b> columns count candidates rejected last week, at "
+                 "sourcing/screening vs later stages."),
         _roles(roles),
         _section("HIRES LAST WEEK"),
         _hires(hires_last_week),

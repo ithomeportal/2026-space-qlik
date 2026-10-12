@@ -173,6 +173,58 @@ class TestTicketTotals:
         assert d["ticket_totals"]["ytd"] == {"onboarding": 0, "offboarding": 0}
 
 
+def _rej(app, pos, stage, at, fallback=False):
+    return {"app": app, "position": pos, "stage": stage, "at": at, "fallback": fallback}
+
+
+class TestRejections:
+    """HR 2026-10-12: rejections at the screening stages were missing."""
+
+    def _b(self, rejections):
+        return pipe.build_pipeline(
+            mondays=MONDAYS, positions=POSITIONS, stage_orders=STAGES, firsts=[],
+            applications=[], offers={}, tickets=[], wanted_dept=None,
+            now_utc=utc(2026, 10, 12, 21), rejections=rejections)
+
+    def test_grouped_by_the_stage_at_rejection(self):
+        d = self._b([_rej("a", "p1", "s1", utc(2026, 10, 6, 15)),   # Candidates
+                     _rej("b", "p1", "s3", utc(2026, 10, 7, 15)),   # Phone Screening
+                     _rej("c", "p1", "s4", utc(2026, 10, 7, 15)),   # HR Interview
+                     _rej("d", "p1", "s7", utc(2026, 10, 8, 15))])  # Send Offer
+        w = d["weeks"][0]
+        assert (w["rejected_screening"], w["rejected_interview"], w["rejected_final"],
+                w["rejected_total"]) == (2, 1, 1, 4)
+
+    def test_a_double_logged_rejection_counts_once_per_week(self):
+        d = self._b([_rej("a", "p1", "s3", utc(2026, 10, 6, 15)),
+                     _rej("a", "p1", "s3", utc(2026, 10, 6, 15, 1))])
+        assert d["weeks"][0]["rejected_total"] == 1
+
+    def test_re_rejection_in_another_week_counts_again(self):
+        d = self._b([_rej("a", "p1", "s3", utc(2026, 9, 30, 15)),
+                     _rej("a", "p1", "s3", utc(2026, 10, 6, 15))])
+        assert d["weeks"][0]["rejected_total"] == 1 and d["weeks"][1]["rejected_total"] == 1
+
+    def test_sunday_evening_rejection_is_last_week(self):
+        d = self._b([_rej("a", "p1", "s2", utc(2026, 10, 12, 3))])   # Oct 11 22:00 CDT
+        assert d["weeks"][0]["rejected_screening"] == 1
+
+    def test_excluded_department_never_counts(self):
+        d = self._b([_rej("a", "px", "s3", utc(2026, 10, 6, 15))])
+        assert d["weeks"][0]["rejected_total"] == 0
+
+    def test_roles_split_last_week_screening_vs_later(self):
+        d = self._b([_rej("a", "p1", "s2", utc(2026, 10, 6, 15)),
+                     _rej("b", "p1", "s5", utc(2026, 10, 6, 15)),
+                     _rej("c", "p1", "s3", utc(2026, 9, 30, 15))])   # week before: not LW
+        r = next(x for x in d["roles"] if x["position_id"] == "p1")
+        assert (r["rejected_screening_last_week"], r["rejected_later_last_week"]) == (1, 1)
+
+    def test_without_rejections_the_series_are_zero_not_missing(self):
+        d = self._b(None)
+        assert d["weeks"][0]["rejected_total"] == 0
+
+
 class TestBuild:
     def test_excluded_departments_never_count(self):
         d = _build([_app("1", "px", "s3"), _app("2", "p1", "s3")],
@@ -355,6 +407,10 @@ class TestDigest:
         trend = digest["html"].split("ONBOARDING VS OFFBOARDING")[1].split("OPEN ROLES")[0]
         assert "Full period" in trend and "2026 year to date" in trend
         assert "12 on" in trend and "30 off" in trend      # YTD from the fixture
+
+    def test_rejections_block_is_rendered(self, digest):
+        assert "REJECTIONS &mdash; by the stage" in digest["html"]
+        assert "Rejected · sourcing &amp; screening" in digest["html"]
 
     def test_offer_acceptance_and_definitions_are_removed(self, digest):
         assert "Offer acceptance" not in digest["html"]

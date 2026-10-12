@@ -147,6 +147,7 @@ def join_roles(open_roles: list[dict], pipeline_roles: list[dict]) -> list[dict]
     by_id = {r["position_id"]: r for r in pipeline_roles}
     empty = {"in_pipeline": 0, "sourcing": 0, "screening": 0, "interviews": 0,
              "final": 0, "new_last_week": 0, "valid_last_week": 0,
+             "rejected_screening_last_week": 0, "rejected_later_last_week": 0,
              "furthest_stage": None}
     return [{**r, **by_id.get(r["id"], empty)} for r in open_roles]
 

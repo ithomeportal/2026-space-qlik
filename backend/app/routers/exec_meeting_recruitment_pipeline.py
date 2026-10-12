@@ -34,6 +34,21 @@ WEEKLY FUNNEL — the part the portal does not have:
   custom names); a name outside DEFAULT_STAGE_ORDER is returned in
   ``unknown_stages`` so drift is visible instead of silently uncounted.
 
+REJECTIONS (added 2026-10-12 after HR: "it doesn't include the candidates who
+were rejected last week during the screening stages"): the schema has no
+rejectedAt, but every single-application rejection — the application page AND
+the Kanban card — writes ``ActivityLog`` (entity 'Application', entityId,
+details.status 'REJECTED', createdAt). Measured: 1,736 such events since
+2026-02-16, 1,725 within 2 min of the application's updatedAt, all in the same
+week; every application rejected since 2026-08-17 has one. A rejection does not
+move the stage, so the stage AT rejection = the toStage of the last transition at
+or before it, else the first transition's fromStage, else the current stage.
+The bulk path (``/api/applications/bulk``) logs one row with a COUNT and no ids
+(used once, 2026-03-20, 3 rows) — a REJECTED application with NO rejection log
+falls back to its updatedAt + current stage. Counted once per (application,
+week): a reactivated-then-re-rejected candidate in another week counts again,
+because that is a second rejection.
+
 Weeks are Monday–Sunday America/Chicago and only COMPLETED weeks are returned.
 Columns are Prisma ``timestamp(3)`` holding UTC, so bounds are computed in CST
 and converted to naive UTC in Python — never a bare ``::date AT TIME ZONE``
@@ -94,6 +109,14 @@ STAGE_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("interviews", (4, 5)),
     ("final", (6, 7, 8)),
 )
+
+# Rejections bucketed by the stage they happened at.
+REJECTION_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("rejected_screening", (0, 1, 2, 3)),   # Bench, Candidates, Phone Sourcing, Phone Screening
+    ("rejected_interview", (4, 5)),         # HR Interview, Panel Interview
+    ("rejected_final", (6, 7, 8, 9)),       # approval, offer, accepted, hired
+)
+SCREENING_ORDERS = REJECTION_GROUPS[0][1]
 
 PENDING_OFFER_STATUSES = ("DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT")
 # CEO/VP Approval for Hire, Send Offer, Offer Accepted — the pipeline's offer
@@ -229,6 +252,45 @@ async def _first_arrivals(pool, stage_orders: dict[str, int], since_utc: datetim
     return list(firsts.values())
 
 
+async def _rejections(pool, since_utc: datetime) -> list[dict]:
+    """Rejection EVENTS since ``since_utc`` with the stage they happened at."""
+    rows = await pool.fetch(
+        """
+        WITH logged AS (
+          SELECT DISTINCT "entityId" AS app, "createdAt" AS at
+            FROM "ActivityLog"
+           WHERE entity = 'Application' AND "entityId" IS NOT NULL
+             AND details->>'status' = 'REJECTED' AND "createdAt" >= $1
+        ),
+        unlogged AS (   -- the bulk path writes no per-application row
+          SELECT a.id AS app, a."updatedAt" AS at
+            FROM "Application" a
+           WHERE a.status = 'REJECTED' AND a."updatedAt" >= $1
+             AND NOT EXISTS (
+                   SELECT 1 FROM "ActivityLog" l
+                    WHERE l.entity = 'Application' AND l."entityId" = a.id
+                      AND l.details->>'status' = 'REJECTED')
+        ),
+        ev AS (
+          SELECT app, at, false AS fallback FROM logged
+          UNION ALL SELECT app, at, true FROM unlogged
+        )
+        SELECT ev.app, ev.at, ev.fallback, a."positionId" AS position,
+               COALESCE(
+                 (SELECT st."toStageId" FROM "StageTransition" st
+                   WHERE st."applicationId" = ev.app AND st."createdAt" <= ev.at
+                   ORDER BY st."createdAt" DESC LIMIT 1),
+                 (SELECT st."fromStageId" FROM "StageTransition" st
+                   WHERE st."applicationId" = ev.app
+                   ORDER BY st."createdAt" ASC LIMIT 1),
+                 a."stageId") AS stage
+          FROM ev JOIN "Application" a ON a.id = ev.app
+        """,
+        since_utc,
+    )
+    return [dict(r) for r in rows]
+
+
 async def _applications(pool) -> list[dict]:
     rows = await pool.fetch(
         """
@@ -293,6 +355,7 @@ def build_pipeline(
     tickets: list[dict],
     wanted_dept: Optional[str],
     now_utc: datetime,
+    rejections: Optional[list[dict]] = None,
 ) -> dict[str, Any]:
     def in_scope(position_id: Optional[str]) -> bool:
         p = positions.get(position_id or "")
@@ -306,7 +369,8 @@ def build_pipeline(
     series: dict[str, list[int]] = {
         k: [0] * n
         for k in ("new_applications", "screened", "valid", "panel", "offer",
-                  "hires", "onboarding_tickets", "offboarding_tickets")
+                  "hires", "onboarding_tickets", "offboarding_tickets",
+                  *(g for g, _ in REJECTION_GROUPS), "rejected_total")
     }
 
     for a in apps:
@@ -325,6 +389,24 @@ def build_pipeline(
             i = week_of(f.get(key), mondays)
             if i is not None:
                 series[key][i] += 1
+
+    # Once per (application, week) — a double-click or a log retry is one event.
+    rejected_seen: set[tuple[str, int]] = set()
+    rejected_lw: dict[str, list[Optional[int]]] = {}
+    for r in rejections or []:
+        if not in_scope(r["position"]):
+            continue
+        i = week_of(r["at"], mondays)
+        if i is None or (r["app"], i) in rejected_seen:
+            continue
+        rejected_seen.add((r["app"], i))
+        order = stage_orders.get(r["stage"])
+        series["rejected_total"][i] += 1
+        for g, orders in REJECTION_GROUPS:
+            if order in orders:
+                series[g][i] += 1
+        if i == 0:
+            rejected_lw.setdefault(r["position"], []).append(order)
 
     for t in tickets:
         if _is_excluded_display(t["department"]) or not _matches(t["department"], wanted_dept):
@@ -416,6 +498,10 @@ def build_pipeline(
             **{g: 0 for g, _ in STAGE_GROUPS},
             "new_last_week": 0,
             "valid_last_week": 0,
+            "rejected_screening_last_week": sum(
+                1 for o in rejected_lw.get(pid, []) if o in SCREENING_ORDERS),
+            "rejected_later_last_week": sum(
+                1 for o in rejected_lw.get(pid, []) if o not in SCREENING_ORDERS),
             "furthest_stage": None,
         }
     furthest: dict[str, int] = {}
@@ -513,6 +599,7 @@ async def pipeline(
     positions = await _positions(pool)
     stage_orders, unknown = await _stage_orders(pool, since_utc)
     firsts = await _first_arrivals(pool, stage_orders, since_utc)
+    rejections = await _rejections(pool, since_utc)
     applications = await _applications(pool)
     offers = await _offer_counts(pool)
     # From Jan 1 (or the window start, if earlier) so YTD totals come from the
@@ -530,6 +617,7 @@ async def pipeline(
         tickets=tickets,
         wanted_dept=f["department"],
         now_utc=cst_now().astimezone(timezone.utc).replace(tzinfo=None),
+        rejections=rejections,
     )
 
     # Unfiltered freshness: the newest write ANYWHERE in the pipeline, so a dead
@@ -544,5 +632,7 @@ async def pipeline(
         "weeks": weeks,
         "pipeline_as_of": _iso_ts(as_of),
         "unknown_stages": unknown,
+        # Rejections with no per-application log (bulk path) — dated by updatedAt.
+        "rejections_from_fallback": sum(1 for r in rejections if r["fallback"]),
     }
     return {"success": True, "data": data}
