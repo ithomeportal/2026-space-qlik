@@ -37,6 +37,8 @@ from app.routers import (
     division_payment_cutoffs,
     edi_load_tenders,
     exec_meeting_recruitment,
+    exec_meeting_recruitment_pipeline,
+    exec_recruitment_digest,
     hd_spot,
     hr_access_doors,
     it_tickets,
@@ -1708,6 +1710,10 @@ app.include_router(production_spots_trends.router, prefix="/api")
 app.include_router(division_payment.router, prefix="/api")
 app.include_router(division_payment_cutoffs.router, prefix="/api")
 app.include_router(exec_meeting_recruitment.router, prefix="/api")
+# Weekly funnel + live pipeline (Jobs portal) and the Monday 16:00 "Recruitment
+# Status" e-mail pulled by n8n — same prefix, own modules.
+app.include_router(exec_meeting_recruitment_pipeline.router, prefix="/api")
+app.include_router(exec_recruitment_digest.router, prefix="/api")
 app.include_router(podium_top.router, prefix="/api")
 for _podium_team_router in podium_top.team_routers:
     app.include_router(_podium_team_router, prefix="/api")
