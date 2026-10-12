@@ -18,6 +18,7 @@ import { SidePanels } from "@/app/reports/ops-portal-overview/SidePanels"
 import { ServiceIncidentTables } from "@/app/reports/ops-portal-overview/ServiceIncidentTables"
 import { MarginDistribution } from "@/app/reports/ops-portal-overview/MarginDistribution"
 import { Actuals } from "@/app/reports/ops-portal-overview/Actuals"
+import type { ActualsCompare } from "@/app/reports/ops-portal-overview/ActualsCells"
 import { ActualsByLane } from "@/app/reports/ops-portal-overview/ActualsByLane"
 import { HoldTable } from "@/app/reports/ops-portal-overview/HoldTable"
 import { ByOrder } from "@/app/reports/ops-portal-overview/ByOrder"
@@ -125,6 +126,13 @@ interface Props {
    *  DOWN this month. The sign convention is OPPOSITE, so the panel labels it
    *  rather than leaving the reader to infer it (§69). */
   customerVarianceBasis?: "budget" | "mom"
+  /** What the Actuals table compares the selected window against.
+   *
+   *  "budget" (default, CORP) = All / Actual / Budget / Actual vs Budget.
+   *  "prior_month" (DFW, Bruno PDF 2026-10-12) = All / Actuals / Variances
+   *  against the SAME days of the previous month (10-01..10-12 → 09-01..09-12);
+   *  the window is computed server-side and echoed in `meta.compare`. */
+  actualsCompare?: ActualsCompare
   /** Bruno (PDF "BRUNO -- Exec Portal", 2026-09-03) R3: the Division selector,
    *  used only by the CEO Executive Portal. Every other portal is pinned to one
    *  division server-side and omits these three props entirely.
@@ -156,6 +164,7 @@ export function OpsPortalOverviewContent({
   goToLinks,
   hideBudget = false,
   customerVarianceBasis = "budget",
+  actualsCompare = "budget",
   divisions,
   division,
   onDivisionChange,
@@ -171,6 +180,7 @@ export function OpsPortalOverviewContent({
         goToLinks={goToLinks}
         hideBudget={hideBudget}
         customerVarianceBasis={customerVarianceBasis}
+        actualsCompare={actualsCompare}
         divisions={divisions}
         division={division}
         onDivisionChange={onDivisionChange}
@@ -188,6 +198,7 @@ function Body({
   goToLinks,
   hideBudget,
   customerVarianceBasis,
+  actualsCompare,
   divisions,
   division,
   onDivisionChange,
@@ -200,6 +211,7 @@ function Body({
   goToLinks?: readonly GoToLink[]
   hideBudget?: boolean
   customerVarianceBasis?: "budget" | "mom"
+  actualsCompare?: ActualsCompare
   divisions?: readonly { key: string; label: string }[]
   division?: string
   onDivisionChange?: (key: string) => void
@@ -670,7 +682,12 @@ function Body({
 
         <MarginDistribution filters={filters} />
 
-        <Actuals filters={filters} onPickCustomer={setCustomer} hideBudget={hideBudget} />
+        <Actuals
+          filters={filters}
+          onPickCustomer={setCustomer}
+          hideBudget={hideBudget}
+          compare={actualsCompare}
+        />
         <ActualsByLane filters={filters} onPickLane={pickLane} />
         <ByOrder filters={filters} onPickCustomer={setCustomer} />
         {/* Bruno (PDF 2026-08-19) R1 — directly below By Order, as specified.

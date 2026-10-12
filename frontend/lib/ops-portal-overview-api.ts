@@ -286,7 +286,7 @@ export interface OppProfitTmGauge {
   month_end: string
 }
 
-export interface OppActualsRow {
+export interface OppActualsRow extends OppPriorMonthLeg {
   customer_name: string
   vol: number
   vol_budget: number
@@ -310,6 +310,23 @@ export interface OppActualsRow {
   proj_eom_prof: number
 }
 
+/** Bruno PDF 2026-10-12 (DFW) R1: the same days of the previous month. Present
+ *  on rows AND totals only when the endpoint ran with `compare=prior_month`
+ *  (the DFW router pins it); `*_vs_prev` = current − previous, margin in points. */
+export interface OppPriorMonthLeg {
+  vol_prev?: number; vol_vs_prev?: number
+  rev_prev?: number; rev_vs_prev?: number
+  prof_prev?: number; prof_vs_prev?: number
+  margin_prev_pct?: number; margin_vs_prev_pct?: number
+}
+
+/** `meta.compare` — which window the previous leg covered (ISO dates). */
+export interface OppActualsCompareMeta {
+  basis: "prior_month"
+  start: string
+  end: string
+}
+
 export interface OppLaneRow {
   lane: string
   origin: string
@@ -329,7 +346,7 @@ export interface OppLaneRow {
 }
 
 // Bruno R4 (2026-05-27): totals rows surfaced in meta for the bottom tables.
-export interface OppActualsTotals {
+export interface OppActualsTotals extends OppPriorMonthLeg {
   vol: number; vol_budget: number; vol_var: number
   rev: number; rev_budget: number; rev_var: number
   prof: number; prof_budget: number; prof_var: number

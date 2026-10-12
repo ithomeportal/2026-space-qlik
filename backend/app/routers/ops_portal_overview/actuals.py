@@ -19,6 +19,7 @@ from ._dates import _count_workdays, _month_bounds, _resolve_range
 from ._scope import scope_of
 from ._sql import _parse_team_scope, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
+from ._prior_month import prior_fields, prior_month_sql, prior_month_window
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,11 @@ async def actuals(
     limit: int = Query(100, ge=1, le=500),
     losses_only: bool = Query(False),
     unbilled_only: bool = Query(False),
+    # Bruno (PDF 2026-10-12, DFW) R1: "prior_month" adds the same days of the
+    # previous month as a second comparison leg (``*_prev`` / ``*_vs_prev``).
+    # ⚠ Every direct Python caller must pass it explicitly — a FastAPI Query()
+    # default is NOT applied to a plain function call (§40).
+    compare: str = Query("budget", pattern="^(budget|prior_month)$"),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Bottom Actuals table — per customer, stacked Production / Budget / Variance.
@@ -143,7 +149,20 @@ async def actuals(
         proj_where, *proj_idx, group_col="br4.customer_name", scope=scope,
     )
 
-    prod_rows, bud_rows, proj_rows, proj_all = await asyncio.gather(
+    # Previous-month leg: SAME where-builder, SAME Losses/Unbilled clauses, so
+    # both legs count one population (§96) — see _prior_month.py.
+    with_prior = compare == "prior_month"
+    prev_s, prev_e = prior_month_window(s, e, today)
+    if with_prior:
+        prev_params: list = []
+        prev_where = _v4_scope_where("br4", team_scope, customer, load_type, prev_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
+        prev_params.extend([prev_s, prev_e])
+        prev_sql = prior_month_sql(
+            prev_where, len(prev_params) - 1, len(prev_params),
+            f"{losses_clause}{unbilled_clause}",
+        )
+
+    prod_rows, bud_rows, proj_rows, proj_all, prev_rows = await asyncio.gather(
         pool.fetch(prod_sql, *p_params),
         pool.fetch(bud_sql, *b_params) if scope.has_budget else _empty_rows(),
         pool.fetch(proj_by_cust_sql, *proj_params_l),
@@ -152,6 +171,7 @@ async def actuals(
             lanes=lanes, exclude_lanes=exclude_lanes,
             carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
         ),
+        pool.fetch(prev_sql, *prev_params) if with_prior else _empty_rows(),
     )
 
     # team_count is irrelevant per customer — only the volume/profit legs are
@@ -243,6 +263,10 @@ async def actuals(
             "proj_eom_vol": 0.0, "proj_eom_prof": 0.0,
         })
 
+    prev_tot = {"vol": 0, "rev": 0.0, "prof": 0.0}
+    if with_prior:
+        out, prev_tot = _attach_prior(out, prev_rows)
+
     sort_key = {
         "revenue_desc":  lambda r: -r["rev"],
         "profit_desc":   lambda r: -r["prof"],
@@ -281,16 +305,63 @@ async def actuals(
     totals["proj_eom_vol"] = _safe_float(proj_all["proj_volume"])
     totals["proj_eom_prof"] = _safe_float(proj_all["proj_profit"])
 
-    return {
-        "success": True,
-        "data": out,
-        "meta": {
-            "window": {"start": s.isoformat(), "end": e.isoformat()},
-            "pending_workdays": pending_workdays,
-            "total": full_total,
-            "totals": totals,
-        },
+    meta = {
+        "window": {"start": s.isoformat(), "end": e.isoformat()},
+        "pending_workdays": pending_workdays,
+        "total": full_total,
+        "totals": totals,
     }
+    if with_prior:
+        # The TOTAL's previous leg is the sum over the FULL row set (before the
+        # limit slice), like every other TOTAL here — and its margin is
+        # Σprofit ÷ Σrevenue, never an average of row margins.
+        meta["totals"] = {**totals, **prior_fields(
+            t_vol, _safe_float(t_rev), _safe_float(t_prof),
+            prev_tot["vol"], _safe_float(prev_tot["rev"]), _safe_float(prev_tot["prof"]),
+        )}
+        meta["compare"] = {
+            "basis": "prior_month",
+            "start": prev_s.isoformat(),
+            "end": prev_e.isoformat(),
+        }
+    return {"success": True, "data": out, "meta": meta}
+
+
+def _attach_prior(rows: list[dict], prev_rows) -> tuple[list[dict], dict]:
+    """Add the previous-month fields to every row; append previous-only customers.
+
+    A customer that shipped last month but not this month is a real row of a
+    month-over-month table (its whole volume is the variance), so it is added
+    with a zero current leg — and its previous leg counts in the TOTAL either
+    way. Returns NEW dicts; the input rows are not mutated.
+    """
+    prev_map = {
+        r["customer_name"]: (int(r["vol"] or 0), _safe_float(r["rev"]), _safe_float(r["prof"]))
+        for r in prev_rows
+    }
+    seen = {r["customer_name"] for r in rows}
+    zero_current = {
+        "vol": 0, "vol_budget": 0.0, "vol_var": 0.0,
+        "rev": 0.0, "rev_budget": 0.0, "rev_var": 0.0,
+        "prof": 0.0, "prof_budget": 0.0, "prof_var": 0.0,
+        "margin_pct": 0.0, "margin_budget_pct": 0.0, "margin_var_pct": 0.0,
+        "otp_pct": 0.0, "otd_pct": 0.0, "rev_x_l": 0.0, "prof_x_l": 0.0,
+        "vol_x_day": 0.0, "prof_x_day": 0.0, "proj_eom_vol": 0.0, "proj_eom_prof": 0.0,
+    }
+    merged = [
+        {**r, **prior_fields(r["vol"], r["rev"], r["prof"],
+                             *prev_map.get(r["customer_name"], (0, 0.0, 0.0)))}
+        for r in rows
+    ] + [
+        {"customer_name": name, **zero_current, **prior_fields(0, 0.0, 0.0, *leg)}
+        for name, leg in prev_map.items() if name not in seen
+    ]
+    tot = {
+        "vol": sum(v for v, _, _ in prev_map.values()),
+        "rev": sum(rv for _, rv, _ in prev_map.values()),
+        "prof": sum(pf for _, _, pf in prev_map.values()),
+    }
+    return merged, tot
 
 
 # ---------------------------------------------------------------------------

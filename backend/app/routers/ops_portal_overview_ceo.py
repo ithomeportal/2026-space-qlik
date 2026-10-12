@@ -598,6 +598,10 @@ async def actuals(
     limit: int = Query(100),
     losses_only: bool = Query(False),
     unbilled_only: bool = Query(False),
+    # A VIEW choice inside the gated division, not a scope: forwarded like any
+    # filter. The page sends nothing ⇒ "budget"; DFW's own router pins
+    # "prior_month" (Bruno PDF 2026-10-12).
+    compare: str = Query('budget', pattern="^(budget|prior_month)$"),
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)
@@ -607,7 +611,7 @@ async def actuals(
         customer=customer, load_type=load_type, lanes=lanes,
         exclude_lanes=exclude_lanes, carriers=carriers,
         exclude_carriers=exclude_carriers, sort=sort, limit=limit,
-        losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
+        losses_only=losses_only, unbilled_only=unbilled_only, compare=compare, _user=_user,
     )
 
 @r.get("/{division}/actuals-by-lane")

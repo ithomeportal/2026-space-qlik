@@ -16,6 +16,10 @@ import { OpsPortalOverviewContent } from "@/components/OpsPortalOverviewContent"
  * budget: 0 of its 15 YTD customers appear in `daily_production_budget_report`.
  * Customer Monthly Variance is month-over-month instead (Request 7), which the
  * panel labels — its sign convention is the opposite of the CORP one.
+ *
+ * Bruno PDF 2026-10-12 R1: with no budget to compare against, the Actuals
+ * table compares the window with the SAME days of the previous month — pills
+ * All / Actuals / Variances (`actualsCompare="prior_month"`).
  */
 export default function OpsManagersPortalDfwPage() {
   return (
@@ -28,6 +32,7 @@ export default function OpsManagersPortalDfwPage() {
         hideGoTo
         hideBudget
         customerVarianceBasis="mom"
+        actualsCompare="prior_month"
       />
     </ReportGuard>
   )

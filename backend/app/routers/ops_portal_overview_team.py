@@ -310,7 +310,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             request=request, range=range, start_date=start_date, end_date=end_date,
             team=team, customer=customer, load_type=load_type, lanes=lanes,
             exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, sort=sort, limit=limit,
-            losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
+            losses_only=losses_only, unbilled_only=unbilled_only, compare="budget", _user=_user,
         )
 
     # ---- /actuals-by-lane -------------------------------------------------

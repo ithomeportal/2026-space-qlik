@@ -459,11 +459,18 @@ async def actuals(
     unbilled_only: bool = Query(False),
     _user: dict = Depends(gate),
 ):
+    """Bruno PDF 2026-10-12 R1: DFW compares against the SAME days of the
+    previous month (All / Actuals / Variances), because it has no budget.
+
+    ``compare`` is pinned HERE, not read from the client: it is a property of
+    this report, and the CEO portal's DFW/ALL views keep the budget-shaped
+    payload until someone asks for the same there.
+    """
     return await opo.actuals(
         request=request, range=range, start_date=start_date, end_date=end_date,
         team=_sub_team(team), customer=customer, load_type=load_type, lanes=lanes,
         exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, sort=sort, limit=limit,
-        losses_only=losses_only, unbilled_only=unbilled_only, _user=_user,
+        losses_only=losses_only, unbilled_only=unbilled_only, compare="prior_month", _user=_user,
     )
 
 # ---- /actuals-by-lane -------------------------------------------------
