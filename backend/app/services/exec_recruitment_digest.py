@@ -200,6 +200,7 @@ async def _build(app) -> dict[str, Any]:
         generated=generated,
         exec_report_url=EXEC_REPORT_URL,
         jobs_reports_url=JOBS_REPORTS_URL,
+        ticket_totals=p.get("ticket_totals"),
     )
     return {
         "subject": subject,
@@ -214,6 +215,7 @@ async def _build(app) -> dict[str, Any]:
             "open_roles": summary["data"]["open_roles"],
             "open_vacancies": summary["data"]["open_vacancies"],
             "active_candidates": p["snapshot"]["active_candidates"],
+            "ticket_totals": p.get("ticket_totals"),
             "last_week_counts": {k: v for k, v in lw.items()
                                  if k not in ("week_start", "week_end")},
         },

@@ -458,7 +458,39 @@ def build_pipeline(
     )
 
     return {"weeks": weeks, "snapshot": snapshot, "roles": list(roles.values()),
-            "hires_last_week": hires_last_week}
+            "hires_last_week": hires_last_week,
+            "ticket_totals": ticket_totals(tickets, mondays, wanted_dept)}
+
+
+def ticket_totals(tickets: list[dict], mondays: list[date],
+                  wanted_dept: Optional[str]) -> dict[str, Any]:
+    """Onboarding vs offboarding over the WHOLE window and year-to-date.
+
+    YTD runs Jan 1 → the last COMPLETED Sunday (the same end as the weekly
+    table), never through today: a Monday-afternoon partial day would make the
+    YTD disagree with the weeks printed above it.
+    """
+    if not mondays:
+        return {}
+    end = mondays[0] + timedelta(days=6)
+    start = mondays[-1]
+    year_start = date(end.year, 1, 1)
+    out = {"window_start": start.isoformat(), "window_end": end.isoformat(),
+           "year": end.year, "ytd_end": end.isoformat(),
+           "window": {"onboarding": 0, "offboarding": 0},
+           "ytd": {"onboarding": 0, "offboarding": 0}}
+    for t in tickets:
+        if _is_excluded_display(t["department"]) or not _matches(t["department"], wanted_dept):
+            continue
+        d = to_cst_date(t["at"])
+        key = "onboarding" if t["category"] == "Onboarding" else "offboarding"
+        if d is None or d > end:
+            continue
+        if d >= start:
+            out["window"][key] += 1
+        if d >= year_start:
+            out["ytd"][key] += 1
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +515,10 @@ async def pipeline(
     firsts = await _first_arrivals(pool, stage_orders, since_utc)
     applications = await _applications(pool)
     offers = await _offer_counts(pool)
-    tickets = await _tickets(pool, since_utc)
+    # From Jan 1 (or the window start, if earlier) so YTD totals come from the
+    # same rows and filters as the weekly series.
+    year_start = date(mondays[0].year, 1, 1)
+    tickets = await _tickets(pool, cst_midnight_utc(min(year_start, mondays[-1])))
 
     data = build_pipeline(
         mondays=mondays,

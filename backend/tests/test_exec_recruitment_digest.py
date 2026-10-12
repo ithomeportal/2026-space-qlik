@@ -151,6 +151,28 @@ def _build(apps, firsts=(), tickets=(), offers=None, dept=None):
     )
 
 
+class TestTicketTotals:
+    def test_window_and_ytd_stop_at_the_last_completed_sunday(self):
+        tickets = [
+            {"category": "Onboarding", "department": "IT", "at": utc(2026, 1, 1, 7)},     # Jan 1 CST
+            {"category": "Onboarding", "department": "IT", "at": utc(2026, 1, 1, 5)},     # Dec 31 CST
+            {"category": "Offboarding", "department": "IT", "at": utc(2026, 9, 1, 15)},   # in window
+            {"category": "Offboarding", "department": "IT", "at": utc(2026, 10, 12, 3)},  # Sun Oct 11 CDT
+            {"category": "Offboarding", "department": "IT", "at": utc(2026, 10, 12, 15)}, # today: excluded
+            {"category": "Offboarding", "department": "Seek", "at": utc(2026, 9, 1, 15)}, # excluded dept
+        ]
+        t = pipe.ticket_totals(tickets, MONDAYS, None)
+        assert t["window"] == {"onboarding": 0, "offboarding": 2}
+        assert t["ytd"] == {"onboarding": 1, "offboarding": 2}
+        assert (t["window_start"], t["window_end"]) == ("2026-08-17", "2026-10-11")
+
+    def test_build_returns_totals(self):
+        d = pipe.build_pipeline(mondays=MONDAYS, positions={}, stage_orders={}, firsts=[],
+                                applications=[], offers={}, tickets=[], wanted_dept=None,
+                                now_utc=utc(2026, 10, 12, 21))
+        assert d["ticket_totals"]["ytd"] == {"onboarding": 0, "offboarding": 0}
+
+
 class TestBuild:
     def test_excluded_departments_never_count(self):
         d = _build([_app("1", "px", "s3"), _app("2", "p1", "s3")],
@@ -273,6 +295,10 @@ PAYLOADS = {
                      "time_to_fill": {"avg_days": 19, "evergreen_days": None,
                                       "standard_days": 18, "hires_measured": 5}},
         "roles": [], "hires_last_week": [],
+        "ticket_totals": {"window_start": "2026-08-17", "window_end": "2026-10-11",
+                          "year": 2026, "ytd_end": "2026-10-11",
+                          "window": {"onboarding": 8, "offboarding": 11},
+                          "ytd": {"onboarding": 12, "offboarding": 30}},
         "meta": {"pipeline_as_of": "2026-10-12T15:40-05:00", "unknown_stages": []},
     },
 }
@@ -299,8 +325,7 @@ class TestDigest:
 
     def test_every_section_the_workflow_asserts_is_present(self, digest):
         for section in ("WEEKLY PIPELINE", "ONBOARDING VS OFFBOARDING", "OPEN ROLES",
-                        "HIRES LAST WEEK",
-                        "KEY INDICATORS", "DEFINITIONS"):
+                        "HIRES LAST WEEK", "KEY INDICATORS"):
             assert section in digest["html"], section
 
     def test_stale_ticket_feed_shows_a_banner(self, digest):
@@ -312,17 +337,28 @@ class TestDigest:
 
     def test_flow_trend_has_a_row_per_week_and_a_total(self, digest):
         trend = digest["html"].split("ONBOARDING VS OFFBOARDING")[1].split("OPEN ROLES")[0]
-        assert trend.count("<tr>") == 1 + 8 + 1  # header + weeks + total
+        assert trend.count("<tr>") == 1 + 1 + 8 + 1  # totals headline + header + weeks + total
         assert "8 weeks" in trend
 
-    def test_flow_bars_scale_to_the_peak(self):
-        from app.services.exec_recruitment_digest_html import FLOW_BAR_MAX_PX, _bar
-        assert f'width="{FLOW_BAR_MAX_PX}"' in _bar(3, 3, "#000000", "left")
-        assert 'width="120"' in _bar(1, 2, "#000000", "left")
-        assert "&mdash;" in _bar(0, 2, "#000000", "left")
+    def test_flow_bars_are_text_so_they_survive_print(self):
+        from app.services.exec_recruitment_digest_html import BLOCK, FLOW_BAR_MAX_BLOCKS, _bar
+        assert _bar(3, 3, "#000000", "left").count(BLOCK) == FLOW_BAR_MAX_BLOCKS
+        assert _bar(1, 2, "#000000", "left").count(BLOCK) == FLOW_BAR_MAX_BLOCKS // 2
+        assert BLOCK not in _bar(0, 2, "#000000", "left")
+        assert "bgcolor" not in _bar(3, 3, "#000000", "left")
 
-    def test_the_100pct_acceptance_artefact_is_captioned(self, digest):
-        assert "reads 100% by construction" in digest["html"]
+    def test_section_headings_do_not_rely_on_a_background(self, digest):
+        from app.services.exec_recruitment_digest_html import _section
+        assert "background-color" not in _section("X")
+
+    def test_full_period_and_ytd_totals_head_the_trend(self, digest):
+        trend = digest["html"].split("ONBOARDING VS OFFBOARDING")[1].split("OPEN ROLES")[0]
+        assert "Full period" in trend and "2026 year to date" in trend
+        assert "12 on" in trend and "30 off" in trend      # YTD from the fixture
+
+    def test_offer_acceptance_and_definitions_are_removed(self, digest):
+        assert "Offer acceptance" not in digest["html"]
+        assert "DEFINITIONS" not in digest["html"]
 
     def test_every_text_element_declares_its_font(self, digest):
         for tag in re.findall(r"<(?:td|th|div|span|a)\b[^>]*>", digest["html"]):

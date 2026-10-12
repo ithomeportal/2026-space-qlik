@@ -2,9 +2,14 @@
 
 Sections (each heading is asserted by the n8n workflow):
   KPI tiles · WEEKLY PIPELINE (last 8 completed weeks, latest first, last week
-  boxed, 7-week average and the delta) · OPEN ROLES (oldest first, live pipeline
-  per role) · HIRES LAST WEEK · KEY INDICATORS (Jobs portal definitions) ·
-  DEFINITIONS + data-as-of.
+  boxed, 7-week average and the delta) · ONBOARDING VS OFFBOARDING (full-period
+  and YTD totals, then weekly bars) · OPEN ROLES (oldest first, live pipeline per
+  role) · HIRES LAST WEEK · KEY INDICATORS · links.
+
+Removed on request 2026-10-12: the Offer-acceptance row (the portal records no
+formal offers, so it read 100% by construction) and the Definitions & Data
+footer. ⚠ Outlook's PRINT / PDF drops every background — headings are coloured
+text over a border rule and the trend bars are coloured █ text, never fills.
 
 Outlook rules (SPEC-CODE-RULES §21): FONT_STACK inline on EVERY element, hex
 colours only, tables for layout, no webfonts, print-color-adjust on fills.
@@ -131,9 +136,12 @@ def _div(content: str, *, size: int = 13, color: str = INK, bold: bool = False,
 
 
 def _section(title: str, note: str = "") -> str:
-    bar = (f'<div style="font-family:{FONT_STACK};font-size:13px;font-weight:700;'
-           f"color:#FFFFFF;background-color:{BRAND};{PRINT_EXACT}padding:8px 12px;"
-           f'letter-spacing:1px;margin:24px 0 0 0;">{escape(title)}</div>')
+    # Dark TEXT over a coloured RULE, not white-on-fill: Outlook's print / PDF
+    # drops every background, which turned the old navy bars into faint grey
+    # headings (test print 2026-10-12, /Pictures/hr test.pdf). Borders print.
+    bar = (f'<div style="font-family:{FONT_STACK};font-size:14px;font-weight:700;'
+           f"color:{BRAND};border-bottom:3px solid {BRAND};padding:0 0 4px 0;"
+           f'letter-spacing:1px;margin:26px 0 0 0;">{escape(title)}</div>')
     return bar + (_div(note, size=11, color=MUTED, margin="6px 0 6px 0") if note else "")
 
 
@@ -205,23 +213,54 @@ def _weekly(weeks: list[dict], tickets_are_stale: bool) -> str:
     return _table(head, body)
 
 
-FLOW_BAR_MAX_PX = 240
+FLOW_BAR_MAX_BLOCKS = 20
+BLOCK = "&#9608;"  # █ — a bar drawn in TEXT colour survives Outlook print/PDF
 
 
 def _bar(n: int, peak: int, colour: str, align: str) -> str:
-    """A bar as a fixed-width table cell — Outlook ignores div widths."""
+    """A bar of coloured block characters.
+
+    The first version used filled table cells; Outlook's print / PDF dropped
+    every background and the bars vanished entirely (2026-10-12). Text colour
+    prints, so the bar is text.
+    """
     if not n:
-        return _td(DASH, align=align, color=MUTED, size=11, extra="width:280px;")
-    px = max(4, round(FLOW_BAR_MAX_PX * n / peak)) if peak else 4
-    bar = (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-           f'align="{align}" style="border-collapse:collapse;"><tr>'
-           f'<td width="{px}" height="14" bgcolor="{colour}" style="font-family:{FONT_STACK};'
-           f'width:{px}px;height:14px;font-size:1px;line-height:1px;background-color:{colour};'
-           f'{PRINT_EXACT}">&nbsp;</td></tr></table>')
-    return _td(bar, align=align, extra="width:280px;")
+        return _td(DASH, align=align, color=MUTED, size=11, extra="width:260px;")
+    blocks = max(1, round(FLOW_BAR_MAX_BLOCKS * n / peak)) if peak else 1
+    return _td(BLOCK * blocks, align=align, color=colour, size=12,
+               extra="width:260px;letter-spacing:-1px;white-space:nowrap;")
 
 
-def _flow_trend(weeks: list[dict], tickets_are_stale: bool) -> str:
+def _totals_headline(label: str, on: int, off: int) -> str:
+    text, colour = _delta(on - off, False)
+    return (f'<td width="50%" valign="top" style="font-family:{FONT_STACK};padding:4px;">'
+            f'<div style="font-family:{FONT_STACK};border:1px solid {BORDER};'
+            f'border-top:3px solid {BRAND};padding:10px;">'
+            f'<div style="font-family:{FONT_STACK};font-size:10px;color:{MUTED};'
+            f'text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">{label}</div>'
+            f'<div style="font-family:{FONT_STACK};font-size:22px;font-weight:700;color:{INK};'
+            f'margin:4px 0 0 0;"><span style="font-family:{FONT_STACK};color:{GOOD};">'
+            f'{_n(on)} on</span> <span style="font-family:{FONT_STACK};color:{MUTED};">vs</span> '
+            f'<span style="font-family:{FONT_STACK};color:{BAD};">{_n(off)} off</span> '
+            f'<span style="font-family:{FONT_STACK};font-size:14px;color:{colour};">'
+            f"&nbsp;net {text}</span></div></div></td>")
+
+
+def _flow_totals(totals: dict) -> str:
+    """The full-period answer first: window total and YTD, on vs off."""
+    if not totals:
+        return ""
+    ws, we = (date.fromisoformat(totals[k]) for k in ("window_start", "window_end"))
+    cells = (_totals_headline(f"Full period &middot; {_short(ws)} &ndash; {_short(we)}",
+                              totals["window"]["onboarding"], totals["window"]["offboarding"])
+             + _totals_headline(f"{totals['year']} year to date &middot; to {_short(we)}",
+                                totals["ytd"]["onboarding"], totals["ytd"]["offboarding"]))
+    return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            f'width="100%" style="border-collapse:collapse;width:100%;margin:0 0 8px 0;">'
+            f"<tr>{cells}</tr></table>")
+
+
+def _flow_trend(weeks: list[dict], tickets_are_stale: bool, totals: dict) -> str:
     """ONBOARDING vs OFFBOARDING per week — the Jobs portal's "Exits vs New Hires"
     definition (IT ROUTE tickets), as mirrored bars with the weekly net."""
     on = [w["onboarding_tickets"] for w in weeks]
@@ -253,7 +292,7 @@ def _flow_trend(weeks: list[dict], tickets_are_stale: bool) -> str:
     if tickets_are_stale:
         note = _div("&#9888; The ticket feed is stale — recent weeks may be incomplete.",
                     size=11, color=WARN_INK, margin="6px 0 0 0")
-    return _table(head, body) + note
+    return _flow_totals(totals) + _table(head, body) + note
 
 
 def _roles(roles: list[dict]) -> str:
@@ -301,18 +340,11 @@ def _hires(hires: list[dict]) -> str:
 
 def _indicators(snapshot: dict, annual: dict) -> str:
     ttf = snapshot["time_to_fill"]
-    oa = snapshot["offer_acceptance"]
     rows = [
         ("Average time to fill",
          f"{_n(ttf['avg_days'])} days",
          (f"Evergreen {_n(ttf['evergreen_days'])} d &middot; Standard {_n(ttf['standard_days'])} d "
           f"&middot; {_n(ttf['hires_measured'])} hires, all-time")),
-        ("Offer acceptance",
-         _pct(oa["rate"]),
-         f"{_n(oa['accepted'])} accepted vs {_n(oa['rejected'])} declined, all-time"
-         + ("" if snapshot.get("offers_recorded") else
-            " &middot; &#9888; no formal offers are recorded in the portal, so declines are "
-            "never captured and this reads 100% by construction")),
         ("At approval / offer stage", _n(snapshot["at_offer_stage"]),
          "candidates now in CEO/VP Approval, Send Offer or Offer Accepted"),
         (f"New hires {annual.get('year')} YTD", _n(annual.get("new_hires")),
@@ -349,12 +381,13 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
                 pipeline_as_of: Optional[str], tickets_as_of: Optional[str],
                 people_as_of: Optional[str], tickets_are_stale: bool,
                 generated: datetime, exec_report_url: str,
-                jobs_reports_url: str) -> str:
+                jobs_reports_url: str, ticket_totals: Optional[dict] = None) -> str:
     lw = weeks[0]
     banner = ""
     if tickets_are_stale:
         banner = (f'<div style="font-family:{FONT_STACK};font-size:12px;color:{WARN_INK};'
-                  f"background-color:{WARN_BG};{PRINT_EXACT}padding:8px 12px;margin:12px 0 0 0;\">"
+                  f"background-color:{WARN_BG};{PRINT_EXACT}border-left:4px solid {WARN_INK};"
+                  f"padding:8px 12px;margin:12px 0 0 0;\">"
                   f"&#9888; The IT ROUTE ticket feed has no ticket since {_ts(tickets_as_of)} — "
                   f"onboarding and exit counts below may be incomplete.</div>")
     aged = sum(1 for r in roles if r["days_open"] > AGED_DAYS)
@@ -379,7 +412,7 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
         _section("ONBOARDING VS OFFBOARDING — WEEKLY TREND",
                  "IT ROUTE onboarding and offboarding tickets per week (the Jobs portal's "
                  "Exits vs New Hires definition). Net = onboarding &minus; offboarding."),
-        _flow_trend(weeks, tickets_are_stale),
+        _flow_trend(weeks, tickets_are_stale, ticket_totals or {}),
         _section("OPEN ROLES",
                  f"{len(roles)} active roles, oldest first &middot; "
                  f"{aged} open more than {AGED_DAYS} days (red) &middot; "
@@ -391,21 +424,6 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
         _section("KEY INDICATORS", "Same definitions as the Jobs portal's Reports &amp; "
                  "Analytics page; HIRED = accepted offer."),
         _indicators(snapshot, annual),
-        _section("DEFINITIONS & DATA"),
-        _div("<b>Phone screened</b> = reached Phone Screening or any later stage. "
-             "<b>Valid candidate</b> = passed screening, i.e. reached HR Interview or later. "
-             "<b>Stalled</b> = in process with no update for more than 7 days, not counting "
-             "candidates parked on the Bench. "
-             "Roles and pipeline come from the Jobs portal; onboarding/exits from IT ROUTE "
-             "tickets; headcount and YTD new hires from the time-off directory. "
-             "Weekly rows, open roles and the live pipeline exclude Seek, OilTex, "
-             "Presidency and Aviation; the YTD figures are the Exec Meeting page's own "
-             "(its exits exclude Seek/OilTex tickets). Offer counts cover all departments. "
-             "A hire can be recorded on the portal without passing through the Offer "
-             "stage, so Hires may exceed Offer stage in a week.", size=11, color=MUTED),
-        _div(f"Data as of &mdash; Jobs portal: {_ts(pipeline_as_of)} &middot; "
-             f"tickets: {_ts(tickets_as_of)} &middot; directory: {_ts(people_as_of)}",
-             size=11, color=MUTED),
         _div(f'<a href="{jobs_reports_url}" style="{link}">Jobs portal &mdash; Reports &amp; '
              f'Analytics</a> &middot; <a href="{exec_report_url}" style="{link}">'
              f"Space &mdash; Exec Meeting &ndash; Recruitment</a>", size=12),
