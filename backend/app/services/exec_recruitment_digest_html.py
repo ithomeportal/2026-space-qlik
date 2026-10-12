@@ -311,6 +311,51 @@ def _flow_trend(weeks: list[dict], tickets_are_stale: bool, totals: dict) -> str
     return _flow_totals(totals) + _table(head, body) + note
 
 
+DIVISION_BAR_BLOCKS = 16
+
+
+def _divisions(rows: list[dict], note: Optional[str]) -> str:
+    """BY DIVISION — open positions, days open (bar), activity, fill speed."""
+    if not rows:
+        return ""
+    peak = max((r["avg_days_open"] or 0) for r in rows) or 1
+    head = (_th("Division / department", align="left") + _th("Open roles") + _th("Open vac.")
+            + _th("Avg days open", align="left") + _th("Oldest") + _th("Open &gt; 60 d")
+            + _th("Active cand.") + _th("Valid LW") + _th("Rejected LW")
+            + _th("Hires YTD") + _th("Avg days to fill YTD"))
+    body = ""
+    for r in rows:
+        level = r["level"]
+        top = f"border-top:2px solid {BRAND};" if level in ("division", "total") else ""
+        bold = level != "department"
+        label = (escape(r["label"]) if level != "department"
+                 else f"&nbsp;&nbsp;&nbsp;{escape(r['label'])}")
+        avg = r["avg_days_open"]
+        blocks = max(1, round(DIVISION_BAR_BLOCKS * avg / peak)) if avg else 0
+        bar = (f'<span style="font-family:{FONT_STACK};color:{BAD if avg and avg > AGED_DAYS else BRAND};'
+               f'letter-spacing:-1px;">{BLOCK * blocks}</span>&nbsp;' if blocks else "")
+        body += (
+            "<tr>"
+            + _td(label, align="left", bold=bold, extra=top)
+            + _td(_n(r["open_roles"]), bold=bold, extra=top)
+            + _td(_n(r["open_vacancies"]), bold=bold, extra=top)
+            + _td(f"{bar}<b>{_n(avg)}</b>", align="left", extra=top + "white-space:nowrap;")
+            + _td(_n(r["oldest_days"]), extra=top)
+            + _td(_n(r["over_60"]), color=BAD if r["over_60"] else INK, bold=bool(r["over_60"]),
+                  extra=top)
+            + _td(_n(r["active_candidates"]), extra=top)
+            + _td(_n(r["valid_lw"]), extra=top)
+            + _td(_n(r["rejected_lw"]), extra=top)
+            + _td(_n(r["hires_ytd"]), extra=top)
+            + _td(_n(r["avg_days_to_fill_ytd"]), extra=top)
+            + "</tr>"
+        )
+    out = _table(head, body)
+    if note:
+        out = _div(f"&#9654; {escape(note)}", size=13, bold=True, margin="8px 0 8px 0") + out
+    return out
+
+
 def _roles(roles: list[dict]) -> str:
     if not roles:
         return _div("No ACTIVE positions on the Jobs portal.", color=MUTED)
@@ -400,7 +445,9 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
                 pipeline_as_of: Optional[str], tickets_as_of: Optional[str],
                 people_as_of: Optional[str], tickets_are_stale: bool,
                 generated: datetime, exec_report_url: str,
-                jobs_reports_url: str, ticket_totals: Optional[dict] = None) -> str:
+                jobs_reports_url: str, ticket_totals: Optional[dict] = None,
+                divisions: Optional[list[dict]] = None,
+                division_note: Optional[str] = None) -> str:
     lw = weeks[0]
     banner = ""
     if tickets_are_stale:
@@ -422,6 +469,11 @@ def render_html(*, subject: str, summary: dict, weeks: list[dict], snapshot: dic
              f"{generated.strftime('%H:%M')} CST", size=12, color=MUTED, margin="2px 0 12px 0"),
         banner,
         _tiles(summary, snapshot, lw),
+        _section("BY DIVISION — OPEN POSITIONS & DAYS OPEN",
+                 "CORP = CORP Operations, Admin, Finance, IT, Pricing &middot; DFW = DFW "
+                 "Operations. Days open = days since the role was opened and still not "
+                 "filled. Days to fill = hire date &minus; role opened, for this year's hires."),
+        _divisions(divisions or [], division_note),
         _section(f"WEEKLY PIPELINE — LAST {len(weeks)} WEEKS",
                  "Each candidate counts once per milestone, in the week they FIRST reached it. "
                  "Latest week first; the delta compares last week with the average of the "

@@ -392,6 +392,7 @@ def build_pipeline(
 
     # Once per (application, week) — a double-click or a log retry is one event.
     rejected_seen: set[tuple[str, int]] = set()
+    rejected_lw_events: list[tuple[str, Optional[int]]] = []
     rejected_lw: dict[str, list[Optional[int]]] = {}
     for r in rejections or []:
         if not in_scope(r["position"]):
@@ -401,6 +402,8 @@ def build_pipeline(
             continue
         rejected_seen.add((r["app"], i))
         order = stage_orders.get(r["stage"])
+        if i == 0:
+            rejected_lw_events.append((r["position"], order))
         series["rejected_total"][i] += 1
         for g, orders in REJECTION_GROUPS:
             if order in orders:
@@ -545,7 +548,68 @@ def build_pipeline(
 
     return {"weeks": weeks, "snapshot": snapshot, "roles": list(roles.values()),
             "hires_last_week": hires_last_week,
-            "ticket_totals": ticket_totals(tickets, mondays, wanted_dept)}
+            "ticket_totals": ticket_totals(tickets, mondays, wanted_dept),
+            "by_department": department_stats(
+                apps=apps, positions=positions, firsts=firsts,
+                rejected_lw_events=rejected_lw_events, mondays=mondays, in_scope=in_scope)}
+
+
+def division_of(department: str) -> str:
+    """CORP vs DFW by DEPARTMENT, never by Position.area — measured 2026-10-12, an
+    ACTIVE "DFW OPERATIONS" role carries area 'Corporate', so area would file it
+    under the wrong division."""
+    return "DFW" if department == "DFW OPERATIONS" else "CORP"
+
+
+def department_stats(*, apps: list[dict], positions: dict[str, dict], firsts: list[dict],
+                     rejected_lw_events: list[tuple[str, Optional[int]]],
+                     mondays: list[date], in_scope) -> list[dict]:
+    """Per canonical department: candidates now, last-week activity, YTD hires and
+    days to fill (hire date − position opened, the portal's time-to-fill), all
+    over ALL in-scope positions of that department (not just the open ones).
+    YTD runs Jan 1 → the last completed Sunday, like every other period here."""
+    if not mondays:
+        return []
+    lw_end = mondays[0] + timedelta(days=6)
+    year_start = date(lw_end.year, 1, 1)
+    out: dict[str, dict] = {}
+
+    def row(pid: str) -> dict:
+        dept = positions[pid]["department"]
+        return out.setdefault(dept, {
+            "department": dept, "division": division_of(dept),
+            "active_candidates": 0, "new_apps_lw": 0, "screened_lw": 0, "valid_lw": 0,
+            "rejected_lw": 0, "rejected_screening_lw": 0,
+            "hires_ytd": 0, "fill_days_sum": 0, "fill_days_n": 0,
+        })
+
+    for a in apps:
+        r = row(a["positionId"])
+        if a["status"] == "IN_PROCESS":
+            r["active_candidates"] += 1
+        if week_of(a["createdAt"], mondays) == 0:
+            r["new_apps_lw"] += 1
+        hired_on = to_cst_date(a["hiredAt"]) if a["status"] == "HIRED" else None
+        if hired_on and year_start <= hired_on <= lw_end:
+            r["hires_ytd"] += 1
+            opened = positions[a["positionId"]]["created_at"]
+            if opened is not None:
+                r["fill_days_sum"] += max(0, math.ceil(
+                    (a["hiredAt"] - opened).total_seconds() / 86400))
+                r["fill_days_n"] += 1
+    for f in firsts:
+        if not in_scope(f["position"]):
+            continue
+        if week_of(f.get("screened"), mondays) == 0:
+            row(f["position"])["screened_lw"] += 1
+        if week_of(f.get("valid"), mondays) == 0:
+            row(f["position"])["valid_lw"] += 1
+    for pid, order in rejected_lw_events:
+        r = row(pid)
+        r["rejected_lw"] += 1
+        if order in SCREENING_ORDERS:
+            r["rejected_screening_lw"] += 1
+    return sorted(out.values(), key=lambda r: (r["division"], r["department"]))
 
 
 def ticket_totals(tickets: list[dict], mondays: list[date],

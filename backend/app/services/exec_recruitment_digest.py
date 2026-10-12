@@ -152,6 +152,94 @@ def join_roles(open_roles: list[dict], pipeline_roles: list[dict]) -> list[dict]
     return [{**r, **by_id.get(r["id"], empty)} for r in open_roles]
 
 
+AGED_DAYS = 60
+DIVISION_ORDER = ("CORP", "DFW")
+_SUMMED = ("active_candidates", "new_apps_lw", "screened_lw", "valid_lw", "rejected_lw",
+           "rejected_screening_lw", "hires_ytd", "fill_days_sum", "fill_days_n")
+
+
+def _finish(row: dict, days: list[int]) -> dict:
+    """Derived columns. Averages are recomputed from the parts — never an
+    average of department averages (a 1-role department would weigh as much
+    as a 10-role one)."""
+    n = row["fill_days_n"]
+    return {
+        **row,
+        "open_roles": len(days),
+        "avg_days_open": round(sum(days) / len(days)) if days else None,
+        "oldest_days": max(days) if days else None,
+        "over_60": sum(1 for d in days if d > AGED_DAYS),
+        "avg_days_to_fill_ytd": round(row["fill_days_sum"] / n) if n else None,
+    }
+
+
+def division_table(open_roles: list[dict], dept_stats: list[dict]) -> list[dict]:
+    """Rows: per division a SUBTOTAL, then its departments; a final TOTAL.
+
+    Open-role figures come from /open-roles (the Exec page's own definition);
+    candidate/hire figures from /pipeline's by_department. A department with
+    open roles but no stats row (or the reverse) still prints.
+    """
+    from app.routers.exec_meeting_recruitment_pipeline import division_of
+
+    zero = {k: 0 for k in _SUMMED}
+    depts: dict[str, dict] = {d["department"]: {**zero, **d} for d in dept_stats}
+    days_by_dept: dict[str, list[int]] = {}
+    vac_by_dept: dict[str, int] = {}
+    for r in open_roles:
+        dept = r["department"]
+        depts.setdefault(dept, {**zero, "department": dept, "division": division_of(dept)})
+        days_by_dept.setdefault(dept, []).append(int(r["days_open"]))
+        vac_by_dept[dept] = vac_by_dept.get(dept, 0) + int(r.get("open_vacancies") or 0)
+
+    def leaf(dept: str) -> dict:
+        return {**_finish(depts[dept], days_by_dept.get(dept, [])),
+                "open_vacancies": vac_by_dept.get(dept, 0), "level": "department",
+                "label": dept}
+
+    def rollup(label: str, names: list[str], level: str) -> dict:
+        summed = {k: sum(depts[n][k] for n in names) for k in _SUMMED}
+        days = [d for n in names for d in days_by_dept.get(n, [])]
+        return {**_finish(summed, days), "level": level, "label": label,
+                "division": label if level == "division" else None,
+                "open_vacancies": sum(vac_by_dept.get(n, 0) for n in names)}
+
+    rows: list[dict] = []
+    for division in DIVISION_ORDER:
+        names = sorted((n for n, d in depts.items() if d["division"] == division),
+                       key=lambda n: (not n.endswith("OPERATIONS"), n))
+        if not names:
+            continue
+        rows.append(rollup(division, names, "division"))
+        if len(names) > 1:
+            # Departments with an open role get their own row; the rest fold into
+            # ONE row (5 of 10 CORP departments had none on 2026-10-12 — listing
+            # each was noise). Their numbers still count in the subtotal above.
+            with_roles = [n for n in names if days_by_dept.get(n)]
+            idle = [n for n in names if not days_by_dept.get(n)]
+            rows.extend(leaf(n) for n in with_roles)
+            if idle:
+                rows.append({**rollup(f"Other departments ({len(idle)}, no open role)",
+                                      idle, "department"), "division": division})
+    rows.append(rollup("TOTAL", list(depts), "total"))
+    return rows
+
+
+def division_comparison(rows: list[dict]) -> Optional[str]:
+    """One plain sentence comparing CORP and DFW, or None if either is missing."""
+    div = {r["label"]: r for r in rows if r["level"] == "division"}
+    corp, dfw = div.get("CORP"), div.get("DFW")
+    if not corp or not dfw or not corp["avg_days_open"] or not dfw["avg_days_open"]:
+        return None
+    slow, fast = (corp, dfw) if corp["avg_days_open"] >= dfw["avg_days_open"] else (dfw, corp)
+    ratio = slow["avg_days_open"] / fast["avg_days_open"]
+    pace = (f"{ratio:.1f}× longer" if ratio >= 1.1 else "about as long")
+    return (f"{slow['label']} roles have been open {pace} than {fast['label']} roles on "
+            f"average ({slow['avg_days_open']} vs {fast['avg_days_open']} days); "
+            f"CORP has {corp['open_roles']} open roles / {corp['open_vacancies']} vacancies, "
+            f"DFW {dfw['open_roles']} / {dfw['open_vacancies']}.")
+
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
@@ -186,6 +274,7 @@ async def _build(app) -> dict[str, Any]:
     generated = cst_now()
 
     roles = join_roles(open_roles["data"]["rows"], p["roles"])
+    divisions = division_table(open_roles["data"]["rows"], p.get("by_department", []))
     html = render_html(
         subject=subject,
         summary=summary["data"],
@@ -202,6 +291,8 @@ async def _build(app) -> dict[str, Any]:
         exec_report_url=EXEC_REPORT_URL,
         jobs_reports_url=JOBS_REPORTS_URL,
         ticket_totals=p.get("ticket_totals"),
+        divisions=divisions,
+        division_note=division_comparison(divisions),
     )
     return {
         "subject": subject,

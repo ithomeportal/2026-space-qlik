@@ -225,6 +225,72 @@ class TestRejections:
         assert d["weeks"][0]["rejected_total"] == 0
 
 
+def _stat(dept, division, **kw):
+    base = {"department": dept, "division": division, "active_candidates": 0,
+            "new_apps_lw": 0, "screened_lw": 0, "valid_lw": 0, "rejected_lw": 0,
+            "rejected_screening_lw": 0, "hires_ytd": 0, "fill_days_sum": 0, "fill_days_n": 0}
+    return {**base, **kw}
+
+
+class TestDivisions:
+    """2026-10-12: "indicators per division, how many positions open, days …
+    and comparison between divisions"."""
+
+    OPEN = [
+        {"department": "CORP OPERATIONS", "days_open": 100, "open_vacancies": 1},
+        {"department": "CORP OPERATIONS", "days_open": 20, "open_vacancies": 1},
+        {"department": "IT", "days_open": 168, "open_vacancies": 2},
+        {"department": "DFW OPERATIONS", "days_open": 30, "open_vacancies": 4},
+    ]
+    STATS = [
+        _stat("CORP OPERATIONS", "CORP", active_candidates=10, hires_ytd=2,
+              fill_days_sum=40, fill_days_n=2),
+        _stat("Finance", "CORP", hires_ytd=1, fill_days_sum=100, fill_days_n=1),
+        _stat("DFW OPERATIONS", "DFW", active_candidates=5, valid_lw=3),
+    ]
+
+    def rows(self):
+        return {r["label"]: r for r in svc.division_table(self.OPEN, self.STATS)}
+
+    def test_division_is_by_department_not_area(self):
+        assert pipe.division_of("DFW OPERATIONS") == "DFW"
+        assert pipe.division_of("IT") == "CORP"
+
+    def test_average_days_open_is_over_roles_not_over_departments(self):
+        corp = self.rows()["CORP"]
+        assert corp["open_roles"] == 3
+        assert corp["avg_days_open"] == round((100 + 20 + 168) / 3)   # not mean(60, 168)
+        assert corp["oldest_days"] == 168 and corp["over_60"] == 2
+
+    def test_days_to_fill_is_over_hires(self):
+        assert self.rows()["CORP"]["avg_days_to_fill_ytd"] == round(140 / 3)
+
+    def test_departments_without_open_roles_fold_into_one_row(self):
+        r = self.rows()
+        assert "Finance" not in r
+        other = r["Other departments (1, no open role)"]
+        assert other["hires_ytd"] == 1 and other["open_roles"] == 0
+        assert r["IT"]["active_candidates"] == 0 and r["IT"]["open_roles"] == 1
+        assert r["CORP"]["hires_ytd"] == 3          # folded rows still in the subtotal
+
+    def test_single_department_division_has_no_duplicate_child_row(self):
+        labels = [r["label"] for r in svc.division_table(self.OPEN, self.STATS)]
+        assert labels.count("DFW OPERATIONS") == 0 and "DFW" in labels
+        assert labels[-1] == "TOTAL"
+
+    def test_total_adds_up(self):
+        t = self.rows()["TOTAL"]
+        assert (t["open_roles"], t["open_vacancies"], t["active_candidates"]) == (4, 8, 15)
+
+    def test_comparison_sentence(self):
+        note = svc.division_comparison(svc.division_table(self.OPEN, self.STATS))
+        assert note.startswith("CORP roles have been open 3.2× longer than DFW")
+
+    def test_no_comparison_when_a_division_is_missing(self):
+        rows = svc.division_table(self.OPEN[:3], self.STATS[:2])
+        assert svc.division_comparison(rows) is None
+
+
 class TestBuild:
     def test_excluded_departments_never_count(self):
         d = _build([_app("1", "px", "s3"), _app("2", "p1", "s3")],
@@ -347,6 +413,10 @@ PAYLOADS = {
                      "time_to_fill": {"avg_days": 19, "evergreen_days": None,
                                       "standard_days": 18, "hires_measured": 5}},
         "roles": [], "hires_last_week": [],
+        "by_department": [
+            {"department": "DFW OPERATIONS", "division": "DFW", "active_candidates": 3,
+             "new_apps_lw": 0, "screened_lw": 0, "valid_lw": 1, "rejected_lw": 0,
+             "rejected_screening_lw": 0, "hires_ytd": 1, "fill_days_sum": 10, "fill_days_n": 1}],
         "ticket_totals": {"window_start": "2026-08-17", "window_end": "2026-10-11",
                           "year": 2026, "ytd_end": "2026-10-11",
                           "window": {"onboarding": 8, "offboarding": 11},
@@ -407,6 +477,11 @@ class TestDigest:
         trend = digest["html"].split("ONBOARDING VS OFFBOARDING")[1].split("OPEN ROLES")[0]
         assert "Full period" in trend and "2026 year to date" in trend
         assert "12 on" in trend and "30 off" in trend      # YTD from the fixture
+
+    def test_division_block_is_rendered_under_the_tiles(self, digest):
+        html = digest["html"]
+        assert "BY DIVISION" in html
+        assert html.index("BY DIVISION") < html.index("WEEKLY PIPELINE")
 
     def test_rejections_block_is_rendered(self, digest):
         assert "REJECTIONS &mdash; by the stage" in digest["html"]
