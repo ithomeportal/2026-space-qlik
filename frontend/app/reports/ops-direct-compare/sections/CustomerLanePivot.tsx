@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from "react"
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react"
+import { TopScrollbar } from "@/components/TopScrollbar"
 import { DCErrorBanner } from "../ErrorBanner"
 import {
   DC_DEFAULT_SORT,
@@ -38,6 +39,8 @@ interface Props {
 export function CustomerLanePivot({ title, p1, p2, columns }: Props) {
   const [sort, setSort] = useState(DC_DEFAULT_SORT)
   const [page, setPage] = useState(1)
+  // State, not useRef: the box mounts after loading (see TopScrollbar).
+  const [scrollBox, setScrollBox] = useState<HTMLDivElement | null>(null)
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
   const q = useDCPivot(p1, p2, { sort, page, limit: PAGE_SIZE })
   const rows = q.data?.data ?? []
@@ -83,94 +86,99 @@ export function CustomerLanePivot({ title, p1, p2, columns }: Props) {
           <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
         </div>
       ) : (
-        <div className="max-h-[620px] overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10">
-              <tr className="border-b border-[#E5E7EB] text-[10px] uppercase tracking-wider">
-                <th
-                  aria-sort={ariaSort(sort, "customer")}
-                  className="sticky left-0 z-20 bg-white px-2 py-2 text-left text-[#6B7280]"
-                >
-                  <button
-                    type="button"
-                    onClick={() => changeSort(nextSort(sort, "customer"))}
-                    className="uppercase tracking-wider hover:underline"
+        <>
+          {/* Bruno 2026-10-12 R3: a second horizontal scrollbar ABOVE the
+              table, synced with the box's own bottom one (which stays). */}
+          <TopScrollbar target={scrollBox} />
+          <div ref={setScrollBox} className="max-h-[620px] overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-[#E5E7EB] text-[10px] uppercase tracking-wider">
+                  <th
+                    aria-sort={ariaSort(sort, "customer")}
+                    className="sticky left-0 z-20 bg-white px-2 py-2 text-left text-[#6B7280]"
                   >
-                    Customer
-                    {sortArrow(sort, "customer")}
-                  </button>
-                </th>
-                <th className="bg-white px-2 py-2 text-left text-[#6B7280]">Lane</th>
-                <CompareHeaderCells columns={columns} sort={sort} onSort={changeSort} />
-              </tr>
-              {totals && (
-                <tr className="border-b border-[#D1D5DB] font-semibold">
-                  <td className="sticky left-0 z-20 bg-[#F9FAFB] px-2 py-1.5 text-[#374151]">
-                    Totals
-                  </td>
-                  <td className="bg-[#F9FAFB]" />
-                  <CompareCells row={totals} columns={columns} />
+                    <button
+                      type="button"
+                      onClick={() => changeSort(nextSort(sort, "customer"))}
+                      className="uppercase tracking-wider hover:underline"
+                    >
+                      Customer
+                      {sortArrow(sort, "customer")}
+                    </button>
+                  </th>
+                  <th className="bg-white px-2 py-2 text-left text-[#6B7280]">Lane</th>
+                  <CompareHeaderCells columns={columns} sort={sort} onSort={changeSort} />
                 </tr>
-              )}
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const isOpen = open.has(c.customer)
-                return (
-                  <Fragment key={c.customer}>
-                    <tr className="border-b border-[#E5E7EB] font-medium hover:bg-[#F9FAFB]">
-                      <td
-                        className="sticky left-0 max-w-[260px] truncate bg-white px-2 py-1.5 text-[#111827]"
-                        title={c.customer}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggle(c.customer)}
-                          aria-expanded={isOpen}
-                          className="inline-flex max-w-full items-center gap-1 truncate text-left"
+                {totals && (
+                  <tr className="border-b border-[#D1D5DB] font-semibold">
+                    <td className="sticky left-0 z-20 bg-[#F9FAFB] px-2 py-1.5 text-[#374151]">
+                      Totals
+                    </td>
+                    <td className="bg-[#F9FAFB]" />
+                    <CompareCells row={totals} columns={columns} />
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {rows.map((c) => {
+                  const isOpen = open.has(c.customer)
+                  return (
+                    <Fragment key={c.customer}>
+                      <tr className="border-b border-[#E5E7EB] font-medium hover:bg-[#F9FAFB]">
+                        <td
+                          className="sticky left-0 max-w-[260px] truncate bg-white px-2 py-1.5 text-[#111827]"
+                          title={c.customer}
                         >
-                          {isOpen ? (
-                            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
-                          )}
-                          <span className="truncate">{c.customer}</span>
-                        </button>
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-[10px] text-[#6B7280]">
-                        {c.lane_count.toLocaleString()} {c.lane_count === 1 ? "lane" : "lanes"}
-                      </td>
-                      <CompareCells row={c} columns={columns} />
-                    </tr>
-                    {isOpen &&
-                      c.lanes.map((l, idx) => (
-                        <tr key={`${c.customer}|${l.lane}|${idx}`} className="border-b border-[#F3F4F6]">
-                          <td className="sticky left-0 bg-white" />
-                          <td
-                            className="max-w-[280px] truncate px-2 py-1 pl-4 text-[#374151]"
-                            title={l.lane ?? ""}
+                          <button
+                            type="button"
+                            onClick={() => toggle(c.customer)}
+                            aria-expanded={isOpen}
+                            className="inline-flex max-w-full items-center gap-1 truncate text-left"
                           >
-                            {l.lane}
-                          </td>
-                          <CompareCells row={l} columns={columns} cellClass="px-2 py-1" />
-                        </tr>
-                      ))}
-                  </Fragment>
-                )
-              })}
-              {rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={columns.length + 2}
-                    className="px-2 py-4 text-center text-[#6B7280]"
-                  >
-                    No data in either window.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                            {isOpen ? (
+                              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
+                            )}
+                            <span className="truncate">{c.customer}</span>
+                          </button>
+                        </td>
+                        <td className="whitespace-nowrap px-2 py-1.5 text-[10px] text-[#6B7280]">
+                          {c.lane_count.toLocaleString()} {c.lane_count === 1 ? "lane" : "lanes"}
+                        </td>
+                        <CompareCells row={c} columns={columns} />
+                      </tr>
+                      {isOpen &&
+                        c.lanes.map((l, idx) => (
+                          <tr key={`${c.customer}|${l.lane}|${idx}`} className="border-b border-[#F3F4F6]">
+                            <td className="sticky left-0 bg-white" />
+                            <td
+                              className="max-w-[280px] truncate px-2 py-1 pl-4 text-[#374151]"
+                              title={l.lane ?? ""}
+                            >
+                              {l.lane}
+                            </td>
+                            <CompareCells row={l} columns={columns} cellClass="px-2 py-1" />
+                          </tr>
+                        ))}
+                    </Fragment>
+                  )
+                })}
+                {rows.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={columns.length + 2}
+                      className="px-2 py-4 text-center text-[#6B7280]"
+                    >
+                      No data in either window.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   )

@@ -83,7 +83,7 @@ booleans the table renders, so a KPI can never disagree with the rows below it.
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -679,6 +679,68 @@ def _apply_scenario(rows, adjustment: float):
 
 
 # --------------------------------------------------------------------------
+# Orders-table value filters (Bruno PDF 2026-10-12, Scenario tab: "Revenue =
+# '200', Carrier Cost = '150', Profit = '50'" — per-column amount filters, the
+# quoted figures being his example values).
+# --------------------------------------------------------------------------
+
+# op token -> predicate over (row value, filter value), both at CENTS. Rounding
+# both sides is what lets "= 200" find a $200.00 order whose numeric came back
+# as 199.99999999 after the scenario's float arithmetic.
+_VALUE_OPS = {
+    "eq": lambda v, x: v == x,
+    "gte": lambda v, x: v >= x,
+    "lte": lambda v, x: v <= x,
+}
+# Wire prefix -> row column. `cost` is the wire name for `carrier_cost`.
+_VALUE_FILTER_COLUMNS = (("revenue", "revenue"), ("cost", "carrier_cost"), ("profit", "profit"))
+
+
+def _value_filters(
+    raw: dict[str, tuple[Optional[str], Optional[float]]],
+) -> tuple[tuple[str, str, float], ...]:
+    """Validate the per-column filters → ((column, op, cents_value), ...).
+
+    A value with no op means "=" (the PDF's own wording); an op with no value
+    is no filter. ⚠ An unknown op is a 400, not a silent no-filter: a table that
+    ignores the operator the user picked still renders a plausible list.
+    """
+    out: list[tuple[str, str, float]] = []
+    for wire, column in _VALUE_FILTER_COLUMNS:
+        op, value = raw.get(wire, (None, None))
+        if op is not None and op not in _VALUE_OPS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{wire}_op must be one of: {', '.join(_VALUE_OPS)}",
+            )
+        if value is None:
+            continue
+        if _fl(value) is None:
+            raise HTTPException(status_code=400, detail=f"{wire}_val must be a finite number")
+        out.append((column, op or "eq", round(float(value), 2)))
+    return tuple(out)
+
+
+def _apply_value_filters(rows, filters: tuple[tuple[str, str, float], ...]):
+    """Keep the rows matching EVERY filter. A NULL amount matches none — an
+    order McLeod has no margin for is not "$0 profit". Runs AFTER
+    `_apply_scenario`, so it filters the numbers the table is showing."""
+    if not filters:
+        return rows
+    kept = []
+    for r in rows:
+        ok = True
+        for column, op, target in filters:
+            v = _fl(r[column])
+            if v is None or not _VALUE_OPS[op](round(v, 2), target):
+                ok = False
+                break
+        if ok:
+            kept.append(r)
+    return kept
+
+
+# --------------------------------------------------------------------------
 # /filters — picker options for the selected window
 # --------------------------------------------------------------------------
 
@@ -923,9 +985,22 @@ async def orders(
     page: int = Query(1, ge=1),
     limit: int = Query(200, ge=1, le=MAX_PAGE),
     adjustment: Optional[float] = Query(None),
+    # Bruno PDF 2026-10-12 — Orders-table amount filters. ⚠ Annotated, not
+    # `= Query(None)`: tests call this function directly, and a Query DEFAULT
+    # would arrive as a truthy FieldInfo and read as a filter.
+    revenue_op: Annotated[Optional[str], Query()] = None,
+    revenue_val: Annotated[Optional[float], Query()] = None,
+    cost_op: Annotated[Optional[str], Query()] = None,
+    cost_val: Annotated[Optional[float], Query()] = None,
+    profit_op: Annotated[Optional[str], Query()] = None,
+    profit_val: Annotated[Optional[float], Query()] = None,
     _user: dict = Depends(require_report_access(REPORT_KEY)),
 ):
     """Paginated order rows + a full-universe Totals row.
+
+    The value filters narrow the TABLE only — rows, ``meta.total`` and the
+    Totals row all span the filtered set (§96); the KPI cards (/summary) never
+    see them. ``meta.unfiltered_total`` carries the pre-filter count.
 
     ⚠ ``totals`` is a **server-side aggregate over every matching order**, not a
     client-side reduce of the current page (§44) — a Totals row that only sums
@@ -952,6 +1027,11 @@ async def orders(
             status_code=400,
             detail=f"sort must be one of: {', '.join(sorted(_ORDERS_SORT))}",
         )
+    value_filters = _value_filters({
+        "revenue": (revenue_op, revenue_val),
+        "cost": (cost_op, cost_val),
+        "profit": (profit_op, profit_val),
+    })
 
     params: list = []
     cte = _base_sql(
@@ -982,6 +1062,10 @@ async def orders(
     # derived from — so a totals row contradicting the rows above it is now
     # structurally impossible rather than merely tested for (§16).
     all_rows = _apply_scenario(all_rows, adj)
+    unfiltered_total = len(all_rows)
+    # After the scenario (filter what is SHOWN), before everything else — so the
+    # page, `total` and the Totals row are one filtered population (§96).
+    all_rows = _apply_value_filters(all_rows, value_filters)
 
     total = len(all_rows)
     thresholds = await _thresholds(request, [r["order_id"] for r in all_rows])
@@ -1059,7 +1143,13 @@ async def orders(
             "thresholds_available": thresholds is not None,
             "window": {"start": s.isoformat(), "end": e.isoformat()},
         },
-        "meta": {"total": total, "page": page, "limit": limit},
+        "meta": {
+            "total": total,
+            "unfiltered_total": unfiltered_total,
+            "filtered": bool(value_filters),
+            "page": page,
+            "limit": limit,
+        },
     }
 
 

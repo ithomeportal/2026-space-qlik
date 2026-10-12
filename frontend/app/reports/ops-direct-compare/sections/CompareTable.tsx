@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
+import { TopScrollbar } from "@/components/TopScrollbar"
 import { DCErrorBanner } from "../ErrorBanner"
 import {
   DC_DEFAULT_SORT,
@@ -38,6 +39,8 @@ interface Props {
 export function CompareTable({ title, dim, p1, p2, columns }: Props) {
   const [sort, setSort] = useState(DC_DEFAULT_SORT)
   const [page, setPage] = useState(1)
+  // State, not useRef: the box mounts after loading (see TopScrollbar).
+  const [scrollBox, setScrollBox] = useState<HTMLDivElement | null>(null)
   const q = useDCCompare(dim, p1, p2, { sort, page, limit: PAGE_SIZE })
   const rows = q.data?.data ?? []
   const meta = q.data?.meta
@@ -66,62 +69,67 @@ export function CompareTable({ title, dim, p1, p2, columns }: Props) {
           <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
         </div>
       ) : (
-        <div className="max-h-[520px] overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10">
-              <tr className="border-b border-[#E5E7EB] text-[10px] uppercase tracking-wider">
-                <th
-                  aria-sort={ariaSort(sort, dim)}
-                  className="sticky left-0 z-20 bg-white px-2 py-2 text-left text-[#6B7280]"
-                >
-                  <button
-                    type="button"
-                    onClick={() => changeSort(nextSort(sort, dim))}
-                    className="uppercase tracking-wider hover:underline"
+        <>
+          {/* Bruno 2026-10-12 R3: a second horizontal scrollbar ABOVE the
+              table, synced with the box's own bottom one (which stays). */}
+          <TopScrollbar target={scrollBox} />
+          <div ref={setScrollBox} className="max-h-[520px] overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-[#E5E7EB] text-[10px] uppercase tracking-wider">
+                  <th
+                    aria-sort={ariaSort(sort, dim)}
+                    className="sticky left-0 z-20 bg-white px-2 py-2 text-left text-[#6B7280]"
                   >
-                    {nameLabel}
-                    {sortArrow(sort, dim)}
-                  </button>
-                </th>
-                <CompareHeaderCells columns={columns} sort={sort} onSort={changeSort} />
-              </tr>
-              {totals && (
-                <tr className="border-b border-[#D1D5DB] font-semibold">
-                  <td className="sticky left-0 z-20 bg-[#F9FAFB] px-2 py-1.5 text-[#374151]">
-                    Totals
-                  </td>
-                  <CompareCells row={totals} columns={columns} />
-                </tr>
-              )}
-            </thead>
-            <tbody>
-              {rows.map((r, idx) => {
-                const name = (dim === "customer" ? r.customer : r.lane) ?? "—"
-                return (
-                  <tr key={`${name}-${idx}`} className="border-b border-[#F3F4F6]">
-                    <td
-                      className="sticky left-0 max-w-[260px] truncate bg-white px-2 py-1.5 text-[#111827]"
-                      title={name}
+                    <button
+                      type="button"
+                      onClick={() => changeSort(nextSort(sort, dim))}
+                      className="uppercase tracking-wider hover:underline"
                     >
-                      {name}
-                    </td>
-                    <CompareCells row={r} columns={columns} />
-                  </tr>
-                )
-              })}
-              {rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={columns.length + 1}
-                    className="px-2 py-4 text-center text-[#6B7280]"
-                  >
-                    No data in either window.
-                  </td>
+                      {nameLabel}
+                      {sortArrow(sort, dim)}
+                    </button>
+                  </th>
+                  <CompareHeaderCells columns={columns} sort={sort} onSort={changeSort} />
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                {totals && (
+                  <tr className="border-b border-[#D1D5DB] font-semibold">
+                    <td className="sticky left-0 z-20 bg-[#F9FAFB] px-2 py-1.5 text-[#374151]">
+                      Totals
+                    </td>
+                    <CompareCells row={totals} columns={columns} />
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {rows.map((r, idx) => {
+                  const name = (dim === "customer" ? r.customer : r.lane) ?? "—"
+                  return (
+                    <tr key={`${name}-${idx}`} className="border-b border-[#F3F4F6]">
+                      <td
+                        className="sticky left-0 max-w-[260px] truncate bg-white px-2 py-1.5 text-[#111827]"
+                        title={name}
+                      >
+                        {name}
+                      </td>
+                      <CompareCells row={r} columns={columns} />
+                    </tr>
+                  )
+                })}
+                {rows.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={columns.length + 1}
+                      className="px-2 py-4 text-center text-[#6B7280]"
+                    >
+                      No data in either window.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   )

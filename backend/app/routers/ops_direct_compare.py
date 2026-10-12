@@ -17,9 +17,10 @@ Scope (matches OPs Margins / Top Losses Lanes / Sales-Attrition):
 Performance notes:
 - Reuses ``_scope_where`` + ``_pad_variants`` from ops_margins so the
   sargable padded-variants pattern stays single-source.
-- ``/trend-yoy`` is filter-less (per Bruno's spec "should not change with
+- ``/trend-yoy`` ignores both panels (per Bruno's spec "should not change with
   any filter panel") — cached in-process for 10 min so every viewer
-  shares one DB hit.
+  shares one DB hit. Since 2026-10-12 it takes its OWN ``?teams=`` (the
+  chart's Team filter), which never reaches the panels.
 - The compare tables (customer / lane / customer→lane pivot) compute BOTH
   panels in one SQL via FULL OUTER JOIN of two CTEs (one per panel). Diff
   sign: ``data1 - data2`` (Bruno 2026-10-01; the 2026-04 tables used
@@ -36,7 +37,7 @@ import asyncio
 import json
 import time
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -701,8 +702,10 @@ async def by_customer_lane_diff(
 # ---------------------------------------------------------------------------
 # /trend-yoy — Jan..Dec, previous year vs current year (Bruno 2026-10-01 R4).
 # Replaces /trend-12m. Revenue = Σ total_charge, Profit = Σ margin_amt,
-# Margin = ΣProfit / ΣRevenue. Filter-less like the chart it replaces (all
-# teams; the per-team clones pass their one team). Months the current year has
+# Margin = ΣProfit / ΣRevenue. Ignores both panels' filters. Its own Team
+# filter (Bruno 2026-10-12 R2, `?teams=`, default ALL teams) scopes this chart
+# only; the per-team clones pass their one team and declare no `teams` param, so
+# a crafted `?teams=TEAM2` cannot widen them. Months the current year has
 # not reached are NULL, so the chart shows the previous year's bar alone.
 # ⚠ The x-axis is the month NUMBER from SQL — the old chart did
 # `new Date("2025-11-01")`, parsed it as UTC, and labelled every bar one month
@@ -753,6 +756,15 @@ def _yoy_series(rows, today: date) -> dict:
     return {"prev_year": prev_y, "cur_year": cur_y, "months": months}
 
 
+def _trend_teams(teams_csv: Optional[str]) -> list[str]:
+    """The chart's own Team filter (Bruno PDF 2026-10-12 R2) → a CANONICAL team
+    list. Unknown names drop; nothing valid means ALL teams — the same rule as a
+    panel's team pills (`_parse_csv`). Returned in ALL_TEAMS order so
+    `TEAM3,TEAM1` and `TEAM1,TEAM3` share one cache entry."""
+    wanted = set(_parse_csv(teams_csv, ALL_TEAMS))
+    return [t for t in ALL_TEAMS if t in wanted]
+
+
 async def trend_yoy_for_teams(request: Request, teams: list[str]) -> dict:
     """Shared by the cross-team router and the per-team clones."""
     today = cst_today()
@@ -791,7 +803,7 @@ async def trend_yoy_for_teams(request: Request, teams: list[str]) -> dict:
             """,
             *params,
         )
-        out = _yoy_series(rows, today)
+        out = {**_yoy_series(rows, today), "teams": list(teams)}
         now_ts = time.monotonic()
         _trend_cache[cache_key] = (now_ts, out)
         # Drop other-day keys to keep the cache from growing forever
@@ -805,9 +817,14 @@ async def trend_yoy_for_teams(request: Request, teams: list[str]) -> dict:
 @router.get("/trend-yoy")
 async def trend_yoy(
     request: Request,
+    # ⚠ Annotated, not `= Query(None)`: tests and shims call this function
+    # directly, and a `Query(None)` DEFAULT would arrive as a truthy FieldInfo.
+    teams: Annotated[Optional[str], Query()] = None,
     _user: dict = Depends(require_report_access("ops-direct-compare", "ceo-executive")),
 ):
-    return await trend_yoy_for_teams(request, list(ALL_TEAMS))
+    """Chart-only Team filter: `teams` scopes THIS chart and nothing else — the
+    panels' team pills never reach it, and it never reaches them."""
+    return await trend_yoy_for_teams(request, _trend_teams(teams))
 
 
 # ---------------------------------------------------------------------------

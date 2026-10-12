@@ -93,7 +93,8 @@ export function ScenarioPanel({ filters, scope, step, onStepChange }: Props) {
 
       <KpiCards filters={scenarioFilters} baseline={baseline} />
       <WeeklyChart scope={scope} />
-      <OrdersTable filters={scenarioFilters} />
+      {/* Bruno PDF 2026-10-12 — amount filters on this tab's table only. */}
+      <OrdersTable filters={scenarioFilters} valueFilterable />
     </div>
   )
 }

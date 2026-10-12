@@ -373,8 +373,12 @@ function Body({
             />
           </div>
 
-          {/* Jan–Dec, previous year vs current year (filter-less / team-scoped when locked) */}
-          <TrendYoY scopeLabel={lockedTeam ? `${lockedTeam} only` : "All teams"} />
+          {/* Jan–Dec, previous year vs current year. Ignores the panels; has its
+              OWN Team filter (Bruno 2026-10-12 R2), hidden when team-locked. */}
+          <TrendYoY
+            scopeLabel={lockedTeam ? `${lockedTeam} only` : "All teams"}
+            teamOptions={lockedTeam ? undefined : ALL_TEAMS}
+          />
 
           {/* Concentration pies side-by-side */}
           <div className="grid grid-cols-2 gap-4">

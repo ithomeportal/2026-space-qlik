@@ -9,10 +9,15 @@ import {
   useBookerOrders,
   type BookerFilters,
   type BookerOrdersSort,
+  type OrdersValueFilters,
 } from "@/lib/booker-scorecard-api"
+import { OrdersValueFilterBar } from "./OrdersValueFilterBar"
 
 interface Props {
   filters: BookerFilters
+  /** Render the Revenue / Carrier Cost / Profit amount filters (Bruno PDF
+   *  2026-10-12). Scenario tab only; the Scorecard tab's table is unchanged. */
+  valueFilterable?: boolean
 }
 
 const PAGE_SIZE = 200
@@ -106,25 +111,32 @@ function Th({
   )
 }
 
-export function OrdersTable({ filters }: Props) {
+export function OrdersTable({ filters, valueFilterable = false }: Props) {
   const [sort, setSort] = useState<BookerOrdersSort>("posted_desc")
   const [page, setPage] = useState(1)
+  const [valueFilters, setValueFilters] = useState<OrdersValueFilters>({})
+  // A string, so the debounced bar handing over an equal-but-new object does
+  // not bounce the reader back to page 1.
+  const valueFiltersSig = JSON.stringify(valueFilters)
 
   // Any scope change invalidates the current page number — page 7 of the old
   // result set is meaningless against the new one.
   useEffect(() => {
     setPage(1)
-  }, [filters, sort])
+  }, [filters, sort, valueFiltersSig])
 
   const { data, isLoading, error, isFetching } = useBookerOrders(
     filters,
     sort,
     page,
     PAGE_SIZE,
+    valueFilterable ? valueFilters : undefined,
   )
   const rows = data?.data?.rows ?? []
   const totals = data?.data?.totals
   const total = data?.meta?.total ?? 0
+  const filtered = data?.meta?.filtered === true
+  const unfilteredTotal = data?.meta?.unfiltered_total ?? total
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const thresholdsAvailable = data?.data?.thresholds_available ?? true
 
@@ -139,11 +151,15 @@ export function OrdersTable({ filters }: Props) {
             </span>
           )}
           <span>
-            {fmtCount(total)} order{total === 1 ? "" : "s"}
+            {filtered
+              ? `${fmtCount(total)} of ${fmtCount(unfilteredTotal)} orders · filtered`
+              : `${fmtCount(total)} order${total === 1 ? "" : "s"}`}
           </span>
           {isFetching && <Loader2 className="h-3 w-3 animate-spin" />}
         </div>
       </div>
+
+      {valueFilterable && <OrdersValueFilterBar onChange={setValueFilters} />}
 
       {error ? (
         <div className="py-8 text-center text-xs text-[#991B1B]">
@@ -192,7 +208,7 @@ export function OrdersTable({ filters }: Props) {
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={COLUMN_COUNT} className="py-8 text-center text-[#9CA3AF]">
-                    No orders in this window.
+                    {filtered ? "No orders match these filters." : "No orders in this window."}
                   </td>
                 </tr>
               ) : (
@@ -287,7 +303,9 @@ export function OrdersTable({ filters }: Props) {
                     the visible page (§44). */}
                 <tr className="border-t-2 border-[#E5E7EB] bg-[#F9FAFB] font-semibold">
                   <td className="px-3 py-1.5" colSpan={LEAD_COLS}>
-                    Totals — all {fmtCount(totals.orders)} orders
+                    {filtered
+                      ? `Totals — ${fmtCount(totals.orders)} filtered order${totals.orders === 1 ? "" : "s"}`
+                      : `Totals — all ${fmtCount(totals.orders)} orders`}
                   </td>
                   <td
                     className="px-3 py-1.5 text-right tabular-nums text-[#B45309]"

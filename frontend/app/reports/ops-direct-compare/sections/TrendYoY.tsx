@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -42,6 +43,18 @@ function compactUsd(v: number): string {
   return `$${v.toFixed(0)}`
 }
 
+/** Data label (Bruno PDF 2026-10-12 R1): compact, sign BEFORE the "$", and
+ *  blank for a month with no value (the current year's future months). */
+function dataLabel(v: unknown, mode: Mode): string {
+  if (v === null || v === undefined || v === "") return ""
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ""
+  if (mode === "margin") return `${n.toFixed(1)}%`
+  return n < 0 ? `-${compactUsd(-n)}` : compactUsd(n)
+}
+
+const LABEL_STYLE = { fontSize: 9 } as const
+
 function fmtValue(v: unknown, mode: Mode): string {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "—"
   return mode === "margin" ? `${Number(v).toFixed(2)}%` : fmtUsd(Number(v))
@@ -53,10 +66,28 @@ function fmtValue(v: unknown, mode: Mode): string {
  * Σ margin_amt, Margin = ΣProfit / ΣRevenue. Months the current year has not
  * reached have no current-year bar/point. Ignores both panels' filters.
  * No text strip under the chart (R5).
+ *
+ * Bruno PDF 2026-10-12: R1 every bar / point carries a data label; R2 the chart
+ * has its OWN Team filter. That filter is LOCAL state on purpose — "must apply
+ * exclusively to this chart": it never touches the URL the panels read, and the
+ * panels' team pills never reach this chart. `teamOptions` is omitted on the
+ * per-team clones (already one team; their router ignores `?teams=`).
  */
-export function TrendYoY({ scopeLabel }: { scopeLabel: string }) {
+export function TrendYoY({
+  scopeLabel,
+  teamOptions,
+}: {
+  scopeLabel: string
+  teamOptions?: readonly string[]
+}) {
   const [mode, setMode] = useState<Mode>("revenue")
-  const { data, isLoading, error } = useDCTrendYoY()
+  // Empty = all teams. Deselecting the last team falls back to all, never to
+  // an empty chart.
+  const [teams, setTeams] = useState<readonly string[]>([])
+  const toggleTeam = (t: string) =>
+    setTeams((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+  const allTeams = teams.length === 0 || (teamOptions !== undefined && teams.length === teamOptions.length)
+  const { data, isLoading, error } = useDCTrendYoY(allTeams ? undefined : teams)
   const yoy = data?.data
   const prevKey = String(yoy?.prev_year ?? "Previous year")
   const curKey = String(yoy?.cur_year ?? "Current year")
@@ -68,6 +99,10 @@ export function TrendYoY({ scopeLabel }: { scopeLabel: string }) {
     [prevKey]: pick(m.prev, mode),
     [curKey]: pick(m.cur, mode),
   }))
+  const chartScope = allTeams
+    ? scopeLabel
+    : (teamOptions ?? []).filter((t) => teams.includes(t)).join(", ")
+  const label = (v: unknown) => dataLabel(v, mode)
   const yTick = (v: number) => (mode === "margin" ? `${v.toFixed(0)}%` : compactUsd(v))
   const tooltip = (
     <Tooltip
@@ -83,9 +118,46 @@ export function TrendYoY({ scopeLabel }: { scopeLabel: string }) {
         <div>
           <h3 className="text-sm font-semibold text-[#1B3A5C]">{title}</h3>
           <div className="text-[10px] uppercase tracking-wider text-[#6B7280]">
-            {scopeLabel} · ignores both panels&apos; filters
+            {chartScope} · ignores both panels&apos; filters
           </div>
         </div>
+        {teamOptions && (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Chart team filter">
+            <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
+              Team
+            </span>
+            <button
+              type="button"
+              aria-pressed={allTeams}
+              onClick={() => setTeams([])}
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                allTeams
+                  ? "border-[#1B3A5C] bg-[#1B3A5C] text-white"
+                  : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB]"
+              }`}
+            >
+              All
+            </button>
+            {teamOptions.map((t) => {
+              const on = !allTeams && teams.includes(t)
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleTeam(t)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                    on
+                      ? "border-[#1B3A5C] bg-[#DBEAFE] text-[#1B3A5C]"
+                      : "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB]"
+                  }`}
+                >
+                  {t}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="flex gap-1" role="group" aria-label="Metric">
           {MODES.map((m) => (
             <button
@@ -106,35 +178,47 @@ export function TrendYoY({ scopeLabel }: { scopeLabel: string }) {
       </div>
 
       {isLoading ? (
-        <div className="flex h-64 items-center justify-center">
+        <div className="flex h-80 items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
         </div>
       ) : rows.length === 0 ? (
-        <div className="flex h-64 items-center justify-center text-xs text-[#6B7280]">
+        <div className="flex h-80 items-center justify-center text-xs text-[#6B7280]">
           No trend data.
         </div>
       ) : (
-        <div className="h-64 w-full">
+        <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
             {mode === "margin" ? (
-              <LineChart data={rows} margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
+              <LineChart data={rows} margin={{ top: 20, right: 24, left: 4, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                {/* Padding keeps the Jan / Dec labels off the axis line. */}
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} padding={{ left: 20, right: 20 }} />
                 <YAxis tickFormatter={yTick} tick={{ fontSize: 11 }} width={48} />
                 {tooltip}
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey={prevKey} stroke={PREV_COLOR} strokeWidth={2} dot={{ r: 3 }} />
-                <Line type="monotone" dataKey={curKey} stroke={CUR_COLOR} strokeWidth={2} dot={{ r: 3 }} />
+                {/* Previous year's labels BELOW its points, current year's
+                    ABOVE — the two lines run close, so same-side labels
+                    would overprint. */}
+                <Line type="monotone" dataKey={prevKey} stroke={PREV_COLOR} strokeWidth={2} dot={{ r: 3 }}>
+                  <LabelList dataKey={prevKey} position="bottom" offset={8} formatter={label} style={{ ...LABEL_STYLE, fill: "#64748B" }} />
+                </Line>
+                <Line type="monotone" dataKey={curKey} stroke={CUR_COLOR} strokeWidth={2} dot={{ r: 3 }}>
+                  <LabelList dataKey={curKey} position="top" offset={8} formatter={label} style={{ ...LABEL_STYLE, fill: CUR_COLOR, fontWeight: 600 }} />
+                </Line>
               </LineChart>
             ) : (
-              <BarChart data={rows} margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
+              <BarChart data={rows} margin={{ top: 20, right: 16, left: 4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={yTick} tick={{ fontSize: 11 }} width={56} />
                 {tooltip}
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey={prevKey} fill={PREV_COLOR} radius={[2, 2, 0, 0]} />
-                <Bar dataKey={curKey} fill={CUR_COLOR} radius={[2, 2, 0, 0]} />
+                <Bar dataKey={prevKey} fill={PREV_COLOR} radius={[2, 2, 0, 0]}>
+                  <LabelList dataKey={prevKey} position="top" formatter={label} style={{ ...LABEL_STYLE, fill: "#64748B" }} />
+                </Bar>
+                <Bar dataKey={curKey} fill={CUR_COLOR} radius={[2, 2, 0, 0]}>
+                  <LabelList dataKey={curKey} position="top" formatter={label} style={{ ...LABEL_STYLE, fill: CUR_COLOR, fontWeight: 600 }} />
+                </Bar>
               </BarChart>
             )}
           </ResponsiveContainer>

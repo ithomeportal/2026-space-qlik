@@ -12,7 +12,14 @@ interface ApiResponse<T> {
   success: boolean
   data?: T
   error?: string
-  meta?: { total: number; page: number; limit: number }
+  meta?: {
+    total: number
+    page: number
+    limit: number
+    /** /orders only: the count before the Orders-table value filters. */
+    unfiltered_total?: number
+    filtered?: boolean
+  }
 }
 
 async function apiFetch<T>(
@@ -113,6 +120,50 @@ function bookerKey(f: BookerFilters) {
     // response, i.e. render "15" while showing unadjusted money.
     f.adjustment ?? 0,
   ]
+}
+
+// ---------------------------------------------------------------------------
+// Orders-table value filters (Bruno PDF 2026-10-12, Scenario tab) — per-column
+// amount filters on Revenue / Carrier Cost / Profit. Applied SERVER-side after
+// the scenario adjustment, so they match the numbers on screen and the Totals
+// row spans the filtered orders. They never reach the KPI cards.
+// ---------------------------------------------------------------------------
+
+export type OrdersValueOp = "eq" | "gte" | "lte"
+export type OrdersValueColumn = "revenue" | "cost" | "profit"
+export interface OrdersValueFilter {
+  op: OrdersValueOp
+  value: number
+}
+export type OrdersValueFilters = Partial<Record<OrdersValueColumn, OrdersValueFilter>>
+
+/** ⚠ Literal names — each must be a param `/orders` DECLARES; FastAPI drops an
+ *  undeclared one silently and the table just looks unfiltered.
+ *  `test_frontend_sends_only_declared_params_and_keys_on_them` reads these. */
+const VALUE_FILTER_PARAMS: Record<OrdersValueColumn, readonly [string, string]> = {
+  revenue: ["revenue_op", "revenue_val"],
+  cost: ["cost_op", "cost_val"],
+  profit: ["profit_op", "profit_val"],
+}
+
+function valueFilterParams(v?: OrdersValueFilters): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!v) return out
+  for (const col of Object.keys(VALUE_FILTER_PARAMS) as OrdersValueColumn[]) {
+    const f = v[col]
+    if (!f || !Number.isFinite(f.value)) continue
+    const [opKey, valKey] = VALUE_FILTER_PARAMS[col]
+    out[opKey] = f.op
+    out[valKey] = String(f.value)
+  }
+  return out
+}
+
+function valueFiltersKey(v?: OrdersValueFilters): string {
+  return Object.entries(valueFilterParams(v))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, val]) => `${k}=${val}`)
+    .join("&")
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +446,7 @@ export function useBookerOrders(
   sort: BookerOrdersSort,
   page: number,
   limit = 200,
+  valueFilters?: OrdersValueFilters,
 ) {
   return useQuery({
     queryKey: [
@@ -404,6 +456,8 @@ export function useBookerOrders(
       sort,
       page,
       limit,
+      // §50 — the key covers every param the qs below sends.
+      valueFiltersKey(valueFilters),
     ],
     queryFn: () =>
       apiFetch<BookerOrders>(
@@ -411,6 +465,7 @@ export function useBookerOrders(
           sort,
           page: String(page),
           limit: String(limit),
+          ...valueFilterParams(valueFilters),
         })}`,
       ),
     placeholderData: keepPreviousData,

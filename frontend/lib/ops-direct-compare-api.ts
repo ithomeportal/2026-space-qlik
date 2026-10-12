@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, createElement, useContext, type ReactNode } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
   success: boolean
@@ -213,6 +213,8 @@ export interface DCYoY {
   prev_year: number
   cur_year: number
   months: DCYoYMonth[]
+  /** Teams the chart actually covers (the backend's canonical set). */
+  teams?: string[]
 }
 
 export interface DCFreshness {
@@ -335,12 +337,23 @@ export function useDCPivot(
   })
 }
 
-/** Jan–Dec, previous year vs current year. Ignores both panels' filters. */
-export function useDCTrendYoY() {
+/**
+ * Jan–Dec, previous year vs current year. Ignores both panels' filters; takes
+ * the chart's OWN Team filter (Bruno PDF 2026-10-12 R2). `teams` omitted or
+ * empty = all teams. Sorted so the cache key matches the backend's canonical
+ * set. The per-team clone routers do not declare `teams`, so it is inert there.
+ */
+export function useDCTrendYoY(teams?: readonly string[]) {
   const prefix = useApiPrefix()
+  const teamsCsv = teams && teams.length ? [...teams].sort().join(",") : ""
   return useQuery({
-    queryKey: [prefix, "dc", "trend-yoy"],
-    queryFn: () => apiFetch<DCYoY>(`${prefix}/trend-yoy`),
+    queryKey: [prefix, "dc", "trend-yoy", teamsCsv],
+    queryFn: () =>
+      apiFetch<DCYoY>(
+        `${prefix}/trend-yoy${teamsCsv ? `?teams=${encodeURIComponent(teamsCsv)}` : ""}`,
+      ),
+    // Keep the chart on screen while another team set loads.
+    placeholderData: keepPreviousData,
     staleTime: 5 * 60_000, // backend caches 10 min
     ...RETRY,
   })
