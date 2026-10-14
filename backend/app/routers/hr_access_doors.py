@@ -274,15 +274,23 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
     punches AS (
         SELECT
             TRIM(z.full_name)                                AS nm,
-            lower(btrim(z.email))                            AS em,
+            lower(btrim(COALESCE(m.email, z.email)))         AS em,
             z.event_time,
             TRIM(e.job_title)                                AS jt,
             {_DEPARTMENT_NORMALIZED}                         AS dep,
             {_TEAM_LABEL_EXPR}                               AS team,
             COALESCE(e.display_name, z.full_name)            AS ident
         FROM public.zk_gld_onlyfingerprint z
+        -- 2026-10-14: a badge whose scanner record has no e-mail (or a wrong
+        -- one) is attached by EXACT scanner name. Juan Pablo Mendez (DFW) was
+        -- enrolled with none and was in no KPI here for seven months. Mirrors
+        -- the `zk` CTE in n8n sql/late-arrival-shift-aware.sql; the table and
+        -- its rationale: n8n sql/zk-badge-email-map.sql.
+        LEFT JOIN public.zk_badge_email_map m
+          ON m.active
+         AND lower(btrim(m.scanner_name)) = lower(btrim(z.full_name))
         JOIN public.timeoff_employee e
-          ON TRIM(z.email) = TRIM(e.email)
+          ON TRIM(COALESCE(m.email, z.email)) = TRIM(e.email)
          AND COALESCE(e.email, '') <> ''
         -- LEFT, never INNER: two DFW people have no row in the auth roster and
         -- an inner join would silently drop them from every KPI.
