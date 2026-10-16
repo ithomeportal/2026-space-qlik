@@ -40,7 +40,7 @@ EXPECTED_PATHS = {
     "/custom/ops-portal-overview/team-variance",
     "/custom/ops-portal-overview/customer-variance",
     "/custom/ops-portal-overview/customer-losses",
-    "/custom/ops-portal-overview/customer-not-billed",
+    "/custom/ops-portal-overview/customer-overpay",
     "/custom/ops-portal-overview/team-performance",
     "/custom/ops-portal-overview/team-projection",
     "/custom/ops-portal-overview/profit-tm-gauge",

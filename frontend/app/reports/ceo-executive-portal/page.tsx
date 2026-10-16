@@ -6,6 +6,8 @@ import { ReportGuard } from "@/components/ReportGuard"
 import {
   CORP_GO_TO_LINKS,
   OpsPortalOverviewContent,
+  US_NATIONAL_FUEL_LINK,
+  dedupeGoToLinks,
   type GoToLink,
 } from "@/components/OpsPortalOverviewContent"
 
@@ -59,6 +61,8 @@ const DFW_GO_TO_LINKS: readonly GoToLink[] = [
   { label: "XRay DFW Mng", href: "/reports/xray-dfw-mng" },
   { label: "KAM Performance – DFW", href: "/reports/kam-performance-dfw" },
   { label: "DFW Losses", href: "/reports/dfw-losses" },
+  // Bruno 2026-10-16 R5 — also on the CORP list; ALL dedupes it below.
+  US_NATIONAL_FUEL_LINK,
 ]
 
 // ⚠ Every href here is granted to the CEO TagRole (verified 2026-09-24). The
@@ -68,7 +72,9 @@ const DFW_GO_TO_LINKS: readonly GoToLink[] = [
 const GO_TO_BY_DIVISION: Record<DivisionKey, readonly GoToLink[]> = {
   corp: CORP_GO_TO_LINKS,
   dfw: DFW_GO_TO_LINKS,
-  all: [...CORP_GO_TO_LINKS, ...DFW_GO_TO_LINKS],
+  // Deduped by href: both lists carry US National Fuel, and the renderer keys
+  // each pill on its href.
+  all: dedupeGoToLinks([...CORP_GO_TO_LINKS, ...DFW_GO_TO_LINKS]),
 }
 
 export default function CeoExecutivePortalPage() {

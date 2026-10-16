@@ -69,6 +69,14 @@ export interface GoToLink {
   href: string
 }
 
+/** Bruno "Ops Portal Updates" 2026-10-16 R5 — the pricing portal's US National
+ *  Fuel page. EXTERNAL (another app), so it is absolute and rendered as a plain
+ *  <a>; shared by the CORP and DFW lists. */
+export const US_NATIONAL_FUEL_LINK: GoToLink = {
+  label: "US National Fuel",
+  href: "https://pricing.unilinkportal.com/admin/us-national-fuel",
+}
+
 /** The "Go to" quick-nav row every CORP Ops portal shows (Bruno R1). Exported
  *  so the Executive OPS Portal can compose its per-division rows from the
  *  SAME list rather than a second copy that drifts (§69). */
@@ -84,7 +92,23 @@ export const CORP_GO_TO_LINKS: readonly GoToLink[] = [
   // https://space.unilinkportal.com/... would force a full page load and break
   // on the *.vercel.app alias.
   { label: "Attrition", href: "/reports/attrition-wow" },
+  US_NATIONAL_FUEL_LINK,
 ]
+
+const GO_TO_PILL_CLS =
+  "rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs font-medium text-[#374151] hover:bg-[#F3F4F6] transition-colors whitespace-nowrap"
+
+/** True for an off-portal destination (rendered as a plain <a>, not next/link). */
+export function isExternalHref(href: string): boolean {
+  return /^https?:\/\//i.test(href)
+}
+
+/** First occurrence wins. The Executive OPS Portal's ALL list concatenates the
+ *  CORP and DFW lists, which share links (US National Fuel) — and `key={href}`
+ *  would collide on a duplicate. */
+export function dedupeGoToLinks(links: readonly GoToLink[]): GoToLink[] {
+  return links.filter(({ href }, i) => links.findIndex((l) => l.href === href) === i)
+}
 
 interface Props {
   /** Backend router prefix, e.g. "custom/ops-portal-overview-t1". Defaults to
@@ -638,22 +662,23 @@ function Body({
           {!hideGoTo && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] uppercase tracking-wide text-[#9CA3AF]">Go to</span>
-            {(goToLinks ?? CORP_GO_TO_LINKS)
+            {dedupeGoToLinks(goToLinks ?? CORP_GO_TO_LINKS)
               // Per-team KAM portals hide the Bonus Calculator pill (access
               // managed separately); the main Ops Portal keeps it.
               .filter(({ href }) => !(hideBonusNav && href === "/reports/bonus-calculator"))
-              .map(({ label, href }) => (
-              <Link
-                key={href}
-                href={href}
+              .map(({ label, href }) =>
                 // Bruno (PDF 2026-07-15) R2: open the destination in a new tab.
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-full border border-[#E5E7EB] bg-white px-3 py-1 text-xs font-medium text-[#374151] hover:bg-[#F3F4F6] transition-colors whitespace-nowrap"
-              >
-                {label}
-              </Link>
-            ))}
+                // An external app (2026-10-16 R5) gets a plain <a>.
+                isExternalHref(href) ? (
+                  <a key={href} href={href} target="_blank" rel="noopener noreferrer" className={GO_TO_PILL_CLS}>
+                    {label}
+                  </a>
+                ) : (
+                  <Link key={href} href={href} target="_blank" rel="noopener noreferrer" className={GO_TO_PILL_CLS}>
+                    {label}
+                  </Link>
+                ),
+              )}
           </div>
           )}
 

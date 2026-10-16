@@ -353,12 +353,12 @@ async def customer_losses(
         exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, limit=limit, _user=_user,
     )
 
-# ---- /customer-not-billed ---------------------------------------------
-# MANDATORY: `SidePanels` renders the "Not Billed" panel unconditionally, so a
+# ---- /customer-overpay ------------------------------------------------
+# MANDATORY: `SidePanels` renders the "Over Pay" panel unconditionally, so a
 # missing delegator 404s a visible panel while the rest of the page looks fine.
-# (The four CORP-T clones are missing exactly this shim — fixed there too.)
-@r.get("/customer-not-billed")
-async def customer_not_billed(
+# (Bruno 2026-10-16 R4 — replaced /customer-not-billed, same shim shape.)
+@r.get("/customer-overpay")
+async def customer_overpay(
     request: Request,
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
@@ -373,7 +373,7 @@ async def customer_not_billed(
     limit: int = Query(100, ge=1, le=500),
     _user: dict = Depends(gate),
 ):
-    return await opo.customer_not_billed(
+    return await opo.customer_overpay(
         request=request, range=range, start_date=start_date, end_date=end_date,
         team=_sub_team(team), customer=customer, load_type=load_type, lanes=lanes,
         exclude_lanes=exclude_lanes, carriers=carriers,
@@ -792,7 +792,7 @@ async def team_projection_history(
 # ⚠ Missing since this router shipped (2026-08-21): `SidePanels` renders the
 # Monthly Projection panel's "Team" button UNCONDITIONALLY, so on DFW it opened
 # `ProjectionTeamModal` onto a 404 while every other panel looked fine — the
-# same class of hole the /customer-not-billed shim above closes, and invisible
+# same class of hole the /customer-overpay (was /customer-not-billed) shim above closes, and invisible
 # for the same reason (one modal, no page-level error).
 #
 # It is NOT a budget endpoint despite the name's proximity to the three that
