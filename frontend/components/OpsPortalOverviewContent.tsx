@@ -213,6 +213,20 @@ export function OpsPortalOverviewContent({
   )
 }
 
+/** The four Range buttons. */
+type PresetRange = "yesterday" | "mtd" | "this_month" | "last_month"
+const isPreset = (r: OppRange): r is PresetRange =>
+  r === "yesterday" || r === "mtd" || r === "this_month" || r === "last_month"
+
+/** The window a Range preset stands for. Bruno (PDF 2026-07-20) R2:
+ *  "Yesterday" replaced the YTD button. */
+function presetWindow(k: PresetRange): { startDate: string; endDate: string } {
+  if (k === "yesterday")  return { startDate: clampToYear(yesterdayIso()), endDate: clampToYear(yesterdayIso()) }
+  if (k === "mtd")        return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
+  if (k === "this_month") return { startDate: monthStartIso(), endDate: clampToYear(monthEndIso()) }
+  return { startDate: lastMonthStartIso(), endDate: lastMonthEndIso() }
+}
+
 function Body({
   title,
   lockedTeam,
@@ -297,14 +311,13 @@ function Body({
   // always sends its own team (and the backend ignores any client team anyway).
   const effectiveTeam = lockedTeam ?? team
 
-  const appliedDates = useMemo(() => {
-    // Bruno (PDF 2026-07-20) R2: "Yesterday" replaced the YTD button.
-    if (range === "yesterday")  return { startDate: clampToYear(yesterdayIso()), endDate: clampToYear(yesterdayIso()) }
-    if (range === "mtd")        return { startDate: monthStartIso(), endDate: clampToYear(todayIso()) }
-    if (range === "this_month") return { startDate: monthStartIso(), endDate: clampToYear(monthEndIso()) }
-    if (range === "last_month") return { startDate: lastMonthStartIso(), endDate: lastMonthEndIso() }
-    return { startDate: clampToYear(startDate), endDate: clampToYear(endDate) }
-  }, [range, startDate, endDate])
+  const appliedDates = useMemo(
+    () =>
+      isPreset(range)
+        ? presetWindow(range)
+        : { startDate: clampToYear(startDate), endDate: clampToYear(endDate) },
+    [range, startDate, endDate],
+  )
 
   const filters: OppFilters = useMemo(
     () => ({
@@ -328,9 +341,18 @@ function Body({
   // custom range now that the "Custom" button is gone. A cleared input ("")
   // keeps the previous bound instead of sending an empty date.
   function pickCustomDates(start: string, end: string) {
-    setStartDate(start || appliedDates.startDate)
-    setEndDate(end || appliedDates.endDate)
+    setStartDate(start || startDate)
+    setEndDate(end || endDate)
     setRange("custom")
+  }
+
+  // A preset also fills the always-visible date fields with its own window, so
+  // what the inputs show is what the panels are filtered by.
+  function pickPreset(k: PresetRange) {
+    const w = presetWindow(k)
+    setStartDate(w.startDate)
+    setEndDate(w.endDate)
+    setRange(k)
   }
 
   // R10: clicking a lane in the By-Lane table sets it as the single included lane.
@@ -461,7 +483,7 @@ function Body({
               ].map((opt) => (
                 <button
                   key={opt.k}
-                  onClick={() => setRange(opt.k)}
+                  onClick={() => pickPreset(opt.k)}
                   className={`px-3 py-1.5 ${
                     range === opt.k
                       ? "bg-white font-semibold text-[#1B3A5C] shadow-sm"
@@ -473,17 +495,19 @@ function Body({
               ))}
             </div>
             {/* Bruno PDF 2026-10-16 ("Exec Portal") R1 — no "Custom" button; the
-                date fields are ALWAYS visible. They show the dates actually
-                applied (a preset's own window included), and editing either
-                one switches to a custom range seeded with the OTHER field's
-                current value, so the reader never starts from a stale pair. */}
+                date fields are ALWAYS visible. A preset click copies its window
+                into them, and editing either one switches to a custom range.
+                ⚠ Bound to the RAW state, never to the clamped `appliedDates`:
+                typing a year emits "0002-…" on the first keystroke, and a
+                clamped controlled value snaps that to Jan 1 and wipes the
+                month/day mid-typing. Clamping happens on the way OUT. */}
             <div className="flex items-center gap-1 text-xs">
               <input
                 type="date"
                 min={YEAR_START}
                 max={YEAR_END}
-                value={appliedDates.startDate}
-                onChange={(e) => pickCustomDates(e.target.value, appliedDates.endDate)}
+                value={startDate}
+                onChange={(e) => pickCustomDates(e.target.value, endDate)}
                 className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
               />
               <span className="text-[#6B7280]">→</span>
@@ -491,8 +515,8 @@ function Body({
                 type="date"
                 min={YEAR_START}
                 max={YEAR_END}
-                value={appliedDates.endDate}
-                onChange={(e) => pickCustomDates(appliedDates.startDate, e.target.value)}
+                value={endDate}
+                onChange={(e) => pickCustomDates(startDate, e.target.value)}
                 className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
               />
             </div>

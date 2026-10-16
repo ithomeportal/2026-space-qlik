@@ -243,6 +243,32 @@ async def test_timeout_gives_nulls():
 
 
 @pytest.mark.asyncio
+async def test_timeout_keeps_cached_and_already_fetched_rows():
+    """Review 2026-10-16: the budget used to wrap the cache read too, so one slow
+    SONAR call blanked lanes that were fresh in the cache."""
+    fresh = datetime.now(timezone.utc)
+    pool = HubPool({(K1.origin_key, K1.dest_key, K1.equipment): {
+        "origin_rejection_pct": 9.0, "dest_rejection_pct": 2.0,
+        "has_data": True, "fetched_at": fresh,
+    }})
+    k3 = sc.LaneKey("75001", "77001", "VAN")
+
+    async def first_chunk_then_hang(keys, client=None, on_chunk=None):
+        await on_chunk({K2: sc.Rejection(15.0, 4.0)})
+        await asyncio.sleep(5)
+
+    orig = sc.fetch_from_sonar
+    sc.fetch_from_sonar = first_chunk_then_hang
+    try:
+        got = await sc.get_rejections(pool, [K1, K2, k3], timeout_s=0.05)
+    finally:
+        sc.fetch_from_sonar = orig
+    assert got[K1].origin_rejection_pct == 9.0      # from the cache
+    assert got[K2].origin_rejection_pct == 15.0     # fetched before the timeout
+    assert k3 not in got                            # never reached -> "—"
+
+
+@pytest.mark.asyncio
 async def test_no_credentials_or_no_pool_never_calls_sonar(monkeypatch):
     client, calls = _sonar(_echo)
     assert await sc.get_rejections(None, [K1], client=client) == {}

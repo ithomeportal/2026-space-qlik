@@ -372,7 +372,7 @@ async def customer_overpay(
     exclude_lanes: Optional[List[str]] = Query(None),
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
-    limit: int = Query(100),
+    limit: int = Query(100, ge=1, le=500),
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)

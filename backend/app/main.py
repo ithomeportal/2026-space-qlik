@@ -1133,9 +1133,15 @@ async def lifespan(app: FastAPI):
             # R6) — portal-owned 24 h cache of SONAR coverage-guide readings.
             # SONAR's 100 req/min is ACCOUNT-WIDE (shared with the quoting
             # portal); without this every page view would spend it.
-            from app.services.sonar_coverage import SONAR_REJECTION_CACHE_DDL
+            # Own try: a failure here must degrade the Rejection % columns to
+            # "—", not fall through to the outer except that drops the WHOLE
+            # hub pool (review 2026-10-16). read_cache failures are swallowed.
+            try:
+                from app.services.sonar_coverage import SONAR_REJECTION_CACHE_DDL
 
-            await app.state.pool.execute(SONAR_REJECTION_CACHE_DDL)
+                await app.state.pool.execute(SONAR_REJECTION_CACHE_DDL)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"SONAR rejection cache DDL skipped: {type(e).__name__}")
 
             try:
                 from app.services.division_payment_defaults import seed_division_payment

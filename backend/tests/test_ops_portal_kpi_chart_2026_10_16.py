@@ -131,7 +131,7 @@ def test_customers_span_the_volume_population():
 
 
 @pytest.mark.parametrize("grain,expr", [
-    ("day", "(pc.bucket_start - 1)"),
+    ("day", "RANGE BETWEEN UNBOUNDED PRECEDING AND INTERVAL '1 day' PRECEDING)"),
     ("week", "(pc.bucket_start - 7)"),
     ("month", "(pc.bucket_start - INTERVAL '1 month')::date"),
 ])
@@ -156,7 +156,7 @@ def test_scan_starts_one_bucket_before_the_window_and_still_ends_today(monkeypat
     _, win_end, anchors = _resolve_grain_window(grain, TODAY)
     p_ws = int(re.search(r"origin_actual_departure >= \$(\d+)", sql).group(1))
     p_we = int(re.search(r"origin_actual_departure < \(\$(\d+)::date", sql).group(1))
-    assert params[p_ws - 1] == cx.previous_bucket(grain, anchors[0]) < anchors[0]
+    assert params[p_ws - 1] == cx.lookback_start(grain, anchors[0]) < anchors[0]
     assert params[p_we - 1] == win_end == TODAY
 
 
@@ -165,6 +165,25 @@ def test_previous_bucket_per_grain():
     assert cx.previous_bucket("week", date(2026, 10, 12)) == date(2026, 10, 5)
     assert cx.previous_bucket("month", date(2026, 1, 1)) == date(2025, 12, 1)
     assert cx.previous_bucket("month", date(2026, 3, 1)) == date(2026, 2, 1)
+
+
+def test_day_grain_compares_with_the_previous_ACTIVE_day():
+    """Review 2026-10-16: with the calendar rule every Monday read ~100 % new.
+    Friday → (empty weekend) → Monday must compare Monday with Friday."""
+    fri, mon, tue = date(2026, 10, 9), date(2026, 10, 12), date(2026, 10, 13)
+    presence = {fri: {"A", "B"}, mon: {"A", "B", "C"}, tue: {"C", "D"}}
+    got = cx.new_customers_reference(presence, "day")
+    assert got == {fri: 0, mon: 1, tue: 1}
+    sql = cx.combo_production_sql("day", "x::date", "TRUE", 1, 2)
+    assert "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0) OVER (" in sql
+    for grain in ("week", "month"):
+        assert "PRECEDING" not in cx.combo_production_sql(grain, "x::date", "TRUE", 1, 2)
+
+
+def test_day_lookback_reaches_past_a_long_weekend():
+    assert cx.lookback_start("day", date(2026, 10, 12)) == date(2026, 10, 5)
+    assert cx.lookback_start("week", date(2026, 10, 12)) == date(2026, 10, 5)
+    assert cx.lookback_start("month", date(2026, 3, 1)) == date(2026, 2, 1)
 
 
 def test_new_customers_reference_rule():
@@ -373,7 +392,7 @@ live = pytest.mark.skipif(not os.getenv("SAVINGS_DATABASE_URL"), reason="needs S
 
 
 @live
-@pytest.mark.parametrize("grain", ["week", "month"])
+@pytest.mark.parametrize("grain", ["day", "week", "month"])
 def test_live_new_customers_match_the_reference_rule(monkeypatch, grain):
     import asyncpg
 

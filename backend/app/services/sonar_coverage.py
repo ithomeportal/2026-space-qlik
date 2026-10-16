@@ -69,9 +69,10 @@ BATCH_SIZE = 25
 # At most this many uncached lanes are looked up per page view (= 4 requests).
 # The rest stay "—" until the next view; the cache fills in a few views.
 MAX_FETCH_LANES = 100
-# Hard wall-clock budget for the whole enrichment (lock wait + auth + fetch).
-TOTAL_TIMEOUT_S = 8.0
-REQUEST_TIMEOUT_S = 6.0
+# Wall-clock budget for the lock wait + SONAR fetch (the cache read is outside
+# it). Short, because By Lane waits on it; lanes not reached fill on a later view.
+TOTAL_TIMEOUT_S = 4.0
+REQUEST_TIMEOUT_S = 3.5
 
 DATA_TTL = timedelta(hours=24)
 EMPTY_TTL = timedelta(hours=6)
@@ -359,49 +360,65 @@ def _dedupe(keys: Iterable[Optional[LaneKey]]) -> list[LaneKey]:
     return list(seen)
 
 
-async def _lookup(pool, keys: list[LaneKey], client) -> dict[LaneKey, Rejection]:
-    now = datetime.now(timezone.utc)
-    cached = await read_cache(pool, keys, now)
-    missing = [k for k in keys if k not in cached]
-    if not missing or _in_cooldown() or not _credentials_configured():
-        return cached
+async def _fetch_missing(
+    pool, keys: list[LaneKey], client, sink: dict[LaneKey, Rejection],
+) -> None:
+    """Fill ``sink`` with what is still missing from it: cache re-read, then SONAR.
+
+    ``sink`` is written as answers ARRIVE (cache re-read, then each persisted
+    chunk) so a caller whose time budget runs out still has every reading
+    gathered so far — a timeout must not throw away rows already in hand.
+    """
     async with _fetch_lock:
+        now = datetime.now(timezone.utc)
         # Another viewer may have filled these while we waited for the lock.
-        cached = {**cached, **await read_cache(pool, missing, now)}
-        missing = [k for k in keys if k not in cached][:MAX_FETCH_LANES]
+        sink.update(await read_cache(pool, [k for k in keys if k not in sink], now))
+        missing = [k for k in keys if k not in sink][:MAX_FETCH_LANES]
         if not missing or _in_cooldown():
-            return cached
+            return
+
         async def _persist(got: dict[LaneKey, Rejection]) -> None:
+            stamp = datetime.now(timezone.utc)
+            sink.update({k: Rejection(v.origin_rejection_pct, v.dest_rejection_pct, stamp)
+                         for k, v in got.items()})
             try:
                 await write_cache(pool, got)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[SONAR coverage] cache write failed (%s)", type(exc).__name__)
 
-        fetched = await fetch_from_sonar(missing, client, on_chunk=_persist)
-        stamp = datetime.now(timezone.utc)
-        return {**cached, **{k: Rejection(v.origin_rejection_pct, v.dest_rejection_pct, stamp)
-                             for k, v in fetched.items()}}
+        await fetch_from_sonar(missing, client, on_chunk=_persist)
 
 
 async def get_rejections(
     pool, keys: Iterable[Optional[LaneKey]], client: Optional[httpx.AsyncClient] = None,
     timeout_s: float = TOTAL_TIMEOUT_S,
 ) -> dict[LaneKey, Rejection]:
-    """Cached-or-live readings for ``keys``. Never raises; {} on any failure.
+    """Cached-or-live readings for ``keys``. Never raises.
 
     ``pool`` is the analytics_hub pool (portal-owned cache). With no pool or
     no SONAR credential, nothing is fetched — the cache alone answers.
+
+    The cache read is OUTSIDE the time budget and the budget bounds only the
+    lock wait + SONAR fetch (review 2026-10-16): on a timeout the cached rows
+    and any chunks already fetched are still returned, never ``{}``.
     """
     wanted = _dedupe(keys)
     if pool is None or not wanted:
         return {}
     try:
-        return await asyncio.wait_for(_lookup(pool, wanted, client), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        logger.warning("[SONAR coverage] lookup exceeded %.1fs — columns blank", timeout_s)
+        found = dict(await read_cache(pool, wanted, datetime.now(timezone.utc)))
     except Exception as exc:  # noqa: BLE001 — the table must render regardless
-        logger.warning("[SONAR coverage] lookup failed (%s) — columns blank", type(exc).__name__)
-    return {}
+        logger.warning("[SONAR coverage] cache read failed (%s)", type(exc).__name__)
+        return {}
+    if all(k in found for k in wanted) or _in_cooldown() or not _credentials_configured():
+        return found
+    try:
+        await asyncio.wait_for(_fetch_missing(pool, wanted, client, found), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        logger.warning("[SONAR coverage] fetch exceeded %.1fs — partial columns", timeout_s)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SONAR coverage] fetch failed (%s) — partial columns", type(exc).__name__)
+    return dict(found)
 
 
 def reset_state_for_tests() -> None:

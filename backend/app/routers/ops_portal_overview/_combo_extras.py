@@ -95,10 +95,33 @@ def previous_bucket(grain: str, anchor: date) -> date:
     return anchor - timedelta(days=1)
 
 
-# SQL spelling of `previous_bucket` over a `date` column. Day/week subtract an
-# integer (date - int = date); month needs the interval and a cast back.
+# Day grain compares against the previous ACTIVE day, not the calendar day
+# before: with the calendar rule every Monday (and every day after a holiday)
+# read ~100 % "new", because nobody ships on Sunday. Week and month buckets are
+# never empty in practice, so they keep the strict "immediately previous" rule.
+DAY_LOOKBACK_DAYS = 7
+
+
+def lookback_start(grain: str, anchor: date) -> date:
+    """Where the scan starts so the first visible bucket has a predecessor.
+
+    Day grain reaches back a week so the first visible Monday still finds the
+    previous Friday (or the last active day before a long weekend)."""
+    if grain == "day":
+        return anchor - timedelta(days=DAY_LOOKBACK_DAYS)
+    return previous_bucket(grain, anchor)
+
+
+# SQL spelling of the predecessor bucket. Week subtracts an integer
+# (date - int = date); month needs the interval and a cast back; day takes the
+# latest ACTIVE day strictly before this one — a window frame over the already
+# aggregated rows, so `per_cust` is still referenced once (inlined, one v4 scan).
 _PREV_BUCKET_SQL = {
-    "day": "(pc.bucket_start - 1)",
+    "day": (
+        "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0) OVER ("
+        "ORDER BY pc.bucket_start "
+        "RANGE BETWEEN UNBOUNDED PRECEDING AND INTERVAL '1 day' PRECEDING)"
+    ),
     "week": "(pc.bucket_start - 7)",
     "month": "(pc.bucket_start - INTERVAL '1 month')::date",
 }
@@ -162,9 +185,15 @@ def new_customers_reference(presence: Mapping[date, Iterable[str]], grain: str) 
 
     ``presence`` maps bucket → customers with ≥1 counted load in it. A customer
     is new in a bucket when it is absent from the IMMEDIATELY previous bucket —
-    not merely from the last bucket that happens to have data.
+    not merely from the last bucket that happens to have data. Day grain is the
+    exception: its predecessor is the previous ACTIVE day (see `lookback_start`).
     """
-    sets = {b: set(c) for b, c in presence.items()}
+    sets = {b: set(c) for b, c in presence.items() if c}
+    if grain == "day":
+        days = sorted(sets)
+        prev_of = {d: (days[i - 1] if i else None) for i, d in enumerate(days)}
+        return {b: len(cs - sets.get(prev_of[b], set())) if prev_of[b] else 0
+                for b, cs in sets.items()}
     return {
         b: len(cs - sets.get(previous_bucket(grain, b), set()))
         for b, cs in sets.items()

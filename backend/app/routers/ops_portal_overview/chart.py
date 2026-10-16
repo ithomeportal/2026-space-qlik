@@ -25,7 +25,7 @@ from ._combo_extras import (
     candles_for_anchors,
     combo_production_sql,
     fetch_candles,
-    previous_bucket,
+    lookback_start,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,14 +112,14 @@ async def combo(
     }[grain]
 
     # ---- Production query (bars + losses + customers) -------------------
-    # Bruno PDF 2026-10-16 R1: the scan starts ONE bucket before the first
-    # anchor so `new_customers` in the first visible bar has a previous bucket
-    # to compare against (else it reads 100 % new). That extra bucket is not an
-    # anchor, so the loop below never emits it. The upper bound is unchanged —
-    # the bars still stop at today.
+    # Bruno PDF 2026-10-16 R1: the scan starts BEFORE the first anchor (one
+    # bucket; a week at day grain — see `lookback_start`) so `new_customers` in
+    # the first visible bar has a predecessor to compare against (else it reads
+    # 100 % new). The lookback rows are not anchors, so the loop below never
+    # emits them. The upper bound is unchanged — the bars still stop at today.
     prod_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    prod_params.extend([previous_bucket(grain, anchors[0]), win_end])
+    prod_params.extend([lookback_start(grain, anchors[0]), win_end])
     p_ws = len(prod_params) - 1
     p_we = len(prod_params)
     prod_sql = combo_production_sql(grain, trunc_v4, where, p_ws, p_we)
