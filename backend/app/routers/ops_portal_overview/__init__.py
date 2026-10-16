@@ -36,6 +36,8 @@ Endpoints (all under /api/custom/ops-portal-overview, all guarded by
   /team-variance       → §2 — scope-wide Budget vs Actual variance row
   /customer-variance   → §3 — per-customer Budget vs Actual variance
   /customer-losses     → §4 — per-customer Production losses (margin<0)
+  /customer-overpay    → per-customer Over Pay vs the eSavings lane base
+                         (Bruno 2026-10-16 R4; replaced /customer-not-billed)
   /team-performance    → §5 — single-row team Production+Savings KPIs
   /team-projection     → §6 — single-row team rolling 14d projection
   /profit-tm-gauge     → bottom-middle Profit-TM gauge (MTD profit vs budget)
@@ -125,7 +127,7 @@ from .chart import (  # noqa: F401
 )
 from .variance import (  # noqa: F401
     customer_losses,
-    customer_not_billed,
+    customer_overpay,
     customer_variance,
     team_variance,
     team_variance_by_team,
@@ -214,7 +216,7 @@ __all__ = [
     "cover",
     "cover_forecast",
     "customer_losses",
-    "customer_not_billed",
+    "customer_overpay",
     "customer_variance",
     "data_freshness",
     "filters",

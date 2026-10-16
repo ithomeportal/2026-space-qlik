@@ -47,67 +47,54 @@ const TH_CLS = "px-2 py-1 text-[10px] font-normal uppercase tracking-normal"
 
 const CAPPED_NOTE = "Sorting applies to the rows shown — the server sends only the top 100."
 
-// Two side-by-side panels mirroring the §5 incident split (Bruno 2026-06-15):
-// PU service-fails on the left, DEL service-fails on the right. The backend
-// already caps each at the top 100 by fail count; we scroll within the panel
-// and R11 lets each one expand to the full uncapped table in a modal.
+// Bruno "Ops Portal Updates" 2026-10-16 R3: PU and Del share ONE container with
+// a "PickUp" | "Delivery" toggle (default PickUp). Only the selected table
+// renders and only the selected stop_type is fetched — the other query is not
+// mounted, so switching fetches it on demand (React Query caches both after).
+// The backend still caps each at the top 100 by fail count; we scroll within
+// the panel and R11 lets it expand to the full table in a modal.
 export function ServiceIncidentTables({ filters, onPickCustomer, onPickCarrier }: Props) {
-  // Bruno (PDF 2026-07-15) R8: three-up so the new "by Carrier" card sits
-  // between the Del incident table and Customer Monthly Losses (right column).
-  // The two incident cards shrink to make room (R8 suggestion).
+  // Was three-up (PU · Del · By Carrier, Bruno 2026-07-15 R8); with PU/Del
+  // merged it is two equal halves: incidents (toggled) · By Carrier.
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <IncidentPanel
-        filters={filters}
-        stopType="pu"
-        title="# Service Incident by Customer (PU)"
-        icon="🚚"
-        failHeader="SF"
-        pctHeader="% On Time"
-        onPickCustomer={onPickCustomer}
-      />
-      <IncidentPanel
-        filters={filters}
-        stopType="del"
-        title="# Service Incident by Customer (Del)"
-        icon="📦"
-        failHeader="SF"
-        pctHeader="% On Time"
-        onPickCustomer={onPickCustomer}
-      />
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <IncidentPanel filters={filters} onPickCustomer={onPickCustomer} />
       <CarrierPanel filters={filters} onPickCarrier={onPickCarrier} />
     </div>
   )
 }
 
+type StopType = "pu" | "del"
+
+const STOP_TYPES: ReadonlyArray<{ key: StopType; label: string; icon: string }> = [
+  { key: "pu", label: "PickUp", icon: "🚚" },
+  { key: "del", label: "Delivery", icon: "📦" },
+]
+
+const INCIDENT_TITLE = "# Service Incident by Customer"
+const FAIL_HEADER = "SF"
+const PCT_HEADER = "% On Time"
+
 // ---------------------------------------------------------------------------
-// One panel — capped table + expand button → uncapped modal (own useState).
+// One panel — PickUp/Delivery toggle + capped table + expand → modal.
 // ---------------------------------------------------------------------------
 
 function IncidentPanel({
   filters,
-  stopType,
-  title,
-  icon,
-  failHeader,
-  pctHeader,
   onPickCustomer,
 }: {
   filters: OppFilters
-  stopType: "pu" | "del"
-  title: string
-  icon: string
-  failHeader: string
-  pctHeader: string
   onPickCustomer?: (customer: string) => void
 }) {
+  const [stopType, setStopType] = useState<StopType>("pu")
   const { data, isLoading, error } = useOppServiceIncident(filters, stopType)
   const rows: OppServiceIncidentRow[] = data?.data ?? []
   const [expanded, setExpanded] = useState(false)
+  const current = STOP_TYPES.find((s) => s.key === stopType) ?? STOP_TYPES[0]
 
   return (
     <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-sm font-semibold text-[#3B82F6]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-sm font-semibold text-[#3B82F6]">
         <button
           type="button"
           onClick={() => setExpanded(true)}
@@ -117,8 +104,9 @@ function IncidentPanel({
         >
           <Maximize2 className="h-3.5 w-3.5" />
         </button>
-        <span aria-hidden>{icon}</span>
-        <span>{title}</span>
+        <span aria-hidden>{current.icon}</span>
+        <span>{INCIDENT_TITLE}</span>
+        <StopTypeToggle value={stopType} onChange={setStopType} />
         {isLoading && <Loader2 className="ml-auto h-3 w-3 animate-spin text-[#6B7280]" />}
       </div>
       {error ? (
@@ -126,25 +114,55 @@ function IncidentPanel({
       ) : (
         <div className="[contain:paint] max-h-[460px] overflow-x-hidden overflow-y-auto px-3 py-2">
           <IncidentTable
+            key={stopType}
             rows={rows}
-            failHeader={failHeader}
-            pctHeader={pctHeader}
+            failHeader={FAIL_HEADER}
+            pctHeader={PCT_HEADER}
             onPickCustomer={onPickCustomer}
           />
         </div>
       )}
       {expanded && (
         <IncidentModal
-          title={title}
-          icon={icon}
+          title={`${INCIDENT_TITLE} (${current.label})`}
+          icon={current.icon}
           rows={rows}
-          failHeader={failHeader}
-          pctHeader={pctHeader}
+          failHeader={FAIL_HEADER}
+          pctHeader={PCT_HEADER}
           onPickCustomer={onPickCustomer}
           onClose={() => setExpanded(false)}
         />
       )}
     </section>
+  )
+}
+
+function StopTypeToggle({ value, onChange }: { value: StopType; onChange: (v: StopType) => void }) {
+  return (
+    <div
+      role="group"
+      aria-label="Stop type"
+      className="inline-flex overflow-hidden rounded-md border border-[#BFDBFE] text-[11px] font-medium"
+    >
+      {STOP_TYPES.map((s) => {
+        const active = s.key === value
+        return (
+          <button
+            key={s.key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(s.key)}
+            className={
+              active
+                ? "bg-[#2563EB] px-2 py-0.5 text-white"
+                : "bg-white px-2 py-0.5 text-[#2563EB] hover:bg-[#EFF6FF]"
+            }
+          >
+            {s.label}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 

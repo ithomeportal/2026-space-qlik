@@ -213,15 +213,23 @@ export interface OppCustomerLoss {
   loss_profit: number
 }
 
-// Bruno 2026-07-01 R14: per-customer "Not Billed" (bill_date < sentinel).
-export interface OppCustomerNotBilledRow {
+// Bruno 2026-10-16 R4: per-customer "Over Pay" (eSavings definition; replaced
+// the R14 "Not Billed" table). `over_pay` is NEGATIVE (carrier pay above base).
+export interface OppCustomerOverPayRow {
   customer_name: string
+  /** Every qualifying load (carrier pay ≥ $201) of the customer, not only over-paid ones. */
   loads: number
-  revenue: number
+  over_pay: number
 }
-export interface OppCustomerNotBilledTotals {
+/** Server-side totals over the WHOLE filtered scope (§44), never the LIMIT slice. */
+export interface OppCustomerOverPayTotals {
+  /** All qualifying loads in scope, incl. customers with no over pay. */
   loads: number
-  revenue: number
+  over_pay: number
+  /** Customers with Over Pay < 0 (= rows before LIMIT). */
+  customers: number
+  /** Σ loads of those customers. */
+  listed_loads: number
 }
 
 export interface OppTeamPerformance {
@@ -853,13 +861,13 @@ export function useOppTeamPerformance(f: OppFilters) {
   })
 }
 
-// Bruno 2026-07-01 R14: per-customer "Not Billed" table (meta.totals carries
-// the full-universe Loads/Revenue totals).
-export function useOppCustomerNotBilled(f: OppFilters) {
+// Bruno 2026-10-16 R4: per-customer "Over Pay" table (meta.totals carries the
+// whole-scope Loads / Over Pay totals). Replaced the Not Billed endpoint.
+export function useOppCustomerOverPay(f: OppFilters) {
   const prefix = useApiPrefix()
   return useQuery({
-    queryKey: [prefix, "opp-customer-not-billed", f.range, f.startDate, f.endDate, f.team, customerKey(f), f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppCustomerNotBilledRow[]>(`${prefix}/customer-not-billed${qs(f)}`),
+    queryKey: [prefix, "opp-customer-overpay", f.range, f.startDate, f.endDate, f.team, customerKey(f), f.loadType, laneKey(f)],
+    queryFn: () => apiFetch<OppCustomerOverPayRow[]>(`${prefix}/customer-overpay${qs(f)}`),
     ...RETRY,
   })
 }

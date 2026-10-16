@@ -359,8 +359,8 @@ async def customer_losses(
         exclude_carriers=exclude_carriers, limit=limit, _user=_user,
     )
 
-@r.get("/{division}/customer-not-billed")
-async def customer_not_billed(
+@r.get("/{division}/customer-overpay")
+async def customer_overpay(
     request: Request,
     range: Optional[str] = Query('mtd'),
     start_date: Optional[date] = Query(None),
@@ -376,7 +376,7 @@ async def customer_not_billed(
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)
-    return await opo.customer_not_billed(
+    return await opo.customer_overpay(
         request=request, range=range, start_date=start_date, end_date=end_date,
         team=_sub_team(scope, team), customer=customer, load_type=load_type,
         lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,

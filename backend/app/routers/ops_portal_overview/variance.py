@@ -1,4 +1,4 @@
-"""Budget-vs-actual variance panels and the customer losses / not-billed lists.
+"""Budget-vs-actual variance panels and the customer losses / over-pay lists.
 
 Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTOM-REPORTS §28).
 """
@@ -366,12 +366,77 @@ async def customer_losses(
 
 
 # ---------------------------------------------------------------------------
-# /customer-not-billed — Bruno round (2026-07-01) R14: per-customer "Not Billed"
+# /customer-overpay — Bruno "Ops Portal Updates" 2026-10-16 R4 (replaces the
+# R14 "Not Billed" table, whose /customer-not-billed endpoint is deleted)
 # ---------------------------------------------------------------------------
+#
+# "Over Pay" per customer, with the eSavings-from-Carriers definition
+# (`carriers_savings.py` /by-customer `overpay`), recomputed LIVE from v4 so it
+# honours this page's scope + Team/Customer/Load-type/Lane/Carrier filters and
+# its date window — the eSavings report table has no lane/carrier/load-type
+# grain and is month-pinned.
+#
+# Replicates the n8n "Carriers Savings Update - 4 AM CST" workflow
+# (PdZIaBQPGSLD4VWB; SQL backup
+# /BOT/n8n-mcp/workflow_backups/carriers_savings_populate_quarterly_post_upsert_20260521.sql):
+#
+#   * loads with `override_pay_amt < 201` are excluded everywhere (rule 1);
+#   * the lane is joined to `carriers_savings_results` on its PRIMARY KEY
+#     `(customer_id, origin_name, dest_name)` — all three columns, exact match,
+#     as the workflow joins — so it cannot fan out (unique index, 1 row per lane;
+#     4,896 rows = 4,896 distinct keys, measured 2026-10-16);
+#   * the base is chosen by the LOAD'S month, exactly as the workflow does:
+#       Jul-2025              → none (the report hard-codes variance_july = 0)
+#       Aug-2025 … Mar-2026   → base_lane, except the lane's own base_month
+#                               (rule 8: the month that establishes the lane = 0)
+#       Apr … Jun 2026        → q2_base_lane   (avg of Q1-2026 monthly avgs)
+#       Jul … Sep 2026        → q3_base_lane   (avg of Q2-2026 monthly avgs)
+#       Oct … Dec 2026        → q4_base_lane   (avg of Q3-2026 monthly avgs)
+#     and "no base (0/NULL) ⇒ no variance" (rule 7, memory
+#     feedback_carriers_savings_zero_base — never fall back to base_lane).
+#   * the workflow's monthly variance `(base − avg_cost) × loads` equals
+#     `SUM(base − override_pay_amt)` over the lane-month's loads, so the lane
+#     variance is computed per LANE-MONTH — the grain of
+#     `carriers_savings_results_report`, whose `variance < 0` rows eSavings sums.
+#     Netting a lane across months first would let a saving month cancel an
+#     over-pay month and print a smaller Over Pay than eSavings on a
+#     multi-month range.
+#
+# ⚠ The workflow only computes bases for Jul-2025 … Dec-2026 (no Q1-2027 base
+#   exists). From 2027-01-01 the CASE yields NULL ⇒ this panel is EMPTY until
+#   the workflow (and the CASE below) is extended with a q1_2027 base.
+#
+# POPULATION (§44 / §96) — one population for every number on the panel:
+#   * Loads   = ALL qualifying loads (≥ $201, on a lane with a savings row) of
+#               the customer in the filtered window — the eSavings "loads"
+#               definition — not just the over-paid ones;
+#   * Over Pay = Σ of the NEGATIVE lane-month variances of that customer.
+#   Rows list only customers whose Over Pay < 0, most negative first.
+#   `meta.totals` are computed server-side over the WHOLE filtered set, never a
+#   client reduce over the LIMIT slice: `loads` = every qualifying load in scope
+#   (including customers with no over pay, which add 0 to `over_pay`), so the
+#   two totals span ONE population; `customers` = how many have Over Pay < 0
+#   (= rows before LIMIT); `listed_loads` = Σ Loads of those customers, for a
+#   caption that wants to reconcile against the visible rows.
+
+# Base for a load month `m` — module constant, no user input. Literal date
+# bounds on purpose: these mirror the workflow's hard-coded calendar.
+_OVERPAY_BASE_CASE = """
+    CASE
+      WHEN m >= DATE '2026-10-01' AND m < DATE '2027-01-01' THEN c.q4_base_lane
+      WHEN m >= DATE '2026-07-01' AND m < DATE '2026-10-01' THEN c.q3_base_lane
+      WHEN m >= DATE '2026-04-01' AND m < DATE '2026-07-01' THEN c.q2_base_lane
+      WHEN m >= DATE '2025-08-01' AND m < DATE '2026-04-01'
+       AND c.base_month IS DISTINCT FROM to_char(m, 'YYYY-MM') THEN c.base_lane
+      ELSE NULL
+    END"""
+
+# eSavings rule 1 — loads under this carrier pay are excluded everywhere.
+OVERPAY_MIN_PAY = 201
 
 
-@router.get("/customer-not-billed")
-async def customer_not_billed(
+@router.get("/customer-overpay")
+async def customer_overpay(
     request: Request,
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
@@ -381,74 +446,99 @@ async def customer_not_billed(
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
-    # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """Bruno R14 — orders never billed (``bill_date < '2000-01-01'`` sentinel),
-    grouped per customer.
-
-      Loads   = COUNT(orders where bill_date < '2000-01-01')
-      Revenue = SUM(total_charge where bill_date < '2000-01-01')
-
-    Same CORP scope + page date range (origin_actual_departure) as the sibling
-    Customer Monthly Losses table. Totals in ``meta`` are the full-universe
-    window aggregate (never a client reduce over the LIMIT slice — §44)."""
+    """Per-customer Over Pay vs the eSavings quarterly lane base (see the
+    section comment above for the rules and the totals population)."""
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     s, e = _resolve_range(range, start_date, end_date)
     params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    params.extend([s, e, limit])
-    p_s = len(params) - 2
-    p_e = len(params) - 1
-    p_lim = len(params)
+    params.extend([s, e, OVERPAY_MIN_PAY, limit])
+    p_s, p_e, p_min, p_lim = (len(params) - 3, len(params) - 2, len(params) - 1, len(params))
 
     rows = await pool.fetch(
         f"""
-        WITH g AS (
+        WITH ld AS (
             SELECT
-              br4.customer_name AS customer_name,
-              COUNT(*)                                     AS loads,
-              COALESCE(SUM(br4.total_charge), 0)::numeric  AS revenue
+              br4.customer_name, br4.customer_id, br4.origin_name, br4.dest_name,
+              m, br4.override_pay_amt AS pay,
+              {_OVERPAY_BASE_CASE} AS base
             FROM public.mcleod_gld_budget_report_v4 br4
+            CROSS JOIN LATERAL (
+                SELECT date_trunc('month', br4.origin_actual_departure) AS m
+            ) mm
+            JOIN public.carriers_savings_results c
+              ON  c.customer_id = br4.customer_id
+              AND c.origin_name = br4.origin_name
+              AND c.dest_name   = br4.dest_name
             WHERE {where}
               AND br4.origin_actual_departure >= ${p_s}
               AND br4.origin_actual_departure < (${p_e}::date + INTERVAL '1 day')
-              AND br4.bill_date < '2000-01-01'::date
-            GROUP BY br4.customer_name
+              AND br4.override_pay_amt >= ${p_min}
+        ),
+        lane AS (
+            SELECT customer_name,
+                   COUNT(*) AS loads,
+                   SUM(base - pay) FILTER (WHERE base > 0) AS var
+            FROM ld
+            GROUP BY customer_name, customer_id, origin_name, dest_name, m
+        ),
+        cust AS (
+            SELECT customer_name,
+                   SUM(loads)::bigint AS loads,
+                   COALESCE(SUM(var) FILTER (WHERE var < 0), 0)::numeric AS over_pay
+            FROM lane
+            GROUP BY customer_name
         )
-        SELECT
-          customer_name, loads, revenue,
-          SUM(loads)   OVER () AS loads_total,
-          SUM(revenue) OVER () AS revenue_total,
-          COUNT(*)     OVER () AS cust_total
-        FROM g
-        ORDER BY revenue DESC NULLS LAST
-        LIMIT ${p_lim}
+        (SELECT TRUE AS is_total, NULL::text AS customer_name,
+                COALESCE(SUM(loads), 0)::bigint AS loads,
+                COALESCE(SUM(over_pay), 0)::numeric AS over_pay,
+                COUNT(*) FILTER (WHERE over_pay < 0)::bigint AS customers,
+                COALESCE(SUM(loads) FILTER (WHERE over_pay < 0), 0)::bigint AS listed_loads
+         FROM cust)
+        UNION ALL
+        (SELECT FALSE, customer_name::text, loads, over_pay, NULL::bigint, NULL::bigint
+         FROM cust
+         WHERE over_pay < 0
+         ORDER BY over_pay ASC, customer_name
+         LIMIT ${p_lim})
         """,
         *params,
     )
+    return _overpay_envelope(rows, s, e)
+
+
+def _overpay_envelope(rows, s: date, e: date) -> dict:
+    """Split the one-statement result into rows + server-side totals."""
+    total = next((r for r in rows if r["is_total"]), None)
+    data = [
+        {
+            "customer_name": r["customer_name"],
+            "loads": int(r["loads"] or 0),
+            "over_pay": _safe_float(r["over_pay"]),
+        }
+        for r in rows
+        if not r["is_total"]
+    ]
     totals = {
-        "loads":   int(rows[0]["loads_total"] or 0) if rows else 0,
-        "revenue": _safe_float(rows[0]["revenue_total"]) if rows else 0.0,
+        "loads": int(total["loads"] or 0) if total else 0,
+        "over_pay": _safe_float(total["over_pay"]) if total else 0.0,
+        "customers": int(total["customers"] or 0) if total else 0,
+        "listed_loads": int(total["listed_loads"] or 0) if total else 0,
     }
     return {
         "success": True,
-        "data": [
-            {
-                "customer_name": r["customer_name"],
-                "loads":   int(r["loads"] or 0),
-                "revenue": _safe_float(r["revenue"]),
-            }
-            for r in rows
-        ],
+        "data": data,
         "meta": {
             "window": {"start": s.isoformat(), "end": e.isoformat()},
-            "total": int(rows[0]["cust_total"] or 0) if rows else 0,
+            "total": totals["customers"],
             "totals": totals,
+            "min_pay": OVERPAY_MIN_PAY,
         },
     }
 

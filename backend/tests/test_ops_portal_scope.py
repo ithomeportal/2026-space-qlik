@@ -353,20 +353,25 @@ def test_the_budget_only_endpoints_are_not_exposed_on_dfw() -> None:
     assert "/custom/ops-portal-overview-dfw/team-projection-by-team" in paths
 
 
-def test_the_not_billed_panel_is_delegated_everywhere() -> None:
-    """SidePanels renders it unconditionally on all six portals.
+def test_the_overpay_panel_is_delegated_everywhere() -> None:
+    """SidePanels renders it unconditionally on every portal.
 
-    It was missing from the CORP team factory until 2026-08-21 — a live 404 on
-    four pages while the main portal looked healthy.
+    Its predecessor (/customer-not-billed, replaced by Bruno 2026-10-16 R4) was
+    missing from the CORP team factory until 2026-08-21 — a live 404 on four
+    pages while the main portal looked healthy.
     """
     from app.routers import ops_portal_overview_team as team_mod
 
     src = inspect.getsource(team_mod)
-    assert '@r.get("/customer-not-billed")' in src
-    assert "opo.customer_not_billed(" in src
-    call = src.split("opo.customer_not_billed(")[1].split(")")[0]
+    assert '@r.get("/customer-overpay")' in src
+    assert "opo.customer_overpay(" in src
+    call = src.split("opo.customer_overpay(")[1].split(")")[0]
     assert "team=team" in call
-    assert any(r.path.endswith("/customer-not-billed") for r in dfw.r.routes)
+    assert any(r.path.endswith("/customer-overpay") for r in dfw.r.routes)
+    # The replaced endpoint is gone everywhere, not left half-wired.
+    for routes in (opo.router.routes, dfw.r.routes):
+        assert not any(r.path.endswith("/customer-not-billed") for r in routes)
+    assert "customer_not_billed" not in src
 
 
 def test_customer_variance_is_month_over_month_and_says_so() -> None:
