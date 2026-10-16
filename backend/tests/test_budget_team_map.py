@@ -48,6 +48,7 @@ import importlib
 import inspect
 import os
 import re
+import sys
 import types
 from datetime import date
 from pathlib import Path
@@ -263,9 +264,16 @@ def _drive(module_path: str, fn_name: str, **kwargs):
         if hasattr(mod, attr):
             undo.append((mod, attr, getattr(mod, attr)))
             setattr(mod, attr, lambda request, _p=pool: _p)
-    if hasattr(mod, "cst_today"):
-        undo.append((mod, "cst_today", mod.cst_today))
-        setattr(mod, "cst_today", lambda: FROZEN_TODAY)
+    # Freeze the clock in EVERY loaded module of the endpoint's package, not
+    # just the endpoint's own: `from app.clock import cst_today` binds a copy
+    # per module, and since the 08-14 package split the range resolution lives
+    # in `ops_portal_overview/_dates.py`. Patching only `variance.cst_today`
+    # left "This Month" on the REAL month, so this live test read October.
+    package = module_path.rsplit(".", 1)[0]
+    for name, m in list(sys.modules.items()):
+        if (name == module_path or name.startswith(package + ".")) and hasattr(m, "cst_today"):
+            undo.append((m, "cst_today", m.cst_today))
+            setattr(m, "cst_today", lambda: FROZEN_TODAY)
     fn = getattr(mod, fn_name)
     sig = inspect.signature(fn)
     call = {}
@@ -385,7 +393,15 @@ def test_live_ops_portal_this_month_matches_brunos_figures() -> None:
     stmts = _budget_statements(calls)
     assert len(stmts) == 1
     sql, params = stmts[0]
-    assert params[0] == AUG[0] and params[1] == AUG[1], params[:2]
+    # Read the window through the budget leg's OWN predicate, never a fixed
+    # index: the statement now binds the scope params (team list, statuses …)
+    # first, so `params[0:2]` became the team list and this went red on every
+    # live run while the panel itself was right. What it must still prove: the
+    # "This Month" budget window is the WHOLE month, not cut at today (§92).
+    m = re.search(r'budget\."Date" BETWEEN \$(\d+) AND \$(\d+)', sql)
+    assert m, "the budget leg lost its date-window predicate"
+    window = (params[int(m.group(1)) - 1], params[int(m.group(2)) - 1])
+    assert window == AUG, window
 
     async def run():
         conn = await _gold()
