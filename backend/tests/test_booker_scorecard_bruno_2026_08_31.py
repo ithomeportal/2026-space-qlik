@@ -117,6 +117,8 @@ _EXCLUSION_RES = (
                r"IS\s+DISTINCT\s+FROM\s+0::numeric", re.S),
     re.compile(r"IS\s+DISTINCT\s+FROM\s*\(150::numeric,\s*150::numeric\)", re.S),
     re.compile(r"IS\s+DISTINCT\s+FROM\s*\(250::numeric,\s*150::numeric\)", re.S),
+    # Bruno PDF 2026-10-16 R1 — Revenue 200 / Cost 150 (Profit 50).
+    re.compile(r"IS\s+DISTINCT\s+FROM\s*\(200::numeric,\s*150::numeric\)", re.S),
 )
 
 

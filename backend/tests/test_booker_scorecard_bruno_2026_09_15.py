@@ -250,13 +250,13 @@ def test_ap_outage_yields_none_never_zero():
 
 
 def test_every_rendered_column_has_a_sort_key():
-    """Bruno asked for ALL columns. The table renders 14; each needs an
+    """Bruno asked for ALL columns. The table renders 15; each needs an
     asc/desc pair the backend actually understands."""
     fields = {field for field, _ in bs._ORDERS_SORT.values()}
     expected = {
         "order_id", "team", "customer", "posted_by", "posted_date", "rc_count",
         "revenue", "carrier_cost", "profit", "otp_on_time", "otd_on_time",
-        "threshold", "cost_saving", "threshold_variance_pct",
+        "threshold", "cost_saving", "cost_overrun", "threshold_variance_pct",
     }
     assert fields == expected
     # Every key comes as a matched asc/desc pair, or a header renders an arrow
@@ -415,11 +415,19 @@ def test_revenue_stays_invariant_under_every_step():
 def test_the_two_new_columns_have_exactly_one_definition_each():
     """§69. A second call site is fine; a reimplementation is not."""
     src = Path(bs.__file__).read_text()
-    for name in ("_row_cost_saving", "_row_threshold_variance"):
+    # `_row_cost_overrun` (Bruno PDF 2026-10-16 R2) is the third per-row
+    # threshold column — one more named definition, still the only place its
+    # arithmetic may live.
+    for name in ("_row_cost_saving", "_row_threshold_variance", "_row_cost_overrun"):
         assert src.count(f"def {name}(") == 1
 
     outside = src
-    for fn in (bs._row_cost_saving, bs._row_threshold_variance, bs._threshold_stats):
+    for fn in (
+        bs._row_cost_saving,
+        bs._row_threshold_variance,
+        bs._row_cost_overrun,
+        bs._threshold_stats,
+    ):
         outside = outside.replace(inspect.getsource(fn), "")
     assert "cost / threshold" not in outside
     assert "threshold - cost" not in outside

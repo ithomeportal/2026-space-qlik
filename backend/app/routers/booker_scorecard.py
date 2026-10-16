@@ -372,8 +372,11 @@ def _base_sql(
           AND br.status <> 'V'
           -- Bruno (PDF 2026-08-31 "Booker Performance Scorecard", Scorecard
           -- tab) R1/R2 — placeholder rates are not real bookings. R1: carrier
-          -- cost of exactly 0. R2: the two hard-coded rate pairs
+          -- cost of exactly 0. R2: the hard-coded rate pairs
           -- (revenue 150 / cost 150) and (revenue 250 / cost 150).
+          -- Bruno PDF 2026-10-16 R1 adds a third: (revenue 200 / cost 150),
+          -- i.e. Profit 50 — "delete these orders" from the KPIs, Rank and
+          -- Scenario. McLeod is read-only to us, so "delete" = exclude HERE.
           --
           -- Applied HERE, inside the one CTE every endpoint builds its
           -- universe from, so the Orders page, its full-universe Totals pass,
@@ -390,7 +393,9 @@ def _base_sql(
           AND (br.total_charge, br.total_charge - br.margin_amt)
                 IS DISTINCT FROM (150::numeric, 150::numeric)
           AND (br.total_charge, br.total_charge - br.margin_amt)
-                IS DISTINCT FROM (250::numeric, 150::numeric){extra_sql}
+                IS DISTINCT FROM (250::numeric, 150::numeric)
+          AND (br.total_charge, br.total_charge - br.margin_amt)
+                IS DISTINCT FROM (200::numeric, 150::numeric){extra_sql}
     ),
     sc AS (
         -- Incidents are FAILURES. Restricted to the orders already in scope, so
@@ -606,6 +611,21 @@ def _row_cost_saving(threshold: Optional[float], cost: Optional[float]) -> Optio
     owned that fact.
     """
     if threshold is None or cost is None or cost >= threshold:
+        return None
+    return threshold - cost
+
+
+def _row_cost_overrun(threshold: Optional[float], cost: Optional[float]) -> Optional[float]:
+    """Threshold − Carrier Cost when NEGATIVE, else ``None`` (Bruno PDF 2026-10-16 R2).
+
+    The mirror image of `_row_cost_saving`: an order that came in OVER its
+    threshold carries the (negative) overrun, everything else — under, exactly
+    on, or no threshold at all — renders "—". Kept negative on purpose: Bruno
+    asked for "the calculated value", and the sign is what tells it apart from
+    a saving at a glance. The two columns are disjoint, so on any row at most
+    one of them is non-null.
+    """
+    if threshold is None or cost is None or cost <= threshold:
         return None
     return threshold - cost
 
@@ -895,8 +915,8 @@ async def summary(
 #
 # ⚠ These are PYTHON field names, not SQL fragments — and that is the whole
 # point of Bruno's PDF 2026-09-15 R3 ("enable sorting for all columns").
-# Three of the fourteen columns — Threshold, Cost Savings, Threshold
-# Variance % — come from `loads_to_cover` in a DIFFERENT DATABASE and are
+# Four of the fifteen columns — Threshold, Cost Savings, Cost Overrun,
+# Threshold Variance % — come from `loads_to_cover` in a DIFFERENT DATABASE and are
 # merged in Python (see `_thresholds`), so they do not exist in the SQL result
 # at all and `ORDER BY` cannot reach them. Sorting them page-locally would
 # reorder 200 rows out of thousands while looking like it sorted everything.
@@ -935,6 +955,8 @@ _ORDERS_SORT: dict[str, tuple[str, bool]] = {
     "threshold_asc": ("threshold", False),
     "saving_desc": ("cost_saving", True),
     "saving_asc": ("cost_saving", False),
+    "overrun_desc": ("cost_overrun", True),
+    "overrun_asc": ("cost_overrun", False),
     "variance_desc": ("threshold_variance_pct", True),
     "variance_asc": ("threshold_variance_pct", False),
 }
@@ -1099,6 +1121,7 @@ async def orders(
     # they are computed here and not in SQL.
     for row in enriched:
         row["cost_saving"] = _row_cost_saving(row["threshold"], row["carrier_cost"])
+        row["cost_overrun"] = _row_cost_overrun(row["threshold"], row["carrier_cost"])
         row["threshold_variance_pct"] = _row_threshold_variance(
             row["threshold"], row["carrier_cost"]
         )
@@ -1122,6 +1145,13 @@ async def orders(
     carrier_cost = sum(r["carrier_cost"] or 0.0 for r in enriched)
     otp_on_time = sum(1 for r in enriched if r["otp_on_time"])
     otd_on_time = sum(1 for r in enriched if r["otd_on_time"])
+    # Σ of the per-row overruns over the SAME `enriched` list (§96). None when
+    # the threshold source is down, so the cell reads "—" rather than a $0 that
+    # would claim "nobody went over".
+    cost_overrun = (
+        None if thresholds is None
+        else sum(r["cost_overrun"] or 0.0 for r in enriched)
+    )
 
     return {
         "success": True,
@@ -1138,6 +1168,7 @@ async def orders(
                 # Same helper, same full-universe rows as /summary (§69).
                 "recoveries": _recoveries(enriched),
                 **stats,
+                "cost_overrun": cost_overrun,
             },
             "adjustment": adj,
             "thresholds_available": thresholds is not None,

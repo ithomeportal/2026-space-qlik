@@ -28,9 +28,10 @@ const PAGE_SIZE = 200
 const LEAD_COLS = 5
 /**
  * LEAD_COLS + RC + Revenue, Carrier Cost, Profit, OTP, OTD, Threshold,
- * Cost Savings, Threshold Variance % (the last two: Bruno PDF 2026-09-15).
+ * Cost Savings, Cost Overrun, Threshold Variance % (Cost Savings and
+ * Threshold Variance %: Bruno PDF 2026-09-15; Cost Overrun: 2026-10-16).
  */
-const COLUMN_COUNT = LEAD_COLS + 9
+const COLUMN_COUNT = LEAD_COLS + 10
 
 /**
  * Column key -> (asc sort, desc sort) understood by the backend whitelist.
@@ -54,6 +55,7 @@ const SORTS: Record<string, [BookerOrdersSort, BookerOrdersSort]> = {
   otd_on_time: ["otd_asc", "otd_desc"],
   threshold: ["threshold_asc", "threshold_desc"],
   cost_saving: ["saving_asc", "saving_desc"],
+  cost_overrun: ["overrun_asc", "overrun_desc"],
   threshold_variance_pct: ["variance_asc", "variance_desc"],
 }
 
@@ -189,6 +191,8 @@ export function OrdersTable({ filters, valueFilterable = false }: Props) {
                 <Th label="Threshold" columnKey="threshold" sort={sort} setSort={setSort} align="right" />
                 {/* Bruno PDF 2026-09-15 R1 / R2. */}
                 <Th label="Cost Savings" columnKey="cost_saving" sort={sort} setSort={setSort} align="right" />
+                {/* Bruno PDF 2026-10-16 R2. */}
+                <Th label="Cost Overrun" columnKey="cost_overrun" sort={sort} setSort={setSort} align="right" />
                 <Th
                   label="Threshold Variance %"
                   columnKey="threshold_variance_pct"
@@ -278,6 +282,12 @@ export function OrdersTable({ filters, valueFilterable = false }: Props) {
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#065F46]">
                         {fmtUsd(r.cost_saving)}
                       </td>
+                      {/* Bruno PDF 2026-10-16 R2 — Threshold − Carrier Cost when
+                          negative, else "—". Disjoint from Cost Savings: a row
+                          fills at most one of the two. */}
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#991B1B]">
+                        {fmtUsd(r.cost_overrun)}
+                      </td>
                       {/* R2 — Carrier Cost / Threshold. Over 100% is the same
                           fact the Threshold cell flags, coloured to match. */}
                       <td
@@ -337,6 +347,11 @@ export function OrdersTable({ filters, valueFilterable = false }: Props) {
                       up to it by construction (§16/§69). */}
                   <td className="px-3 py-1.5 text-right tabular-nums text-[#065F46]">
                     {fmtUsd(totals.cost_saving)}
+                  </td>
+                  {/* Σ of the Cost Overrun column over the FULL universe,
+                      server-side — not a sum of this page (§44). */}
+                  <td className="px-3 py-1.5 text-right tabular-nums text-[#991B1B]">
+                    {fmtUsd(totals.cost_overrun)}
                   </td>
                   {/* Σcost / Σthreshold over the comparable orders, computed
                       server-side. ⚠ NOT the mean of the column above it: a

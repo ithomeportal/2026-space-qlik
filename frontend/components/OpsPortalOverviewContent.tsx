@@ -300,6 +300,15 @@ function Body({
     [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, unbilledOnly, laneIds, laneMode, carrierIds, carrierMode],
   )
 
+  // Bruno PDF 2026-10-16 ("Exec Portal") R1 — typing a date IS choosing a
+  // custom range now that the "Custom" button is gone. A cleared input ("")
+  // keeps the previous bound instead of sending an empty date.
+  function pickCustomDates(start: string, end: string) {
+    setStartDate(start || appliedDates.startDate)
+    setEndDate(end || appliedDates.endDate)
+    setRange("custom")
+  }
+
   // R10: clicking a lane in the By-Lane table sets it as the single included lane.
   function pickLane(lane: string) {
     setLaneIds([lane])
@@ -416,7 +425,6 @@ function Body({
                 { k: "mtd" as const,        label: "MTD" },
                 { k: "this_month" as const, label: "This Month" },
                 { k: "last_month" as const, label: "Last Month" },
-                { k: "custom" as const,     label: "Custom" },
               ].map((opt) => (
                 <button
                   key={opt.k}
@@ -431,27 +439,30 @@ function Body({
                 </button>
               ))}
             </div>
-            {range === "custom" && (
-              <div className="flex items-center gap-1 text-xs">
-                <input
-                  type="date"
-                  min={YEAR_START}
-                  max={YEAR_END}
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
-                />
-                <span className="text-[#6B7280]">→</span>
-                <input
-                  type="date"
-                  min={YEAR_START}
-                  max={YEAR_END}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
-                />
-              </div>
-            )}
+            {/* Bruno PDF 2026-10-16 ("Exec Portal") R1 — no "Custom" button; the
+                date fields are ALWAYS visible. They show the dates actually
+                applied (a preset's own window included), and editing either
+                one switches to a custom range seeded with the OTHER field's
+                current value, so the reader never starts from a stale pair. */}
+            <div className="flex items-center gap-1 text-xs">
+              <input
+                type="date"
+                min={YEAR_START}
+                max={YEAR_END}
+                value={appliedDates.startDate}
+                onChange={(e) => pickCustomDates(e.target.value, appliedDates.endDate)}
+                className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+              />
+              <span className="text-[#6B7280]">→</span>
+              <input
+                type="date"
+                min={YEAR_START}
+                max={YEAR_END}
+                value={appliedDates.endDate}
+                onChange={(e) => pickCustomDates(appliedDates.startDate, e.target.value)}
+                className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1"
+              />
+            </div>
           </div>
 
           {divisions && divisions.length > 0 && (

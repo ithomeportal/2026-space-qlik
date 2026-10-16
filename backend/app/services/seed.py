@@ -236,7 +236,7 @@ CUSTOM_REPORTS = [
             "Carrier Cost = Revenue − Profit · Compliance Threshold (1 − broken) "
             "joins AP_module loads_to_cover.thresh (hand-entered, ~60% coverage — "
             "always read it against 'of N orders with a threshold') · orders with a "
-            "carrier cost of 0, and the 150/150 and 250/150 placeholder rates, are "
+            "carrier cost of 0, and the 150/150, 250/150 and 200/150 placeholder rates, are "
             "excluded from the table AND the KPIs · OTP/OTD from "
             "scorecard_incidents_portal, orders not yet picked up count as on-time · "
             "the 10-week chart ignores the date filter by design"

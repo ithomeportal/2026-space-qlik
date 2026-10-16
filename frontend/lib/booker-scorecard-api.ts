@@ -234,6 +234,12 @@ export interface BookerOrderRow {
    */
   cost_saving: number | null
   /**
+   * Bruno PDF 2026-10-16 R2 — the mirror of `cost_saving`: `threshold −
+   * carrier_cost` ONLY when that is NEGATIVE (cost went over the threshold),
+   * so the value is ≤ 0; null for under, exactly-on and no-threshold orders.
+   */
+  cost_overrun: number | null
+  /**
    * Bruno PDF 2026-09-15 R2 — `carrier_cost / threshold`, as a FRACTION.
    * A ratio, not a variance from a baseline: 0.94 = came in at 94% of
    * threshold, 1.06 = 6% over. Feed it to `fmtPct`, never pre-scale it.
@@ -261,6 +267,9 @@ export interface BookerOrders {
     /** Σcost / Σthreshold over the comparable orders only — weighted, never a
      *  mean of the per-row ratios (§96). */
     threshold_variance_pct: number | null
+    /** Σ of the per-row `cost_overrun` over the full universe (≤ 0); null when
+     *  the threshold source is unavailable. */
+    cost_overrun: number | null
     /** Same server-side definition as the KPI card (§69). */
     recoveries: number
   }
@@ -289,6 +298,7 @@ export type BookerOrdersSort =
   | "otd_desc" | "otd_asc"
   | "threshold_desc" | "threshold_asc"
   | "saving_desc" | "saving_asc"
+  | "overrun_desc" | "overrun_asc"
   | "variance_desc" | "variance_asc"
 
 export interface BookerWeek {
