@@ -79,10 +79,11 @@ def _norm(sql: str) -> str:
 
 
 def test_it_applies_the_page_scope_and_window(monkeypatch) -> None:
-    sql, params = _sql(monkeypatch, customer="ACME", carriers=["X"])
+    sql, params = _sql(monkeypatch, customer=["ACME", "BETA, INC"], carriers=["X"])
     s = _norm(sql)
     assert "br4.team_id = ANY(" in s and "br4.status = ANY(" in s
-    assert "br4.customer_name = $" in s and "ACME" in params
+    # Multi-select Customer (Bruno PDF 2026-10-16 R2): the list binds whole.
+    assert "br4.customer_name = ANY($" in s and ["ACME", "BETA, INC"] in params
     assert "br4.origin_actual_departure >= $" in s
     assert "INTERVAL '1 day'" in s
     assert date(2026, 9, 1) in params and date(2026, 9, 30) in params
