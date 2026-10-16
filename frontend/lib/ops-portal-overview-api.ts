@@ -164,6 +164,22 @@ export interface OppBucket {
   budget_revenue: number
   budget_profit: number
   budget_margin_pct: number
+  // Bruno PDF 2026-10-16 R1 — distinct customers over the Vol. population, and
+  // those with no load in the immediately previous bucket.
+  customers: number
+  new_customers: number
+  // Projection OHLC inside this bucket (ops_projection_history); null = none.
+  projection: Record<OppCandleMeasure, OppCandle> | null
+}
+
+export type OppCandleMeasure = "volume" | "revenue" | "profit" | "margin_pct"
+
+export interface OppCandle {
+  open: number
+  high: number
+  low: number
+  close: number
+  days: number
 }
 
 export interface OppCombo {
@@ -177,6 +193,9 @@ export interface OppCombo {
   month_start: string
   month_end: string
   pending_workdays: number
+  /** False for a filtered / untracked scope — the chart keeps the flat line. */
+  projection_tracked?: boolean
+  projection_untracked_reason?: "filtered" | "team_scope" | "unavailable" | null
 }
 
 export interface OppTeamVariance {

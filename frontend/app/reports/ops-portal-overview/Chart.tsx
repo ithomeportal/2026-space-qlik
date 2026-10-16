@@ -20,7 +20,6 @@ import {
   fmtCount,
   fmtPct,
   fmtUsd,
-  fmtUsdSigned,
   useOppCombo,
   useOppCoverForecast,
   useOppProfitTmGauge,
@@ -28,9 +27,14 @@ import {
   useOppTeamProjection,
   useOppWorkdays,
   type LoadType,
+  type OppCandle,
   type OppGrain,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
+import { LegendChip, LegendLabel } from "./ChartLegend"
+import { KpiBox, ProfitTmGauge } from "./ChartFooter"
+import { CustomersTooltip, NEW_CUSTOMER_COLOR, renderCustomerBars } from "./CustomersSeries"
+import { isCandleMeasure, renderCandle, withKpiExtras } from "./ProjectedCandle"
 
 interface Props {
   filters: OppFilters
@@ -49,13 +53,16 @@ interface Props {
 
 // Bruno R5 (2026-06-01) #2: "Service" is now a 5th measure button. It swaps the
 // combo for OTP%/OTD% lines (same data as the standalone Service chart above).
-type Measure = "volume" | "revenue" | "profit" | "margin_pct" | "service"
+// Bruno PDF 2026-10-16 R1: "Customers" — distinct customers per bucket, with
+// the ones new vs the previous bucket stacked on top (CustomersSeries.tsx).
+type Measure = "volume" | "revenue" | "profit" | "margin_pct" | "customers" | "service"
 
 const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
   { k: "volume",     label: "Vol.",    fmt: fmtCount },
   { k: "revenue",    label: "Rev.",    fmt: fmtUsd },
   { k: "profit",     label: "Prof.",   fmt: fmtUsd },
   { k: "margin_pct", label: "Marg.%",  fmt: fmtPct },
+  { k: "customers",  label: "Customers", fmt: fmtCount },
   { k: "service",    label: "Service", fmt: (v) => `${v.toFixed(1)}%` },
 ]
 
@@ -164,6 +171,10 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   const isHidden = (k: SeriesKey) => hidden.has(k)
 
   const isService = measure === "service"
+  const isCustomers = measure === "customers"
+  // Budget / Losses / Projected have no customer-count analogue (R1 2026-10-16).
+  const showBudget = !hideBudget && !isCustomers
+  const showProjected = isCandleMeasure(measure)
 
   const { data: comboRes, isLoading: comboLoading, error: comboError } = useOppCombo(cf, grain)
   const { data: workdaysRes } = useOppWorkdays()
@@ -208,7 +219,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   // Cover buckets that fall *before* the chart's window are dropped: the chart
   // already bounds its own history, and prepending would shift every index that
   // `brush` and `avgLq` are anchored on.
-  const chartData = useMemo(() => {
+  const mergedData = useMemo(() => {
     const fcBuckets = fcRes?.data?.buckets ?? []
     if (!forecastOn || !fcBuckets.length) {
       return baseData.map((d) => ({ ...d, cover_vol: 0, cover_rev: 0, cover_prof: 0, forecast_total: 0 }))
@@ -249,6 +260,9 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
       }
       merged.push({
         ...blank,
+        // An object survives the null-out above — a future bucket must not
+        // inherit the template's projection candle.
+        projection: null,
         bucket_start: b.bucket_start,
         label: fmtBucket(b.bucket_start, grain),
         cover_vol: b.cover_vol,
@@ -259,6 +273,10 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
     }
     return merged
   }, [baseData, fcRes, forecastOn, measure, forecastKey, grain])
+  // Active measure's candle range + the Customers split. Folded into
+  // `chartData` itself (not a second array handed to the chart) so the
+  // re-anchor and Brush-remount effects below see every data change (§97).
+  const chartData = useMemo(() => withKpiExtras(mergedData, measure), [mergedData, measure])
   // Kept whole for the same reason as `baseData`. Both series share one `brush`
   // state, so they must be windowed identically — /combo and /service both emit
   // one dense bucket per anchor, so equal lengths keep the indices aligned.
@@ -398,7 +416,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
     : measure === "volume"   ? "losses_vol"
     : "losses_margin_pct"
   )
-  const showLosses = measure !== "revenue" && !isService
+  const showLosses = measure !== "revenue" && !isService && !isCustomers
 
   const measureMeta = MEASURES.find((m) => m.k === measure)!
   const fmt = measureMeta.fmt
@@ -427,6 +445,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   //   Month → the calendar-month EoM projection from /combo (unchanged default).
   const proj = projRes?.data
   const projected = useMemo(() => {
+    if (!isCandleMeasure(measure)) return 0
     // Per-day value for the active measure (margin% = per-day profit / revenue).
     const perDay =
       measure === "revenue"    ? proj?.avg_rev_day ?? 0
@@ -449,6 +468,14 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
       : proj?.proj_margin_pct
     ) ?? 0
   }, [grain, measure, proj])
+
+  // Bruno PDF 2026-10-16 R1: Projected as candlesticks from the stored
+  // projection history. Untracked (filtered / multi-team) scopes, or no
+  // snapshots in range, keep the flat line above.
+  const hasCandles =
+    showProjected &&
+    data?.projection_tracked === true &&
+    chartData.some((d) => d.proj_range !== null)
 
   const wd = workdaysRes?.data
   const gauge = gaugeRes?.data
@@ -526,7 +553,8 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                 active={!isHidden("bars")}
                 onClick={() => toggle("bars")}
               />
-              {!hideBudget && (
+              {isCustomers && <LegendLabel label="New" color={NEW_CUSTOMER_COLOR} />}
+              {showBudget && (
                 <LegendChip
                   label="BDGT"
                   color="#16A34A"
@@ -534,15 +562,10 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                   onClick={() => toggle("budget")}
                 />
               )}
-              {/* Bruno R5 #3: Variance = Actual − Budget, after Budget. */}
-              {!hideBudget && (
-                <LegendChip
-                  label="Variance"
-                  color="#F59E0B"
-                  active={!isHidden("variance")}
-                  onClick={() => toggle("variance")}
-                />
-              )}
+              {/* Bruno R5 #3: Variance = Actual − Budget, after Budget. A
+                  tooltip row, not a series — so a STATIC label, not a toggle
+                  (Bruno PDF 2026-10-16 R1). */}
+              {showBudget && <LegendLabel label="Variance" color="#F59E0B" />}
               <LegendChip
                 label="Avg. LQ"
                 color="#9333EA"
@@ -550,13 +573,15 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                 active={!isHidden("avgLq")}
                 onClick={() => toggle("avgLq")}
               />
-              <LegendChip
-                label="Projected"
-                color="#2563EB"
-                dashed
-                active={!isHidden("projected")}
-                onClick={() => toggle("projected")}
-              />
+              {showProjected && (
+                <LegendChip
+                  label="Projected"
+                  color="#2563EB"
+                  dashed={!hasCandles}
+                  active={!isHidden("projected")}
+                  onClick={() => toggle("projected")}
+                />
+              )}
               {/* Bruno 2026-07-01 R10: Losses — hidden in the Rev. view. */}
               {showLosses && (
                 <LegendChip
@@ -650,7 +675,17 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload || !payload.length) return null
+                  if (isCustomers) {
+                    return (
+                      <CustomersTooltip
+                        row={payload[0].payload}
+                        avg={avgLq}
+                        showAvg={!isHidden("avgLq") && avgLq !== 0}
+                      />
+                    )
+                  }
                   const row = payload[0].payload as Record<string, number> & { label?: string }
+                  const candle = hasCandles ? (payload[0].payload as { proj_ohlc?: OppCandle | null }).proj_ohlc : null
                   // Bruno R16: fixed order — Actual · Budget · Variance · Avg · Projected.
                   // (Losses series removed.)
                   const actualVal = Number(row[measure] ?? 0)
@@ -659,12 +694,20 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                     { key: "bars" as SeriesKey,      label: "Actual",    color: "#0EA5E9", value: actualVal },
                     // Budget + Variance leave the tooltip too when hidden —
                     // a tooltip row is as much a rendered number as a line is.
-                    ...(hideBudget ? [] : [
+                    ...(!showBudget ? [] : [
                       { key: "budget" as SeriesKey,   label: "Budget",   color: "#16A34A", value: budgetVal },
                       { key: "variance" as SeriesKey, label: "Variance", color: "#F59E0B", value: actualVal - budgetVal },
                     ]),
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
-                    { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
+                    ...(!showProjected ? [] : candle ? [
+                      // Candle: close is "the" projection; O/H/L describe its path.
+                      { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: candle.close },
+                      { key: "projected" as SeriesKey, label: "Proj. Open", color: "#93C5FD", value: candle.open },
+                      { key: "projected" as SeriesKey, label: "Proj. High", color: "#93C5FD", value: candle.high },
+                      { key: "projected" as SeriesKey, label: "Proj. Low",  color: "#93C5FD", value: candle.low },
+                    ] : hasCandles ? [] : [
+                      { key: "projected" as SeriesKey, label: "Projected", color: "#2563EB", value: projected },
+                    ]),
                     // Bruno 2026-07-01 R10: Losses row (hidden in Rev. view).
                     ...(showLosses
                       ? [{ key: "losses" as SeriesKey, label: "Losses", color: "#DC2626", value: Number(row[lossesKey] ?? 0) }]
@@ -681,7 +724,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                     <div className="rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-md">
                       <div className="mb-1 font-semibold text-[#111827]">{row.label}</div>
                       {items.map((i) => (
-                        <div key={i.key} className="flex items-center justify-between gap-4">
+                        <div key={i.label} className="flex items-center justify-between gap-4">
                           <span className="flex items-center gap-1.5">
                             <span className="inline-block h-2 w-2 rounded-full" style={{ background: i.color }} />
                             {i.label}
@@ -693,7 +736,8 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                   )
                 }}
               />
-              {!isHidden("bars") && (
+              {!isHidden("bars") && isCustomers && renderCustomerBars()}
+              {!isHidden("bars") && !isCustomers && (
                 <Bar
                   dataKey={measure}
                   name="Actual"
@@ -733,7 +777,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                   />
                 </Bar>
               )}
-              {!hideBudget && !isHidden("budget") && (
+              {showBudget && !isHidden("budget") && (
                 <Line
                   type="monotone"
                   dataKey={budgetKey}
@@ -751,7 +795,10 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                   label={{ value: `Avg. LQ ${fmt(avgLq)}`, fontSize: 10, fill: "#7C3AED", position: "right" }}
                 />
               )}
-              {!isHidden("projected") && projected !== 0 && (
+              {showProjected && hasCandles && !isHidden("projected") && (
+                <Bar dataKey="proj_range" name="Projected" fill="#2563EB" shape={renderCandle} isAnimationActive={false} />
+              )}
+              {showProjected && !hasCandles && !isHidden("projected") && projected !== 0 && (
                 <ReferenceLine
                   y={projected}
                   stroke="#2563EB"
@@ -848,144 +895,6 @@ function PillGroup<T extends string>({
           {opt.label}
         </button>
       ))}
-    </div>
-  )
-}
-
-function LegendChip({
-  label,
-  color,
-  dashed,
-  active,
-  onClick,
-}: {
-  label: string
-  color: string
-  dashed?: boolean
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
-        active
-          ? "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB]"
-          : "border-[#E5E7EB] bg-[#F3F4F6] text-[#9CA3AF] line-through"
-      }`}
-    >
-      <span
-        className="inline-block h-2 w-4 rounded-sm"
-        style={{
-          background: dashed
-            ? `repeating-linear-gradient(90deg, ${color} 0 4px, transparent 4px 8px)`
-            : color,
-          opacity: active ? 1 : 0.4,
-        }}
-      />
-      {label}
-    </button>
-  )
-}
-
-function KpiBox({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: number
-  tone: "neutral" | "accent"
-}) {
-  return (
-    <div
-      className={`rounded-lg border px-3 py-2 ${
-        tone === "accent"
-          ? "border-[#BFDBFE] bg-[#EFF6FF]"
-          : "border-[#E5E7EB] bg-white"
-      }`}
-    >
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-        {label}
-      </div>
-      <div className="text-2xl font-bold text-[#1B3A5C]">{value}</div>
-    </div>
-  )
-}
-
-/** Bruno (PDF 2026-08-31) R2: "Target" → "Budget", and the readout becomes
- *  Actual / Budget / Differential / Projected Profit.
- *
- *  ⚠ Actual is month-to-DATE while Budget is the WHOLE month (§92 — a
- *  whole-period plan must not be truncated to today). So Differential reads
- *  negative for most of the month BY CONSTRUCTION and is not a warning sign;
- *  Projected Profit is the leg to compare against Budget. The labels are spelt
- *  out rather than implied so nobody reads the gap as underperformance.
- */
-function ProfitTmGauge({
-  mtd,
-  budget,
-  projProfit,
-}: {
-  mtd: number
-  budget: number
-  projProfit: number
-}) {
-  const max = Math.max(budget, mtd, 1) * 1.05
-  const pct = Math.min(100, Math.max(0, (mtd / max) * 100))
-  const budgetPct = budget > 0 ? Math.min(100, Math.max(0, (budget / max) * 100)) : 0
-  const completionPct = budget > 0 ? (mtd / budget) * 100 : 0
-  const onTrack = budget > 0 && mtd >= budget * (new Date().getDate() / 30)
-  const differential = mtd - budget
-  return (
-    <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2">
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7280]">
-          Profit - TM
-        </span>
-        <span className="text-xs font-semibold tabular-nums text-[#1B3A5C]">
-          <span title="Month-to-date profit">Actual {fmtUsd(mtd)}</span>
-          <span className="text-[#D1D5DB]"> / </span>
-          <span className="text-[#6B7280]" title="Whole-month budget">
-            Budget {fmtUsd(budget)}
-          </span>
-          <span className="text-[#D1D5DB]"> / </span>
-          <span
-            className={differential < 0 ? "text-[#DC2626]" : "text-[#15803D]"}
-            title="Actual − Budget. Actual is month-to-date and Budget is the whole month, so this is negative for most of the month by construction — compare Projected Profit against Budget instead."
-          >
-            Differential {fmtUsdSigned(differential)}
-          </span>
-          <span className="text-[#D1D5DB]"> / </span>
-          <span
-            className={projProfit < 0 ? "text-[#DC2626]" : "text-[#1B3A5C]"}
-            title="End-of-month projection — the same number the Monthly Projection panel shows"
-          >
-            Projected Profit {fmtUsd(projProfit)}
-          </span>
-        </span>
-      </div>
-      <div className="relative h-3 w-full overflow-hidden rounded-full bg-[#F3F4F6]">
-        <div
-          className="absolute inset-y-0 left-0"
-          style={{
-            width: `${pct}%`,
-            background: onTrack ? "#16A34A" : mtd < 0 ? "#DC2626" : "#F59E0B",
-          }}
-        />
-        {budgetPct > 0 && (
-          <div
-            className="absolute inset-y-0 w-0.5 bg-[#1B3A5C]"
-            style={{ left: `${budgetPct}%` }}
-          />
-        )}
-      </div>
-      {budget > 0 && (
-        <div className="mt-0.5 text-center text-xs font-medium tabular-nums text-[#374151]">
-          {completionPct.toFixed(2)}%
-        </div>
-      )}
     </div>
   )
 }
