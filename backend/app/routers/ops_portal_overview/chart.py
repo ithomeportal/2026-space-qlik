@@ -6,19 +6,29 @@ Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTO
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import List, Optional
 
 from fastapi import Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _bucket_end, _count_workdays, _month_bounds, _resolve_grain_window
 from ._scope import scope_of
-from ._sql import _customer_any, _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._sql import _customer_any, _customer_list, _parse_team_scope, _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _safe_float, _team_projection_core
+from ._combo_extras import (
+    candle_tracking,
+    candles_for_anchors,
+    combo_production_sql,
+    fetch_candles,
+    previous_bucket,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/combo")
@@ -47,6 +57,12 @@ async def combo(
 
     BDGT line scales with the tab too — backend returns all four budget variants.
     Frontend picks the matching key based on the active measure pill.
+
+    Bruno PDF 2026-10-16 R1 adds, per bucket: ``customers`` / ``new_customers``
+    (same scan and population as ``volume``) and ``projection`` — the OHLC of
+    the stored projection inside that bucket, or None. ``projection_tracked``
+    is False for a filtered / untracked scope; the UI then keeps the flat line.
+    Helpers live in ``_combo_extras.py``.
 
     Source split unchanged:
       - Bars + losses_*   → mcleod_gld_budget_report_v4 (Production)
@@ -95,29 +111,18 @@ async def combo(
         "month": 'DATE_TRUNC(\'month\', budget."Date")::date',
     }[grain]
 
-    # ---- Production query (bars + losses) -------------------------------
+    # ---- Production query (bars + losses + customers) -------------------
+    # Bruno PDF 2026-10-16 R1: the scan starts ONE bucket before the first
+    # anchor so `new_customers` in the first visible bar has a previous bucket
+    # to compare against (else it reads 100 % new). That extra bucket is not an
+    # anchor, so the loop below never emits it. The upper bound is unchanged —
+    # the bars still stop at today.
     prod_params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, prod_params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    prod_params.extend([win_start, win_end])
+    prod_params.extend([previous_bucket(grain, anchors[0]), win_end])
     p_ws = len(prod_params) - 1
     p_we = len(prod_params)
-    prod_sql = f"""
-        SELECT
-          {trunc_v4} AS bucket_start,
-          COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS volume,
-          COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
-          COALESCE(SUM(br4.margin_amt), 0)::numeric   AS profit,
-          COUNT(*) FILTER (WHERE br4.margin_amt < 0
-                             AND br4.total_charge IS NOT NULL
-                             AND br4.total_charge <> 0) AS losses_vol,
-          COALESCE(SUM(br4.total_charge) FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses_rev,
-          COALESCE(SUM(br4.margin_amt)   FILTER (WHERE br4.margin_amt < 0), 0)::numeric AS losses_prof
-        FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE {where}
-          AND br4.origin_actual_departure >= ${p_ws}
-          AND br4.origin_actual_departure < (${p_we}::date + INTERVAL '1 day')
-        GROUP BY 1
-    """
+    prod_sql = combo_production_sql(grain, trunc_v4, where, p_ws, p_we)
 
     # ---- Budget (Budget URL) --------------------------------------------
     bud_params: list = [win_start, bud_end]
@@ -150,7 +155,32 @@ async def combo(
     m_start, m_end = _month_bounds(today)
     pending_workdays = _count_workdays(today, m_end)
 
-    prod_rows, bud_rows, proj = await asyncio.gather(
+    # ---- Projected candles — Bruno PDF 2026-10-16 R1 ---------------------
+    # Tracked, unfiltered scopes only; otherwise the UI keeps the flat line.
+    # `_customer_list`, not `bool(customer)`: a multi-select that arrives as
+    # [""] is "All", and must not switch the candles off.
+    filtered = bool(_customer_list(customer) or load_type or lanes or exclude_lanes
+                    or carriers or exclude_carriers)
+    team_key, untracked = candle_tracking(scope, _parse_team_scope(team, None), filtered)
+    hub = None
+    if team_key is not None:
+        try:
+            hub = get_pool(request)
+        except Exception as exc:  # the chart must render without the hub DB
+            logger.warning("combo: projection history unavailable (%s)", type(exc).__name__)
+            team_key, untracked = None, "unavailable"
+
+    async def _snapshots() -> Optional[list]:
+        if hub is None or team_key is None:
+            return []
+        try:
+            return await fetch_candles(hub, scope_key=scope.key, team_key=team_key,
+                                       grain=grain, start=anchors[0], end=today)
+        except Exception as exc:  # never take the bars down with the candles
+            logger.warning("combo: projection history read failed (%s)", type(exc).__name__)
+            return None
+
+    prod_rows, bud_rows, proj, snaps = await asyncio.gather(
         pool.fetch(prod_sql, *prod_params),
         pool.fetch(bud_sql, *bud_params) if scope.has_budget else _empty_rows(),
         _team_projection_core(
@@ -158,7 +188,12 @@ async def combo(
             lanes=lanes, exclude_lanes=exclude_lanes,
             carriers=carriers, exclude_carriers=exclude_carriers, today=today, scope=scope,
         ),
+        _snapshots(),
     )
+    if snaps is None:
+        team_key, untracked = None, "unavailable"
+    candles = (candles_for_anchors(snaps, proj, grain, anchors, today)
+               if team_key is not None else {})
 
     prod_map = {r["bucket_start"]: r for r in prod_rows}
     bud_map = {r["bucket_start"]: r for r in bud_rows}
@@ -194,6 +229,12 @@ async def combo(
             "budget_revenue":    b_rev,
             "budget_profit":     b_prof,
             "budget_margin_pct": (b_prof / b_rev * 100.0) if b_rev else 0.0,
+            # Bruno PDF 2026-10-16 R1 — Customers measure (same population as
+            # `volume`, §96) and the per-bucket projection OHLC (None = no
+            # snapshot in that bucket).
+            "customers":     int(p["customers"]) if p else 0,
+            "new_customers": int(p["new_customers"]) if p else 0,
+            "projection":    candles.get(a),
         })
 
     return {
@@ -209,6 +250,8 @@ async def combo(
             "month_start": m_start.isoformat(),
             "month_end": m_end.isoformat(),
             "pending_workdays": pending_workdays,
+            "projection_tracked": team_key is not None,
+            "projection_untracked_reason": untracked,
         },
     }
 
