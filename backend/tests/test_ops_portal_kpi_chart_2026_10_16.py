@@ -167,15 +167,17 @@ def test_previous_bucket_per_grain():
     assert cx.previous_bucket("month", date(2026, 3, 1)) == date(2026, 2, 1)
 
 
-def test_day_grain_compares_with_the_previous_ACTIVE_day():
-    """Review 2026-10-16: with the calendar rule every Monday read ~100 % new.
-    Friday → (empty weekend) → Monday must compare Monday with Friday."""
-    fri, mon, tue = date(2026, 10, 9), date(2026, 10, 12), date(2026, 10, 13)
-    presence = {fri: {"A", "B"}, mon: {"A", "B", "C"}, tue: {"C", "D"}}
+def test_day_grain_compares_with_the_previous_active_WEEKDAY():
+    """Review 2026-10-16: with the calendar rule every Monday read ~100 % new,
+    and with "previous active day" Monday still compared with a thin Sunday.
+    Monday — and the weekend days themselves — compare with Friday."""
+    thu, fri, sun = date(2026, 10, 8), date(2026, 10, 9), date(2026, 10, 11)
+    mon, tue = date(2026, 10, 12), date(2026, 10, 13)
+    presence = {thu: {"A"}, fri: {"A", "B"}, sun: {"E"}, mon: {"A", "B", "C"}, tue: {"C", "D"}}
     got = cx.new_customers_reference(presence, "day")
-    assert got == {fri: 0, mon: 1, tue: 1}
+    assert got == {thu: 0, fri: 1, sun: 1, mon: 1, tue: 1}
     sql = cx.combo_production_sql("day", "x::date", "TRUE", 1, 2)
-    assert "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0) OVER (" in sql
+    assert "FILTER (WHERE pc.volume > 0 AND EXTRACT(ISODOW FROM pc.bucket_start) < 6) OVER (" in sql
     for grain in ("week", "month"):
         assert "PRECEDING" not in cx.combo_production_sql(grain, "x::date", "TRUE", 1, 2)
 

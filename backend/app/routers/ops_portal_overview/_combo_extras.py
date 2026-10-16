@@ -95,9 +95,9 @@ def previous_bucket(grain: str, anchor: date) -> date:
     return anchor - timedelta(days=1)
 
 
-# Day grain compares against the previous ACTIVE day, not the calendar day
-# before: with the calendar rule every Monday (and every day after a holiday)
-# read ~100 % "new", because nobody ships on Sunday. Week and month buckets are
+# Day grain compares against the previous active BUSINESS day, not the
+# calendar day before: with the calendar rule every Monday (and every day after
+# a holiday) read ~100 % "new". Week and month buckets are
 # never empty in practice, so they keep the strict "immediately previous" rule.
 DAY_LOOKBACK_DAYS = 7
 
@@ -114,16 +114,41 @@ def lookback_start(grain: str, anchor: date) -> date:
 
 # SQL spelling of the predecessor bucket. Week subtracts an integer
 # (date - int = date); month needs the interval and a cast back; day takes the
-# latest ACTIVE day strictly before this one — a window frame over the already
-# aggregated rows, so `per_cust` is still referenced once (inlined, one v4 scan).
+# latest ACTIVE WEEKDAY strictly before this one — a window frame over the
+# already aggregated rows, so `per_cust` is still referenced once (inlined, one
+# v4 scan). Weekday, not merely active: weekends run a handful of customers
+# (5 on Sun 2026-10-11 vs 22 on Fri 10-09), so Monday-vs-Sunday still read
+# ~70 % "new" live. Every day compares with the previous BUSINESS day.
 _PREV_BUCKET_SQL = {
     "day": (
-        "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0) OVER ("
+        "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0"
+        " AND EXTRACT(ISODOW FROM pc.bucket_start) < 6) OVER ("
         "ORDER BY pc.bucket_start "
         "RANGE BETWEEN UNBOUNDED PRECEDING AND INTERVAL '1 day' PRECEDING)"
     ),
     "week": "(pc.bucket_start - 7)",
     "month": "(pc.bucket_start - INTERVAL '1 month')::date",
+}
+
+
+# When the customer was last seen, on the SAME calendar as the predecessor:
+# week/month use the plain LAG over the customer's counted buckets; day grain
+# must ask for the customer's latest earlier WEEKDAY, or a Fri+Sat customer
+# reads "last seen Sat ≠ predecessor Fri" and is miscounted as new on Sunday
+# (caught by the live reference check).
+_PREV_SEEN_SQL = {
+    "day": (
+        "MAX(pc.bucket_start) FILTER (WHERE pc.volume > 0"
+        " AND EXTRACT(ISODOW FROM pc.bucket_start) < 6) OVER ("
+        "PARTITION BY pc.cust ORDER BY pc.bucket_start "
+        "RANGE BETWEEN UNBOUNDED PRECEDING AND INTERVAL '1 day' PRECEDING)"
+    ),
+    "default": (
+        "LAG(pc.bucket_start) OVER (\n"
+        "                   PARTITION BY pc.cust, (pc.volume > 0)\n"
+        "                   ORDER BY pc.bucket_start\n"
+        "                 )"
+    ),
 }
 
 
@@ -135,6 +160,7 @@ def combo_production_sql(grain: str, trunc_v4: str, where: str, p_ws: int, p_we:
     ``customer_name`` is its own group and still contributes to the sums).
     """
     prev = _PREV_BUCKET_SQL.get(grain, _PREV_BUCKET_SQL["month"])
+    prev_seen = _PREV_SEEN_SQL["day"] if grain == "day" else _PREV_SEEN_SQL["default"]
     return f"""
         WITH per_cust AS (
           SELECT
@@ -157,10 +183,7 @@ def combo_production_sql(grain: str, trunc_v4: str, where: str, p_ws: int, p_we:
         flagged AS (
           SELECT pc.*,
                  (pc.volume > 0 AND pc.cust IS NOT NULL) AS present,
-                 LAG(pc.bucket_start) OVER (
-                   PARTITION BY pc.cust, (pc.volume > 0)
-                   ORDER BY pc.bucket_start
-                 ) AS prev_seen,
+                 {prev_seen} AS prev_seen,
                  {prev} AS prev_bucket
           FROM per_cust pc
         )
@@ -186,12 +209,12 @@ def new_customers_reference(presence: Mapping[date, Iterable[str]], grain: str) 
     ``presence`` maps bucket → customers with ≥1 counted load in it. A customer
     is new in a bucket when it is absent from the IMMEDIATELY previous bucket —
     not merely from the last bucket that happens to have data. Day grain is the
-    exception: its predecessor is the previous ACTIVE day (see `lookback_start`).
+    exception: its predecessor is the previous active WEEKDAY (Mon–Fri).
     """
     sets = {b: set(c) for b, c in presence.items() if c}
     if grain == "day":
-        days = sorted(sets)
-        prev_of = {d: (days[i - 1] if i else None) for i, d in enumerate(days)}
+        weekdays = sorted(d for d in sets if d.weekday() < 5)
+        prev_of = {d: max((w for w in weekdays if w < d), default=None) for d in sets}
         return {b: len(cs - sets.get(prev_of[b], set())) if prev_of[b] else 0
                 for b, cs in sets.items()}
     return {
