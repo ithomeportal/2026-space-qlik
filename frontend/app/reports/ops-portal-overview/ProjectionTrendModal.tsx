@@ -60,7 +60,7 @@ function errCls(pct: number | null): string {
 export function ProjectionTrendModal({ filters, onClose }: Props) {
   const cf = {
     team: filters.team,
-    customer: filters.customer,
+    customers: filters.customers,
     loadType: filters.loadType,
     lanes: filters.lanes,
     excludeLanes: filters.excludeLanes,

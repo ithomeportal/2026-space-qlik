@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import CORP_COMPANIES, CORP_TEAMS, router
 from ._dates import _resolve_range
 from ._scope import scope_of
-from ._sql import _sub_team_param, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._sql import _customer_any, _sub_team_param, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
 
@@ -62,7 +62,7 @@ async def by_order(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -316,7 +316,7 @@ async def by_order(
 async def pending_to_cover(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
@@ -352,9 +352,9 @@ async def pending_to_cover(
     if team:
         params.append(_sub_team_param(scope, [team]))
         parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"br4.customer_name = ${len(params)}")
+    cust_pred = _customer_any("br4.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     if lanes:
         params.append(lanes)
         parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")
@@ -418,7 +418,7 @@ async def pending_to_cover(
 async def cover(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
@@ -501,9 +501,9 @@ async def cover(
     if team:
         params.append(_sub_team_param(scope, [team]))
         parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"br4.customer_name = ${len(params)}")
+    cust_pred = _customer_any("br4.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     if lanes:
         params.append(lanes)
         parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")

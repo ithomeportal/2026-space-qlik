@@ -614,7 +614,7 @@ def test_the_endpoint_refuses_to_answer_for_a_filtered_panel() -> None:
     """
     pts = [(date(2026, 8, 2), 405_981.0, "backfill"), (date(2026, 8, 20), 542_601.0, "backfill")]
     for kwargs in (
-        {"customer": "KOHLER CO MONTERREY"},
+        {"customer": ["KOHLER CO MONTERREY"]},
         {"load_type": "contract"},
         {"lanes": ["A - B"]},
         {"exclude_lanes": ["A - B"]},

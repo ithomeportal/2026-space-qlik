@@ -110,7 +110,9 @@ def _axis(name: str, scope):
     sub = scope.sub_teams[0]
     return {
         "team": [sub],
-        "customer": ["SOME CUSTOMER"],
+        # A LIST, as the multi-select sends it (Bruno PDF 2026-10-16 R2); the
+        # comma inside a name is why it is never comma-joined on the wire.
+        "customer": [["SOME CUSTOMER", "OTHER, INC"]],
         "lanes": [["A - B"]],
         "exclude_lanes": [["A - B"]],
         "carriers": [["CARRIER X"]],

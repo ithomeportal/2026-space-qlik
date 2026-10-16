@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import customer_team_cte, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _month_bounds, _resolve_range
 from ._scope import scope_of
-from ._sql import _parse_team_scope, _scorecard_cte, _v4_scope_where
+from ._sql import _customer_any, _parse_team_scope, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _projection_from_sums, _projection_params, _projection_sums_sql, _safe_float, _team_projection_core
 from ._prior_month import (
     PREV, PREV_FULL, full_month_window, prior_fields, prior_month_sql, prior_month_window,
@@ -39,7 +39,7 @@ async def actuals(
     teams: Optional[str] = Query(
         None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
     ),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -121,9 +121,9 @@ async def actuals(
     if team_scope:
         b_params.append(team_scope)
         b_extra += f" AND ct.team_id = ANY(${len(b_params)})"
-    if customer:
-        b_params.append(customer)
-        b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
+    cust_pred = _customer_any('budget."Customer Name"', customer, b_params)
+    if cust_pred:
+        b_extra += f" AND {cust_pred}"
     bud_sql = f"""
         WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT
@@ -402,7 +402,7 @@ async def actuals_by_lane(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -574,7 +574,7 @@ async def margin_distribution(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),

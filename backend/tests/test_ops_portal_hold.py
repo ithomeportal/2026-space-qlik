@@ -109,7 +109,7 @@ def test_the_unbilled_floor_is_a_fixed_constant_and_is_reported() -> None:
     assert f"br4.ordered_date >= '{hold_mod.UNBILLED_FROM}'::date" in pool.sql
     assert resp["meta"]["unbilled_from"] == hold_mod.UNBILLED_FROM
     # Identical whatever else the caller passes — it is not a filter.
-    other, _ = _run(team="TEAM2", customer="ACME", limit=7)
+    other, _ = _run(team="TEAM2", customer=["ACME"], limit=7)
     assert f"br4.ordered_date >= '{hold_mod.UNBILLED_FROM}'::date" in other.sql
 
 

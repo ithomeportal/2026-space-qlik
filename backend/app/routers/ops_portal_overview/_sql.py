@@ -62,6 +62,54 @@ def _parse_team_scope(team: TeamScope = None, teams: Optional[str] = None) -> Li
     return [t.strip().upper() for t in _team_list(team)]
 
 
+# The Customer filter is one name, several names, or none (= every customer).
+CustomerScope = Union[str, Sequence[str], None]
+
+
+def _customer_list(customer: CustomerScope) -> Optional[List[str]]:
+    """Normalise the Customer filter to a list of names, or ``None`` = no filter.
+
+    Bruno PDF 2026-10-16 R2 made Customer a MULTI-select on all 7 ops portals,
+    so every customer predicate in this package binds ONE text[] through here
+    and renders ``= ANY($n)`` — a single name and five names take the
+    same code path. Names are kept verbatim (exact match on ``customer_name``);
+    only blank entries are dropped, and an empty result is ``None`` so ``[]`` /
+    ``[""]`` read as "All", never as "match nothing".
+
+    A bare string is wrapped, NOT iterated character-wise (internal callers and
+    older tests still pass one name). Anything else — notably the truthy
+    ``Query(None)`` default object a plain-Python caller binds when it omits
+    the argument (see ``_parse_team_scope``) — is "no filter".
+    """
+    if isinstance(customer, str):
+        items: Sequence = [customer]
+    elif isinstance(customer, (list, tuple)):
+        items = customer
+    else:
+        return None
+    names = list(dict.fromkeys(c for c in items if isinstance(c, str) and c.strip()))
+    return names or None
+
+
+def _customer_any(col: str, customer: CustomerScope, params: list) -> Optional[str]:
+    """``{col} = ANY($n)`` with the normalised list bound, or ``None``.
+
+    The one rendering of the multi-select Customer predicate (Bruno PDF
+    2026-10-16 R2) — v4, budget mirror, savings and scorecard legs all use it,
+    so the legs cannot drift onto different matching rules. Appends to
+    ``params`` only when a filter actually applies.
+
+    No ``::text[]`` cast, same as the lane / team / carrier predicates:
+    asyncpg infers the array type from the column, and a bracketed cast would
+    trip the Python-list-repr linter in ``test_ops_portal_dfw_sql_valid.py``.
+    """
+    names = _customer_list(customer)
+    if not names:
+        return None
+    params.append(names)
+    return f"{col} = ANY(${len(params)})"
+
+
 def _lane_expr(alias: str) -> str:
     """Lane key — ``concat(origin_name, ' - ', dest_name)`` per Bruno R7.
 
@@ -139,7 +187,7 @@ def _team_id_select(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
 def _v4_scope_where(
     alias: str,
     team: TeamScope,
-    customer: Optional[str],
+    customer: CustomerScope,
     load_type: Optional[str],
     params: list,
     lanes: Optional[List[str]] = None,
@@ -152,7 +200,8 @@ def _v4_scope_where(
 
     Sargable (no TRIM()): pushes padded+unpadded literal variants per the
     width=8 / width=4 / width=1 declared schema on team_id / company_id /
-    status. ``customer`` is exact-match (single select). ``load_type`` is
+    status. ``customer`` is a multi-select of exact names (Bruno PDF 2026-10-16
+    R2) — ``= ANY($n)``, empty/None means no filter. ``load_type`` is
     "contract" or "spot" — falls back to no filter when None/empty.
     ``lanes`` / ``exclude_lanes`` (Bruno R7) are multi-select lane keys —
     empty/None means no filter.
@@ -195,9 +244,9 @@ def _v4_scope_where(
     if team_ids:
         params.append(_sub_team_param(scope, team_ids))
         parts.append(f"{alias}.{scope.v4_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"{alias}.customer_name = ${len(params)}")
+    cust_pred = _customer_any(f"{alias}.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     if load_type and load_type.lower() in ("contract", "spot"):
         params.append(load_type.lower())
         parts.append(

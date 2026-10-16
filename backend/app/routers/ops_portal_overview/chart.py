@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import customer_team_cte, CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _bucket_end, _count_workdays, _month_bounds, _resolve_grain_window
 from ._scope import scope_of
-from ._sql import _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._sql import _customer_any, _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _safe_float, _team_projection_core
 
 
@@ -25,7 +25,7 @@ from ._metrics import _empty_rows, _safe_float, _team_projection_core
 async def combo(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None, description="'contract' | 'spot' | null"),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -125,9 +125,9 @@ async def combo(
     if team:
         bud_params.append(team)
         bud_extra += f" AND ct.team_id = ${len(bud_params)}"
-    if customer:
-        bud_params.append(customer)
-        bud_extra += f' AND budget."Customer Name" = ${len(bud_params)}'
+    cust_pred = _customer_any('budget."Customer Name"', customer, bud_params)
+    if cust_pred:
+        bud_extra += f" AND {cust_pred}"
     bud_sql = f"""
         WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT
@@ -222,7 +222,7 @@ async def combo(
 async def service(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -313,7 +313,7 @@ async def service(
 async def cover_forecast(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None, description="'contract' | 'spot' | null"),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -369,9 +369,9 @@ async def cover_forecast(
     if team:
         params.append(_sub_team_param(scope, [team]))
         parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"br4.customer_name = ${len(params)}")
+    cust_pred = _customer_any("br4.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     if load_type and load_type.lower() in ("contract", "spot"):
         params.append(load_type.lower())
         parts.append(f"LOWER(TRIM(COALESCE(br4.contract_type_descr,''))) = ${len(params)}")
