@@ -13,6 +13,7 @@ from fastapi import Depends, Query, Request
 
 from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.services import sonar_coverage
 
 from ._constants import customer_team_cte, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _month_bounds, _resolve_range
@@ -447,7 +448,11 @@ async def actuals_by_lane(
                     -- Bruno round (2026-07-01) R3: carrier per order (first movement).
                     NULLIF(TRIM(mov.payee_name), '') AS carrier,
                     COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
-                    COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
+                    COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt,
+                    -- Bruno (PDF 2026-10-16) R6: SONAR location inputs.
+                    COALESCE(TRIM(br4.origin_state_id), '') || '|' || COALESCE(TRIM(br4.origin_zip_code), '') AS o_loc,
+                    COALESCE(TRIM(br4.dest_state_id), '')   || '|' || COALESCE(TRIM(br4.dest_zip_code), '')   AS d_loc,
+                    TRIM(br4.equipment_type_descr) AS equip
                 FROM public.mcleod_gld_budget_report_v4 br4
                 LEFT JOIN otp ON TRIM(br4.id)=otp.id_key AND TRIM(br4.company_id)=otp.company_id_key
                 LEFT JOIN otd ON TRIM(br4.id)=otd.id_key AND TRIM(br4.company_id)=otd.company_id_key
@@ -485,7 +490,12 @@ async def actuals_by_lane(
                                              AND total_charge IS NOT NULL
                                              AND total_charge <> 0), 0)::numeric AS loss_profit,
           SUM(otp_cnt) AS otp_late,
-          SUM(otd_cnt) AS otd_late
+          SUM(otd_cnt) AS otd_late,
+          -- Most frequent state|zip and equipment on the lane — the inputs of
+          -- the SONAR coverage-guide lookup (R6). Not returned as columns.
+          MODE() WITHIN GROUP (ORDER BY o_loc) AS o_loc,
+          MODE() WITHIN GROUP (ORDER BY d_loc) AS d_loc,
+          MODE() WITHIN GROUP (ORDER BY equip) AS equip
         FROM prod CROSS JOIN uni
         GROUP BY origin, dest
     """
@@ -520,6 +530,8 @@ async def actuals_by_lane(
             "otd_pct":    (1.0 - otd_late / vol) * 100.0 if vol else 0.0,
             "rev_x_l":    (rev / vol) if vol else 0.0,
             "prof_x_l":   (prof / vol) if vol else 0.0,
+            # Bruno (PDF 2026-10-16) R6 — None for a non-US / ZIP-less lane.
+            _SONAR_KEY:   _sonar_lane_key(r),
         })
 
     sort_key = {
@@ -532,7 +544,8 @@ async def actuals_by_lane(
     }.get(sort, lambda r: -r["rev"])
     full_total = len(out)
     out.sort(key=sort_key)
-    out = out[:limit]
+    # Only the lanes about to be RETURNED are looked up (SONAR budget, R6).
+    out, rejection_as_of = await _with_rejection(request, out[:limit])
 
     t_vol, t_rev, t_prof = tot["vol"], tot["rev"], tot["prof"]
     # Universe-wide distinct carrier count (same scalar on every row via uni CTE).
@@ -558,8 +571,45 @@ async def actuals_by_lane(
             "window": {"start": s.isoformat(), "end": e.isoformat()},
             "total": full_total,
             "totals": totals,
+            # R6: the rejection columns are a CURRENT market reading, not the window.
+            "rejection": {"as_of": rejection_as_of, "source": sonar_coverage.SOURCE_LABEL},
         },
     }
+
+
+_SONAR_KEY = "_sonar_key"
+
+
+def _split_loc(v) -> tuple[str, str]:
+    state, _, zip_code = (v or "").partition("|")
+    return state, zip_code
+
+
+def _sonar_lane_key(r) -> Optional[sonar_coverage.LaneKey]:
+    """SONAR-askable key for a lane row (US→US with ZIPs), else None."""
+    o_state, o_zip = _split_loc(r["o_loc"])
+    d_state, d_zip = _split_loc(r["d_loc"])
+    return sonar_coverage.lane_key(o_state, o_zip, d_state, d_zip, r["equip"])
+
+
+async def _with_rejection(request: Request, rows: list[dict]) -> tuple[list[dict], Optional[str]]:
+    """Attach origin/dest rejection % (nullable) to each row. Never raises.
+
+    The cache lives in analytics_hub (``app.state.pool``); without it nothing
+    is fetched, so a SONAR call can never happen uncached.
+    """
+    hub_pool = getattr(request.app.state, "pool", None)
+    found = await sonar_coverage.get_rejections(hub_pool, (r[_SONAR_KEY] for r in rows))
+    stamps = [v.fetched_at for v in found.values() if v.fetched_at is not None]
+    out = []
+    for r in rows:
+        hit = found.get(r[_SONAR_KEY]) if r[_SONAR_KEY] is not None else None
+        out.append({
+            **{k: v for k, v in r.items() if k != _SONAR_KEY},
+            "origin_rejection_pct": hit.origin_rejection_pct if hit else None,
+            "dest_rejection_pct": hit.dest_rejection_pct if hit else None,
+        })
+    return out, (min(stamps).isoformat() if stamps else None)
 
 
 # ---------------------------------------------------------------------------
