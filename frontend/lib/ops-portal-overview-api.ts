@@ -352,6 +352,11 @@ export interface OppLaneRow {
   otd_pct: number
   rev_x_l: number
   prof_x_l: number
+  /** Bruno PDF 2026-10-16 R6: live SONAR market tender rejection, PERCENT
+   *  (12.3 = 12.3%). CURRENT reading — not tied to the date filter. null for
+   *  non-US / ZIP-less lanes or when SONAR is unavailable. */
+  origin_rejection_pct: number | null
+  dest_rejection_pct: number | null
 }
 
 // Bruno R4 (2026-05-27): totals rows surfaced in meta for the bottom tables.

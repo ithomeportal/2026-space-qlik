@@ -23,13 +23,20 @@ type ColumnKey =
   | "lane" | "vol" | "carriers" | "rev" | "prof" | "margin"
   | "loss_loads" | "loss_profit"
   | "otp" | "otd" | "rev_x_l" | "prof_x_l"
+  | "o_rej" | "d_rej"
+
+// Bruno PDF 2026-10-16 R6: live SONAR coverage-guide reading per lane.
+const REJECTION_TIP =
+  "Live SONAR market tender rejection (current, not the selected period); US lanes only"
 
 const COLUMNS: {
   k: ColumnKey
   label: string
   align: "left" | "center" | "right"
   numeric: boolean
-  accessor: (r: OppLaneRow) => number | string
+  /** null sorts LAST in either direction (a lane SONAR cannot price). */
+  accessor: (r: OppLaneRow) => number | string | null
+  title?: string
 }[] = [
   { k: "lane",        label: "Lane",         align: "left",   numeric: false, accessor: (r) => (r.lane || "").toUpperCase() },
   { k: "vol",         label: "Volume",       align: "right",  numeric: true,  accessor: (r) => r.vol },
@@ -43,7 +50,28 @@ const COLUMNS: {
   { k: "otd",         label: "OTD %",        align: "right",  numeric: true,  accessor: (r) => r.otd_pct },
   { k: "rev_x_l",     label: "Rev. x L",     align: "right",  numeric: true,  accessor: (r) => r.rev_x_l },
   { k: "prof_x_l",    label: "Prof. x L",    align: "right",  numeric: true,  accessor: (r) => r.prof_x_l },
+  { k: "o_rej",       label: "Origin Rejection %", align: "right", numeric: true, accessor: (r) => r.origin_rejection_pct ?? null, title: REJECTION_TIP },
+  { k: "d_rej",       label: "Dest Rejection %",   align: "right", numeric: true, accessor: (r) => r.dest_rejection_pct ?? null,   title: REJECTION_TIP },
 ]
+
+// Pricing-portal thresholds (quoting spots pages): ≥15 red, ≥8 orange, ≥4 yellow.
+function rejectionClass(v: number): string {
+  if (v >= 15) return "text-[#DC2626]"
+  if (v >= 8) return "text-[#EA580C]"
+  if (v >= 4) return "text-[#CA8A04]"
+  return ""
+}
+
+function RejectionCell({ value }: { value: number | null | undefined }) {
+  if (value == null) {
+    return <td className="px-2 py-1.5 text-right tabular-nums text-[#9CA3AF]">—</td>
+  }
+  return (
+    <td className={`px-2 py-1.5 text-right tabular-nums ${rejectionClass(value)}`}>
+      {value.toFixed(1)}%
+    </td>
+  )
+}
 
 export function ActualsByLane({ filters, onPickLane }: Props) {
   // Bruno (PDF 2026-08-31 "Ops Portal Updates") R2: Profit descending by default.
@@ -66,6 +94,9 @@ export function ActualsByLane({ filters, onPickLane }: Props) {
     return [...raw].sort((a, b) => {
       const va = col.accessor(a)
       const vb = col.accessor(b)
+      if (va === null || vb === null) {
+        return va === vb ? 0 : va === null ? 1 : -1
+      }
       if (typeof va === "string" || typeof vb === "string") {
         return String(va).localeCompare(String(vb)) * mult
       }
@@ -199,6 +230,7 @@ function LaneTable({
               active={sortKey === c.k}
               dir={sortDir}
               onClick={() => onSort(c.k)}
+              title={c.title}
             >
               {c.label}
             </SortableTh>
@@ -218,6 +250,8 @@ function LaneTable({
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtPct(totals.otd_pct)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.rev_x_l)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(totals.prof_x_l)}</td>
+            <td className="px-2 py-1.5" />
+            <td className="px-2 py-1.5" />
           </tr>
         )}
       </thead>
@@ -262,6 +296,8 @@ function LaneTable({
             <td className={`px-2 py-1.5 text-right tabular-nums ${r.prof_x_l < 0 ? "text-[#DC2626]" : ""}`}>
               {fmtUsd(r.prof_x_l)}
             </td>
+            <RejectionCell value={r.origin_rejection_pct} />
+            <RejectionCell value={r.dest_rejection_pct} />
           </tr>
         ))}
       </tbody>
@@ -275,12 +311,14 @@ function SortableTh({
   active,
   dir,
   onClick,
+  title,
 }: {
   children: React.ReactNode
   align?: "left" | "right" | "center"
   active: boolean
   dir: "asc" | "desc"
   onClick: () => void
+  title?: string
 }) {
   const cls =
     align === "right" ? "text-right"
@@ -291,7 +329,7 @@ function SortableTh({
     : align === "center" ? "justify-center"
     : "justify-start"
   return (
-    <th className={`px-2 py-2 ${cls}`}>
+    <th className={`px-2 py-2 ${cls}`} title={title}>
       <button
         type="button"
         onClick={onClick}

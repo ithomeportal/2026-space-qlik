@@ -1129,6 +1129,14 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(PROJECTION_HISTORY_INDEX_DDL)
             await app.state.pool.execute(WEEKLY_ACTUALS_DDL)
 
+            # Ops Portal "By Lane" Origin/Dest Rejection % (Bruno 2026-10-16
+            # R6) — portal-owned 24 h cache of SONAR coverage-guide readings.
+            # SONAR's 100 req/min is ACCOUNT-WIDE (shared with the quoting
+            # portal); without this every page view would spend it.
+            from app.services.sonar_coverage import SONAR_REJECTION_CACHE_DDL
+
+            await app.state.pool.execute(SONAR_REJECTION_CACHE_DDL)
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
