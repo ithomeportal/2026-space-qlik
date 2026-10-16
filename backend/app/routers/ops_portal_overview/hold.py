@@ -134,7 +134,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import CORP_COMPANIES, router
 from ._scope import scope_of
 from ._metrics import _safe_float
-from ._sql import _lane_expr, _sub_team_param, _team_id_col
+from ._sql import _customer_any, _lane_expr, _sub_team_param, _team_id_col
 
 # Statuses the PDF excludes: 'V' voided, 'A' available/pending cover.
 EXCLUDED_HOLD_STATUSES = ("V", "A")
@@ -184,7 +184,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
 
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
     sort: str = Query("delay_asc"),
@@ -226,9 +226,9 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     if team:
         params.append(_sub_team_param(scope, [team]))
         parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"br4.customer_name = ${len(params)}")
+    cust_pred = _customer_any("br4.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     if lanes:
         params.append(lanes)
         parts.append(f"{_lane_expr('br4')} = ANY(${len(params)})")

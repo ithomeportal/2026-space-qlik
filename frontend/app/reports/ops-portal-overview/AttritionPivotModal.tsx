@@ -45,12 +45,19 @@ export default function AttritionPivotModal({
   // Ops Portal's date range is deliberately NOT mapped: Attrition has no date
   // filter at all — every figure is anchored to the last completed Mon-Sun
   // week — so pretending the range applied would be a lie on screen.
+  //
+  // Ops Portal's Customer filter became a multi-select (Bruno PDF 2026-10-16
+  // R2) but Attrition still takes ONE customer, so it is carried across only
+  // when exactly one is picked. With 2+ the pivot shows every customer and the
+  // header says the selection was not applied — never silently the first one.
+  const picked = filters.customers ?? []
+  const carriedCustomer = picked.length === 1 ? picked[0] : undefined
   const attritionFilters: AttritionFilters = useMemo(
     () => ({
       teams: filters.team ? [filters.team] : CORP_TEAMS,
-      customer: filters.customer || undefined,
+      customer: carriedCustomer,
     }),
-    [filters.team, filters.customer],
+    [filters.team, carriedCustomer],
   )
 
   return (
@@ -69,7 +76,8 @@ export default function AttritionPivotModal({
           <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">
             Performance Trends · last completed week vs 8-week average
             {filters.team ? ` · ${filters.team}` : " · all CORP teams"}
-            {filters.customer ? ` · ${filters.customer}` : ""}
+            {carriedCustomer ? ` · ${carriedCustomer}` : ""}
+            {picked.length > 1 ? ` · ${picked.length} customers selected — not applied here` : ""}
           </span>
           <div className="ml-auto flex items-center gap-3 text-[10px] text-[#6B7280]">
             {/* Ops Portal's date range does not apply here — say so rather

@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_ac
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _last_5_weeks, _last_n_business_days_start, _month_bounds, _week_label
 from ._scope import scope_of
-from ._sql import _parse_team_scope, _v4_scope_where
+from ._sql import _customer_any, _customer_list, _parse_team_scope, _v4_scope_where
 from ._metrics import _zero_val, _projection_from_sums, _safe_float, _team_projection_core
 
 # ⚠ `app.services.projection_history` is imported INSIDE the endpoint, not at
@@ -60,7 +60,7 @@ async def team_projection(
     teams: Optional[str] = Query(
         None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
     ),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -119,7 +119,7 @@ async def profit_tm_gauge(
     teams: Optional[str] = Query(
         None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
     ),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -156,9 +156,9 @@ async def profit_tm_gauge(
     if team_scope:
         b_params.append(team_scope)
         b_extra += f" AND ct.team_id = ANY(${len(b_params)})"
-    if customer:
-        b_params.append(customer)
-        b_extra += f' AND budget."Customer Name" = ${len(b_params)}'
+    cust_pred = _customer_any('budget."Customer Name"', customer, b_params)
+    if cust_pred:
+        b_extra += f" AND {cust_pred}"
     bud_sql = f"""
         WITH {customer_team_cte(scope, with_budget_team=True)}
         SELECT COALESCE(SUM(budget."Profit Budget"), 0)::numeric AS profit_budget
@@ -189,7 +189,7 @@ async def profit_tm_gauge(
 @router.get("/team-projection-by-team")
 async def team_projection_by_team(
     request: Request,
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -280,7 +280,7 @@ async def team_projection_by_team(
 async def team_projection_weekly(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -384,7 +384,7 @@ async def team_projection_history(
     teams: Optional[str] = Query(
         None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
     ),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -407,7 +407,9 @@ async def team_projection_history(
     m_start, m_end = _month_bounds(today)
     team_scope = _parse_team_scope(team, teams)
 
-    filtered = bool(customer or load_type or lanes or exclude_lanes
+    # `[""]` is "All" too — normalise before truth-testing (Bruno PDF
+    # 2026-10-16 R2 made Customer a list).
+    filtered = bool(_customer_list(customer) or load_type or lanes or exclude_lanes
                     or carriers or exclude_carriers)
     hist = _history()
     team_key = hist.resolve_history_key(scope, team_scope)

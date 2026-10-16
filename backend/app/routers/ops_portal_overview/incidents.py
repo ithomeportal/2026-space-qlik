@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES, router
 from ._dates import _resolve_range
 from ._scope import scope_of
-from ._sql import _sub_team_param, _scorecard_cte, _v4_scope_where
+from ._sql import _customer_any, _sub_team_param, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
 
@@ -41,7 +41,7 @@ async def service_incident_by_customer(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -88,9 +88,9 @@ async def service_incident_by_customer(
     if team:
         params.append(_sub_team_param(scope, [team]))
         parts.append(f"sc.{scope.sc_team_col} = ANY(${len(params)})")
-    if customer:
-        params.append(customer)
-        parts.append(f"sc.customer_name = ${len(params)}")
+    cust_pred = _customer_any("sc.customer_name", customer, params)
+    if cust_pred:
+        parts.append(cust_pred)
     # ``load_type`` is accepted for API symmetry with /actuals but ignored here:
     # the incident table has no contract_type / load-type grain.
     where = " AND ".join(parts)
@@ -169,7 +169,7 @@ async def service_by_carrier(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),

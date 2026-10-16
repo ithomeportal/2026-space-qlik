@@ -224,8 +224,9 @@ function Body({
   // When a team is locked we never let `team` change; the cross-team report
   // starts at "" (All).
   const [team, setTeam] = useState<string>(lockedTeam ?? "")
-  const [customerInput, setCustomerInput] = useState<string>("")
-  const [customer, setCustomer] = useState<string>("")
+  // Bruno (PDF 2026-10-16) R2: Customer is a multi-select (include only) —
+  // `[]` = All. Was one free-text pick with a suggestion list.
+  const [customers, setCustomers] = useState<string[]>([])
   const [loadType, setLoadType] = useState<LoadType>("")
   // Bruno R5: "Losses" button — global toggle (margin_amt < 0) for the
   // Actuals / By Lane / By Order tables.
@@ -260,8 +261,7 @@ function Body({
   if (division !== prevDivision) {
     setPrevDivision(division)
     setTeam(lockedTeam ?? "")
-    setCustomer("")
-    setCustomerInput("")
+    setCustomers([])
     setLaneIds([])
     setCarrierIds([])
   }
@@ -288,7 +288,7 @@ function Body({
       startDate: appliedDates.startDate,
       endDate: appliedDates.endDate,
       team: effectiveTeam || undefined,
-      customer: customer || undefined,
+      customers: customers.length > 0 ? customers : undefined,
       loadType: loadType || undefined,
       lossesOnly: lossesOnly || undefined,
       unbilledOnly: unbilledOnly || undefined,
@@ -297,7 +297,7 @@ function Body({
       carriers: carrierMode === "include" && carrierIds.length > 0 ? carrierIds : undefined,
       excludeCarriers: carrierMode === "exclude" && carrierIds.length > 0 ? carrierIds : undefined,
     }),
-    [range, appliedDates, effectiveTeam, customer, loadType, lossesOnly, unbilledOnly, laneIds, laneMode, carrierIds, carrierMode],
+    [range, appliedDates, effectiveTeam, customers, loadType, lossesOnly, unbilledOnly, laneIds, laneMode, carrierIds, carrierMode],
   )
 
   // R10: clicking a lane in the By-Lane table sets it as the single included lane.
@@ -313,11 +313,20 @@ function Body({
     setCarrierMode("include")
   }
 
-  const customerSuggestions = useMemo(() => {
-    const q = customerInput.trim().toLowerCase()
-    if (!q || !filterOptions?.customers) return []
-    return filterOptions.customers.filter((c) => c.toLowerCase().includes(q)).slice(0, 8)
-  }, [customerInput, filterOptions])
+  // Every table drill-down (Actuals, By Order, Service, side panels) narrows to
+  // exactly the clicked customer — it replaces the selection, never adds to it,
+  // so a click always means "show me this one" (Bruno PDF 2026-10-16 R2).
+  function pickCustomer(customer: string) {
+    setCustomers([customer])
+  }
+
+  // Header pill: first name, then "+N" for the rest.
+  const customerLabel =
+    customers.length === 0
+      ? "All"
+      : customers.length === 1
+        ? customers[0]
+        : `${customers[0]} +${customers.length - 1}`
 
   // Bruno R4 (2026-05-27): "last auto-refresh" stamp. Shares the /actuals cache
   // key with the Actuals table, so this adds no extra fetch.
@@ -379,7 +388,7 @@ function Body({
               {" · "}
               Team: {effectiveTeam || "All"}
               {" · "}
-              Customer: {customer || "All"}
+              Customer: {customerLabel}
               {laneIds.length > 0 &&
                 ` · Lanes: ${laneMode === "exclude" ? "excl " : ""}${laneIds.length}`}
               {carrierIds.length > 0 &&
@@ -516,42 +525,17 @@ function Body({
             </div>
           )}
 
-          <div className="relative flex items-center gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Customer</label>
-            <input
-              type="text"
-              placeholder={loadingFilters ? "Loading…" : customer || "All customers"}
-              value={customerInput}
-              onChange={(e) => setCustomerInput(e.target.value)}
-              onBlur={() => setTimeout(() => setCustomerInput(""), 150)}
-              className="w-64 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
-            />
-            {customerInput && customerSuggestions.length > 0 && (
-              <ul className="absolute left-[calc(theme(spacing.2)+4.5rem)] top-full z-30 mt-1 max-h-64 w-64 overflow-auto rounded-md border border-[#E5E7EB] bg-white text-xs shadow-md">
-                {customerSuggestions.map((c) => (
-                  <li key={c}>
-                    <button
-                      onMouseDown={() => {
-                        setCustomer(c)
-                        setCustomerInput("")
-                      }}
-                      className="block w-full truncate px-3 py-1.5 text-left hover:bg-[#F3F4F6]"
-                    >
-                      {c}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {customer && (
-              <button
-                onClick={() => setCustomer("")}
-                className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs text-[#6B7280] hover:bg-[#F3F4F6]"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          {/* Bruno (PDF 2026-10-16) R2: Customer filter — multi-select, include
+              only (no mode toggle, so MultiSelectChips hides the Include⇄Exclude
+              switch). Sent as one repeated `customer` key per name. */}
+          <MultiSelectChips
+            label="Customer"
+            options={filterOptions?.customers ?? []}
+            selected={customers}
+            onChange={setCustomers}
+            placeholder={loadingFilters ? "Loading…" : "All customers"}
+            width={260}
+          />
 
           {/* Bruno R7 (2026-06-05): Lane filter — multi-select + Include⇄Exclude. */}
           <MultiSelectChips
@@ -669,11 +653,11 @@ function Body({
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
           <div className="space-y-4">
             <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} hideBudget={hideBudget} />
-            <ServiceIncidentTables filters={filters} onPickCustomer={setCustomer} onPickCarrier={pickCarrier} />
+            <ServiceIncidentTables filters={filters} onPickCustomer={pickCustomer} onPickCarrier={pickCarrier} />
           </div>
           <SidePanels
             filters={filters}
-            onPickCustomer={setCustomer}
+            onPickCustomer={pickCustomer}
             lockedTeam={lockedTeam}
             hideBudget={hideBudget}
             customerVarianceBasis={customerVarianceBasis}
@@ -684,12 +668,12 @@ function Body({
 
         <Actuals
           filters={filters}
-          onPickCustomer={setCustomer}
+          onPickCustomer={pickCustomer}
           hideBudget={hideBudget}
           compare={actualsCompare}
         />
         <ActualsByLane filters={filters} onPickLane={pickLane} />
-        <ByOrder filters={filters} onPickCustomer={setCustomer} />
+        <ByOrder filters={filters} onPickCustomer={pickCustomer} />
         {/* Bruno (PDF 2026-08-19) R1 — directly below By Order, as specified.
             Not date-windowed on purpose; see HoldTable.tsx. */}
         <HoldTable filters={filters} />

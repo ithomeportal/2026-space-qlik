@@ -137,7 +137,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/combo")
     async def combo(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -158,7 +158,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_variance(
@@ -173,7 +173,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         limit: int = Query(50, ge=1, le=200),
         _user: dict = Depends(gate),
     ):
@@ -189,7 +189,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -216,7 +216,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -239,7 +239,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -257,7 +257,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/team-projection")
     async def team_projection(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -274,7 +274,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/profit-tm-gauge")
     async def profit_tm_gauge(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -294,7 +294,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -320,7 +320,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -343,7 +343,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/service")
     async def service(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -364,7 +364,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -387,7 +387,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/pending-to-cover")
     async def pending_to_cover(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
         limit: int = Query(500, ge=1, le=2000),
@@ -402,7 +402,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/cover")
     async def cover(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
         limit: int = Query(500, ge=1, le=2000),
@@ -422,7 +422,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/hold")
     async def hold(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
         # Must track hold.py's default. `departure_desc` was removed with the
@@ -441,7 +441,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/cover-forecast")
     async def cover_forecast(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -467,7 +467,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/team-weekly-performance")
     async def team_weekly_performance(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -487,7 +487,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -510,7 +510,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -532,7 +532,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -555,7 +555,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         range: Optional[str] = Query("mtd"),
         start_date: Optional[date] = Query(None),
         end_date: Optional[date] = Query(None),
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -577,7 +577,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/team-variance-weekly")
     async def team_variance_weekly(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         _user: dict = Depends(gate),
     ):
         return await opo.team_variance_weekly(
@@ -587,7 +587,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/team-projection-weekly")
     async def team_projection_weekly(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),
@@ -609,7 +609,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     @r.get("/team-projection-history")
     async def team_projection_history(
         request: Request,
-        customer: Optional[str] = Query(None),
+        customer: Optional[List[str]] = Query(None),
         load_type: Optional[str] = Query(None),
         lanes: Optional[List[str]] = Query(None),
         exclude_lanes: Optional[List[str]] = Query(None),

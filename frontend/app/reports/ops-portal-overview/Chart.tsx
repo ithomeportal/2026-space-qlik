@@ -126,7 +126,7 @@ function labelFmt(measure: Measure, v: number): string {
 export function ComboChart({ filters, loadType, setLoadType, hideBudget = false }: Props) {
   const cf = {
     team: filters.team,
-    customer: filters.customer,
+    customers: filters.customers,
     loadType,
     lanes: filters.lanes,
     excludeLanes: filters.excludeLanes,
@@ -140,7 +140,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   // user dragged. Mirrors the /combo + /service React Query keys.
   const filterKey = [
     cf.team ?? "",
-    cf.customer ?? "",
+    JSON.stringify(cf.customers ?? []),
     loadType ?? "",
     (cf.lanes ?? []).join("|"),
     (cf.excludeLanes ?? []).join("|"),

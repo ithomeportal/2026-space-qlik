@@ -431,7 +431,7 @@ function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedT
 // ---------------------------------------------------------------------------
 
 function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
-  const cf = { team: filters.team, customer: filters.customer, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
+  const cf = { team: filters.team, customers: filters.customers, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const { data, isLoading, error } = useOppTeamProjection(cf)
   const v = data?.data
   // Bruno (PDF 2026-07-13): Week / Team break-out modals.
@@ -974,7 +974,7 @@ function VarianceTeamModal({ filters, onClose }: { filters: OppFilters; onClose:
 function projectionCf(filters: OppFilters) {
   return {
     team: filters.team,
-    customer: filters.customer,
+    customers: filters.customers,
     loadType: filters.loadType,
     lanes: filters.lanes,
     excludeLanes: filters.excludeLanes,

@@ -16,7 +16,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _last_5_weeks, _resolve_range, _week_label
 from ._scope import scope_of
-from ._sql import _v4_scope_where
+from ._sql import _customer_any, _v4_scope_where
 from ._metrics import _safe_float, _variance_from_sums
 
 
@@ -136,7 +136,7 @@ def _variance_params(
     s: date,
     e: date,
     team: Optional[str],
-    customer: Optional[str],
+    customer: Optional[List[str]],
     scope,
 ) -> tuple[list, str, int, int, str]:
     """Bind both legs off ONE params list and return ``(params, where, p_s, p_e,
@@ -156,9 +156,9 @@ def _variance_params(
     if team:
         params.append(team)
         bud_extra += f" AND ct.team_id = ${len(params)}"
-    if customer:
-        params.append(customer)
-        bud_extra += f' AND budget."Customer Name" = ${len(params)}'
+    cust_pred = _customer_any('budget."Customer Name"', customer, params)
+    if cust_pred:
+        bud_extra += f" AND {cust_pred}"
     return params, where, p_s, p_e, bud_extra
 
 
@@ -174,7 +174,7 @@ async def team_variance(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Bruno's "Team Budget Monthly Variance" inverted table — single row.
@@ -252,7 +252,7 @@ async def customer_variance(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
@@ -307,7 +307,7 @@ async def customer_losses(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -377,7 +377,7 @@ async def customer_not_billed(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -457,7 +457,7 @@ async def customer_not_billed(
 async def team_variance_weekly(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Team Budget Variance broken out by the last 5 completed Mon-Sun weeks.
@@ -515,7 +515,7 @@ async def team_variance_by_team(
     range: Optional[str] = Query("mtd"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
     """Team Budget Variance split per CORP team (TEAM1..TEAM5) + a Total.

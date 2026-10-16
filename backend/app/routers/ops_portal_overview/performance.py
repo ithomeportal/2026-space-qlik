@@ -27,6 +27,7 @@ from ._dates import _resolve_range
 from ._scope import scope_of
 from ._sql import (
     _bill_metrics_sql,
+    _customer_any,
     _parse_team_scope,
     _scorecard_cte,
     _team_id_select,
@@ -118,7 +119,7 @@ async def team_performance(
     teams: Optional[str] = Query(
         None, description="Comma-separated multi-team scope, e.g. TEAM1,TEAM2,TEAM3,TEAM4"
     ),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -203,9 +204,9 @@ async def team_performance(
     # ---- Savings query (variance>0 = savings, variance<0 = over-pay) -----
     sav_params: list = [s, e]
     sav_extra = " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
-    if customer:
-        sav_params.append(customer)
-        sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
+    cust_pred = _customer_any("cs.customer_name", customer, sav_params)
+    if cust_pred:
+        sav_extra += f" AND {cust_pred}"
     # ct.team_id comes out of CUSTOMER_TEAM_CTE already TRIMmed, so these are
     # plain ids — no pad_variants here (unlike the v4 predicate above).
     if team_scope:
@@ -297,7 +298,7 @@ async def team_performance(
 async def team_weekly_performance(
     request: Request,
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -392,9 +393,9 @@ async def team_weekly_performance(
     # ---- Savings grouped by ISO week ------------------------------------
     sav_params: list = [weeks_start, weeks_end]
     sav_extra = " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
-    if customer:
-        sav_params.append(customer)
-        sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
+    cust_pred = _customer_any("cs.customer_name", customer, sav_params)
+    if cust_pred:
+        sav_extra += f" AND {cust_pred}"
     if team:
         sav_params.append(team)
         sav_extra += f" AND ct.team_id = ${len(sav_params)}"
@@ -545,7 +546,7 @@ async def team_performance_by_team(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     team: Optional[str] = Query(None),
-    customer: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
     load_type: Optional[str] = Query(None),
     lanes: Optional[List[str]] = Query(None),
     exclude_lanes: Optional[List[str]] = Query(None),
@@ -623,9 +624,9 @@ async def team_performance_by_team(
     # ---- Savings grouped by canonical team_id ---------------------------
     sav_params: list = [s, e]
     sav_extra = " AND UPPER(COALESCE(cs.customer_name,'')) NOT LIKE '%OILTEX%'"
-    if customer:
-        sav_params.append(customer)
-        sav_extra += f" AND cs.customer_name = ${len(sav_params)}"
+    cust_pred = _customer_any("cs.customer_name", customer, sav_params)
+    if cust_pred:
+        sav_extra += f" AND {cust_pred}"
     sav_sql = f"""
         WITH {customer_team_cte(scope)}
         SELECT
