@@ -25,9 +25,10 @@ from app.routers.deps import require_user
 from app.services import ai_chat_agent, ai_chat_tools, bot_assertion
 from app.services.ai_chat_tools import (
     DENIED_KEY_STEMS,
-    PARAM_ALLOWLIST,
+    DENIED_SECTIONS,
     SECTION_ALLOWLIST,
     TOOL_RESULT_MAX_CHARS,
+    RouteSpec,
     ToolInputError,
     oldest_timestamp,
     validate_section_call,
@@ -98,9 +99,18 @@ def _build_app(seen: list):
         })
 
     @app.get("/api/custom/hd-spot/summary")
-    async def hd_summary(request: Request, user: dict = Depends(require_user)):
+    async def hd_summary(request: Request, range: str | None = None, user: dict = Depends(require_user)):
+        """Spot funnel and covered profit for the window.
+
+        Second paragraph is not shown to the model.
+        """
         _record("hd-spot/summary", user, request)
         return {"success": True, "data": {"covered_profit": 12345.67, "window": {"start": "2026-10-01", "end": "2026-10-17"}}}
+
+    @app.get("/api/custom/hd-spot/digest-email")
+    async def hd_digest(request: Request, user: dict = Depends(require_user)):
+        _record("hd-spot/digest-email", user, request)
+        return {"success": True}
 
     @app.get("/api/custom/hd-spot/freshness")
     async def hd_fresh(request: Request, user: dict = Depends(require_user)):
@@ -315,7 +325,9 @@ def test_model_request_is_built_from_settings_and_the_three_tools(client, monkey
                           {"role": "assistant", "content": "earlier a"}])
     call = script.calls[0]
     assert call["model"] == "claude-sonnet-5-5"
-    assert [t["name"] for t in call["tools"]] == ["list_reports", "ceo_cockpit_summary", "get_report_section"]
+    assert [t["name"] for t in call["tools"]] == [
+        "list_reports", "ceo_cockpit_summary", "list_report_sections", "get_report_section",
+    ]
     system = call["system"] if isinstance(call["system"], str) else json.dumps(call["system"])
     assert "never invent" in system.lower()
     roles = [m["role"] for m in call["messages"]]
@@ -437,17 +449,23 @@ def test_tool_results_are_truncated_to_6000_chars(client, monkeypatch):
 # ---------------------------------------------------------------- allowlist enforcement
 
 
-ROUTES = frozenset({
-    "/api/custom/hd-spot/summary",
-    "/api/custom/hd-spot/freshness",
-    "/api/custom/bonus-calculator/summary",
-    "/api/custom/division-payment/summary",
-    "/api/custom/admin-cashflow/kpis",
-    "/api/custom/budget-followup/summary",
-})
+def _spec(*scalars, lists=()):
+    return RouteSpec(params={**{n: False for n in scalars}, **{n: True for n in lists}}, doc="")
+
+
+ROUTES = {
+    "/api/custom/hd-spot/summary": _spec("range", "limit", "flag", "ratio", lists=("teams",)),
+    "/api/custom/hd-spot/freshness": _spec(),
+    "/api/custom/bonus-calculator/summary": _spec(),
+    "/api/custom/division-payment/summary": _spec(),
+    "/api/custom/admin-cashflow/kpis": _spec(),
+    "/api/custom/budget-followup/summary": _spec(),
+    "/api/custom/ops-direct-compare-t1/by-customer-diff": _spec("p1_start_date", "p2_start_date", "limit"),
+}
 CATALOG_KEYS = frozenset({"hd-spot", "bonus-calculator", "bonus-calculator-dfw",
                           "division-payment-calculator", "admin-cashflow",
-                          "kam-performance-dfw", "budget-followup-2026", "augie-funnel"})
+                          "kam-performance-dfw", "budget-followup-2026", "augie-funnel",
+                          "corp-t1-direct-compare"})
 
 
 def _validate(key, section, params=None):
@@ -457,6 +475,26 @@ def _validate(key, section, params=None):
 def test_valid_call_resolves_path_and_params():
     _prefix, path, params = _validate("hd-spot", "summary", {"range": "mtd", "limit": 10})
     assert path == "/api/custom/hd-spot/summary" and params == {"range": "mtd", "limit": 10}
+
+
+def test_a_param_the_route_declares_is_accepted_beyond_the_common_names():
+    """Direct Compare's period filters are p1_/p2_ — the old fixed list made it unreadable."""
+    _prefix, path, params = _validate("corp-t1-direct-compare", "by-customer-diff",
+                                      {"p1_start_date": "2026-10-01", "p2_start_date": "2026-09-01"})
+    assert path == "/api/custom/ops-direct-compare-t1/by-customer-diff"
+    assert params == {"p1_start_date": "2026-10-01", "p2_start_date": "2026-09-01"}
+
+
+def test_booleans_and_numbers_pass_as_scalars():
+    _p, _path, params = _validate("hd-spot", "summary", {"flag": True, "ratio": 0.5})
+    assert params == {"flag": True, "ratio": 0.5}
+
+
+def test_a_list_is_accepted_only_for_a_list_param():
+    _p, _path, params = _validate("hd-spot", "summary", {"teams": ["TEAM1", "TEAM2"]})
+    assert params == {"teams": ["TEAM1", "TEAM2"]}
+    with pytest.raises(ToolInputError, match="one value"):
+        _validate("hd-spot", "summary", {"range": ["mtd", "ytd"]})
 
 
 @pytest.mark.parametrize("key", ["bonus-calculator", "bonus-calculator-dfw",
@@ -473,7 +511,8 @@ def test_write_only_route_is_rejected():
         _validate("augie-funnel", "summary")
 
 
-@pytest.mark.parametrize("section", ["orders", "notes", "../admin/users", "summary/../x", "", None])
+@pytest.mark.parametrize("section", ["notes", "digest-email", "explain", "rows", "orders.csv",
+                                     "../admin/users", "summary/../x", "", None])
 def test_bad_section_is_rejected(section):
     with pytest.raises(ToolInputError):
         _validate("hd-spot", section)
@@ -489,6 +528,7 @@ def test_bad_section_is_rejected(section):
         {"limit": 10_000},
         {"limit": "ten"},
         {"teams": ["T"] * 21},
+        {"teams": [{"nested": 1}]},
         {"range": {"nested": 1}},
         "range=mtd",
     ],
@@ -498,8 +538,13 @@ def test_bad_params_are_rejected(params):
         _validate("hd-spot", "summary", params)
 
 
-def test_scalar_param_error_names_both_accepted_types():
-    with pytest.raises(ToolInputError, match="must be a string or an integer"):
+def test_undeclared_param_error_names_the_route():
+    with pytest.raises(ToolInputError, match="list_report_sections"):
+        _validate("hd-spot", "summary", {"division": "all"})
+
+
+def test_scalar_param_error_names_the_accepted_types():
+    with pytest.raises(ToolInputError, match="must be a string, number or boolean"):
         _validate("hd-spot", "summary", {"range": {"nested": 1}})
 
 
@@ -508,15 +553,58 @@ def test_unknown_report_key_is_rejected():
         _validate("not-a-report", "summary")
 
 
-def test_allowlists_match_the_contract():
-    assert SECTION_ALLOWLIST == frozenset({
-        "summary", "kpis", "freshness", "overview", "trends", "team-performance",
-        "customer-variance", "weekly-trends", "by-customer", "by-team", "monthly",
-    })
-    assert PARAM_ALLOWLIST == frozenset({"range", "start_date", "end_date", "team", "teams",
-                                         "customer", "limit"})
+def test_denied_sections_and_stems():
+    for section in ("digest-email", "team-digest-email", "delays-email", "explain", "rows"):
+        assert section in DENIED_SECTIONS
+    assert not SECTION_ALLOWLIST & DENIED_SECTIONS
+    assert not any(s.endswith((".csv", "email")) for s in SECTION_ALLOWLIST)
     for stem in ("payroll", "bonus", "division-payment", "admin-cashflow", "kam-performance"):
         assert stem in DENIED_KEY_STEMS
+
+
+def _readable_sections():
+    """section -> example path, for every GET route of every report the assistant may read."""
+    from app.main import app
+
+    prefixes = {ai_chat_tools.REPORT_ROUTE_PREFIX.get(k, k) for k in ai_chat_tools.CATALOG_KEYS}
+    prefixes = {p for p in prefixes if not ai_chat_tools._is_denied(p)}
+    found: dict[str, str] = {}
+    for path in ai_chat_tools.get_route_table(app):
+        parts = path.split("/")
+        if len(parts) > 4 and parts[3] in prefixes:
+            found.setdefault("/".join(parts[4:]), path)
+    return found
+
+
+def test_every_readable_report_section_is_decided():
+    """A new GET section must be allowlisted or denied ON PURPOSE — otherwise the assistant
+    silently cannot read it (how TEAM1 Direct Compare ended up showing only /freshness)."""
+    undecided = {s: p for s, p in _readable_sections().items()
+                 if s not in SECTION_ALLOWLIST and s not in DENIED_SECTIONS and not s.endswith(".csv")}
+    assert not undecided, f"add to SECTION_ALLOWLIST or DENIED_SECTIONS: {undecided}"
+
+
+def test_team_direct_compare_is_readable_with_its_period_filters():
+    from app.main import app
+
+    routes = ai_chat_tools.get_route_table(app)
+    for section, params in (
+        ("panel-summary", {"start_date": "2026-10-01", "end_date": "2026-10-17"}),
+        ("by-customer-diff", {"p1_start_date": "2026-10-01", "p1_end_date": "2026-10-17",
+                              "p2_start_date": "2026-09-01", "p2_end_date": "2026-09-17"}),
+    ):
+        _prefix, path, clean = validate_section_call(
+            "corp-t1-direct-compare", section, params,
+            catalog_keys=ai_chat_tools.CATALOG_KEYS, get_paths=routes,
+        )
+        assert path == f"/api/custom/ops-direct-compare-t1/{section}" and clean == params
+
+
+def test_live_route_table_records_list_params():
+    from app.main import app
+
+    spec = ai_chat_tools.get_route_table(app)["/api/custom/ops-portal-overview-t1/team-performance"]
+    assert spec.params["customer"] is True and spec.params["range"] is False
 
 
 def test_every_alias_targets_a_live_get_route():
@@ -527,6 +615,31 @@ def test_every_alias_targets_a_live_get_route():
     for key, prefix in ai_chat_tools.REPORT_ROUTE_PREFIX.items():
         live = [s for s in SECTION_ALLOWLIST if f"/api/custom/{prefix}/{s}" in paths]
         assert live, f"alias {key} -> {prefix} reaches no allowlisted GET route"
+
+
+def test_list_report_sections_shows_readable_sections_and_their_params(client, monkeypatch, seen):
+    script = _Script(_resp(_tool("list_report_sections", {"report_key": "hd-spot"})), _resp(_text("ok")))
+    monkeypatch.setattr(ai_chat_agent, "create_message", script)
+    _ask(client)
+    rows = json.loads(_tool_results(script.calls[1])[0]["content"])
+    by_name = {r["section"]: r for r in rows["sections"]}
+    assert set(by_name) == {"summary", "freshness"}, "digest-email is denied, so never offered"
+    assert by_name["summary"]["params"] == ["range"]
+    assert by_name["summary"]["about"] == "Spot funnel and covered profit for the window."
+    assert not seen, "listing sections calls no report endpoint"
+
+
+def test_list_report_sections_refuses_a_report_the_user_cannot_open(client, monkeypatch):
+    script = _Script(
+        _resp(_tool("list_report_sections", {"report_key": "xray-corp-mng"}),
+              _tool("list_report_sections", {"report_key": "bonus-calculator"})),
+        _resp(_text("ok")),
+    )
+    monkeypatch.setattr(ai_chat_agent, "create_message", script)
+    _ask(client)
+    contents = [r["content"] for r in _tool_results(script.calls[1])]
+    assert contents[0] == "no access to xray-corp-mng"
+    assert "not available to the assistant" in contents[1]
 
 
 def test_denied_report_through_the_loop_never_reaches_its_endpoint(client, monkeypatch, seen):
@@ -824,3 +937,76 @@ def test_model_call_budget_settings():
 def test_system_prompt_forbids_totals_over_truncated_lists():
     prompt = ai_chat_agent.SYSTEM_PROMPT.lower()
     assert "truncated" in prompt and "total" in prompt and "rank" in prompt
+
+
+# ---------------------------------------------------------------- security review 2026-10-17
+
+
+def _live(key, section, params=None):
+    from app.main import app
+
+    return validate_section_call(key, section, params, catalog_keys=ai_chat_tools.CATALOG_KEYS,
+                                 get_paths=ai_chat_tools.get_route_table(app))
+
+
+def test_lane_rates_is_denied_because_it_calls_paid_apis_and_writes():
+    assert "lane-rates" in DENIED_SECTIONS and "lane-rates" not in SECTION_ALLOWLIST
+    with pytest.raises(ToolInputError):
+        _live("esavings-carriers", "lane-rates")
+
+
+def test_params_are_keyed_on_their_wire_alias():
+    """`date_from` is sent as `from`; advertising the Python name made FastAPI drop the filter."""
+    from app.main import app
+
+    spec = ai_chat_tools.get_route_table(app)["/api/custom/attrition-wow/losses"]
+    assert "from" in spec.params and "to" in spec.params
+    assert "date_from" not in spec.params
+    _p, _path, clean = _live("attrition-wow", "losses", {"from": "2026-09-01"})
+    assert clean == {"from": "2026-09-01"}
+
+
+@pytest.mark.parametrize("key,section,param", [
+    ("corp-t1-direct-compare", "panel-summary", "teams"),
+    ("corp-t1-direct-compare", "panel-summary", "division"),
+    ("corp-t1-direct-compare", "by-customer-diff", "p2_teams"),
+    ("corp-t2-direct-compare", "by-lane-diff", "p1_division"),
+])
+def test_scope_params_a_team_clone_ignores_are_rejected(key, section, param):
+    """The clone pins its team server-side; accepting teams=TEAM2 would mislabel TEAM1 numbers."""
+    with pytest.raises(ToolInputError, match="locked"):
+        _live(key, section, {param: "TEAM2"})
+
+
+def test_team_clone_scope_params_are_not_advertised(client, monkeypatch):
+    from app.main import app
+
+    rows = ai_chat_tools.readable_sections("corp-t1-direct-compare", catalog_keys=ai_chat_tools.CATALOG_KEYS,
+                                           get_paths=ai_chat_tools.get_route_table(app))
+    params = {p for r in rows for p in r["params"]}
+    assert not params & ai_chat_tools.SCOPE_PARAMS
+    assert "p1_start_date" in params
+
+
+def test_access_doors_never_take_a_person_name():
+    with pytest.raises(ToolInputError):
+        _live("ops-access-doors", "kpis", {"name": "Some Person"})
+
+
+def test_cockpit_is_only_reachable_through_its_filtered_tool():
+    with pytest.raises(ToolInputError, match="ceo_cockpit_summary"):
+        _live("ceo-cockpit", "summary")
+
+
+def test_cache_bypass_param_is_never_accepted():
+    assert "fresh" in ai_chat_tools.DENIED_PARAMS
+
+
+@pytest.mark.parametrize("section", ["detail", "top-users", "pending", "closed"])
+def test_free_text_and_per_person_sections_are_denied(section):
+    assert section in DENIED_SECTIONS and section not in SECTION_ALLOWLIST
+
+
+def test_non_ascii_digit_limit_is_a_tool_input_error():
+    with pytest.raises(ToolInputError):
+        _validate("hd-spot", "summary", {"limit": "²"})

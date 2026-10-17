@@ -1,7 +1,7 @@
 """AI chat tools — read-only, executed IN-PROCESS as the asking user.
 
 Design (docs/SPEC-AI-CHAT.md, contract SPEC-CONTRACTS.md §3): the model never
-touches SQL. It may only call three tools, and every report read is an
+touches SQL. It may only call four tools, and every report read is an
 in-process GET to the report's OWN endpoint (httpx ASGITransport, the CEO
 Cockpit technique §31) carrying the asking user's identity exactly as the
 Vercel proxy would. So each report's `require_report_access` decides, numbers
@@ -14,8 +14,9 @@ Three gates before any call, all fail-closed:
 2. the user must GENUINELY hold access to that key (catalog check) — a borrowed
    endpoint (§52) would otherwise answer a scope-pinned SUBSET under a
    company-wide label, the exact trap the cockpit re-gates for;
-3. `section` must be in the GET-only allowlist AND exist as a live GET route;
-   `params` must be in the param allowlist with bounded scalar values.
+3. `section` must be in the section allowlist AND exist as a live GET route of
+   that report; `params` must be query params THAT route declares, with bounded
+   values (a list only where the route takes a list).
 
 ⚠ The proxy secret is attached ONLY to the in-process request headers; it never
 enters a tool result, the model payload, a log line or the HTTP response.
@@ -26,10 +27,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
 
 import httpx
 from fastapi.routing import APIRoute
@@ -40,14 +44,63 @@ from app.services.seed import CUSTOM_REPORTS
 
 logger = logging.getLogger(__name__)
 
+# Every GET section of every readable report is decided ON PURPOSE: allowlisted
+# here or listed in DENIED_SECTIONS (`test_every_readable_report_section_is_decided`
+# fails on a new one). The first, 11-name list left most reports' real data —
+# TEAM1 Direct Compare's /panel-summary among them — unreadable. Generated from the
+# live route table 2026-10-17; each report's own gate still decides per user.
 SECTION_ALLOWLIST = frozenset({
-    "summary", "kpis", "freshness", "overview", "trends", "team-performance",
-    "customer-variance", "weekly-trends", "by-customer", "by-team", "monthly",
+    "actuals", "actuals-by-lane", "all-orders", "annual", "attrition", "breakdown",
+    "business-type-summary", "by-award-lane", "by-carrier-lane", "by-customer",
+    "by-customer-award", "by-customer-detail", "by-customer-diff", "by-customer-lane-diff",
+    "by-day", "by-department", "by-direction", "by-division", "by-hour", "by-job-title", "by-lane",
+    "by-lane-diff", "by-month", "by-order", "by-team", "by-week", "carriers", "chart", 
+    "combo", "concentration", "contract-spot", "contract-spot-kpis", "convertio-ratio", "cover",
+    "cover-forecast", "customer-attrition", "customer-losses", "customer-overpay",
+    "customer-spark", "customer-variance", "customers", "customers-margin", "daily",
+    "data-freshness", "del/detail", "del/not-our-fault", "del/our-fault", "del/overview",
+    "del/pinned", "details", "distribution", "exceptions", "facets", "filter-options",
+    "filters", "freshness", "heatmap", "hold", "kpis", "lane-analysis", 
+    "lane-summary", "lane-trend", "lanes", "lanes-margin", "loads", "loss-customers", "losses",
+    "losses-by-month", "losses-by-week", "margin-distribution", "monthly", "monthly-totals",
+    "months", "negative-orders", "note", "open-roles", "orders", "overview", "panel-summary",
+    "pending-to-cover", "people-flow", "pipeline", "pivot", "podiums",
+    "potential-by-month", "profit-tm-gauge", "projection", "pu/detail", "pu/not-our-fault",
+    "pu/our-fault", "pu/overview", "pu/pinned", "rank", "rank/last-week", "reactive-summary",
+    "risk", "service", "service-by-carrier", "service-incident-by-customer", "summary",
+    "summary-by-customer", "summary-by-customer-detail", "summary-by-tab", "summary-table",
+    "table", "team-performance", "team-performance-by-team", "team-projection",
+    "team-projection-by-team", "team-projection-history", "team-projection-weekly",
+    "team-variance", "team-variance-by-team", "team-variance-weekly", "team-weekly-performance",
+    "teams-breakdown", "top-lanes-combo", "top5", "trend", "trend-12m", "trend-30d",
+    "trend-daily", "trend-yoy", "trends", "trio-tables", "weekly", "weekly-movers",
+    "weekly-performance", "weekly-trends", "workdays", "wow-variation",
 })
-PARAM_ALLOWLIST = frozenset({"range", "start_date", "end_date", "team", "teams", "customer", "limit"})
+# Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
+# queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid
+# SONAR / 123LB APIs per lane and UPSERTs — `equipment` is free text, so every call
+# can miss), and the require_user-only call / ticket detail (other employees' free
+# text and phone identifiers, company-wide). `.csv` exports are never allowlisted.
+# Documentation for the decided-test; the gate itself is SECTION_ALLOWLIST alone.
+DENIED_SECTIONS = frozenset({
+    "digest-email", "team-digest-email", "delays-email", "explain", "rows",
+    "lane-rates", "detail", "top-users", "pending", "closed",
+})
+# `fresh` bypasses the cockpit cache and fans out to every tile endpoint.
+DENIED_PARAMS = frozenset({"fresh"})
+# Scope params a team clone (`…-t1`, `…-tm2`) accepts but IGNORES — it pins its team
+# server-side. Offering them would let the model label TEAM1 numbers as TEAM2's.
+_SCOPE_STEMS = ("division", "teams", "team", "sub_teams", "sub_team")
+SCOPE_PARAMS = frozenset(
+    stem if not period else f"{period}_{stem}" for stem in _SCOPE_STEMS for period in ("", "p1", "p2")
+)
+_TEAM_CLONE_SUFFIX = re.compile(r"-tm?[1-4]$")
+# Door reports: no per-person attendance lookups through the assistant.
+_ACCESS_DOORS_SUFFIX = "access-doors"
 # Substrings of a report key OR its router prefix that are never offered.
 DENIED_KEY_STEMS = ("payroll", "bonus", "division-payment", "admin-cashflow", "kam-performance")
 TOOL_RESULT_MAX_CHARS = 6000
+MAX_ABOUT_CHARS = 160
 MAX_PARAM_CHARS = 100
 MAX_LIST_ITEMS = 20
 MAX_LIMIT = 500
@@ -110,6 +163,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "list_report_sections",
+        "description": (
+            "The sections of one report you can read, each with the filter parameters it "
+            "accepts and a one-line description. Call it before get_report_section when you "
+            "do not already know the section and parameter names."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"report_key": {"type": "string", "description": "A key from list_reports."}},
+            "required": ["report_key"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "get_report_section",
         "description": (
             "Read one section of one report exactly as the report shows it. "
@@ -119,23 +186,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "report_key": {"type": "string", "description": "A key from list_reports."},
-                "section": {"type": "string", "enum": sorted(SECTION_ALLOWLIST)},
+                "section": {"type": "string", "description": "A section from list_report_sections."},
                 "params": {
                     "type": "object",
                     "description": (
-                        "Optional filters: range (e.g. today|wtd|mtd|qtd|ytd), start_date / "
-                        "end_date (YYYY-MM-DD), team, teams (list), customer, limit (1-500)."
+                        "Optional filters, named exactly as list_report_sections shows for this "
+                        "section. Common ones: range (today|wtd|mtd|qtd|ytd), start_date / end_date "
+                        "(YYYY-MM-DD), customer, limit (1-500). Period comparisons use p1_* / p2_*."
                     ),
-                    "properties": {
-                        "range": {"type": "string"},
-                        "start_date": {"type": "string"},
-                        "end_date": {"type": "string"},
-                        "team": {"type": "string"},
-                        "teams": {"type": "array", "items": {"type": "string"}},
-                        "customer": {"type": "string"},
-                        "limit": {"type": "integer"},
+                    "additionalProperties": {
+                        "type": ["string", "integer", "number", "boolean", "array"],
+                        "items": {"type": "string"},
                     },
-                    "additionalProperties": False,
                 },
             },
             "required": ["report_key", "section"],
@@ -154,20 +216,46 @@ class ToolInputError(ValueError):
 # Route table
 # --------------------------------------------------------------------------
 
-_ROUTE_CACHE: weakref.WeakKeyDictionary[Any, frozenset[str]] = weakref.WeakKeyDictionary()
+@dataclass(frozen=True)
+class RouteSpec:
+    """A static GET route: its query params (name -> takes a list) and a one-line doc."""
+
+    params: Mapping[str, bool]
+    doc: str
 
 
-def get_route_table(app: Any) -> frozenset[str]:
-    """Every static GET path the app serves (no path parameters)."""
+_ROUTE_CACHE: weakref.WeakKeyDictionary[Any, dict[str, RouteSpec]] = weakref.WeakKeyDictionary()
+
+
+def _is_list_annotation(annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return any(_is_list_annotation(a) for a in get_args(annotation) if a is not type(None))
+    return origin in (list, tuple, set, frozenset)
+
+
+def _first_line(doc: str | None) -> str:
+    line = (doc or "").strip().split("\n\n", 1)[0]
+    line = " ".join(line.split())
+    return line if len(line) <= MAX_ABOUT_CHARS else line[: MAX_ABOUT_CHARS - 1] + "…"
+
+
+def get_route_table(app: Any) -> dict[str, RouteSpec]:
+    """Every static GET path the app serves (no path parameters), with its query params."""
     cached = _ROUTE_CACHE.get(app)
     if cached is not None:
         return cached
-    paths = frozenset(
-        r.path for r in app.routes
+    table = {
+        r.path: RouteSpec(
+            # The WIRE name: `date_from = Query(alias="from")` is sent as `from`.
+            params={q.alias: _is_list_annotation(q.field_info.annotation) for q in r.dependant.query_params},
+            doc=_first_line(r.description or getattr(r.endpoint, "__doc__", None)),
+        )
+        for r in app.routes
         if isinstance(r, APIRoute) and "GET" in (r.methods or set()) and "{" not in r.path
-    )
-    _ROUTE_CACHE[app] = paths
-    return paths
+    }
+    _ROUTE_CACHE[app] = table
+    return table
 
 
 def invalidate_route_cache() -> None:
@@ -183,40 +271,71 @@ def _is_denied(*names: str) -> bool:
     return any(stem in name for name in names for stem in DENIED_KEY_STEMS)
 
 
-def _clean_scalar(name: str, value: Any) -> str | int:
-    if isinstance(value, bool) or not isinstance(value, str | int):
-        raise ToolInputError(f"param '{name}' must be a string or an integer")
+def _clean_scalar(name: str, value: Any) -> str | int | float | bool:
+    if not isinstance(value, str | int | float | bool):
+        raise ToolInputError(f"param '{name}' must be a string, number or boolean")
     if isinstance(value, str) and len(value) > MAX_PARAM_CHARS:
         raise ToolInputError(f"param '{name}' is too long")
     return value
 
 
 def _clean_limit(value: Any) -> int:
-    if isinstance(value, str) and value.isdigit():
+    if isinstance(value, str) and value.isascii() and value.isdigit():
         value = int(value)
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_LIMIT:
         raise ToolInputError(f"param 'limit' must be an integer 1-{MAX_LIMIT}")
     return value
 
 
-def _clean_params(params: Any) -> dict[str, Any]:
+def _refused_param(prefix: str, name: str) -> str | None:
+    """Why the assistant may not pass ``name`` to this report, or None."""
+    if name in DENIED_PARAMS:
+        return f"param '{name}' is not available to the assistant"
+    if name in SCOPE_PARAMS and _TEAM_CLONE_SUFFIX.search(prefix):
+        return f"param '{name}' is locked by this team report — it always shows its own team"
+    if name == "name" and prefix.endswith(_ACCESS_DOORS_SUFFIX):
+        return "door reports cannot be filtered to one person by the assistant"
+    return None
+
+
+def offered_params(prefix: str, spec: RouteSpec) -> list[str]:
+    return sorted(n for n in spec.params if _refused_param(prefix, n) is None)
+
+
+def _clean_params(params: Any, spec: RouteSpec, prefix: str, where: str) -> dict[str, Any]:
     if params in (None, {}):
         return {}
     if not isinstance(params, dict):
         raise ToolInputError("params must be an object")
     clean: dict[str, Any] = {}
     for name, value in params.items():
-        if name not in PARAM_ALLOWLIST:
-            raise ToolInputError(f"param '{name}' is not allowed")
+        if name not in spec.params:
+            raise ToolInputError(f"{where} does not take param '{name}' — see list_report_sections")
+        if (refused := _refused_param(prefix, name)) is not None:
+            raise ToolInputError(refused)
         if name == "limit":
             clean[name] = _clean_limit(value)
-        elif name == "teams" and isinstance(value, list):
+        elif isinstance(value, list):
+            if not spec.params[name]:
+                raise ToolInputError(f"param '{name}' takes one value, not a list")
             if len(value) > MAX_LIST_ITEMS:
-                raise ToolInputError("param 'teams' has too many items")
+                raise ToolInputError(f"param '{name}' has too many items")
             clean[name] = [_clean_scalar(name, v) for v in value]
         else:
             clean[name] = _clean_scalar(name, value)
     return clean
+
+
+def _readable_prefix(report_key: Any, catalog_keys: frozenset[str]) -> str:
+    if not isinstance(report_key, str) or report_key not in catalog_keys:
+        raise ToolInputError("unknown report_key — use list_reports")
+    prefix = REPORT_ROUTE_PREFIX.get(report_key, report_key)
+    if _is_denied(report_key, prefix):
+        raise ToolInputError(f"report {report_key} is not available to the assistant")
+    if report_key == COCKPIT_KEY:
+        # The raw summary carries tiles of denied reports; only the tool filters them.
+        raise ToolInputError(f"use ceo_cockpit_summary for {COCKPIT_KEY}")
+    return prefix
 
 
 def validate_section_call(
@@ -225,20 +344,30 @@ def validate_section_call(
     params: Any,
     *,
     catalog_keys: frozenset[str],
-    get_paths: frozenset[str],
+    get_paths: Mapping[str, RouteSpec],
 ) -> tuple[str, str, dict[str, Any]]:
     """Return (router_prefix, path, clean_params) or raise ToolInputError."""
-    if not isinstance(report_key, str) or report_key not in catalog_keys:
-        raise ToolInputError("unknown report_key — use list_reports")
-    prefix = REPORT_ROUTE_PREFIX.get(report_key, report_key)
-    if _is_denied(report_key, prefix):
-        raise ToolInputError(f"report {report_key} is not available to the assistant")
+    prefix = _readable_prefix(report_key, catalog_keys)
     if not isinstance(section, str) or section not in SECTION_ALLOWLIST:
-        raise ToolInputError(f"section must be one of: {', '.join(sorted(SECTION_ALLOWLIST))}")
+        raise ToolInputError(f"section {section!r} is not readable — use list_report_sections")
     path = f"/api/custom/{prefix}/{section}"
-    if path not in get_paths:
-        raise ToolInputError(f"section '{section}' is not available for {report_key}")
-    return prefix, path, _clean_params(params)
+    spec = get_paths.get(path)
+    if spec is None:
+        raise ToolInputError(f"section '{section}' is not available for {report_key} — use list_report_sections")
+    return prefix, path, _clean_params(params, spec, prefix, f"{report_key}/{section}")
+
+
+def readable_sections(report_key: Any, *, catalog_keys: frozenset[str],
+                      get_paths: Mapping[str, RouteSpec]) -> list[dict[str, Any]]:
+    """[{section, params, about}] for every allowlisted live GET section of one report."""
+    prefix = _readable_prefix(report_key, catalog_keys)
+    base = f"/api/custom/{prefix}/"
+    rows = []
+    for path, spec in sorted(get_paths.items()):
+        section = path[len(base):] if path.startswith(base) else ""
+        if section in SECTION_ALLOWLIST:
+            rows.append({"section": section, "params": offered_params(prefix, spec), "about": spec.doc})
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -369,6 +498,8 @@ class ToolSession:
             if name == "ceo_cockpit_summary":
                 return await self._cockpit()
             args = tool_input if isinstance(tool_input, dict) else {}
+            if name == "list_report_sections":
+                return await self._sections(args.get("report_key"))
             return await self._section(args.get("report_key"), args.get("section"), args.get("params"))
         except ToolInputError as exc:
             return ToolOutcome(str(exc), is_error=True)
@@ -452,6 +583,13 @@ class ToolSession:
         previous = self.freshness.get(COCKPIT_KEY)
         self.freshness[COCKPIT_KEY] = oldest_of([tile_age, previous]) if previous else tile_age
         return ToolOutcome(_dump({"generated_at": data.get("generated_at"), "tiles": tiles}))
+
+    async def _sections(self, report_key: Any) -> ToolOutcome:
+        rows = readable_sections(report_key, catalog_keys=CATALOG_KEYS, get_paths=get_route_table(self.app))
+        accessible = await self._accessible_reports()
+        if report_key not in accessible:
+            return ToolOutcome(f"no access to {report_key}")
+        return ToolOutcome(_dump({"report": report_key, "sections": rows}))
 
     async def _section(self, report_key: Any, section: Any, params: Any) -> ToolOutcome:
         prefix, path, clean = validate_section_call(

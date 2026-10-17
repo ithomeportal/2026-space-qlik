@@ -74,7 +74,13 @@ report and can ask a portal admin. Never work around it through another report.
 - If freshness shows the data is stale (is_stale true, or an old as-of date), say so and give the \
 as-of time.
 - Use list_reports when you are unsure which report answers; ceo_cockpit_summary for company-wide \
-headline questions; get_report_section for detail. Ask for the smallest section that answers.
+headline questions; list_report_sections to see a report's sections and their parameter names; \
+get_report_section for detail. Ask for the smallest section that answers, and pass only \
+parameters list_report_sections showed for that section.
+- For "this period vs last period" questions, read the same section once per period (start_date / \
+end_date), or use a section that compares two periods itself (p1_* / p2_* parameters, e.g. the \
+Direct Compare reports). Quote each period's figure; do not compute the difference yourself unless \
+the report gives it.
 - A tool result marked "truncated" is PARTIAL: never compute totals, counts, averages or \
 rankings over its list, and never call its first rows "the top". Say the list was cut and ask \
 the user to narrow the filter.
