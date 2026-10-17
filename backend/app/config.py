@@ -85,6 +85,19 @@ class Settings(BaseSettings):
     # Override per environment if a preview deployment ever needs its own link.
     APP_BASE_URL: str = "https://space.unilinkportal.com"
 
+    # --- AI chat (POST /api/custom/ai-chat/ask, docs/SPEC-AI-CHAT.md) ---
+    # Anthropic API key. OPTIONAL: while empty the route answers 503
+    # {"detail":"ai chat not configured"}; nothing else in the app reads it.
+    ANTHROPIC_API_KEY: str = ""
+    # Model id override. Empty = the code default (ai_chat_agent.DEFAULT_MODEL,
+    # the current Sonnet). Must be a Claude 4.6+ model (adaptive thinking/effort).
+    SPACE_AI_MODEL: str = ""
+    # HS256 secret shared ONLY with the teams-chat-ai bot (≥ 32 bytes). Verifies
+    # `X-Bot-Assertion` on the ask route. ⚠ FAILS CLOSED: unset/short ⇒ every
+    # assertion is a 401. Deliberately NOT PROXY_SHARED_SECRET — that one lets
+    # the holder self-assert any identity on every endpoint.
+    TEAMS_BOT_ASSERTION_SECRET: str = ""
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

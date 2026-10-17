@@ -94,6 +94,18 @@ services:
       - key: MS_SEND_FROM
         sync: false
 
+      # --- AI chat (POST /api/custom/ai-chat/ask, called by the teams-chat-ai
+      # bot). All three OPTIONAL: unset ANTHROPIC_API_KEY ⇒ the route 503s;
+      # unset/short TEAMS_BOT_ASSERTION_SECRET ⇒ every bot call 401s (fails
+      # CLOSED). The assertion secret is shared ONLY with the bot — never reuse
+      # PROXY_SHARED_SECRET. NOT yet on the live service (added 2026-10-17).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SPACE_AI_MODEL            # empty = code default (current Sonnet)
+        sync: false
+      - key: TEAMS_BOT_ASSERTION_SECRET  # ≥ 32 bytes, identical to the bot's
+        sync: false
+
       - key: PYTHON_VERSION
         value: "3.12.0"
 

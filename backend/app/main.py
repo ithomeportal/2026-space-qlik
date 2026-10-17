@@ -18,6 +18,7 @@ from app.config import settings
 from app.services.keepwarm_monitor import classify_keepwarm_source
 from app.routers import (
     admin,
+    ai_chat,
     admin_cashflow,
     attrition_wow,
     attrition_wow_digest,
@@ -26,6 +27,7 @@ from app.routers import (
     augie_funnel_digest,
     auth_email,
     bonus_calculator,
+    bot_identity,
     booker_scorecard,
     budget_followup,
     carrier_risk,
@@ -1694,6 +1696,13 @@ async def _timing_log(request: Request, call_next):
     )
     return response
 
+
+# `X-Bot-Assertion` (the Teams bot) may authenticate ONLY POST
+# /api/custom/ai-chat/ask — every other route answers 403 before any handler
+# runs (contract SPEC-CONTRACTS.md §1). Registered after `_timing_log`, so it
+# runs first (Starlette applies the last-added middleware outermost).
+app.middleware("http")(bot_identity.bot_assertion_route_guard)
+
 app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(reports_index.router, prefix="/api")
@@ -1780,6 +1789,8 @@ for _bonus_router in bonus_calculator.BONUS_ROUTERS:
 # Login-code issue/verify — replaces the frontend's direct Prisma access so
 # Vercel no longer needs DATABASE_URL (Aiven ip_filter remediation).
 app.include_router(auth_email.router, prefix="/api")
+# AI chat for the Teams bot (docs/SPEC-AI-CHAT.md). 503 until ANTHROPIC_API_KEY is set.
+app.include_router(ai_chat.router, prefix="/api")
 
 
 @app.get("/api/health")
