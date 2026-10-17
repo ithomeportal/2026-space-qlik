@@ -326,6 +326,23 @@ def _clean_params(params: Any, spec: RouteSpec, prefix: str, where: str) -> dict
     return clean
 
 
+def _with_custom_ranges(clean: dict[str, Any], spec: RouteSpec) -> dict[str, Any]:
+    """Dates count only under ``range=custom`` on nearly every report (any other range,
+    or the default ``mtd``, silently wins). Fill it in, per period (``p1_``/``p2_``)."""
+    filled = dict(clean)
+    for period in ("", "p1_", "p2_"):
+        range_key = f"{period}range"
+        has_dates = any(f"{period}{k}" in clean for k in ("start_date", "end_date"))
+        if not has_dates or range_key not in spec.params:
+            continue
+        given = clean.get(range_key)
+        if given is None:
+            filled[range_key] = "custom"
+        elif given != "custom":
+            raise ToolInputError(f"{period}start_date/{period}end_date need {range_key}=custom, not '{given}'")
+    return filled
+
+
 def _readable_prefix(report_key: Any, catalog_keys: frozenset[str]) -> str:
     if not isinstance(report_key, str) or report_key not in catalog_keys:
         raise ToolInputError("unknown report_key — use list_reports")
@@ -354,7 +371,8 @@ def validate_section_call(
     spec = get_paths.get(path)
     if spec is None:
         raise ToolInputError(f"section '{section}' is not available for {report_key} — use list_report_sections")
-    return prefix, path, _clean_params(params, spec, prefix, f"{report_key}/{section}")
+    clean = _clean_params(params, spec, prefix, f"{report_key}/{section}")
+    return prefix, path, _with_custom_ranges(clean, spec)
 
 
 def readable_sections(report_key: Any, *, catalog_keys: frozenset[str],

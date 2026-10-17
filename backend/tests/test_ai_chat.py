@@ -597,7 +597,7 @@ def test_team_direct_compare_is_readable_with_its_period_filters():
             "corp-t1-direct-compare", section, params,
             catalog_keys=ai_chat_tools.CATALOG_KEYS, get_paths=routes,
         )
-        assert path == f"/api/custom/ops-direct-compare-t1/{section}" and clean == params
+        assert path == f"/api/custom/ops-direct-compare-t1/{section}" and params.items() <= clean.items()
 
 
 def test_live_route_table_records_list_params():
@@ -1010,3 +1010,30 @@ def test_free_text_and_per_person_sections_are_denied(section):
 def test_non_ascii_digit_limit_is_a_tool_input_error():
     with pytest.raises(ToolInputError):
         _validate("hd-spot", "summary", {"limit": "²"})
+
+
+# ---------------------------------------------------------------- dates need range=custom
+
+
+def test_dates_without_a_range_become_a_custom_range():
+    """Most reports ignore start/end unless range=custom (live: Sept asked, MTD answered)."""
+    _p, _path, clean = _live("corp-t1-direct-compare", "panel-summary",
+                             {"start_date": "2026-09-01", "end_date": "2026-09-17"})
+    assert clean == {"start_date": "2026-09-01", "end_date": "2026-09-17", "range": "custom"}
+
+
+def test_each_comparison_period_gets_its_own_custom_range():
+    _p, _path, clean = _live("corp-t1-direct-compare", "by-customer-diff",
+                             {"p1_start_date": "2026-10-01", "p1_end_date": "2026-10-17",
+                              "p2_start_date": "2026-09-01", "p2_end_date": "2026-09-17"})
+    assert clean["p1_range"] == "custom" and clean["p2_range"] == "custom"
+
+
+def test_dates_with_a_conflicting_range_are_rejected():
+    with pytest.raises(ToolInputError, match="range=custom"):
+        _live("corp-t1-direct-compare", "panel-summary", {"range": "mtd", "start_date": "2026-09-01"})
+
+
+def test_a_route_without_a_range_param_is_left_alone():
+    _p, _path, clean = _validate("corp-t1-direct-compare", "by-customer-diff", {"p1_start_date": "2026-10-01"})
+    assert clean == {"p1_start_date": "2026-10-01"}
