@@ -905,6 +905,41 @@ CUSTOM_REPORTS = [
         # closest existing report over the same database.
         "roles": ["CEO", "Executive", "Procurement", "Sales", "Operations"],
     },
+    {
+        "key": "augie-funnel",  # -> /reports/augie-funnel
+        "title": "Funnel Augie Activities",
+        "description": "Every load picked up in a window, how many Augie actually tracked, how many of those yielded information, and why the rest never reached Augie — by unit, team, customer and carrier, with a daily trend and load-level drill-down",
+        "note": (
+            "Source: the Augie app's own tables in aivn_datalake_gold (role "
+            "spaceqlik_gold_ro). Pickups = distinct orders in "
+            "app_augment_n8n_data_ra_rt by original_origin_sched_early (the Augie "
+            "dashboard's Pickup column), deleted rows excluded, latest movement "
+            "wins. Tracked = accepted by Augment (an app_load_tracking send row) "
+            "- NOT 'has an augie_status': on 2026-10-16 113 loads carried a "
+            "status but only 62 were ever sent, and that gap is the leakage this "
+            "report exists to show (the status count is printed beside it). Info "
+            "captured = a tracked load with a PHONE carrier-update, a "
+            "PHONE_EMAIL tracking-event or a stop-update - the same rule as the "
+            "n8n Augie Daily Activity e-mail, counted per load. Contacted and "
+            "captured % are of TRACKED loads; everything else is of pickups. "
+            "Not in Augie carries ONE reason per load in priority order: "
+            "canceled, international, multistop (extra stops or several "
+            "movements), not covered (no carrier/driver), other. A daily "
+            "e-mail with yesterday's close is served at "
+            "/api/custom/augie-funnel/digest-email for n8n."
+        ),
+        "category": "Operations",
+        "tags": [
+            "augie", "augment", "tracking", "track and trace", "funnel",
+            "pickups", "info captured", "multistop", "not covered",
+            "international", "leakage", "carrier", "customer", "corp", "dfw",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15; after that
+        # /admin/reports is the sole authority. Approved in the 2026-10-17 plan:
+        # leadership + Operations + both divisions (Augie serves CORP and DFW).
+        "roles": ["CEO", "Executive", "Operations", "DFW", "CORP"],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

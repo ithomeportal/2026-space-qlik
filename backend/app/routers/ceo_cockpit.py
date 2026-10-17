@@ -389,6 +389,8 @@ LINK_TILES: list[dict[str, Any]] = [
      "note": "DFW monthly bonus engine (15/16/17/18/19% margin ladder) — open to explore"},
     {"key": "production-spots-trends", "title": "Production SPOTS Trends", "category": "Executive",
      "note": "Spot funnel, WoW/MoM comparatives and month projection — open to explore"},
+    {"key": "augie-funnel", "title": "Funnel Augie Activities", "category": "Operations",
+     "note": "Pickups → tracked by Augie → info captured, and why loads miss — open to explore"},
 ]
 
 _CATEGORY_ORDER = ["Executive", "Operations", "DFW", "Finance", "Sales", "HR", "IT", "Admin"]
