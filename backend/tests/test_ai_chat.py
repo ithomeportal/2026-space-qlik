@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import anthropic
@@ -30,6 +30,7 @@ from app.services.ai_chat_tools import (
     TOOL_RESULT_MAX_CHARS,
     RouteSpec,
     ToolInputError,
+    answer_as_of,
     oldest_timestamp,
     validate_section_call,
 )
@@ -894,8 +895,24 @@ def test_oldest_timestamp_reads_only_freshness_stamps_not_business_dates():
                              "webhooks_received": "2026-10-17T03:00:00+00:00"}) == "2026-10-17T03:00:00+00:00"
 
 
-def test_a_used_report_with_unknown_freshness_makes_data_as_of_null(client, monkeypatch):
-    """hd-spot has a /freshness, budget-followup does not — the answer's age is UNKNOWN."""
+def test_a_report_with_no_load_stamp_is_as_of_yesterdays_close(client, monkeypatch):
+    """budget-followup has no /freshness — every report refreshes by the day's close (owner, 10-17)."""
+    monkeypatch.setattr(ai_chat_tools, "cst_today", lambda: date(2026, 10, 17))
+    script = _Script(
+        _resp(_tool("get_report_section", {"report_key": "budget-followup-2026", "section": "summary"})),
+        _resp(_text("ok")),
+    )
+    monkeypatch.setattr(ai_chat_agent, "create_message", script)
+    body = _ask(client).json()
+    assert body["data_as_of"] == "2026-10-16"
+    # the model is told the same date, so its answer and the card footer agree
+    contents = " ".join(r["content"] for r in _tool_results(script.calls[1]))
+    assert '"as_of":"2026-10-16"' in contents and "close of day" in contents
+
+
+def test_a_stamp_older_than_yesterdays_close_still_wins(client, monkeypatch):
+    """hd-spot's gold is 10-16 00:00 — older than the 10-19 close, so it is not hidden by it."""
+    monkeypatch.setattr(ai_chat_tools, "cst_today", lambda: date(2026, 10, 20))
     script = _Script(
         _resp(_tool("get_report_section", {"report_key": "hd-spot", "section": "summary"}),
               _tool("get_report_section", {"report_key": "budget-followup-2026", "section": "summary"})),
@@ -904,7 +921,19 @@ def test_a_used_report_with_unknown_freshness_makes_data_as_of_null(client, monk
     monkeypatch.setattr(ai_chat_agent, "create_message", script)
     body = _ask(client).json()
     assert {r["key"] for r in body["reports_used"]} == {"hd-spot", "budget-followup-2026"}
-    assert body["data_as_of"] is None
+    assert body["data_as_of"] == "2026-10-16"
+
+
+def test_answer_as_of_takes_the_older_of_the_stamps_and_yesterdays_close():
+    today = date(2026, 10, 17)
+    assert answer_as_of([], today) is None
+    assert answer_as_of([None], today) == "2026-10-16"
+    # a stamp from today is fresher than yesterday's close: the close is the honest floor
+    assert answer_as_of([None, "2026-10-17T09:00:00"], today) == "2026-10-16"
+    # a stamp before yesterday's close is older: it wins
+    assert answer_as_of([None, "2026-10-16T20:00:00"], today) == "2026-10-16T20:00:00"
+    # every report stamped: unchanged, the oldest stamp
+    assert answer_as_of(["2026-10-17T09:00:00", "2026-10-17T05:00:00"], today) == "2026-10-17T05:00:00"
 
 
 def test_overall_timeout_is_504(client, monkeypatch):

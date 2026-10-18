@@ -31,14 +31,14 @@ import re
 import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 import httpx
 from fastapi.routing import APIRoute
 
-from app.clock import CST
+from app.clock import CST, cst_today
 from app.config import settings
 from app.services.seed import CUSTOM_REPORTS
 
@@ -426,6 +426,25 @@ def oldest_of(values: Any) -> str | None:
     return min(parsed)[1] if parsed else None
 
 
+def answer_as_of(stamps: list[str | None], today: date) -> str | None:
+    """The answer's age: the oldest stamp, floored at yesterday's close of day.
+
+    Every report refreshes at least by each day's close (owner, 2026-10-17), so a
+    report with no load stamp (None) is as of yesterday's close — and a stamp from
+    today is no fresher than that floor for an answer built from several reports.
+    A stamp OLDER than yesterday's close still wins: the floor never hides staleness.
+    """
+    if not stamps:
+        return None
+    close = today - timedelta(days=1)
+    known = oldest_of(stamps)
+    if None not in stamps:
+        return known
+    close_end = datetime.combine(today, time.min, tzinfo=CST)
+    parsed = _parse_ts(known) if known else None
+    return known if parsed is not None and parsed < close_end else close.isoformat()
+
+
 def oldest_timestamp(data: Any) -> str | None:
     """The STALEST load stamp in a /freshness payload (§54), as the report printed it."""
     stamps: list[str] = []
@@ -526,16 +545,8 @@ class ToolSession:
             return ToolOutcome(f"{name} unavailable ({type(exc).__name__})", is_error=True)
 
     def data_as_of(self) -> str | None:
-        """Oldest freshness among reports USED; None when any of them is unknown.
-
-        An unknown age must not borrow another report's (fresher) time.
-        """
-        if not self.reports_used:
-            return None
-        stamps = [self.freshness.get(k) for k in self.reports_used]
-        if any(s is None for s in stamps):
-            return None
-        return oldest_of(stamps)
+        """Oldest freshness among reports USED; an unknown one counts as yesterday's close."""
+        return answer_as_of([self.freshness.get(k) for k in self.reports_used], cst_today())
 
     # ---- access -----------------------------------------------------------
 
@@ -630,6 +641,9 @@ class ToolSession:
         result = {k: v for k, v in body.items() if k != "success"} if isinstance(body, dict) else body
         self._mark_used(report_key, accessible[report_key]["title"])
         fresh = await self._freshness(report_key, prefix, section, body)
+        if fresh is None:
+            fresh = {"as_of": (cst_today() - timedelta(days=1)).isoformat(),
+                     "basis": "no load stamp; reports refresh by each close of day"}
         return ToolOutcome(_dump({
             "report": report_key, "section": section, "params": clean,
             "result": result, "freshness": fresh,
