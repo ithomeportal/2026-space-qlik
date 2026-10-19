@@ -191,19 +191,19 @@ class TestThresholdBoundary:
 
 class TestUnscoredRowsAreExcluded:
     def test_every_out_of_time_count_carries_the_expected_guard(self):
-        """Every `<= -1` in the emitted SQL must be the WHOLE named predicate.
+        """Every `<= -5` in the emitted SQL must be the WHOLE named predicate.
 
-        A bare `check_minutes <= -1` reads as a harmless simplification and
+        A bare `check_minutes <= -5` reads as a harmless simplification and
         behaves identically on the rows that HAVE a scheduled start — it only
         diverges the day someone COALESCEs the NULL, which is a change nobody
         would connect to this report.
         """
-        occurrences = FLAT.count("<= -1")
+        occurrences = FLAT.count("<= -5")
         assert occurrences >= 4, "the Out-of-Time predicate vanished"
         assert FLAT.count(_squash(_OUT_OF_TIME_PREDICATE)) == occurrences
 
     def test_on_time_carries_the_same_guard(self):
-        occurrences = FLAT.count(">= 0")
+        occurrences = FLAT.count(">= -4")
         assert occurrences >= 2, "the On-Time predicate vanished"
         assert FLAT.count(_squash(_ON_TIME_PREDICATE)) == occurrences
 
@@ -214,8 +214,8 @@ class TestUnscoredRowsAreExcluded:
     def test_the_three_buckets_are_mutually_exclusive_and_named(self):
         for pred in (_ON_TIME_PREDICATE, _OUT_OF_TIME_PREDICATE):
             assert "expected IS NOT NULL" in _squash(pred)
-        assert "<= -1" in _squash(_OUT_OF_TIME_PREDICATE)
-        assert ">= 0" in _squash(_ON_TIME_PREDICATE)
+        assert "<= -5" in _squash(_OUT_OF_TIME_PREDICATE)
+        assert ">= -4" in _squash(_ON_TIME_PREDICATE)
 
     def test_worst_and_average_lateness_ignore_the_unscored_and_the_punctual(self):
         """An AVG over every day would report a punctual average for someone
@@ -224,7 +224,7 @@ class TestUnscoredRowsAreExcluded:
             idx = FLAT.index(agg + " TRUNC(EXTRACT(EPOCH")
             tail = FLAT[idx: idx + 260]
             assert "FILTER (WHERE (expected IS NOT NULL" in tail
-            assert "<= -1" in tail
+            assert "<= -5" in tail
 
     def test_the_rate_denominator_drops_the_unscored_days(self):
         """10 badged days, 4 of them unscoreable, 4 Out of Time is 4/6, not
@@ -261,8 +261,8 @@ class TestOutOfTimeIsDefinedOnce:
         """A second copy of "Out of Time" is exactly how the portal and the n8n
         workflow drifted apart over the expected-arrival rules."""
         builder = inspect.getsource(svc._build_sql)
-        assert "<= -1" not in builder, "the predicate was re-typed into the SQL"
-        assert ">= 0" not in builder
+        assert "<= -5" not in builder, "the predicate was re-typed into the SQL"
+        assert ">= -4" not in builder
         assert "expected IS NULL" not in builder
         assert "_OUT_OF_TIME_PREDICATE" in builder
         assert "_ON_TIME_PREDICATE" in builder
@@ -285,8 +285,9 @@ class TestOutOfTimeIsDefinedOnce:
     def test_the_plain_language_definition_lives_beside_the_sql(self):
         """A footnote that drifts from the SQL is worse than no footnote."""
         d = OUT_OF_TIME_DEFINITION.lower()
-        assert "one minute" in d
-        assert "no grace period" in d
+        assert "5 minutes" in d
+        assert "4 min 59 s grace" in d
+        assert "no grace period" not in d
         assert "not scored" in d
 
 
@@ -392,8 +393,9 @@ class TestAllClear:
     async def test_the_definition_is_in_the_footer_of_both_states(self):
         for offenders in ([], [_person("Ada", 6)]):
             html = (await build_access_doors_delays_digest(_StubPool(offenders)))["html"]
-            assert "one minute or more" in html
-            assert "no grace period" in html.lower()
+            assert "5 minutes or more" in html
+            assert "4 min 59 s grace" in html
+            assert "no grace period" not in html.lower()
 
 
 # ---------------------------------------------------------------------------

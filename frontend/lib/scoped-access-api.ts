@@ -257,7 +257,8 @@ export function fmtCheckMinutes(v: number | null): string {
 
 export function checkColorClass(v: number | null): string {
   if (v === null || v === undefined) return "text-[#6B7280]"
-  if (v >= 0) return "text-[#047857] font-semibold"
+  // 4 min 59 s grace — same rule as the backend's LATE_GRACE_MINUTES (v is truncated).
+  if (v >= -4) return "text-[#047857] font-semibold"
   if (v >= -14) return "text-[#D97706]"
   if (v >= -59) return "text-[#EA580C]"
   return "text-[#DC2626] font-semibold"

@@ -34,8 +34,8 @@ Business rules:
   * The arrival row per (employee, shift date) is the scoring row — later
     punches in that shift are ignored (in/out cycles).
   * `check_minutes` = TRUNC(EXTRACT(EPOCH FROM (expected - actual)) / 60).
-      + positive -> arrived at or before expected (ON TIME)
-      + negative -> arrived late            (OUT OF TIME)
+      + >= -4    -> on time, incl. the 4 min 59 s grace (ON TIME)
+      + <= -5    -> arrived 5+ minutes late  (OUT OF TIME)
       + NULL     -> no rule matched         (NOT ON TIME REFERENCE bucket)
     A true timestamp difference, so it stays correct across midnight. The old
     hour*60+minute form scored a 00:30 arrival against 19:30 as "19h early".
@@ -241,18 +241,28 @@ def _as_cst(column: str) -> str:
 # neither bucket — folding it into ON_TIME would flatter every rate, and folding
 # it into OUT_OF_TIME would accuse people the report has no expectation for.
 _NOT_ON_TIME_REF_PREDICATE = "expected IS NULL"
-_ON_TIME_PREDICATE = f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} >= 0)"
+# GRACE (HR, 2026-10-19): 4 min 59 s after the scheduled start is still On Time;
+# Out of Time starts at 5 minutes. check_minutes is TRUNCated toward zero, so a
+# 4:59 arrival reads -4 (on time) and 5:00 reads -5 (out of time). Same rule as
+# /BOT/n8n-mcp's daily Late Arrivals, DFW Attendance Flags and Presence reports —
+# change all of them together.
+LATE_GRACE_MINUTES = 5
+_ON_TIME_PREDICATE = (
+    f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} >= -{LATE_GRACE_MINUTES - 1})"
+)
 
-# OUT OF TIME. `<= -1`, not `< 0`: check_minutes is already TRUNCated to whole
-# minutes, so there is no grace period — one minute late is Out of Time.
-_OUT_OF_TIME_PREDICATE = f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} <= -1)"
+# OUT OF TIME: 5 or more truncated minutes late. Exactly the complement of
+# _ON_TIME_PREDICATE on rows that have an expected time.
+_OUT_OF_TIME_PREDICATE = (
+    f"(expected IS NOT NULL AND {_CHECK_MINUTES_EXPR} <= -{LATE_GRACE_MINUTES})"
+)
 
 # Plain-language wording for the same rule, so an e-mail/tooltip explaining
 # "Out of Time" cannot drift from the SQL that computes it.
 OUT_OF_TIME_DEFINITION = (
     "A day is counted Out of Time when the employee's first badge-in for that "
-    "shift is later than their scheduled start time by one minute or more. "
-    "There is no grace period. Days with no scheduled start on file are not "
+    "shift is later than their scheduled start time by 5 minutes or more "
+    "(4 min 59 s grace). Days with no scheduled start on file are not "
     "scored at all \u2014 they count as neither on time nor out of time."
 )
 
