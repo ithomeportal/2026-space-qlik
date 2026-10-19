@@ -320,30 +320,32 @@ export function fmtNaiveStamp(v: string | null | undefined): string {
 
 export const REASON_LABELS: Record<AugieFunnelReason, string> = {
   canceled: "Canceled",
-  international: "International",
-  multistop: "Multistop",
-  not_covered: "Not covered",
-  other: "Other",
+  international: "Outside the US",
+  multistop: "Multi-stop or split load",
+  not_covered: "No carrier assigned yet",
+  other: "Other settings",
 }
 
 export const REASON_HELP: Record<AugieFunnelReason, string> = {
-  canceled: "voided or canceled",
-  international: "an end outside the US — Augie only tracks US→US",
-  multistop: "extra stops at pickup/delivery, or several movements",
-  not_covered: "no carrier / driver assigned",
-  other: "allow-list, blocking rules, switches or timing",
+  canceled: "The load was voided or canceled before it could be sent.",
+  international:
+    "Picks up or delivers outside the US — Augie only handles US-to-US loads.",
+  multistop: "Has extra pickup/delivery stops, or moves in more than one leg.",
+  not_covered: "No carrier or driver on the load, so there is nobody for Augie to call.",
+  other:
+    "Excluded by a customer/carrier setting, a blocking rule, Augie switched off, or timing.",
 }
 
 export const NODE_LABELS: Record<AugieFunnelNode, string> = {
-  all: "All pickups",
-  tracked: "Tracked by Augie",
-  contacted: "Contacted by Augie",
-  captured: "Info captured",
-  tracked_no_info: "Tracked, no info captured",
-  not_tracked: "Not in Augie",
-  canceled: "Not in Augie: Canceled",
-  international: "Not in Augie: International",
-  multistop: "Not in Augie: Multistop",
-  not_covered: "Not in Augie: Not covered",
-  other: "Not in Augie: Other",
+  all: "All loads picked up",
+  tracked: "Sent to Augie",
+  contacted: "Carrier contacted",
+  captured: "Carrier gave an update",
+  tracked_no_info: "Sent, no update yet",
+  not_tracked: "Not sent to Augie",
+  canceled: "Not sent: Canceled",
+  international: "Not sent: Outside the US",
+  multistop: "Not sent: Multi-stop or split load",
+  not_covered: "Not sent: No carrier assigned yet",
+  other: "Not sent: Other settings",
 }

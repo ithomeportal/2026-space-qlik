@@ -37,11 +37,11 @@ const COLUMNS: { label: string; sorts?: AugieFunnelSort[] }[] = [
 ]
 
 function stage(r: AugieLoadRow): { text: string; cls: string } {
-  if (r.captured) return { text: "Captured", cls: "bg-[#D1FAE5] text-[#065F46]" }
-  if (r.contacted) return { text: "Contacted", cls: "bg-[#EDE9FE] text-[#5B21B6]" }
-  if (r.tracked) return { text: "Tracked", cls: "bg-[#DBEAFE] text-[#1D4ED8]" }
+  if (r.captured) return { text: "Carrier gave an update", cls: "bg-[#D1FAE5] text-[#065F46]" }
+  if (r.contacted) return { text: "Carrier contacted", cls: "bg-[#EDE9FE] text-[#5B21B6]" }
+  if (r.tracked) return { text: "Sent, no update yet", cls: "bg-[#DBEAFE] text-[#1D4ED8]" }
   const why = r.reason ? REASON_LABELS[r.reason] : "Unknown"
-  return { text: `Not in Augie: ${why}`, cls: "bg-[#FEE2E2] text-[#991B1B]" }
+  return { text: `Not sent: ${why}`, cls: "bg-[#FEE2E2] text-[#991B1B]" }
 }
 
 function HeaderCell({
@@ -111,7 +111,7 @@ export function LoadsTable({ data, loading, error, node, onClearNode, sort, onSo
   let body
   if (error) body = <ErrorBlock what="the loads" error={error} />
   else if (loading && rows.length === 0) body = <LoadingBlock />
-  else if (rows.length === 0) body = <EmptyBlock msg="No loads in this slice." />
+  else if (rows.length === 0) body = <EmptyBlock msg="No loads match this step and these filters." />
   else
     body = (
       <div className="max-h-[640px] overflow-auto">
@@ -143,7 +143,7 @@ export function LoadsTable({ data, loading, error, node, onClearNode, sort, onSo
             onClick={onClearNode}
             className="rounded-md border border-[#E5E7EB] px-2 py-1 text-xs text-[#4B5563] hover:bg-[#F3F4F6]"
           >
-            Show all pickups
+            Show all loads picked up
           </button>
         ) : null
       }

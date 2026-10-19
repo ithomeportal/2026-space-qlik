@@ -39,8 +39,8 @@ export function FreshnessLine({
   return (
     <div className="space-y-2">
       <p className="text-[11px] text-[#6B7280]">
-        Loads as of {fmtNaiveStamp(data.loads_updated)} CST · Augment callbacks as of{" "}
-        {fmtTz(data.webhooks_received)} CST
+        Data as of {fmtNaiveStamp(data.loads_updated)} CST (when the McLeod load feed last
+        updated) · Augment callbacks as of {fmtTz(data.webhooks_received)} CST
       </p>
       {data.is_stale ? (
         <div className="flex items-start gap-2 rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-xs text-[#991B1B]">
@@ -76,28 +76,33 @@ export function HowCounted() {
       {open ? (
         <ul className="mt-2 list-disc space-y-1 pl-5 leading-relaxed">
           <li>
-            <b>Pickups</b> — every load whose scheduled pickup falls in the window, counted
-            once per order per pickup day (CST) — an order with legs on two days is two
-            pickups, so a range always equals the sum of its days.
+            <b>Loads picked up</b> — every load with a pickup scheduled that day (CST), all
+            units. A load is counted once per pickup day, so a load with legs on two days counts
+            twice and a date range always equals the sum of its days.
           </li>
           <li>
-            <b>Tracked by Augie</b> — the load was accepted by Augment, not merely carrying an
-            Augie status in the app. The muted line under it is the app&apos;s status count, so
-            the gap between the two is visible.
+            <b>Sent to Augie</b> — Augment accepted the load, so Augie will follow up with the
+            carrier. A status showing in the Augie app is not enough; the grey line under the box
+            shows how many loads carry one, so you can see the gap.
           </li>
           <li>
-            <b>Info captured</b> — a tracked load that sent a phone carrier update, a
+            <b>Carrier contacted</b> — Augie got through to the carrier: a completed call, or the
+            carrier answered by phone or e-mail.
+          </li>
+          <li>
+            <b>Carrier gave an update</b> — the carrier came back with a phone update, a
             phone/e-mail tracking event or a stop update (the same rule as the Augie Daily
-            Activity e-mail).
+            Activity e-mail). <b>Sent, no update yet</b> is everything sent without one.
           </li>
           <li>
-            <b>Contacted %</b> and <b>Captured %</b> are shares of <b>tracked</b>; Tracked %
-            and the Not-in-Augie reasons are shares of <b>pickups</b>.
+            <b>% sent</b> and the <b>Not sent to Augie</b> reasons are shares of loads picked up;{" "}
+            <b>Contacted %</b> and <b>% with update</b> are shares of loads sent to Augie. A{" "}
+            <b>—</b> means there is nothing to divide by (e.g. no loads sent).
           </li>
           <li>
-            Each untracked load gets <b>one</b> reason, the first that applies in this order:
-            canceled → international → multistop → not covered → other. The reasons therefore
-            add up to Not in Augie exactly.
+            Each load not sent gets <b>one</b> reason, the first that applies in this order:
+            canceled → outside the US → multi-stop or split load → no carrier assigned yet →
+            other settings. The reasons therefore add up to Not sent to Augie exactly.
           </li>
         </ul>
       ) : null}

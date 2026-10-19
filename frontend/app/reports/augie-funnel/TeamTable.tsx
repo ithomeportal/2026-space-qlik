@@ -22,12 +22,13 @@ type Col = { key: string; label: string; pct?: boolean; align?: "left" | "right"
 const COLS: Col[] = [
   { key: "unit", label: "Unit", align: "left" },
   { key: "team", label: "Team", align: "left" },
-  { key: "pickups", label: "Pickups" },
-  { key: "tracked", label: "Tracked" },
-  { key: "tracked_pct", label: "Tracked %", pct: true },
+  { key: "pickups", label: "Picked up" },
+  { key: "tracked", label: "Sent to Augie" },
+  { key: "tracked_pct", label: "% sent", pct: true },
   { key: "contacted_pct", label: "Contacted %", pct: true },
-  { key: "captured_pct", label: "Captured %", pct: true },
-  { key: "not_tracked", label: "Not in Augie" },
+  { key: "captured", label: "Updates" },
+  { key: "captured_pct", label: "% with update", pct: true },
+  { key: "not_tracked", label: "Not sent" },
   ...AUGIE_REASONS.map((r) => ({ key: r, label: REASON_LABELS[r] })),
 ]
 
@@ -47,7 +48,7 @@ export function TeamTable({ rows, loading, error }: Props) {
   let body
   if (error) body = <ErrorBlock what="the team table" error={error} />
   else if (loading && flat.length === 0) body = <LoadingBlock />
-  else if (flat.length === 0) body = <EmptyBlock msg="No pickups in this window." />
+  else if (flat.length === 0) body = <EmptyBlock msg="No loads picked up in this window." />
   else
     body = (
       <div className="overflow-x-auto">
@@ -88,7 +89,7 @@ export function TeamTable({ rows, loading, error }: Props) {
   return (
     <Panel
       title="By team"
-      subtitle="Tracked % is of pickups; Contacted % and Captured % are of tracked."
+      subtitle="% sent is of loads picked up; Contacted % and % with update are of loads sent to Augie. — means nothing to divide by."
     >
       {body}
     </Panel>

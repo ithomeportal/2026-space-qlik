@@ -152,8 +152,8 @@ function Content() {
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-[#111827]">Funnel Augie Activities</h1>
             <p className="text-xs text-[#6B7280]">
-              Every load picked up, how many Augie tracked, how many yielded information —
-              and why the rest never reached Augie.
+              Every load picked up, how many were sent to Augie, how many carriers gave an
+              update — and why the rest were not sent.
             </p>
           </div>
         </div>
@@ -170,7 +170,10 @@ function Content() {
         </p>
       ) : (
         <>
-          <Panel title="Funnel" subtitle={windowLabel ? `Pickups ${windowLabel} (CST)` : undefined}>
+          <Panel
+            title="From pickup to carrier update"
+            subtitle={windowLabel ? `Loads picked up ${windowLabel} (CST)` : undefined}
+          >
             {summary.error ? (
               <ErrorBlock what="the funnel" error={summary.error} />
             ) : s ? (

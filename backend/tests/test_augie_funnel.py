@@ -395,7 +395,8 @@ def test_a_stale_feed_refuses_the_email():
 def test_subject_names_the_closed_day_and_both_rates():
     s = dg.subject_for(date(2026, 10, 16), {"pickups": 164, "tracked_pct": 37.8,
                                             "captured_pct": 72.6})
-    assert s == "Augie Funnel - Fri Oct 16, 2026 - 164 pickups, 38% tracked, 73% info captured"
+    assert s == ("Augie Funnel - Fri Oct 16, 2026 - 164 loads picked up, 38% sent to Augie, "
+                 "73% with a carrier update")
     assert "n/a" in dg.subject_for(date(2026, 10, 16),
                                    {"pickups": 0, "tracked_pct": None, "captured_pct": None})
 
@@ -422,8 +423,12 @@ def _model():
 
 def test_the_email_carries_every_section_the_n8n_assert_checks():
     html = dh.render_html(_model())
-    for heading in ("FUNNEL EFFICIENCY", "NOT IN AUGIE", "PERIOD COMPARISON",
-                    "14-DAY TREND", "BY TEAM"):
+    # ⚠ Literal, not dh.SECTIONS: this list must match the n8n assert
+    # (/BOT/n8n-mcp/workflows/augie-funnel.assert.code.js), not the builder.
+    expected = ("FROM PICKUP TO CARRIER UPDATE", "WHY LOADS WERE NOT SENT TO AUGIE",
+                "HOW THIS COMPARES", "LAST 14 DAYS", "BY TEAM")
+    assert dh.SECTIONS == expected
+    for heading in expected:
         assert heading in html
     assert dg.REPORT_URL in html
     assert "Oct 17, 06:55 CST" in html
@@ -617,3 +622,26 @@ def test_a_range_entirely_before_the_data_floor_is_a_400(monkeypatch):
     _freeze(monkeypatch, date(2026, 10, 17))
     with pytest.raises(HTTPException):
         m._resolve_range("custom", date(2026, 2, 1), date(2026, 2, 20))
+
+
+def test_the_email_speaks_plain_language():
+    """2026-10-19: "Not in Augie: 27 (79.4%) … is not clear". The reader-facing
+    labels are the user manual's; the engine's jargon must not come back."""
+    html = dh.render_html(_model())
+    for phrase in ("Loads picked up", "Sent to Augie", "Carrier contacted",
+                   "Carrier gave an update", "were never sent to Augie",
+                   "only the 4 that Augment accepted count as sent",
+                   "vs last Friday", "No carrier assigned yet", "Outside the US",
+                   "colour key", "percentage points", "Yesterday:</b> sent",
+                   "This month:</b> sent", "Last 7 days:</b> sent"):
+        assert phrase in html, phrase
+    for jargon in ("Not in Augie:", "Info captured", "Tracked by Augie", "Not covered",
+                   "vs last wk", "allow-list", "Δ"):
+        assert jargon not in html, jargon
+
+
+def test_email_deltas_read_as_arrows_and_points():
+    assert dh._signed(5.94, " pts") == (f"{dh.UP} 5.9 pts", dh.GOOD)
+    assert dh._signed(-10.6, " pts") == (f"{dh.DOWN} 10.6 pts", dh.BAD)
+    assert dh._signed(0.01, " pts")[0] == "no change"
+    assert dh._signed(None)[0] == dh.DASH

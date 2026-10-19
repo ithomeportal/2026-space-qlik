@@ -1,8 +1,14 @@
 """Daily "Augie Funnel" e-mail — HTML rendering only.
 
 Sections (each heading is asserted by the n8n workflow, so a stale build or a
-renamed heading cannot mail): FUNNEL EFFICIENCY · NOT IN AUGIE · PERIOD
-COMPARISON · 14-DAY TREND · BY TEAM.
+renamed heading cannot mail — rename one HERE and in
+``/BOT/n8n-mcp/workflows/augie-funnel.assert.code.js`` together, the assert
+first): see ``SECTIONS``.
+
+Wording is plain language for ops readers (2026-10-19, user request: "Not in
+Augie: 27 (79.4%) … is not clear"). The internal keys (tracked, captured,
+not_covered …) are unchanged; only what a reader sees. The user manual
+(``~/Pictures/Augie-Funnel-User-Manual.pdf``) uses these exact labels.
 
 Outlook rules (SPEC-CODE-RULES §21): FONT_STACK inline on EVERY element, hex
 colours only, tables for layout, no webfonts. ⚠ Outlook's PRINT / PDF drops
@@ -37,14 +43,27 @@ DASH = "&mdash;"
 BLOCK = "&#9608;"  # █ — a bar drawn in TEXT colour survives Outlook print/PDF
 BAR_MAX_BLOCKS = 24
 
+UP = "&#9650;"    # ▲
+DOWN = "&#9660;"  # ▼
+
+# The n8n assert checks every one of these is in the HTML.
+SECTIONS = ("FROM PICKUP TO CARRIER UPDATE", "WHY LOADS WERE NOT SENT TO AUGIE",
+            "HOW THIS COMPARES", "LAST 14 DAYS", "BY TEAM")
+
 REASON_LABELS: tuple[tuple[str, str, str], ...] = (
     # ⚠ Same order as augie_funnel.REASONS — the CASE's priority (the section
     # note says so, and a test pins it).
-    ("canceled", "Canceled", "voided or canceled before Augie could track it"),
-    ("international", "International", "an end outside the US — Augie only tracks US→US"),
-    ("multistop", "Multistop", "extra stops at pickup/delivery, or several movements"),
-    ("not_covered", "Not covered", "no carrier / driver assigned (cannot be tracked)"),
-    ("other", "Other", "allow-list, blocking rules, switches or timing"),
+    ("canceled", "Canceled",
+     "The load was voided or canceled before it could be sent."),
+    ("international", "Outside the US",
+     "Picks up or delivers outside the US &mdash; Augie only handles US-to-US loads."),
+    ("multistop", "Multi-stop or split load",
+     "Has extra pickup/delivery stops, or moves in more than one leg."),
+    ("not_covered", "No carrier assigned yet",
+     "No carrier or driver on the load, so there is nobody for Augie to call."),
+    ("other", "Other settings",
+     ("Excluded by a customer/carrier setting, a blocking rule, Augie switched off, "
+      "or timing.")),
 )
 
 
@@ -83,14 +102,18 @@ def _stamp(iso: Optional[str]) -> str:
 
 
 def _signed(v: Optional[float], unit: str = "") -> tuple[str, str]:
-    """Delta text + colour. A RISE is good for every figure this e-mail compares
-    (pickups, tracked, captured and both rates)."""
+    """Delta text + colour, as ▲/▼ + magnitude ("▲ 5.9 pts"). A RISE is good for
+    every figure this e-mail compares (pickups, sent, updates and both rates)."""
     if v is None:
         return DASH, MUTED
     if round(v, 1) == 0:
-        return f"0{unit}", FLAT
-    text = f"{v:+,.1f}{unit}" if unit else f"{v:+,.0f}"
-    return text, GOOD if v > 0 else BAD
+        return "no change", FLAT
+    mag = f"{abs(v):,.1f}{unit}" if unit else f"{abs(v):,.0f}"
+    return f"{UP if v > 0 else DOWN} {mag}", GOOD if v > 0 else BAD
+
+
+def _weekday(d: date) -> str:
+    return d.strftime("%A")
 
 
 # ---------------------------------------------------------------------------
@@ -158,42 +181,49 @@ def _arrow() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _funnel(day: dict, vs_week: dict) -> str:
+def _funnel(day: dict, vs_week: dict, d: date) -> str:
     wk_t, wk_c = _signed(vs_week["tracked_pts"], " pts")
     cp_t, cp_c = _signed(vs_week["captured_pts"], " pts")
+    last = f"vs last {_weekday(d)}"
     boxes = (
-        _box("Pickups", _n(day["pickups"]), "company-wide, by scheduled pickup", BRAND)
+        _box("Loads picked up", _n(day["pickups"]),
+             "every load with a pickup scheduled that day", BRAND)
         + _arrow()
-        + _box("Tracked by Augie", _n(day["tracked"]),
-               f'{_p(day["tracked_pct"])} of pickups · '
-               f'<span style="font-family:{FONT_STACK};color:{wk_c};">{wk_t}</span> vs last wk',
+        + _box("Sent to Augie", _n(day["tracked"]),
+               f'{_p(day["tracked_pct"])} of loads picked up<br>'
+               f'<span style="font-family:{FONT_STACK};color:{wk_c};">{wk_t}</span> {last}',
                TRACK)
         + _arrow()
-        + _box("Contacted", _n(day["contacted"]),
-               f'{_p(day["contacted_pct"])} of tracked', TRACK)
+        + _box("Carrier contacted", _n(day["contacted"]),
+               f'{_p(day["contacted_pct"])} of loads sent to Augie', TRACK)
         + _arrow()
-        + _box("Info captured", _n(day["captured"]),
-               f'{_p(day["captured_pct"])} of tracked · '
-               f'<span style="font-family:{FONT_STACK};color:{cp_c};">{cp_t}</span> vs last wk',
+        + _box("Carrier gave an update", _n(day["captured"]),
+               f'{_p(day["captured_pct"])} of loads sent to Augie<br>'
+               f'<span style="font-family:{FONT_STACK};color:{cp_c};">{cp_t}</span> {last}',
                CAPTURE)
     )
     reconcile = (
-        f'<div style="font-family:{FONT_STACK};font-size:11px;color:{MUTED};margin:6px 0 0 0;">'
-        f'Not in Augie: <b style="font-family:{FONT_STACK};color:{INK};">'
-        f'{_n(day["not_tracked"])} ({_p(day["not_tracked_pct"])})</b>. '
-        f'For reference, {_n(day["has_status"])} loads carry an Augie status in the app; '
-        f'only those Augment accepted count as tracked.</div>')
+        f'<div style="font-family:{FONT_STACK};font-size:12px;color:{INK};margin:8px 0 0 0;">'
+        f'<b style="font-family:{FONT_STACK};">{_n(day["not_tracked"])} of '
+        f'{_n(day["pickups"])} loads ({_p(day["not_tracked_pct"])}) were never sent to '
+        f'Augie</b> &mdash; the reasons are below.</div>'
+        f'<div style="font-family:{FONT_STACK};font-size:11px;color:{MUTED};margin:2px 0 0 0;">'
+        f'The Augie app shows a status on {_n(day["has_status"])} loads, but only the '
+        f'{_n(day["tracked"])} that Augment accepted count as sent. '
+        f'&ldquo;pts&rdquo; = percentage points: 30% &rarr; 20% is &ldquo;{DOWN} 10.0 pts&rdquo;.'
+        f'</div>')
     return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
             f'style="font-family:{FONT_STACK};"><tr>{boxes}</tr></table>{reconcile}')
 
 
-def _reasons(day: dict, last_week: dict) -> str:
+def _reasons(day: dict, last_week: dict, d: date) -> str:
     peak = max([day[k] for k, _, _ in REASON_LABELS] + [1])
     body = ""
     for key, label, help_ in REASON_LABELS:
         diff = day[key] - last_week[key]
-        text = DASH if diff == 0 else (f"+{diff:,}" if diff > 0 else f"{diff:,}")
-        # Fewer untracked loads is the good direction here.
+        text = ("same" if diff == 0
+                else f"{UP if diff > 0 else DOWN} {abs(diff):,} {'more' if diff > 0 else 'fewer'}")
+        # Fewer loads left out is the good direction here.
         colour = MUTED if diff == 0 else (BAD if diff > 0 else GOOD)
         body += ("<tr>"
                  + _td(f'<b style="font-family:{FONT_STACK};">{label}</b>'
@@ -204,32 +234,36 @@ def _reasons(day: dict, last_week: dict) -> str:
                  + _td(_bar(day[key], peak, MISS), align="left")
                  + _td(text, color=colour)
                  + "</tr>")
-    head = (_th("Reason", "left") + _th("Loads") + _th("% of pickups")
-            + _th("", "left") + _th("vs same day last wk"))
+    head = (_th("Reason", "left") + _th("Loads") + _th("% of loads picked up")
+            + _th("", "left") + _th(f"vs last {_weekday(d)}"))
     return _table(head, body)
 
 
 def _comparison(m: dict) -> str:
     s, p = m["summary"], m["periods"]
     rows = (
-        ("Yesterday", "day", None),
-        ("Day before", "prev_day", "vs_prev_day"),
-        ("Same day last week", "last_week_day", "vs_last_week_day"),
-        ("Last 7 days", "last7", None),
-        ("Prior 7 days", "prior7", "vs_prior7"),
-        ("Month to date", "mtd", None),
-        ("Same days last month", "prev_mtd", "vs_prev_mtd"),
+        # (label, period, comparison, the NEWER period that comparison is of)
+        ("Yesterday", "day", None, None),
+        ("Day before", "prev_day", "vs_prev_day", "Yesterday"),
+        (f"Last {_weekday(p['last_week_day'][0])}", "last_week_day", "vs_last_week_day",
+         "Yesterday"),
+        ("Last 7 days", "last7", None, None),
+        ("The 7 days before", "prior7", "vs_prior7", "Last 7 days"),
+        ("This month so far", "mtd", None, None),
+        ("Same days last month", "prev_mtd", "vs_prev_mtd", "This month"),
     )
     body = ""
-    for label, key, cmp_key in rows:
+    for label, key, cmp_key, newer in rows:
         r = s[key]
         lo, hi = p[key]
         if cmp_key:
             c = m[cmp_key]
             t_txt, t_col = _signed(c["tracked_pts"], " pts")
             c_txt, c_col = _signed(c["captured_pts"], " pts")
-            delta = (f'<span style="font-family:{FONT_STACK};color:{t_col};">{t_txt}</span> / '
-                     f'<span style="font-family:{FONT_STACK};color:{c_col};">{c_txt}</span>')
+            delta = (f'<b style="font-family:{FONT_STACK};">{newer}:</b> '
+                     f'sent <span style="font-family:{FONT_STACK};color:{t_col};">{t_txt}</span>'
+                     f'<br>update <span style="font-family:{FONT_STACK};color:{c_col};">'
+                     f'{c_txt}</span>')
             shade = ""
         else:
             delta = ""
@@ -245,8 +279,8 @@ def _comparison(m: dict) -> str:
                  + _td(_p(r["captured_pct"]), bold=True, color=CAPTURE, extra=shade)
                  + _td(delta, size=11, extra=shade)
                  + "</tr>")
-    head = (_th("Period", "left") + _th("Pickups") + _th("Tracked") + _th("Tracked %")
-            + _th("Captured") + _th("Captured %") + _th("Δ tracked / captured"))
+    head = (_th("Period", "left") + _th("Picked up") + _th("Sent to Augie") + _th("% sent")
+            + _th("Updates") + _th("% with update") + _th("Change vs this row"))
     return _table(head, body)
 
 
@@ -266,9 +300,19 @@ def _trend(points: list[dict]) -> str:
                  + _td(_p(pt["captured_pct"]), color=CAPTURE, bold=True)
                  + _td(bar, align="left")
                  + "</tr>")
-    head = (_th("Pickup day", "left") + _th("Pickups") + _th("Tracked %")
-            + _th("Captured %") + _th("captured · tracked · not in Augie", "left"))
+    head = (_th("Pickup day", "left") + _th("Picked up") + _th("% sent")
+            + _th("% with update") + _th("Loads (see colour key)", "left"))
     return _table(head, body)
+
+
+def _legend() -> str:
+    def key(colour: str, text: str) -> str:
+        return (f'<span style="font-family:{FONT_STACK};color:{colour};font-size:11px;">'
+                f'{BLOCK}{BLOCK}</span> {text}')
+    return ("latest first &middot; colour key: "
+            + key(CAPTURE, "carrier gave an update") + " &middot; "
+            + key(TRACK, "sent to Augie, no update yet") + " &middot; "
+            + key(MISS, "not sent to Augie"))
 
 
 def _teams(teams: list[dict], units: dict[str, dict]) -> str:
@@ -304,8 +348,8 @@ def _teams(teams: list[dict], units: dict[str, dict]) -> str:
                  + _td(_p(t["captured_pct"]), color=CAPTURE)
                  + _td(_n(t["not_tracked"]))
                  + "</tr>")
-    head = (_th("Unit / team", "left") + _th("Pickups") + _th("Tracked") + _th("Tracked %")
-            + _th("Captured %") + _th("Not in Augie"))
+    head = (_th("Unit / team", "left") + _th("Picked up") + _th("Sent to Augie")
+            + _th("% sent") + _th("% with update") + _th("Not sent"))
     return _table(head, body)
 
 
@@ -319,32 +363,47 @@ def render_html(m: dict[str, Any]) -> str:
     s = m["summary"]
     day, last_week = s["day"], s["last_week_day"]
     title = (f'<div style="font-family:{FONT_STACK};font-size:20px;font-weight:700;'
-             f'color:{BRAND};">Augie Funnel &mdash; close of {_short(d)}, {d.year}</div>'
+             f'color:{BRAND};">Augie Funnel &mdash; {_weekday(d)}, {d.strftime("%b")} '
+             f'{d.day}, {d.year}</div>'
              f'<div style="font-family:{FONT_STACK};font-size:12px;color:{MUTED};'
-             f'margin:4px 0 0 0;">Every load picked up that day (scheduled pickup, CST), '
-             f'how many Augie tracked, and why the rest never reached it.</div>')
+             f'margin:4px 0 0 0;">Every load with a pickup scheduled that day (CST, all units): '
+             f'how many were sent to Augie, whether Augie reached the carrier and got an '
+             f'update, and why the rest were never sent.</div>')
+
+    def term(word: str, meaning: str) -> str:
+        return f'<b style="font-family:{FONT_STACK};color:{INK};">{word}</b> = {meaning} '
+
     footer = (f'<div style="font-family:{FONT_STACK};font-size:11px;color:{MUTED};'
-              f'margin:24px 0 0 0;border-top:1px solid {BORDER};padding-top:8px;">'
-              f'<b style="font-family:{FONT_STACK};">Tracked</b> = accepted by Augment. '
-              f'<b style="font-family:{FONT_STACK};">Info captured</b> = a tracked load that '
-              f'sent a phone carrier update, a phone/e-mail tracking event or a stop update '
-              f'(same rule as the Augie Daily Activity report). Contacted and captured % '
-              f'are of tracked loads; everything else is of pickups. Loads feed as of '
-              f'{_stamp(m["freshness"].get("loads_updated"))}. '
+              f'margin:24px 0 0 0;border-top:1px solid {BORDER};padding-top:8px;'
+              f'line-height:16px;">'
+              + term("Sent to Augie", "Augment accepted the load for tracking.")
+              + term("Carrier contacted", "Augie got through to the carrier: a completed call, "
+                     "or the carrier answered by phone or e-mail.")
+              + term("Carrier gave an update",
+                     "the carrier gave Augie a location, status or stop update by phone or "
+                     "e-mail (same rule as the Augie Daily Activity report).")
+              + term("% sent", "share of loads picked up;")
+              + "contacted and update % are shares of the loads sent to Augie. "
+              + term(f"{UP} / {DOWN}", "higher / lower; green is better, red is worse.")
+              + term("&mdash;", "nothing to measure (for example, no loads were sent).")
+              + f'Data as of {_stamp(m["freshness"].get("loads_updated"))}. '
               f'<a href="{m["report_url"]}" style="font-family:{FONT_STACK};color:{LINK};">'
-              f'Open the live report in Space</a></div>')
+              f'Open the live report in Space</a> to see each load.</div>')
     body = (
         title
-        + _section("FUNNEL EFFICIENCY", f"{_short(d)} · company-wide")
-        + _funnel(day, m["vs_last_week_day"])
-        + _section("NOT IN AUGIE", "one reason per load, in this priority order")
-        + _reasons(day, last_week)
-        + _section("PERIOD COMPARISON",
-                   "Δ = change in tracked % / captured %, in percentage points")
+        + _section(SECTIONS[0], f"{_short(d)} &middot; all units")
+        + _funnel(day, m["vs_last_week_day"], d)
+        + _section(SECTIONS[1],
+                   "each load is counted once, under the first reason that applies "
+                   "(top to bottom)")
+        + _reasons(day, last_week, d)
+        + _section(SECTIONS[2],
+                   "each comparison row says how the newer period (Yesterday, Last 7 days "
+                   "or This month) did against it, in percentage points (pts)")
         + _comparison(m)
-        + _section("14-DAY TREND", "latest first")
+        + _section(SECTIONS[3], _legend())
         + _trend(m["trend"])
-        + _section("BY TEAM", f"{_short(d)}")
+        + _section(SECTIONS[4], f"{_short(d)} &middot; &mdash; = no loads sent to Augie")
         + _teams(m["teams"], m["units"])
         + footer
     )

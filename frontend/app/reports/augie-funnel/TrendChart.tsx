@@ -21,7 +21,7 @@ const GRAINS: { k: AugieFunnelGrain; label: string }[] = [
   { k: "week", label: "Week" },
 ]
 
-const PCT_SERIES = new Set(["Tracked %", "Captured %"])
+const PCT_SERIES = new Set(["% sent", "% with update"])
 
 interface Props {
   data: AugieTrendPoint[] | undefined
@@ -60,7 +60,7 @@ export function TrendChart({ data, grain, onGrainChange, loading, error, singleD
   } else if (loading && rows.length === 0) {
     body = <LoadingBlock h={280} />
   } else if (rows.length === 0) {
-    body = <EmptyBlock h={200} msg="No pickups in this window." />
+    body = <EmptyBlock h={200} msg="No loads picked up in this window." />
   } else {
     body = (
       <div className="h-72">
@@ -87,20 +87,20 @@ export function TrendChart({ data, grain, onGrainChange, loading, error, singleD
               }}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar yAxisId="l" dataKey="captured" name="Info captured" stackId="a" fill="#047857" />
+            <Bar yAxisId="l" dataKey="captured" name="Carrier gave an update" stackId="a" fill="#047857" />
             <Bar
               yAxisId="l"
               dataKey="trackedNoInfo"
-              name="Tracked, no info"
+              name="Sent, no update yet"
               stackId="a"
               fill="#93C5FD"
             />
-            <Bar yAxisId="l" dataKey="notTracked" name="Not in Augie" stackId="a" fill="#FCA5A5" />
+            <Bar yAxisId="l" dataKey="notTracked" name="Not sent to Augie" stackId="a" fill="#D1D5DB" />
             <Line
               yAxisId="r"
               type="monotone"
               dataKey="trackedPct"
-              name="Tracked %"
+              name="% sent"
               stroke="#1D4ED8"
               strokeWidth={2}
               dot={false}
@@ -110,7 +110,7 @@ export function TrendChart({ data, grain, onGrainChange, loading, error, singleD
               yAxisId="r"
               type="monotone"
               dataKey="capturedPct"
-              name="Captured %"
+              name="% with update"
               stroke="#065F46"
               strokeWidth={2}
               strokeDasharray="4 3"
@@ -126,7 +126,7 @@ export function TrendChart({ data, grain, onGrainChange, loading, error, singleD
   return (
     <Panel
       title="Trend"
-      subtitle="Pickups per bucket split by funnel stage; Tracked % is of pickups, Captured % of tracked."
+      subtitle="Loads picked up per day or week: green = carrier gave an update, blue = sent, no update yet, grey = not sent. % sent is of loads picked up; % with update is of loads sent to Augie."
       right={<Toggle options={GRAINS} value={grain} onChange={onGrainChange} />}
     >
       {body}

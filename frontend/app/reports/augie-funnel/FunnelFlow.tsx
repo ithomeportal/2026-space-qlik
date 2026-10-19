@@ -76,11 +76,14 @@ function NotInAugie({ data, node, onNode }: Props) {
         className="w-full rounded-t-xl px-4 py-3 text-left hover:bg-[#FEF2F2]"
       >
         <div className="text-[11px] font-semibold uppercase tracking-wider text-[#B91C1C]">
-          Not in Augie
+          Not sent to Augie
         </div>
         <div className="mt-1 text-2xl font-bold text-[#111827]">{fmtInt(data.not_tracked)}</div>
-        <div className="text-xs text-[#4B5563]">{fmtPct(data.not_tracked_pct)} of pickups</div>
+        <div className="text-xs text-[#4B5563]">{fmtPct(data.not_tracked_pct)} of loads picked up</div>
       </button>
+      <p className="border-t border-[#F3F4F6] px-4 py-1.5 text-[11px] text-[#6B7280]">
+        Why: each load is counted once, under the first reason that applies (top to bottom).
+      </p>
       <ul className="divide-y divide-[#F3F4F6] border-t border-[#F3F4F6]">
         {AUGIE_REASONS.map((r) => {
           const on = node === r
@@ -115,8 +118,8 @@ function NotInAugie({ data, node, onNode }: Props) {
   )
 }
 
-/** Bruno's sketch: Pickups → Tracked → Contacted → Info captured, with the
- *  untracked branch hanging under Pickups. Every box / reason sets the detail
+/** Bruno's sketch: Loads picked up → Sent to Augie → Carrier contacted →
+ *  Carrier gave an update, with the not-sent branch hanging under the pickups. Every box / reason sets the detail
  *  table's `node`. */
 export function FunnelFlow({ data, node, onNode }: Props) {
   return (
@@ -127,9 +130,9 @@ export function FunnelFlow({ data, node, onNode }: Props) {
             active={node === "all"}
             onClick={() => onNode("all")}
             tone="text-[#1B3A5C]"
-            title="Pickups"
+            title="Loads picked up"
             value={data.pickups}
-            pct="every load picked up in the window"
+            pct="every load with a pickup scheduled in the window"
           />
         </div>
         <Arrow />
@@ -138,12 +141,13 @@ export function FunnelFlow({ data, node, onNode }: Props) {
             active={node === "tracked"}
             onClick={() => onNode("tracked")}
             tone="text-[#1D4ED8]"
-            title="Tracked by Augie"
+            title="Sent to Augie"
             value={data.tracked}
-            pct={`${fmtPct(data.tracked_pct)} of pickups`}
+            pct={`${fmtPct(data.tracked_pct)} of loads picked up`}
           >
             <div className="mt-1 text-[11px] text-[#9CA3AF]">
-              {fmtInt(data.has_status)} carry an Augie status in the app
+              The Augie app shows a status on {fmtInt(data.has_status)} loads, but only the{" "}
+              {fmtInt(data.tracked)} that Augment accepted count as sent.
             </div>
           </Box>
         </div>
@@ -153,13 +157,13 @@ export function FunnelFlow({ data, node, onNode }: Props) {
             active={node === "contacted"}
             onClick={() => onNode("contacted")}
             tone="text-[#7C3AED]"
-            title="Contacted"
+            title="Carrier contacted"
             value={data.contacted}
-            pct={`${fmtPct(data.contacted_pct)} of tracked`}
+            pct={`${fmtPct(data.contacted_pct)} of loads sent to Augie`}
           >
             <div className="mt-1 text-[11px] text-[#9CA3AF]">
-              {fmtInt(data.tracked - data.contacted)} tracked loads never got a call or
-              update back
+              {fmtInt(data.tracked - data.contacted)} loads sent to Augie never got a call or
+              an update back
             </div>
           </Box>
         </div>
@@ -169,9 +173,9 @@ export function FunnelFlow({ data, node, onNode }: Props) {
             active={node === "captured"}
             onClick={() => onNode("captured")}
             tone="text-[#047857]"
-            title="Info captured"
+            title="Carrier gave an update"
             value={data.captured}
-            pct={`${fmtPct(data.captured_pct)} of tracked`}
+            pct={`${fmtPct(data.captured_pct)} of loads sent to Augie`}
           />
         </div>
       </div>

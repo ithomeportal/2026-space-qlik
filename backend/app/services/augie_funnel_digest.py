@@ -165,8 +165,8 @@ def subject_for(d: date, day: dict) -> str:
         return "n/a" if v is None else f"{v:.0f}%"
 
     return (f"Augie Funnel - {d.strftime('%a')} {d.strftime('%b')} {d.day}, {d.year} - "
-            f"{day['pickups']:,} pickups, {pct(day['tracked_pct'])} tracked, "
-            f"{pct(day['captured_pct'])} info captured")
+            f"{day['pickups']:,} loads picked up, {pct(day['tracked_pct'])} sent to Augie, "
+            f"{pct(day['captured_pct'])} with a carrier update")
 
 
 def _range_params(lo: date, hi: date, **extra: Any) -> dict:
