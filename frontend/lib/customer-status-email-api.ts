@@ -31,7 +31,7 @@ const RETRY = {
 }
 
 export type SendStatus = "sent" | "failed" | "sending"
-export type SlotStatus = SendStatus | "missed" | "upcoming"
+export type SlotStatus = SendStatus | "missed" | "upcoming" | "not_live"
 
 export interface Recipients {
   from: string

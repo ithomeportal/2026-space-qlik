@@ -32,6 +32,7 @@ from app.services.customer_status_email.data import StaleFeedError
 from app.services.customer_status_email.html import render
 from app.services.customer_status_email.sender import (
     ACTIVITY_SQL,
+    FIRST_SEND_SQL,
     build_all,
     routing_for,
     send_test_now,
@@ -72,9 +73,12 @@ def _json(value):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def today_grid(rows: list[dict], now) -> list[dict]:
+def today_grid(rows: list[dict], now, first_send: Optional[str] = None) -> list[dict]:
     """Every (report, send hour) of TODAY with its outcome — including the ones
-    that never ran, which a log alone cannot show (absence of a row is not health)."""
+    that never ran, which a log alone cannot show (absence of a row is not health).
+
+    A slot due before the feature's first-ever send is ``not_live`` — on go-live
+    day the morning slots were not missed, the job did not exist yet."""
     today = now.strftime("%Y-%m-%d")
     by_slot = {(r["report_key"], r["slot_key"]): r for r in rows}
     grid = []
@@ -85,6 +89,8 @@ def today_grid(rows: list[dict], now) -> list[dict]:
             due = now.replace(hour=hour, minute=0, second=0, microsecond=0)
             if row:
                 state = row["status"]
+            elif first_send is None or due.strftime("%Y-%m-%dT%H:%M:%S") < first_send:
+                state = "not_live"
             elif now >= due + MISSED_AFTER:
                 state = "missed"
             else:
@@ -110,6 +116,8 @@ async def activity(
         for col in ("counts", "recipients", "loads"):
             r[col] = _json(r[col])
     now = cst_now()
+    async with get_pool(request).acquire() as conn:
+        first_send = await conn.fetchval(FIRST_SEND_SQL)
     if report is None:
         today_rows = rows
     else:
@@ -119,7 +127,7 @@ async def activity(
         "success": True,
         "data": {
             "rows": rows,
-            "today": today_grid(today_rows, now),
+            "today": today_grid(today_rows, now, first_send),
             "live": bool(settings.CUSTOMER_STATUS_EMAIL_LIVE),
             "enabled": bool(settings.CUSTOMER_STATUS_EMAIL_ENABLED),
             "now": now.strftime("%Y-%m-%dT%H:%M:%S"),

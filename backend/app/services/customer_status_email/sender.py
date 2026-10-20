@@ -82,6 +82,12 @@ SET status = $3, counts = $4::jsonb, error = $5, finished_at = NOW(),
 WHERE report_key = $1 AND slot_key = $2
 """
 
+# When the feature first sent anything — slots before it are "not live yet", never "missed".
+FIRST_SEND_SQL = """
+SELECT to_char(min(claimed_at) AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD"T"HH24:MI:SS')
+FROM customer_status_email_log
+"""
+
 # The Customer E-mail Activity panel reads this (routers/customer_status_email.py).
 ACTIVITY_SQL = """
 SELECT report_key, slot_key, mode, status, counts, subject, recipients, loads, error,

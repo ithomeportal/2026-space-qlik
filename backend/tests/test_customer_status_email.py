@@ -577,14 +577,20 @@ def test_today_grid_marks_sent_failed_missed_and_upcoming():
          "finished_at": "2026-10-20T12:00:09"},
     ]
     at = datetime(2026, 10, 20, 12, 50, tzinfo=CST)
-    donna = next(r for r in today_grid(rows, at) if r["key"] == "pca-donna")
+    donna = next(r for r in today_grid(rows, at, "2026-10-01T00:00:00") if r["key"] == "pca-donna")
     states = {s["hour"]: s["status"] for s in donna["slots"]}
     # 02:00 has no row 45+ min later ⇒ MISSED (the job never ran) — absence is not health.
     assert states == {2: "missed", 7: "sent", 12: "failed", 15: "upcoming", 22: "upcoming"}
     early = {s["hour"]: s["status"] for s in
-             next(r for r in today_grid([], datetime(2026, 10, 20, 2, 30, tzinfo=CST))
+             next(r for r in today_grid([], datetime(2026, 10, 20, 2, 30, tzinfo=CST),
+                                        "2026-10-01T00:00:00")
                   if r["key"] == "pca-donna")["slots"]}
     assert early[2] == "upcoming"  # inside the grace (the :20 retry has not had its chance)
+    # Go-live day: slots before the first-ever send were not missed — the job did not exist.
+    golive = {s["hour"]: s["status"] for s in
+              next(r for r in today_grid([], at, "2026-10-20T12:38:58")
+                   if r["key"] == "pca-donna")["slots"]}
+    assert golive[2] == golive[7] == golive[12] == "not_live" and golive[15] == "upcoming"
 
 
 def test_activity_sql_reads_the_log_newest_first_in_cst():
