@@ -626,3 +626,26 @@ def test_panel_mirrors_seed_icon_route_and_gates():
             assert any(n.startswith("require_admin_or_cron") for n in names), route.path
         else:
             assert any(n.startswith("require_digest_access") for n in names), route.path
+
+
+def test_border_yard_comments_do_not_read_as_a_delivery():
+    """User 2026-10-20: the US leg of a split load is closed at the customs yard —
+    "Empty at consignee TRANCASA EL PASO" read like a delivery."""
+    cc = cards.customer_comment
+    assert cc("Empty at consignee TRANCASA EL PASO, EL PASO, TX at 10/15/26 1300.", "Nefab Juarez") == \
+        "At TRANCASA EL PASO, EL PASO, TX for customs clearance since 10/15/2026 @ 01:00 PM."
+    assert cc("Departed SouthWest Yard, EL PASO, TX at 10/17/26 1500.", "Digssa Packaging and Supply") == (
+        "Cleared customs and departed SouthWest Yard, EL PASO, TX on 10/17/2026 @ 03:00 PM; "
+        "continuing to final destination.")
+    assert cc("Appointment confirmed at SouthWest Yard, EL PASO, TX for 10/19/26 0900 to 10/19/26 1800.",
+              "Digssa Packaging and Supply") == (
+        "Border crossing appointment confirmed at SouthWest Yard, EL PASO, TX: "
+        "10/19/2026 @ 09:00 AM to 10/19/2026 @ 06:00 PM.")
+    # The order's OWN consignee is not a yard — unchanged.
+    own = "Appointment confirmed at PCA DONNA, DONNA, TX for 10/20/26 1800 to 10/20/26 1800."
+    assert cc(own, "PCA DONNA") == own
+    # Anything else (Augie free text, LOADSHIP at the shipper) is untouched.
+    for text in ("In transit in Austin, TX; ETA Donna 9:00 AM.",
+                 "Loaded at the shipper Central Texas Corrugated at 10/19/26 1335."):
+        assert cc(text, "PCA DONNA") == text
+    assert cc(None, "PCA DONNA") is None

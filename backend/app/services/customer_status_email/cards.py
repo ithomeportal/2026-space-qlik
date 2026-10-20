@@ -13,6 +13,7 @@ the SQL only reads A/P/D):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
@@ -127,6 +128,52 @@ def on_time(actual: Optional[datetime], deadline: Optional[datetime]) -> Optiona
     return actual <= deadline
 
 
+# McLeod stop comments: "<verb> <PLACE, CITY, ST> at|for MM/DD/YY HHMM[ to MM/DD/YY HHMM]."
+_MCLEOD_TS = r"(\d\d/\d\d/\d\d) (\d\d)(\d\d)"
+_YARD_PATTERNS = (
+    # (regex, customer wording) — {place} is the yard, {at} / {to} formatted times.
+    (re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
+     "At {place} for customs clearance since {at}."),
+    (re.compile(rf"^Departed (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
+     "Cleared customs and departed {place} on {at}; continuing to final destination."),
+    (re.compile(rf"^Appointment confirmed at (?P<place>.+?) for {_MCLEOD_TS} to "
+                rf"(\d\d/\d\d/\d\d) (\d\d)(\d\d)\.?$"),
+     "Border crossing appointment confirmed at {place}: {at} to {to}."),
+)
+
+
+def _fmt_mcleod(day: str, hh: str, mm: str) -> str:
+    """'10/15/26', '13', '00' -> '10/15/2026 @ 01:00 PM'."""
+    h = int(hh)
+    return f"{day[:6]}20{day[6:]} @ {h % 12 or 12:02d}:{mm} {'AM' if h < 12 else 'PM'}"
+
+
+def customer_comment(comment: Optional[str], consignee: Optional[str]) -> Optional[str]:
+    """Reword a stop comment that names a BORDER TRANSFER YARD, not the consignee.
+
+    Cross-border PCA loads are SPLIT: the US leg ends at a yard (EC Logistics
+    Pharr, ACG Global / Alfredo Casso Laredo, SouthWest Yard El Paso, FEMA /
+    Forza / Trancasa Nuevo Laredo), waits for customs clearance, then the
+    Mexican leg continues. McLeod closes the US leg as delivered, so its comment
+    reads "Empty at consignee TRANCASA EL PASO …" — accurate, but a customer
+    reads it as a delivery (user, 2026-10-20). A comment that names the order's
+    own consignee is left as is.
+    """
+    if not comment:
+        return comment
+    final = normalise(consignee)
+    for pattern, wording in _YARD_PATTERNS:
+        m = pattern.match(comment.strip())
+        if not m:
+            continue
+        if final and normalise(m.group("place")).startswith(final):
+            return comment
+        g = m.groups()
+        to = _fmt_mcleod(*g[4:7]) if len(g) >= 7 else ""
+        return wording.format(place=m.group("place"), at=_fmt_mcleod(*g[1:4]), to=to)
+    return comment
+
+
 def _active_leg(moves: list[dict]) -> Optional[dict]:
     ordered = sorted(moves, key=lambda m: _num(m.get("movement_id")))
     for m in ordered:
@@ -227,7 +274,8 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
         pu_on_time=on_time(order.get("pu_in"), order.get("pu_sched_late")),
         del_on_time=on_time(order.get("del_in"), order.get("del_sched_late")),
         status_label=STATUS_LABELS.get(status_code) if bucket == IN_PROGRESS else None,
-        comment=(comment or {}).get("comment") if bucket == IN_PROGRESS else None,
+        comment=customer_comment((comment or {}).get("comment"), order.get("consignee"))
+        if bucket == IN_PROGRESS else None,
         track_link=link if bucket == IN_PROGRESS else None,
         pod_link=pod.get("pod_file_url") if bucket == DELIVERED else None,
         has_pod=bool(pod.get("has_pod")) if bucket == DELIVERED else False,
