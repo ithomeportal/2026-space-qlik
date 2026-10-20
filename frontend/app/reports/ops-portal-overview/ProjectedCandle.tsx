@@ -4,7 +4,7 @@
 //
 // Each bucket's candle is the OHLC of the stored projection while that bucket
 // was running (ops_projection_history; /combo `projection`): month = the
-// month-end projection, week = avg/day × 7, day = avg/day (one snapshot ⇒ a
+// month-end projection, week = avg/day × 6, day = avg/day (one snapshot ⇒ a
 // flat candle). Margin % is never scaled. Recharts has no candlestick, so this
 // is a custom <Bar shape> over a RANGE dataKey `proj_range = [low, high]` —
 // a range value is what makes the y-axis domain include the whole wick.

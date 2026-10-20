@@ -482,21 +482,19 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
     >
       <table className="w-full text-xs">
         <tbody>
-          {/* Bruno (PDF 2026-08-31) R4: "(last 14 days)" is an accurate
-              CALENDAR description of the existing window — 12 Mon-Sat business
-              days ending yesterday spans exactly 14 calendar days. Nothing
-              about the maths changed: the window already ended at the close of
-              the previous day and already ignored the Date filter. */}
+          {/* "(last 14 days)" is the CALENDAR span of the window: 12 day-slots
+              ending yesterday, where Saturday + Sunday together are ONE slot
+              (request 2026-10-20 — Sundays used to be dropped). ÷ 12, never
+              ÷ 14. The Date filter does not apply. */}
           <Row label="Avg. Vol. x Day (last 14 days)"  value={v ? fmtCount(v.avg_vol_day)  : "—"} />
           <Row label="Avg. Rev. x Day (last 14 days)" value={v ? fmtUsd(v.avg_rev_day)    : "—"} />
           <Row label="Avg. Prof. x Day (last 14 days)" value={v ? fmtUsd(v.avg_prof_day)  : "—"} signed numeric={v?.avg_prof_day ?? 0} />
           <tr><td colSpan={2} className="py-1"></td></tr>
           <Row label="Pending Days"    value={v ? fmtCount(v.pending_workdays) : "—"} />
           {/* Bruno (PDF 2026-08-31) R4: month-start → end of YESTERDAY.
-              Volume reconciles exactly — Avg. Vol x Day × Pending Days +
-              Volume (MTD) = Proj. Volume. Revenue/Profit do NOT, because the
-              projection's own MTD legs run to month end (backend _metrics.py
-              documents why that asymmetry must stay). */}
+              Since 2026-10-20 the projection uses the same close, so all three
+              reconcile on screen: Avg x Day × Pending Days + (MTD) = Proj. —
+              and the panel no longer moves during the day (backend _metrics.py). */}
           <Row label="Volume (MTD)"    value={v ? fmtCount(v.mtd_volume)   : "—"} />
           <Row label="Revenue (MTD)"   value={v ? fmtUsd(v.mtd_revenue)    : "—"} />
           <Row label="Profit (MTD)"    value={v ? fmtUsd(v.mtd_profit)     : "—"} signed numeric={v?.mtd_profit ?? 0} />
@@ -513,6 +511,10 @@ function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; lockedTe
           <Row label="Proj. Team Ut."  value={v ? fmtPct(v.proj_team_ut)   : "—"} />
         </tbody>
       </table>
+      <p className="mt-2 text-[10px] leading-snug text-[#6B7280]">
+        Actuals as of yesterday&apos;s close (CST) — fixed all day. Avg x Day = last 12 working
+        days ÷ 12 (Sat + Sun = 1 day). Proj. = Avg x Day × Pending Days + MTD.
+      </p>
       {weekOpen && <ProjectionWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
       {teamOpen && <ProjectionTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
       {trendOpen && <ProjectionTrendModal filters={filters} onClose={() => setTrendOpen(false)} />}

@@ -9,7 +9,7 @@ Three changes, pinned at the level each can break:
       and the scan starts ONE bucket early so the first visible bar is not
       100 % new.
   (b) **Projected candlesticks**: per-bucket OHLC from ``ops_projection_history``
-      — month = proj_<m>, week = avg_<m>_day × 7, day = avg_<m>_day, margin never
+      — month = proj_<m>, week = avg_<m>_day × 6 (× 7 until 2026-10-20), day = avg_<m>_day, margin never
       scaled; live value folded into today (§84); filtered / untracked ⇒ none.
   (c) the **Variance** legend entry is a static label, not a toggle.
 
@@ -250,10 +250,11 @@ def test_week_candle_scales_the_daily_average_by_7_and_never_scales_margin():
     agg = cx.aggregate_candles(rows, "week")
     assert list(agg) == [mon], "a Mon-based week bucket, like DATE_TRUNC('week')"
     p = agg[mon]["profit"]
-    assert (p["open"], p["high"], p["low"], p["close"]) == (70, 210, 70, 140)
+    assert (p["open"], p["high"], p["low"], p["close"]) == (60, 180, 60, 120)
     m = agg[mon]["margin_pct"]
     assert (m["open"], m["high"], m["low"], m["close"]) == (14.0, 18.0, 14.0, 16.0)
-    assert cx.WEEK_SCALE_DAYS == 7
+    # Six day-slots a week — Sat + Sun are ONE since 2026-10-20 (was 7).
+    assert cx.WEEK_SCALE_DAYS == 6
 
 
 def test_day_candle_is_degenerate_and_reads_the_daily_average():

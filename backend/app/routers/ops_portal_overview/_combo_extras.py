@@ -32,7 +32,7 @@ that bucket, read from the portal-owned ``ops_projection_history`` (one row per
 scope, team, as-of date — §84-86):
 
   * month → ``proj_<m>``              (the month-end projection)
-  * week  → ``avg_<m>_day × 7``       (the convention the flat line already used)
+  * week  → ``avg_<m>_day × 6``       (6 day-slots: Mon-Fri + the weekend as ONE)
   * day   → ``avg_<m>_day``           (one snapshot ⇒ a degenerate candle)
   * margin_pct is a ratio — never scaled; ``proj_margin_pct`` at every grain.
 
@@ -58,10 +58,12 @@ logger = logging.getLogger(__name__)
 # Measures a candle exists for. Service and Customers have no projection.
 CANDLE_MEASURES: tuple[str, ...] = ("volume", "revenue", "profit", "margin_pct")
 
-# Week candles scale the per-business-day average by 7 — identical to the flat
-# week Projected line this replaces (see the `_metrics.py` header table), so
-# the two renderings of "Projected" cannot disagree at the week grain.
-WEEK_SCALE_DAYS = 7
+# Week candles scale the per-day-slot average by 6 — identical to the flat week
+# Projected line in Chart.tsx, so the two renderings of "Projected" cannot
+# disagree at the week grain. 6, not 7, since 2026-10-20: the average now
+# folds Sunday into the weekend slot (Sat + Sun = one of 12), so a week is six
+# slots and ×7 would count every weekend twice (+16.7%).
+WEEK_SCALE_DAYS = 6
 
 _AVG_COL = {"volume": "avg_vol_day", "revenue": "avg_rev_day", "profit": "avg_prof_day"}
 _PROJ_COL = {

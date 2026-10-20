@@ -30,16 +30,14 @@ TWO SOURCES, AND THEY ARE NOT THE SAME THING
 
 ⚠ THE REPLAY MUST CLAMP THE MTD UPPER BOUND
 -------------------------------------------
-``_projection_params`` binds the revenue/profit MTD leg as
-``BETWEEN month_start AND month_END`` (the documented vol/rev asymmetry in
-``_metrics.py``). Live that is harmless — no rows exist past today, verified
-2026-08-25: exactly ONE row table-wide carries a future ``origin_actual_departure``
-(2026-09-19) out of 279,671. Replayed at an as-of date inside a CLOSED month it
-would sum the WHOLE month, so the "projection" would contain the answer and
-every historical point would be wrong in the flattering direction. Hence
-``mtd_end``: ``None`` for the live path (identical SQL text AND identical bound
-params, so ``tests/test_ops_portal_scope.py``'s byte-identical baseline keeps
-its teeth) and the as-of date for a replay.
+Until 2026-10-20 ``_projection_params`` bound the revenue/profit MTD leg as
+``BETWEEN month_start AND month_END``. Live that only leaked TODAY's partial
+loads (the intraday drift the 10-20 request reported); replayed at an as-of date
+inside a CLOSED month it would sum the WHOLE month, so the "projection" would
+contain the answer and every historical point would be wrong in the flattering
+direction. Every leg now closes at the day before the as-of date — live and
+replay alike — so the clamp is no longer a special case, but the replay must
+still never read the as-of day itself or anything after it.
 
 ⚠ ONE DEFINITION OF PROJECTED (§69)
 -----------------------------------
@@ -76,6 +74,7 @@ from app.routers.ops_portal_overview._constants import (
 )
 from app.routers.ops_portal_overview._dates import _count_workdays, _month_bounds
 from app.routers.ops_portal_overview._metrics import (
+    _projection_anchor,
     _projection_from_sums,
     _safe_float,
     _team_projection_core,
@@ -294,9 +293,13 @@ def _replay_sums_sql(where: str, p_start: int, p_end: int, p_scan_from: int) -> 
     ``$p_scan_from`` deliberately reaches ~40 days before ``$p_start`` so the
     first as-of date still has a full 12-business-day lookback behind it.
 
-    The Mon-Sat rule (``EXTRACT(DOW) <> 0`` = not Sunday) and the loads-count
-    filter (``total_charge IS NOT NULL AND <> 0``, volume only — profit is
-    never filtered, §39) mirror ``_projection_sums_sql`` exactly.
+    The window (12 Mon-Sat slots ending the day BEFORE the as-of date, summed
+    over its whole calendar span so Sat + Sun = one slot), the MTD legs (month
+    start → the day before, all three) and the loads-count filter
+    (``total_charge IS NOT NULL AND <> 0``, volume only — profit is never
+    filtered, §39) mirror ``_projection_params`` / ``_projection_sums_sql``
+    exactly, Sunday anchor included. ``tests/test_ops_portal_projection_close_of_day.py``
+    replays both against live gold and asserts they agree to the cent.
     """
     return f"""
         WITH daily AS (
@@ -319,28 +322,34 @@ def _replay_sums_sql(where: str, p_start: int, p_end: int, p_scan_from: int) -> 
             FROM generate_series(${p_scan_from}::date, ${p_end}::date, '1 day') g
             LEFT JOIN daily dd ON dd.d = g::date
         ),
-        -- 12-business-day rolling window. Sundays are dropped BEFORE the
-        -- window so "12 rows back" really is 12 Mon-Sat days.
+        -- Running totals over EVERY calendar day, Sundays included, so any
+        -- calendar window is two lookups: run(end) - run(start) + start's own day.
+        run AS (
+          SELECT d, vol, rev, prof,
+                 SUM(vol)  OVER c AS vol_cum,
+                 SUM(rev)  OVER c AS rev_cum,
+                 SUM(prof) OVER c AS prof_cum
+            FROM cal
+          WINDOW c AS (ORDER BY d)
+        ),
+        -- The Mon-Sat days, numbered. They only LOCATE the window: its start
+        -- is the 12th Mon-Sat day back from the as-of day's yesterday — the
+        -- same `_last_n_business_days_start` the live panel uses. The SUM then
+        -- runs over the whole calendar span, so a Sunday lands in its weekend
+        -- slot instead of vanishing (request 2026-10-20).
         bdays AS (
-          SELECT d,
-                 SUM(vol)  OVER w AS vol_12,
-                 SUM(rev)  OVER w AS rev_12,
-                 SUM(prof) OVER w AS prof_12,
-                 COUNT(*)  OVER w AS n_12
+          SELECT d, ROW_NUMBER() OVER (ORDER BY d) AS rn
             FROM cal
            WHERE EXTRACT(DOW FROM d) <> 0
-          WINDOW w AS (ORDER BY d ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)
         ),
-        -- Month-to-date cumulative legs. `vol_mtd` stops at the PREVIOUS day
-        -- and `rev/prof_mtd` include the as-of day itself: that asymmetry is
-        -- load-bearing (see _metrics.py) and is reproduced here, not tidied.
-        mtd AS (
+        -- The ANCHOR of each as-of day — `_metrics._projection_anchor` in SQL:
+        -- a Sunday (not the 1st) is computed as of its Saturday, because the
+        -- weekend slot is still open. Every bound below hangs off `e`.
+        asof AS (
           SELECT d,
-                 SUM(vol)  OVER m AS vol_cum,
-                 SUM(rev)  OVER m AS rev_cum,
-                 SUM(prof) OVER m AS prof_cum
+                 CASE WHEN EXTRACT(DOW FROM d) = 0 AND EXTRACT(DAY FROM d) > 1
+                      THEN d - 1 ELSE d END AS e
             FROM cal
-          WINDOW m AS (PARTITION BY date_trunc('month', d) ORDER BY d)
         ),
         -- Months with no scoped volume at all are skipped: writing a $0
         -- projection for a division that did not exist yet would plant a
@@ -352,22 +361,31 @@ def _replay_sums_sql(where: str, p_start: int, p_end: int, p_scan_from: int) -> 
         SELECT
           a.d                                                   AS as_of,
           date_trunc('month', a.d)::date                        AS month_start,
-          COALESCE(b.vol_12,  0)                                AS vol_12,
-          COALESCE(b.rev_12,  0)                                AS rev_12,
-          COALESCE(b.prof_12, 0)                                AS prof_12,
-          COALESCE(mp.vol_cum,  0)                              AS vol_mtd,
-          COALESCE(mc.rev_cum,  0)                              AS rev_mtd,
-          COALESCE(mc.prof_cum, 0)                              AS prof_mtd
-          FROM cal a
+          COALESCE(we.vol_cum  - ws.vol_cum  + ws.vol,  0)      AS vol_12,
+          COALESCE(we.rev_cum  - ws.rev_cum  + ws.rev,  0)      AS rev_12,
+          COALESCE(we.prof_cum - ws.prof_cum + ws.prof, 0)      AS prof_12,
+          -- Every MTD leg closes the day before the ANCHOR — volume, revenue
+          -- and profit alike, exactly as `_projection_params` binds them. On
+          -- the 1st there is no earlier day in the month: 0.
+          COALESCE(my.vol_cum  - mf.vol_cum  + mf.vol,  0)      AS vol_mtd,
+          COALESCE(my.rev_cum  - mf.rev_cum  + mf.rev,  0)      AS rev_mtd,
+          COALESCE(my.prof_cum - mf.prof_cum + mf.prof, 0)      AS prof_mtd
+          FROM asof a
           JOIN live_months lm ON lm.m = date_trunc('month', a.d)::date
           LEFT JOIN LATERAL (
-            SELECT vol_12, rev_12, prof_12 FROM bdays
-             WHERE bdays.d <= a.d - 1 AND bdays.n_12 = 12
+            SELECT rn FROM bdays
+             WHERE bdays.d <= a.e - 1
              ORDER BY bdays.d DESC LIMIT 1
-          ) b ON TRUE
-          LEFT JOIN mtd mp ON mp.d = a.d - 1
-                          AND date_trunc('month', mp.d) = date_trunc('month', a.d)
-          LEFT JOIN mtd mc ON mc.d = a.d
+          ) be ON TRUE
+          -- A partial lookback (fewer than 12 Mon-Sat days scanned) has no
+          -- 12th day back, so `bs` is NULL and the point sums to 0.
+          LEFT JOIN bdays bs ON bs.rn = be.rn - 11
+          LEFT JOIN run ws ON ws.d = bs.d
+          LEFT JOIN run we ON we.d = a.e - 1 AND bs.d IS NOT NULL
+          LEFT JOIN run mf ON mf.d = date_trunc('month', a.d)::date
+                          AND a.e - 1 >= date_trunc('month', a.d)::date
+          LEFT JOIN run my ON my.d = a.e - 1
+                          AND a.e - 1 >= date_trunc('month', a.d)::date
          WHERE a.d BETWEEN ${p_start} AND ${p_end}
          ORDER BY a.d
     """
@@ -409,7 +427,8 @@ async def _replay_scope(
     for r in rows:
         as_of: date = r["as_of"]
         m_end = _month_end_of(as_of)
-        pending = _count_workdays(as_of, m_end)
+        # From the ANCHOR, like the live panel — a Sunday counts its Saturday.
+        pending = _count_workdays(_projection_anchor(as_of), m_end)
         proj = _projection_from_sums(
             r["vol_12"], r["rev_12"], r["prof_12"],
             r["vol_mtd"], r["rev_mtd"], r["prof_mtd"],

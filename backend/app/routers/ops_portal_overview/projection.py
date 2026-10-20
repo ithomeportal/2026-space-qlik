@@ -15,10 +15,10 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
-from ._dates import _count_workdays, _last_5_weeks, _last_n_business_days_start, _month_bounds, _week_label
+from ._dates import _count_workdays, _last_5_weeks, _month_bounds, _week_label
 from ._scope import scope_of
 from ._sql import _customer_any, _customer_list, _parse_team_scope, _v4_scope_where
-from ._metrics import _zero_val, _projection_from_sums, _safe_float, _team_projection_core
+from ._metrics import _zero_val, _projection_bounds, _projection_from_sums, _safe_float, _team_projection_core
 
 # ⚠ `app.services.projection_history` is imported INSIDE the endpoint, not at
 # module level, and the indirection is load-bearing.
@@ -72,8 +72,10 @@ async def team_projection(
     """§6 Team Monthly Projection — last 12 Mon-Sat business days extrapolated to EoM.
 
     Bruno round-2 (2026-05-13): switched divisor from 14 calendar days to
-    12 business days (Mon-Sat). The SQL still scans a calendar window
-    ending yesterday, but filters out Sundays so the divisor is exact.
+    12 business days (Mon-Sat). The SQL scans the 14-calendar-day window those
+    12 slots span, ending yesterday, Sundays INCLUDED and folded into their
+    weekend slot; every MTD leg closes at yesterday (request 2026-10-20 — see
+    ``_metrics.py``), so the panel does not move during the day.
 
     Date filter intentionally ignored (projection always uses the rolling
     business-day window). Team + Customer apply.
@@ -207,14 +209,15 @@ async def team_projection_by_team(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     today = cst_today()
-    m_start, m_end = _month_bounds(today)
-    win_start = _last_n_business_days_start(today, 12)
-    win_end = today - timedelta(days=1)
-    pending_workdays = _count_workdays(today, m_end)
+    # The panel's own bounds, so the Sunday anchor and the close-of-yesterday
+    # rule can never drift between the panel and this break-out (2026-10-20).
+    win_start, win_end, m_start, m_end, pending_workdays = _projection_bounds(today)
 
     params: list = []
     where = _v4_scope_where("br4", None, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
-    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
+    # Same bounds as `_projection_params`: the last slot is yesterday, not
+    # month end, and the window carries no Sunday predicate (2026-10-20).
+    params.extend([win_start, win_end, m_start, win_end, m_start, win_end])
     p_ws = len(params) - 5
     p_we = len(params) - 4
     p_ms1 = len(params) - 3
@@ -224,15 +227,12 @@ async def team_projection_by_team(
     rows = await pool.fetch(
         f"""
         SELECT
-          TRIM(br4.team_id) AS team_id,
+          TRIM(br4.{scope.v4_team_col}) AS team_id,
           COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol_12,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                             THEN br4.total_charge END), 0)::numeric AS rev_12,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                             THEN br4.margin_amt END), 0)::numeric AS prof_12,
           COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
                              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol_mtd,
@@ -242,7 +242,7 @@ async def team_projection_by_team(
                             THEN br4.margin_amt END), 0)::numeric AS prof_mtd
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
-        GROUP BY TRIM(br4.team_id)
+        GROUP BY TRIM(br4.{scope.v4_team_col})
         """,
         *params,
     )

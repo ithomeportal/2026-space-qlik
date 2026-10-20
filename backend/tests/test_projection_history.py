@@ -23,6 +23,7 @@ Each test below pins ONE way this can be wrong in a way nobody would notice:
 from __future__ import annotations
 
 import inspect
+import re
 from datetime import date
 
 import pytest
@@ -83,14 +84,14 @@ def test_every_projection_field_is_persisted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_replay_stops_the_mtd_leg_at_the_as_of_date() -> None:
-    """`rev/prof_mtd` must be cumulative TO the as-of day, not to month end.
+def test_the_replay_closes_every_mtd_leg_the_day_before_the_as_of_date() -> None:
+    """All three MTD legs are cumulative to the as-of day's YESTERDAY.
 
-    The live query binds the leg as `BETWEEN month_start AND month_END`, which
-    is harmless today (no rows exist past today) and catastrophic in a replay:
-    an as-of date inside a closed month would sum the entire month, so the
-    "projection" would contain the outcome and every error figure would be
-    near-zero — a graph that says the forecast is perfect.
+    Two ways this goes wrong, both silent: summing to month END in a replay
+    puts the outcome inside every historical "projection" (a graph that says
+    the forecast is perfect); summing to the as-of day ITSELF reproduces the
+    intraday drift the 2026-10-20 request reported, and no longer matches the
+    live panel, which closes at yesterday since that request.
     """
     params: list = []
     where = _v4_scope_where("br4", None, None, None, params,
@@ -98,27 +99,51 @@ def test_the_replay_stops_the_mtd_leg_at_the_as_of_date() -> None:
     n = len(params) + 3
     sql = ph._replay_sums_sql(where, n - 2, n - 1, n)
 
-    # The month-to-date CTE is joined on the AS-OF row, never on month end.
-    assert "LEFT JOIN mtd mc ON mc.d = a.d" in sql
     assert "m_end" not in sql
-    # ...and the volume leg keeps the documented one-day lag.
-    assert "LEFT JOIN mtd mp ON mp.d = a.d - 1" in sql
+    assert "LEFT JOIN run my ON my.d = a.e - 1" in sql
+    # No `run` row may be joined on the as-of day (or its anchor) itself —
+    # every upper bound is the day BEFORE the anchor.
+    assert not re.search(r"\.d = a\.[de](?! - 1)", sql), "a leg reads the as-of day"
+    assert "a.d - 1" not in sql, "bounds hang off the anchor `a.e`, not `a.d`"
+    for leg in ("vol_mtd", "rev_mtd", "prof_mtd"):
+        line = next(ln for ln in sql.splitlines() if ln.strip().rstrip(",").endswith(f"AS {leg}"))
+        assert "my." in line and "mf." in line, line
 
 
-def test_the_replay_excludes_sundays_before_the_rolling_window() -> None:
-    """"Last 12 business days" is 12 Mon-Sat days, not 12 calendar rows.
+def test_the_replay_window_keeps_sundays_but_locates_by_mon_sat() -> None:
+    """12 Mon-Sat slots LOCATE the window; the SUM keeps Sundays (Sat + Sun = 1).
 
-    Filtering after the window would silently make it ~10 business days.
+    Filtering Sundays out of the summed rows is the pre-2026-10-20 defect: the
+    weekend's second day existed in neither the average nor the pending days.
+    Filtering them out of the LOCATOR instead would make "12 rows back" ~10
+    business days.
     """
     params: list = []
     where = _v4_scope_where("br4", None, None, None, params,
                             None, None, None, None, scope=CORP_SCOPE)
     sql = ph._replay_sums_sql(where, 1, 2, 3)
-    window_cte = sql.split("bdays AS (", 1)[1].split("mtd AS (", 1)[0]
-    assert "WHERE EXTRACT(DOW FROM d) <> 0" in window_cte
-    assert "ROWS BETWEEN 11 PRECEDING AND CURRENT ROW" in window_cte
+    run_cte = sql.split("run AS (", 1)[1].split("bdays AS (", 1)[0]
+    bdays_cte = sql.split("bdays AS (", 1)[1].split("live_months AS (", 1)[0]
+    assert "EXTRACT(DOW" not in run_cte, "the summed series must keep Sundays"
+    assert "WHERE EXTRACT(DOW FROM d) <> 0" in bdays_cte
+    # 12 slots: the start is the 12th Mon-Sat day back, inclusive.
+    assert "bs.rn = be.rn - 11" in sql
     # A partial lookback must not produce a point at all.
-    assert "n_12 = 12" in sql
+    assert "AND bs.d IS NOT NULL" in sql
+
+
+
+def test_the_replay_anchors_a_sunday_on_its_saturday_like_the_panel() -> None:
+    """`_metrics._projection_anchor` in SQL — a Sunday (not the 1st) is its Saturday.
+
+    Without it every replayed Sunday dips by ~Sunday/12 against the live
+    panel, and the 2026 re-replay would plant a fake weekly Low.
+    """
+    sql = ph._replay_sums_sql("TRUE", 1, 2, 3)
+    asof = sql.split("asof AS (", 1)[1].split("live_months AS (", 1)[0]
+    assert "EXTRACT(DOW FROM d) = 0 AND EXTRACT(DAY FROM d) > 1" in asof
+    assert "THEN d - 1 ELSE d END AS e" in asof
+    assert "FROM asof a" in sql
 
 
 def test_the_replay_skips_months_with_no_volume() -> None:

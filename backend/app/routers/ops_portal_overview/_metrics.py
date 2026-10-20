@@ -21,17 +21,36 @@ from ._sql import _team_list, _v4_scope_where
 #
 #   KPI chart (Month)  14 CALENDAR days / 14, Sundays included   → /combo
 #   KPI chart (Week)   12 business days / 12, then × 7           → /team-projection
+#                      (× 6 since 2026-10-20 — six day-slots a week)
 #   Team Monthly Proj. 12 BUSINESS days / 12, Sundays excluded   → /team-projection
+#                      (Sundays FOLDED IN as Sat+Sun = 1 slot since 2026-10-20)
 #   Actuals Proj. EOM  the SELECTED window / 14 (hardcoded)      → /actuals
 #
 # Bruno's ruling: "Team Monthly Projection" is the single source of truth, so
 # its window and divisor are the ones kept here and every other consumer is
 # re-pointed at this helper.
 #
-# ⚠ Do NOT "tidy" the vol_mtd / rev_mtd asymmetry below (volume counts to
-# yesterday, revenue and profit to month-end). It is what produces the numbers
-# Bruno validated against — $2,301,182 revenue / $433,757 profit — so
-# normalising it would move the very figure this round declares correct.
+# Request 2026-10-20 (`Pictures/tasl.txt`) reversed two R6-era rules, and the
+# reasons are the whole point — keep them if this is ever revisited:
+#
+#   1. CLOSE OF THE PREVIOUS DAY. Revenue and profit MTD used to run to month
+#      END while volume stopped at yesterday. v4 is refreshed INTRADAY (24 of
+#      today's loads were already in it at 09:11 CST on 10-20, with mass update
+#      batches near 12:00 / 16:00 / 18:00), and `pending` counts TODAY as a full
+#      projected day — so today was counted twice (partial actual + a whole
+#      projected day) and Proj. Revenue / Profit crept up through the
+#      afternoon. Users read that as "it is on UTC". The clock was CST all along;
+#      the bound was the defect. Every MTD leg now stops at yesterday, so the
+#      panel is the same number from 00:00 to 23:59 CST. (The old asymmetry is
+#      what reproduced Bruno's R6 check figures — those figures are history.)
+#   2. A WEEKEND IS ONE DAY. Sundays used to be dropped from the 12-day sums,
+#      and `pending` (Mon-Sat) never projects a Sunday either — so Sunday
+#      production existed in neither leg (51 loads / $109,195 / $19,919 in the
+#      10-06..10-19 window). The window is still 12 Mon-Sat slots ending
+#      yesterday (= 14 calendar days), but Sunday's rows now count, folded into
+#      the weekend slot: divisor 12, Sat + Sun = one day. On a Sunday the panel
+#      is anchored on Saturday (`_projection_anchor`) — the weekend slot is
+#      still open — so it shows the same number all weekend.
 #
 # ⚠ The projection is a MONTH concept: it always reads the last 12 business
 # days plus month-to-date, and deliberately ignores the report's date-range
@@ -42,12 +61,38 @@ from ._sql import _team_list, _v4_scope_where
 _PROJ_LOOKBACK_BUSINESS_DAYS = 12
 
 
+def _projection_anchor(today: date) -> date:
+    """The day the projection is computed AS OF — today, except on a Sunday.
+
+    Saturday + Sunday are ONE day-slot (request 2026-10-20), and that slot is
+    only closed once Sunday is. So on a Sunday the panel is Saturday's panel:
+    the weekend is still the day in progress — projected, never half-measured.
+    Anchoring on Sunday itself would close the window at Saturday WITHOUT its
+    Sunday, so every Sunday's 02:45 snapshot would dip by ~Sunday/12 and plant
+    a fake weekly Low in the history.
+
+    ⚠ Except on the 1st: the Saturday before a Sunday 1st (2026-11-01) is in
+    the PREVIOUS month, and borrowing it would project the wrong month.
+    """
+    if today.weekday() == 6 and today.day > 1:
+        return today - timedelta(days=1)
+    return today
+
+
 def _projection_bounds(today: date) -> tuple[date, date, date, date, int]:
-    """(win_start, win_end, month_start, month_end, pending_workdays)."""
-    m_start, m_end = _month_bounds(today)
-    win_start = _last_n_business_days_start(today, _PROJ_LOOKBACK_BUSINESS_DAYS)
-    win_end = today - timedelta(days=1)
-    return win_start, win_end, m_start, m_end, _count_workdays(today, m_end)
+    """(win_start, win_end, month_start, month_end, pending_workdays).
+
+    ``win_end`` is the day before the anchor — YESTERDAY on Mon-Sat: the close
+    of the previous day bounds every leg. ``pending`` counts Mon-Sat from the
+    anchor to month end, so the day in progress is projected, never measured
+    (request 2026-10-20). On a Sunday the anchor is Saturday — see
+    ``_projection_anchor``.
+    """
+    anchor = _projection_anchor(today)
+    m_start, m_end = _month_bounds(anchor)
+    win_start = _last_n_business_days_start(anchor, _PROJ_LOOKBACK_BUSINESS_DAYS)
+    win_end = anchor - timedelta(days=1)
+    return win_start, win_end, m_start, m_end, _count_workdays(anchor, m_end)
 
 
 def _projection_sums_sql(
@@ -59,8 +104,11 @@ def _projection_sums_sql(
     """The six sums every Projected number is built from.
 
     ``group_col`` yields one row per group (used by /actuals for its per-
-    customer rows); omit it for the report-wide figure. Bruno's "last 12
-    business days" is Mon-Sat — ``EXTRACT(DOW) = 0`` is Sunday.
+    customer rows); omit it for the report-wide figure. The "last 12
+    business days" are 12 Mon-Sat slots ending yesterday; the calendar window
+    they span (14 days) is summed WHOLE, so a Sunday adds to its weekend slot
+    rather than vanishing (request 2026-10-20). There is deliberately no DOW
+    predicate here — the Mon-Sat rule lives in the window START and in the ÷12.
 
     ⚠ Do NOT add columns here for a panel that merely wants to DISPLAY
     something. `test_ops_portal_projection` asserts this statement is
@@ -75,14 +123,11 @@ def _projection_sums_sql(
         SELECT
           {sel}
           COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                             AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                              AND br4.total_charge IS NOT NULL
                              AND br4.total_charge <> 0) AS vol_12,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                             THEN br4.total_charge END), 0)::numeric AS rev_12,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
-                              AND EXTRACT(DOW FROM br4.origin_actual_departure::date) <> 0
                             THEN br4.margin_amt END), 0)::numeric AS prof_12,
           COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ms1} AND ${p_we2}
                              AND br4.total_charge IS NOT NULL
@@ -108,10 +153,9 @@ def _mtd_display_sql(where: str, p_ms: int, p_ye: int) -> str:
 
     ⚠ Bounds are month-start → YESTERDAY, verbatim from the PDF ("if today is
     August 31, the calculation should include data through August 30 at 11:59
-    PM"). That makes Revenue/Profit (MTD) DIFFER from the projection's own
-    `rev_mtd`/`prof_mtd` legs, which run to month END by a deliberate asymmetry
-    documented at the top of this module. Proj. Revenue / Proj. Profit are
-    therefore not reconstructable on screen from these three rows; Volume is.
+    PM"). Since 2026-10-20 the projection's own MTD legs use the SAME bound, so
+    all three Proj. rows are reconstructable on screen:
+    ``Avg × Pending + (MTD)`` — Revenue and Profit included.
 
     ⚠ Volume repeats `vol_mtd`'s predicate exactly — including the
     `total_charge` guard — rather than a bare COUNT(*). "Volume" means
@@ -155,13 +199,16 @@ def _projection_params(
     today: date, scope: DivisionScope = CORP_SCOPE,
 ) -> tuple[str, list, tuple[int, int, int, int, int, int], int]:
     """Scope predicate + bound params for ``_projection_sums_sql``."""
-    win_start, win_end, m_start, m_end, pending = _projection_bounds(today)
+    win_start, win_end, m_start, _m_end, pending = _projection_bounds(today)
     params: list = []
     where = _v4_scope_where(
         "br4", team, customer, load_type, params,
         lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
     )
-    params.extend([win_start, win_end, m_start, win_end, m_start, m_end])
+    # The last slot is `win_end` (yesterday), NOT `m_end`: revenue/profit MTD
+    # close at yesterday exactly like volume — see the 2026-10-20 note above.
+    # Six slots are kept so every `_projection_sums_sql` caller stays unchanged.
+    params.extend([win_start, win_end, m_start, win_end, m_start, win_end])
     n = len(params)
     return where, params, (n - 5, n - 4, n - 3, n - 2, n - 1, n), pending
 

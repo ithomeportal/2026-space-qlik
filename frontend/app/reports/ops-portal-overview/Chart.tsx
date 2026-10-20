@@ -441,7 +441,9 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
 
   // Projected — Bruno (PDF 2026-07-15) R10: grain-dependent.
   //   Day   → per-day averages from Team Monthly Projection (Avg. Vol/Rev/Prof x Day).
-  //   Week  → those per-day averages × 7 (margin % is a ratio, so it never scales).
+  //   Week  → those per-day averages × 6 — six day-slots a week, Sat + Sun being
+  //           ONE (request 2026-10-20; was × 7). Margin % is a ratio, never scaled.
+  //           Must equal WEEK_SCALE_DAYS in backend _combo_extras.py (the candles).
   //   Month → the calendar-month EoM projection from /combo (unchanged default).
   const proj = projRes?.data
   const projected = useMemo(() => {
@@ -455,7 +457,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
         ? (proj && proj.avg_rev_day ? (proj.avg_prof_day / proj.avg_rev_day) * 100 : 0)
         : 0
     if (grain === "day") return perDay
-    if (grain === "week") return measure === "margin_pct" ? perDay : perDay * 7
+    if (grain === "week") return measure === "margin_pct" ? perDay : perDay * 6
     // Month: the calendar-month EoM projection. Bruno (PDF 2026-08-14) R6 —
     // this used to read /combo, which ran its own 14-calendar-day formula and
     // showed $2,121,651 next to the Team Monthly Projection panel's

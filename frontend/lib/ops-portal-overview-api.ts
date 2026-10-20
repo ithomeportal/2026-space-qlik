@@ -294,10 +294,10 @@ export interface OppTeamProjection {
   /** Bruno (PDF 2026-08-31) R4 — between "Pending Days" and "Proj. Volume".
    *  Month-start → END OF YESTERDAY; today never moves them, and the page's
    *  Date filter never reaches them (/team-projection ignores it).
-   *  Volume uses the report's house definition (charge-bearing orders), so
-   *  `avg_vol_day * pending_workdays + mtd_volume === proj_volume`.
-   *  ⚠ Revenue/Profit do NOT reconcile that way — the projection's own MTD
-   *  legs run to month END by a deliberate asymmetry (backend `_metrics.py`).
+   *  Volume uses the report's house definition (charge-bearing orders). Since
+   *  2026-10-20 all three reconcile: `avg_<m>_day * pending_workdays +
+   *  mtd_<m> === proj_<m>` — the projection's own MTD legs close at yesterday
+   *  too (they used to run to month END; backend `_metrics.py`).
    *  ⚠ Served ONLY by /team-projection. The Week and Team break-out modals
    *  reuse `OppTeamProjectionWeek` / `...Team`, which do not carry these. */
   mtd_volume: number

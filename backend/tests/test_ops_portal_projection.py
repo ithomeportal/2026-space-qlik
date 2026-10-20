@@ -137,5 +137,6 @@ def test_pending_workdays_excludes_sundays_only():
     """Mon-Sat, holidays not excluded — Bruno's literal round-2 spec."""
     # 2026-08-14 is a Friday; Aug has 31 days.
     assert opo._count_workdays(date(2026, 8, 14), date(2026, 8, 31)) == 15
-    # The 12-business-day lookback ends yesterday and skips Sundays.
+    # The 12-business-day lookback ends yesterday; Sundays are skipped when
+    # LOCATING its start, but their rows are summed (Sat + Sun = 1 slot, 2026-10-20).
     assert opo._last_n_business_days_start(date(2026, 8, 14), 12) == date(2026, 7, 31)
