@@ -95,8 +95,11 @@ REPORTS: tuple[CustomerReport, ...] = (
             Destination("BOXUCANX", ("BOX UP",), tz=TZ_MONTERREY),
             Destination("CORRSAJA", ("CORRUGADOS HEAVY BOX SAN ISIDRO",), tz=TZ_MX_CENTRAL),
             Destination("EMPASAN1", ("EMPAQUES CARMA",), tz=TZ_MONTERREY),
-            # ⚠ Best match, not proven: the only ALT*/Tlajomulco consignee.
-            Destination("ALTOSAJA", ("ALTA TRANSFORMACIONES",), tz=TZ_MX_CENTRAL),
+            # Ops 2026-10-20: ALTOSAJA is Empaques Cartones y Suministros (San Pedro
+            # Tlaquepaque), NOT Alta; both Alta Transformacion sites go in LAREDO.
+            Destination("ALTOSAJA", ("EMPAQUES CARTONES Y SUMINISTROS",), tz=TZ_MX_CENTRAL),
+            Destination("ALTATLJ1", ("ALTA TRANSFORMACIONES",), tz=TZ_MX_CENTRAL),
+            Destination("ALTAGUJA", ("ALTA TRANSFORMACION",), tz=TZ_MX_CENTRAL),
             Destination("IECEMON1", ("IEC EMPAQUE",), tz=TZ_MONTERREY),
             Destination("INNOSANX", ("INNOVACION PACKING AUTOMOTORES",), tz=TZ_MONTERREY),
             Destination("NEFAZAJA", ("NEFAB",), tz=TZ_MX_CENTRAL),

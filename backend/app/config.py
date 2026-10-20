@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     # decided; the mail guard refuses those addresses today.
     CUSTOMER_STATUS_EMAIL_ENABLED: bool = True
     CUSTOMER_STATUS_EMAIL_LIVE: bool = False
+    # Who is alerted when a slot is not sent (failed / stuck / never ran).
+    CUSTOMER_STATUS_EMAIL_ALERT_TO: str = (
+        "dfrodriguez@unilinktransportation.com,t1ops@unilinktransportation.com"
+    )
+    # TTControl (/BOT/macropoint-tt) feed of carrier live-share links (Samsara,
+    # Motive, Spireon…) + MacroPoint positions. OPTIONAL: unset secret = the
+    # e-mails simply carry no share link. Its OWN secret, == TTControl's
+    # CUSTOMER_TRACKING_SECRET — never the proxy or cron secret.
+    TTCONTROL_URL: str = "https://ttcontrol.unilinkportal.com"
+    TTCONTROL_TRACKING_SECRET: str = ""
 
     # Public origin of the Next.js frontend. Used ONLY to build the "click here
     # to sign in directly" link in the login-code email, which replaces the old

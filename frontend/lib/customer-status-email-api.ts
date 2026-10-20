@@ -30,7 +30,7 @@ const RETRY = {
   retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 4000),
 }
 
-export type SendStatus = "sent" | "failed" | "sending"
+export type SendStatus = "sent" | "failed" | "sending" | "skipped"
 export type SlotStatus = SendStatus | "missed" | "upcoming" | "not_live"
 
 export interface Recipients {

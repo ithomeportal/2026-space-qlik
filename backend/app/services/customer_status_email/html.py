@@ -37,7 +37,7 @@ SECTION_DELIVERED = "Finally, please see the loads we have delivered in the last
 SECTIONS = (SECTION_IN_PROGRESS, SECTION_SCHEDULED, SECTION_DELIVERED)
 _SECTION_COLOURS = ("#1F6FB2", "#5B8DC9", "#2E9E44")
 
-EMPTY_TEXT = "No loads at this time."
+EMPTY_TEXT = "No loads at this time — this e-mail is skipped, nothing is sent."
 AHEAD_CAP_HOURS = 24
 
 
@@ -217,10 +217,13 @@ def _card(top: str, bottom: str = "") -> str:
 
 
 def _section(title: str, colour: str, cards: str) -> str:
-    body = cards or f'<div {_s(f"font-size:13px;color:{MUTED};padding:8px 10px;")}>{EMPTY_TEXT}</div>'
+    """A section with no loads is NOT shown (user 2026-10-20: "don't show
+    nothing and pass to the next"); a report with no loads at all is not sent."""
+    if not cards:
+        return ""
     css = (f"margin:22px 0 8px 0;border-left:6px solid {colour};background:#F3F6FB;"
            f"padding:6px 10px;font-size:14px;font-weight:700;color:{colour};")
-    return f'<div {_s(css)}>{escape(title)}</div>{body}'
+    return f'<div {_s(css)}>{escape(title)}</div>{cards}'
 
 
 def subject_for(rc: ReportCards, slot_at: datetime) -> str:
@@ -239,6 +242,8 @@ def render(rc: ReportCards, slot_at: datetime, test_banner: Optional[str] = None
         + _section(SECTION_DELIVERED, _SECTION_COLOURS[2],
                    "".join(card_delivered(c) for c in rc.delivered))
     )
+    if not sections:  # only an admin preview gets here — the sender skips empty reports
+        sections = f'<div {_s(f"font-size:13px;color:{MUTED};padding:8px 10px;")}>{EMPTY_TEXT}</div>'
     as_of = (f'<div {_s(f"font-size:11px;color:{MUTED};margin-top:14px;")}>Status as of '
              f'{slot_at.strftime("%m/%d/%Y %I:%M %p")} CST. Times are local to each stop.</div>')
     return (

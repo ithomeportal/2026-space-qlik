@@ -25,7 +25,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
+import httpx
+
+from app.config import settings
 from app.services.customer_status_email.config import BILL_TO
 
 logger = logging.getLogger(__name__)
@@ -146,6 +150,24 @@ WHERE h.id = ANY($1::varchar[])
 ORDER BY h.id, h.posted_date DESC
 """
 
+# Augie phone/e-mail location pings (Augment TRACKING_UPDATE webhooks). TRIMMED
+# order ids; event_utc is a real timestamptz → shown on the CST clock.
+PINGS_SQL = """
+SELECT DISTINCT ON (l.order_id)
+       l.order_id                                              AS id,
+       btrim(l.city)                                           AS city,
+       NULLIF(btrim(l.state_or_province), '')                  AS state,
+       (l.event_utc AT TIME ZONE 'America/Chicago')            AS at_cst
+FROM app_load_locations l
+WHERE l.order_id = ANY($1::varchar[])
+  AND NULLIF(btrim(l.city), '') IS NOT NULL
+ORDER BY l.order_id, l.event_utc DESC
+"""
+
+TTCONTROL_PATH = "/api/share/customer-tracking"
+TTCONTROL_BATCH = 200  # the route's own cap
+TTCONTROL_TIMEOUT_S = 20.0
+
 POD_SQL = """
 SELECT mcleod_order_id AS id, has_pod, pod_file_url
 FROM pod_tracker_loads
@@ -190,7 +212,8 @@ async def fetch_details(
     with a silently missing status.
     """
     if not orders:
-        return {"movements": {}, "augie": {}, "comments": {}, "pods": {}}
+        return {"movements": {}, "augie": {}, "comments": {}, "pods": {}, "pings": {},
+                "tt": {}}
     padded_ids = sorted({o["id"] for o in orders})
     padded_cos = sorted({o["company_id"] for o in orders})
     trimmed_ids = sorted({i.strip() for i in padded_ids})
@@ -204,6 +227,7 @@ async def fetch_details(
             COMMENTS_SQL, padded_ids, padded_cos, list(SAFE_COMMENT_TYPES),
             UNSAFE_COMMENT_PATTERN, since,
         )
+        pings = await conn.fetch(PINGS_SQL, trimmed_ids)
 
     pods: dict[str, dict] = {}
     if ap_pool is not None:
@@ -219,7 +243,58 @@ async def fetch_details(
         "augie": _group(legs),
         "comments": {r["id"].strip(): dict(r) for r in comments},
         "pods": pods,
+        "pings": {r["id"].strip(): dict(r) for r in pings},
+        # Only loads still moving need a live link / position.
+        "tt": await fetch_ttcontrol(
+            sorted({o["id"].strip() for o in orders if (o.get("status") or "").strip() == "P"})),
     }
+
+
+async def fetch_ttcontrol(order_ids: list[str]) -> dict[str, dict]:
+    """Carrier share links + positions from TTControl, keyed by trimmed id.
+
+    Optional and fail-SOFT: unset secret or any HTTP fault ⇒ {} (the e-mail
+    still goes, without share links). ⚠ Share URLs are bearer credentials —
+    never logged here.
+    """
+    secret = settings.TTCONTROL_TRACKING_SECRET
+    if not secret or not order_ids:
+        return {}
+    out: dict[str, dict] = {}
+    url = settings.TTCONTROL_URL.rstrip("/") + TTCONTROL_PATH
+    try:
+        async with httpx.AsyncClient(timeout=TTCONTROL_TIMEOUT_S) as client:
+            for i in range(0, len(order_ids), TTCONTROL_BATCH):
+                batch = order_ids[i:i + TTCONTROL_BATCH]
+                r = await client.get(url, params={"orders": ",".join(batch)},
+                                     headers={"Authorization": f"Bearer {secret}"})
+                r.raise_for_status()
+                out.update(parse_ttcontrol(r.json()))
+    except Exception as exc:  # noqa: BLE001 — optional enrichment
+        logger.error("customer status email: TTControl feed failed, no share links: %s",
+                     type(exc).__name__)
+        return {}
+    return out
+
+
+def parse_ttcontrol(payload: dict) -> dict[str, dict]:
+    """TTControl's envelope → {order: {share_link, share_provider, place, at_cst}}."""
+    out: dict[str, dict] = {}
+    for oid, row in ((payload or {}).get("data") or {}).items():
+        link = (row or {}).get("shareLink") or {}
+        url = link.get("url")
+        pos = (row or {}).get("position") or {}
+        at_cst = None
+        if pos.get("atUtc"):
+            at = datetime.fromisoformat(pos["atUtc"].replace("Z", "+00:00"))
+            at_cst = at.astimezone(ZoneInfo("America/Chicago")).replace(tzinfo=None)
+        out[str(oid).strip()] = {
+            "share_link": url if isinstance(url, str) and url.startswith("https://") else None,
+            "share_provider": link.get("provider"),
+            "place": pos.get("place"),
+            "at_cst": at_cst,
+        }
+    return out
 
 
 def _group(rows: list) -> dict[str, list[dict]]:

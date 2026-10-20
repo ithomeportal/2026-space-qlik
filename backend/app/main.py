@@ -369,6 +369,20 @@ async def _scheduled_customer_status_emails():
         raise
 
 
+async def _scheduled_customer_status_watch():
+    """Background job: at :45 of every send hour, alert dfrodriguez + t1ops ONCE
+    if a PCA customer e-mail due that hour is not Sent/Skipped (failed, stuck,
+    or the send job never ran). Raises when the alert itself cannot be sent."""
+    from app.services.customer_status_email.sender import watch_slot
+
+    try:
+        result = await watch_slot(app)
+        logger.info(f"Customer status e-mail watch: {result}")
+    except Exception as e:
+        logger.error(f"Customer status e-mail watch FAILED: {e}", exc_info=True)
+        raise
+
+
 async def _scheduled_lane_rates_prewarm():
     """Background job: pre-warm SONAR + 123LB monthly rates for lanes in the
     current and previous month so the eSavings report never blocks on a cold
@@ -1655,6 +1669,20 @@ async def lifespan(app: FastAPI):
             coalesce=True,
             misfire_grace_time=900,
         )
+        scheduler.add_job(
+            _scheduled_customer_status_watch,
+            CronTrigger(
+                hour=",".join(str(h) for h in SEND_HOURS),
+                minute=45,
+                timezone="America/Chicago",
+            ),
+            id="customer_status_email_watch",
+            name="Alert when a PCA customer e-mail slot did not go out",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
         logger.info(
             "Scheduled PCA customer status e-mails at %s:00 CST (live=%s)",
             ",".join(str(h) for h in SEND_HOURS),
@@ -1689,6 +1717,7 @@ async def lifespan(app: FastAPI):
         "daily_dfw_bonus_roster_sync": "Bonus DFW roster from Time-off, 05:00 CST",
         "daily_dpc_cutoff_snapshot": "Division Payment month-close snapshot, 00:15 CST",
         "customer_status_emails": "PCA customer load-status e-mails, 02/07/12/15/16/22 CST",
+        "customer_status_email_watch": "PCA e-mail not-sent alert, :45 of each send hour",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)

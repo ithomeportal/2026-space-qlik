@@ -92,6 +92,9 @@ class ReportCards:
     scheduled: tuple[Card, ...]
     delivered: tuple[Card, ...]
 
+    def is_empty(self) -> bool:
+        return not (self.in_progress or self.scheduled or self.delivered)
+
     def counts(self) -> dict[str, int]:
         return {IN_PROGRESS: len(self.in_progress), SCHEDULED: len(self.scheduled),
                 DELIVERED: len(self.delivered)}
@@ -210,12 +213,6 @@ def _tracking(order: dict, legs: list[dict], active: Optional[dict],
     """
     out: dict = {}
     naive_now = now_cst.replace(tzinfo=None)
-    fixes = [lg for lg in legs if lg.get("gps_at") and (lg.get("geo_city") or lg.get("geo_state"))]
-    if fixes:
-        last = max(fixes, key=lambda lg: lg["gps_at"])
-        if naive_now - last["gps_at"] <= GPS_MAX_AGE:
-            out["location"] = ", ".join(p for p in (last.get("geo_city"), last.get("geo_state")) if p)
-            out["location_at"] = last["gps_at"]
 
     active_id = str((active or {}).get("movement_id") or "").strip()
     leg = next((lg for lg in legs if str(lg.get("movement_id") or "").strip() == active_id), None)
@@ -237,14 +234,50 @@ def _tracking(order: dict, legs: list[dict], active: Optional[dict],
     return out
 
 
+def best_location(candidates: list[tuple[Optional[str], Optional[datetime]]],
+                  naive_now: datetime) -> dict:
+    """The FRESHEST (place, CST time) among every source, if within GPS_MAX_AGE.
+
+    Sources (2026-10-20): Augie GPS per leg, Augie phone/e-mail pings, and
+    TTControl (carrier share-link polls + MacroPoint). Each covers different
+    loads — share links mostly the Mexican leg Augie never sees.
+    """
+    valid = [(place, at) for place, at in candidates
+             if place and at and naive_now - at <= GPS_MAX_AGE]
+    if not valid:
+        return {}
+    place, at = max(valid, key=lambda c: c[1])
+    return {"location": place, "location_at": at}
+
+
+def _location_candidates(legs: list[dict], ping: Optional[dict], tt: Optional[dict]) -> list:
+    def join(*parts: Optional[str]) -> Optional[str]:
+        text = ", ".join(p for p in parts if p)
+        return text or None
+    cands = [(join(lg.get("geo_city"), lg.get("geo_state")), lg.get("gps_at")) for lg in legs]
+    if ping:
+        cands.append((join(ping.get("city"), ping.get("state")), ping.get("at_cst")))
+    if tt:
+        cands.append((tt.get("place"), tt.get("at_cst")))
+    return cands
+
+
 def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
                dest_tz: str = ORIGIN_TZ) -> Card:
     oid = order["id"].strip()
     moves = details.get("movements", {}).get(oid, [])
     active = _active_leg(moves)
-    tracking = _tracking(order, details.get("augie", {}).get(oid, []), active, now_cst, dest_tz) \
-        if bucket == IN_PROGRESS else {}
-    link = (active or {}).get("track_link") or next(
+    legs = details.get("augie", {}).get(oid, [])
+    tt = details.get("tt", {}).get(oid) or {}
+    tracking = {}
+    if bucket == IN_PROGRESS:
+        tracking = {
+            **_tracking(order, legs, active, now_cst, dest_tz),
+            **best_location(_location_candidates(legs, details.get("pings", {}).get(oid), tt),
+                            now_cst.replace(tzinfo=None)),
+        }
+    # A carrier live-share link (the template's Samsara example) beats MacroPoint.
+    link = tt.get("share_link") or (active or {}).get("track_link") or next(
         (m["track_link"] for m in sorted(moves, key=lambda m: -_num(m.get("movement_id")))
          if m.get("track_link")), None)
     comment = details.get("comments", {}).get(oid)

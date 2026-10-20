@@ -58,7 +58,8 @@ def test_every_template_destination_code_is_configured():
     expected = {
         "pca-donna": {"PCADDOTX"},
         "pca-laredo": {"ALDETLJA", "ASCMAPNX", "BOXUCANX", "CORRSAJA", "EMPASAN1", "ALTOSAJA",
-                       "IECEMON1", "INNOSANX", "NEFAZAJA", "PARQTLJA"},
+                       "IECEMON1", "INNOSANX", "NEFAZAJA", "PARQTLJA",
+                       "ALTATLJ1", "ALTAGUJA"},  # Ops 2026-10-20
         "pca-el-paso": {"ABMAJUCI", "DIGSJUCI", "NEFAJUCH", "TECNCHCI", "PCAEELTX"},
         "pca-reynosa": {"REYNOSA", "REGIRITM", "AGEBRETM", "WOORRETM"},
     }
@@ -222,9 +223,10 @@ def _rc(**kw):
 
 def test_render_has_every_section_and_the_empty_text():
     out = html.render(_rc(), NOW)
-    for title in html.SECTIONS:
-        assert title in out
-    assert out.count(html.EMPTY_TEXT) == 2  # scheduled + delivered are empty
+    # Only in-progress has loads: the two empty sections are NOT shown at all.
+    assert html.SECTION_IN_PROGRESS in out
+    assert html.SECTION_SCHEDULED not in out and html.SECTION_DELIVERED not in out
+    assert html.EMPTY_TEXT not in out
     assert "Thank you for the opportunity to support your business." in out
     assert "Magaly Vazquez" in out and "route.unilinkportal.com/report" in out
 
@@ -319,8 +321,9 @@ def patched(monkeypatch):
     sent: list[dict] = []
 
     async def fake_build(app, now):
-        empty = {r.key: cards.ReportCards(r, (), (), ()) for r in config.REPORTS}
-        return empty, []
+        one = cards.build_card(_order(), cards.IN_PROGRESS, {}, NOW)
+        loaded = {r.key: cards.ReportCards(r, (one,), (), ()) for r in config.REPORTS}
+        return loaded, []
 
     async def fake_send(**kw):
         sent.append(kw)
@@ -649,3 +652,149 @@ def test_border_yard_comments_do_not_read_as_a_delivery():
                  "Loaded at the shipper Central Texas Corrugated at 10/19/26 1335."):
         assert cc(text, "PCA DONNA") == text
     assert cc(None, "PCA DONNA") is None
+
+
+def test_a_report_with_no_loads_is_skipped_not_sent(patched, monkeypatch):
+    """User 2026-10-20: "if one specific route don't have any info … don't show
+    nothing and pass to the next"."""
+    async def donna_empty(app, now):
+        one = cards.build_card(_order(), cards.IN_PROGRESS, {}, NOW)
+        return {r.key: cards.ReportCards(r, () if r.key == "pca-donna" else (one,), (), ())
+                for r in config.REPORTS}, []
+
+    monkeypatch.setattr(sender, "build_all", donna_empty)
+    hub = _Hub()
+    result = asyncio.run(sender.run_slot(_app(hub), datetime(2026, 10, 20, 7, 0, tzinfo=CST)))
+    assert result["skipped"] == ["pca-donna"] and len(result["sent"]) == 3
+    assert not any("DONNA" in m["subject"] for m in patched)
+    assert hub.rows[("pca-donna", "2026-10-20 07")]["status"] == "skipped"
+    # A skipped slot is final — the :20 firing does not retake it.
+    asyncio.run(sender.run_slot(_app(hub), datetime(2026, 10, 20, 7, 20, tzinfo=CST)))
+    assert len(patched) == 3
+
+
+def test_manual_send_of_an_empty_report_sends_nothing(patched, monkeypatch):
+    async def all_empty(app, now):
+        return {r.key: cards.ReportCards(r, (), (), ()) for r in config.REPORTS}, []
+
+    monkeypatch.setattr(sender, "build_all", all_empty)
+    out = asyncio.run(sender.send_test_now(_app(_Hub()), "pca-donna"))
+    assert out["skipped"] is True and patched == []
+
+
+def test_preview_of_an_empty_report_says_it_is_skipped():
+    out = html.render(cards.ReportCards(DONNA, (), (), ()), NOW)
+    assert html.EMPTY_TEXT in out and html.SECTION_IN_PROGRESS not in out
+
+
+# --- not-sent alert (:45 watch) --------------------------------------------
+
+class _WatchHub(_Hub):
+    def __init__(self, rows):
+        super().__init__()
+        self.slot_rows = rows
+
+    def acquire(self):
+        hub = self
+
+        class C(_HubConn):
+            async def fetch(self, sql, *params):
+                return [r for r in hub.slot_rows if r["slot_key"] == params[0]]
+        return _Acq(C(self))
+
+
+def test_watch_alerts_on_failed_stuck_and_never_ran(patched):
+    rows = [
+        {"slot_key": "2026-10-20 16", "report_key": "pca-laredo", "status": "sent", "error": None},
+        {"slot_key": "2026-10-20 16", "report_key": "pca-el-paso", "status": "skipped", "error": None},
+        {"slot_key": "2026-10-20 16", "report_key": "pca-reynosa", "status": "failed",
+         "error": "graph_status_500"},
+    ]
+    out = asyncio.run(sender.watch_slot(_app(_WatchHub(rows)),
+                                        datetime(2026, 10, 20, 16, 45, tzinfo=CST)))
+    assert out["alerted"] == ["pca-reynosa"]
+    assert len(patched) == 1
+    mail = patched[0]
+    assert "NOT sent" in mail["subject"] and "2026-10-20 16" in mail["subject"]
+    assert mail["to"] == ["dfrodriguez@unilinktransportation.com", "t1ops@unilinktransportation.com"]
+    assert "graph_status_500" in mail["html_body"]
+    # 15:00 is DONNA's slot; no row at all = the job never ran.
+    out = asyncio.run(sender.watch_slot(_app(_WatchHub([])),
+                                        datetime(2026, 10, 20, 15, 45, tzinfo=CST)))
+    assert out["alerted"] == ["pca-donna"] and "never ran" in patched[1]["html_body"]
+
+
+def test_watch_is_quiet_when_every_due_report_went_out(patched):
+    rows = [{"slot_key": "2026-10-20 07", "report_key": r.key, "status": "sent", "error": None}
+            for r in config.REPORTS]
+    out = asyncio.run(sender.watch_slot(_app(_WatchHub(rows)),
+                                        datetime(2026, 10, 20, 7, 45, tzinfo=CST)))
+    assert "ok" in out and patched == []
+
+
+def test_watch_raises_when_the_alert_itself_fails(patched, monkeypatch):
+    async def down(**kw):
+        return {"sent": False, "reason": "token_failed"}
+
+    monkeypatch.setattr(sender, "send_mail", down)
+    with pytest.raises(sender.SlotRunError):
+        asyncio.run(sender.watch_slot(_app(_WatchHub([])), datetime(2026, 10, 20, 7, 45, tzinfo=CST)))
+
+
+def test_watch_job_is_registered_at_45():
+    src = MAIN.read_text()
+    assert 'id="customer_status_email_watch"' in src and "minute=45" in src
+    assert '"customer_status_email_watch":' in src
+
+
+# --- tracking sources: TTControl share links + Augie pings -------------------
+
+def test_ttcontrol_payload_keeps_only_https_links_and_converts_to_cst():
+    payload = {"success": True, "data": {
+        "0349555": {"shareLink": {"provider": "samsara", "url": "https://cloud.samsara.com/o/1/x"},
+                    "position": {"place": "Matehuala, SLP", "atUtc": "2026-10-20T17:50:23Z",
+                                 "source": "macropoint"}},
+        "0349107": {"shareLink": {"provider": "x", "url": "javascript:alert(1)"}, "position": None},
+    }}
+    got = data.parse_ttcontrol(payload)
+    assert got["0349555"]["share_link"].startswith("https://cloud.samsara.com/")
+    assert got["0349555"]["at_cst"] == datetime(2026, 10, 20, 12, 50, 23)
+    assert got["0349107"]["share_link"] is None and got["0349107"]["at_cst"] is None
+
+
+def test_ttcontrol_without_a_secret_is_skipped(monkeypatch):
+    called = []
+
+    def no_network(*a, **k):  # the soft-fail except would swallow a raise — record instead
+        called.append(1)
+        raise RuntimeError("network")
+
+    monkeypatch.setattr(data.settings, "TTCONTROL_TRACKING_SECRET", "")
+    monkeypatch.setattr(data.httpx, "AsyncClient", no_network)
+    assert asyncio.run(data.fetch_ttcontrol(["0349555"])) == {}
+    assert called == [], "TTControl was called without a secret"
+
+
+def test_freshest_location_wins_across_sources():
+    det = _details(None, gps_at=NAIVE_NOW - timedelta(hours=3))
+    det["pings"] = {"0349842": {"city": "Falfurrias", "state": "TX",
+                                "at_cst": NAIVE_NOW - timedelta(hours=1)}}
+    det["tt"] = {"0349842": {"share_link": "https://cloud.samsara.com/o/1/abc",
+                             "place": "Edinburg, TX", "at_cst": NAIVE_NOW - timedelta(minutes=10)}}
+    c = cards.build_card(_order(), cards.IN_PROGRESS, det, NOW)
+    assert c.location == "Edinburg, TX"
+    # A carrier share link beats the MacroPoint link.
+    assert c.track_link == "https://cloud.samsara.com/o/1/abc"
+    det["tt"]["0349842"]["at_cst"] = NAIVE_NOW - timedelta(hours=30)  # too old: ignored
+    assert cards.build_card(_order(), cards.IN_PROGRESS, det, NOW).location == "Falfurrias, TX"
+
+
+def test_ops_answer_2026_10_20_laredo_consignees():
+    """Ops: ALTOSAJA = Empaques Cartones y Suministros; ALTATLJ1 (Tlajomulco) and
+    ALTAGUJA (Guadalajara, load 0347649) are both Alta Transformacion — all in LAREDO."""
+    laredo = config.REPORTS_BY_KEY["pca-laredo"]
+    m = config.match_destination
+    assert m(laredo, "Empaques Cartones y Suministros", "SAN PEDRO TLAQUEPAQUE, JA").code == "ALTOSAJA"
+    assert m(laredo, "Empaques Cartones y Suministros", "TLAQUEPAQUE, JA").code == "ALTOSAJA"
+    assert m(laredo, "ALTA TRANSFORMACIONES", "TLAJOMULCO DE ZUNIGA, JA").code == "ALTATLJ1"
+    assert m(laredo, "Alta Transformacion", "GUADALAJARA, JA").code == "ALTAGUJA"

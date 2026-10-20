@@ -229,6 +229,11 @@ async def run_slot(app: Any, now_cst: Optional[datetime] = None) -> dict:
         rc = by_key[report.key]
         routing = routing_for(report, live=live)
         record = sent_record(rc, routing, now_cst)
+        if rc.is_empty():
+            # No loads in any section ⇒ nothing to tell the customer (user 2026-10-20).
+            await _finish(hub, report.key, slot, "skipped", rc.counts(), None, record)
+            outcome[report.key] = "skipped"
+            continue
         try:
             await deliver(rc, routing, now_cst)
             await _finish(hub, report.key, slot, "sent", rc.counts(), None, record)
@@ -238,10 +243,12 @@ async def run_slot(app: Any, now_cst: Optional[datetime] = None) -> dict:
             await _finish(hub, report.key, slot, "failed", rc.counts(), str(exc)[:500], record)
             outcome[report.key] = f"failed: {exc}"
 
-    failed = {k: v for k, v in outcome.items() if v != "sent"}
+    failed = {k: v for k, v in outcome.items() if v not in ("sent", "skipped")}
     if failed:
         raise SlotRunError(f"slot {slot}: {len(failed)} report(s) failed: {failed}")
-    return {"slot": slot, "mode": mode, "sent": sorted(outcome)}
+    return {"slot": slot, "mode": mode,
+            "sent": sorted(k for k, v in outcome.items() if v == "sent"),
+            "skipped": sorted(k for k, v in outcome.items() if v == "skipped")}
 
 
 async def send_test_now(app: Any, report_key: str) -> dict:
@@ -251,6 +258,8 @@ async def send_test_now(app: Any, report_key: str) -> dict:
     by_key, _ = await build_all(app, now_cst)
     rc = by_key[report.key]
     routing = routing_for(report, live=False)
+    if rc.is_empty():
+        return {"report": report.key, "counts": rc.counts(), "skipped": True, "to": []}
     result = await deliver(rc, routing, now_cst)
     hub = getattr(app.state, "pool", None)
     if hub is not None:
@@ -288,3 +297,89 @@ async def _finish_all(hub: Any, reports: list[CustomerReport], slot: str, status
                       counts: Optional[dict], error: Optional[str]) -> None:
     for report in reports:
         await _finish(hub, report.key, slot, status, counts, error)
+
+
+# ---------------------------------------------------------------------------
+# Watch (2026-10-20): alert when a due slot did not go out
+# ---------------------------------------------------------------------------
+
+SLOT_ROWS_SQL = """
+SELECT report_key, status, error
+FROM customer_status_email_log
+WHERE slot_key = $1 AND report_key = ANY($2::text[])
+"""
+OK_STATUSES = ("sent", "skipped")
+PANEL_URL = "https://space.unilinkportal.com/reports/customer-status-email"
+
+
+def slot_problems(due: tuple[CustomerReport, ...], rows: list[dict]) -> list[dict]:
+    """Due reports whose slot is not Sent/Skipped — failed, stuck or NEVER RAN.
+
+    A report with no row at all is the case a log cannot show by itself: the
+    job did not run (dead dyno, unregistered job, crash before the claim).
+    """
+    by_key = {r["report_key"]: r for r in rows}
+    out = []
+    for report in due:
+        row = by_key.get(report.key)
+        if row is None:
+            out.append({"key": report.key, "subject": report.subject,
+                        "status": "never ran", "error": "no log row for this slot"})
+        elif row["status"] not in OK_STATUSES:
+            out.append({"key": report.key, "subject": report.subject,
+                        "status": row["status"], "error": row.get("error") or ""})
+    return out
+
+
+def alert_html(slot: str, problems: list[dict]) -> str:
+    from html import escape
+
+    from app.services.team_perf_digest_html import FONT_STACK
+
+    td = f'style="font-family:{FONT_STACK};font-size:13px;padding:6px 10px;border-bottom:1px solid #E5E7EB;"'
+    rows = "".join(
+        f"<tr><td {td}><b>{escape(p['subject'])}</b></td><td {td}>{escape(p['status'])}</td>"
+        f"<td {td}>{escape(p['error'][:300])}</td></tr>" for p in problems)
+    return (f'<div style="font-family:{FONT_STACK};font-size:14px;color:#111827;">'
+            f"<p>These PCA customer status e-mails did <b>not</b> go out for slot "
+            f"<b>{escape(slot)} CST</b> (after the :00 send and the :20 retry):</p>"
+            f'<table role="presentation" cellpadding="0" cellspacing="0" '
+            f'style="font-family:{FONT_STACK};border-collapse:collapse;">{rows}</table>'
+            f'<p>Panel: <a href="{PANEL_URL}">Customer E-mail Activity</a>. '
+            f"Spec: docs/SPEC-CUSTOMER-STATUS-EMAIL.md.</p></div>")
+
+
+async def watch_slot(app: Any, now_cst: Optional[datetime] = None) -> dict:
+    """At :45 of a send hour: alert once if any due report did not go out."""
+    if not settings.CUSTOMER_STATUS_EMAIL_ENABLED:
+        return {"skipped": "disabled"}
+    now_cst = now_cst or cst_now()
+    if now_cst.tzinfo is None:
+        raise ValueError("now_cst must be timezone-aware")
+    due = reports_due(slot_hour(now_cst))
+    if not due:
+        return {"skipped": "no report due"}
+    hub = getattr(app.state, "pool", None)
+    if hub is None:
+        raise SlotRunError("analytics_hub pool unavailable; cannot check the slot")
+    slot = slot_key_for(now_cst)
+    async with hub.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(SLOT_ROWS_SQL, slot, [r.key for r in due])]
+    problems = slot_problems(due, rows)
+    if not problems:
+        return {"slot": slot, "ok": [r.key for r in due]}
+    to = [a.strip() for a in settings.CUSTOMER_STATUS_EMAIL_ALERT_TO.split(",") if a.strip()]
+    result = await send_mail(
+        tenant_id=settings.MS_TENANT_ID,
+        client_id=settings.MS_CLIENT_ID,
+        client_secret=settings.MS_CLIENT_SECRET,
+        from_address=settings.MS_SEND_FROM,
+        to=to,
+        subject=f"⚠ PCA customer e-mail NOT sent — slot {slot} CST ({len(problems)} report(s))",
+        html_body=alert_html(slot, problems),
+    )
+    if not result.get("sent"):
+        raise SlotRunError(f"alert for slot {slot} could not be sent: {result.get('reason')}")
+    logger.error("customer status emails: slot %s NOT sent for %s — alert mailed",
+                 slot, ", ".join(p["key"] for p in problems))
+    return {"slot": slot, "alerted": [p["key"] for p in problems]}

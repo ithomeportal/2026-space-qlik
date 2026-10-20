@@ -4,6 +4,7 @@ const STYLES: Record<SlotStatus, { label: string; cls: string }> = {
   sent: { label: "Sent", cls: "bg-green-100 text-green-800 border-green-300" },
   failed: { label: "Failed", cls: "bg-red-100 text-red-800 border-red-300" },
   sending: { label: "Sending", cls: "bg-amber-100 text-amber-800 border-amber-300" },
+  skipped: { label: "Skipped · no loads", cls: "bg-slate-100 text-slate-600 border-slate-300" },
   missed: { label: "Missed", cls: "bg-red-50 text-red-700 border-red-300 border-dashed" },
   upcoming: { label: "Upcoming", cls: "bg-slate-50 text-slate-500 border-slate-200" },
   not_live: { label: "Not live yet", cls: "bg-white text-slate-400 border-slate-200" },
