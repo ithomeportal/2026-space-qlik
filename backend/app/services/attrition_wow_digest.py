@@ -31,11 +31,17 @@ the arithmetic is ported here and pinned by tests against the request's PDF
 
   (Decision 2026-10-05: week-over-week, because it reproduces the PDF exactly;
   an "any load in the 8 weeks" basis listed 21 CORP names vs the PDF's 5.)
+
+Request 2026-10-19 (Iris, after review with Erick + Andy): inactive and
+reactivated are 9-week TABLES like the below-average one, and every table ends
+in a Totals row — ``table_totals`` ports the page's Totals row so the e-mail
+and the page add up the same way.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
@@ -207,12 +213,49 @@ def below_average(rows: list[dict]) -> list[dict]:
     return sorted(out, key=lambda r: (r["diff"], r["customer"]))
 
 
-def inactive(rows: list[dict]) -> list[str]:
-    return sorted(r["customer"] for r in rows if r["prev"] > 0 and r["lw"] == 0)
+def _name_key(name: str) -> str:
+    """Sort like the page's ``localeCompare``: punctuation and spaces ignored,
+    so "PAPER, C/O … MCALLEN" precedes "PAPER MEXICO" as in the mock-up."""
+    return re.sub(r"[^0-9A-Z]", "", name.upper())
 
 
-def reactivated(rows: list[dict]) -> list[str]:
-    return sorted(r["customer"] for r in rows if r["prev"] == 0 and r["lw"] > 0)
+def inactive(rows: list[dict]) -> list[dict]:
+    """Shipped the week before LW, nothing in LW — Team, then Customer (mock-up)."""
+    out = [r for r in rows if r["prev"] > 0 and r["lw"] == 0]
+    return sorted(out, key=lambda r: (r["team"] or "", _name_key(r["customer"])))
+
+
+def reactivated(rows: list[dict]) -> list[dict]:
+    """Nothing the week before LW, shipped in LW — biggest comeback first."""
+    out = [r for r in rows if r["prev"] == 0 and r["lw"] > 0]
+    return sorted(out, key=lambda r: (-r["lw"], r["team"] or "", _name_key(r["customer"])))
+
+
+def _sum_present(values: list[float | None]) -> float | None:
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
+def table_totals(rows: list[dict]) -> dict | None:
+    """The page's Totals row (``PivotsTab.tsx``), for an additive metric.
+
+    A week sums the rows that have a value — all missing stays a dash, never 0.
+    The 8-week avg is the SUM of the row refs; Diff LW–L8W = LW total − that
+    sum; Diff LW–L2W = LW total − the week-before total.
+    """
+    if not rows:
+        return None
+    values = [_sum_present([r["values"][i] for r in rows])
+              for i in range(len(rows[0]["values"]))]
+    ref = sum(r["ref"] for r in rows)
+    lw, prev = values[0], values[1]
+    return {
+        "count": len(rows),
+        "values": values,
+        "ref": ref,
+        "diff": None if lw is None else lw - ref,
+        "diff2w": None if lw is None or prev is None else lw - prev,
+    }
 
 
 # ---------------------------------------------------------------------------

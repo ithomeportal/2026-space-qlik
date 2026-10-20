@@ -4,7 +4,9 @@ Mirrors the request PDF (2026-10-05): intro + LAST WEEK HIGHLIGHTS prose, then
 per scope (UNILINK black / CORP red / DFW navy bar) the period chips, the Lane
 and Customer Attrition cards and the metric table with the LAST WEEK block
 boxed in green; then LAST WEEK ATTRITION — customers below their 8-week average
-(CORP, DFW), inactive and reactivated customers.
+(CORP, DFW), then INACTIVE and REACTIVATED customers as 9-week tables (request
+2026-10-19, Iris's mock-up: red / green heading, last week boxed in the same
+colour). Every customer table ends in the page's Totals row.
 
 Outlook rules (SPEC-CODE-RULES §21): FONT_STACK / MONO_STACK inline on EVERY
 td / th / div / span / a, hex colours only, tables for layout, no webfonts.
@@ -17,7 +19,7 @@ from datetime import date, datetime
 from html import escape
 from typing import Optional
 
-from app.services.attrition_wow_digest import round_half_away
+from app.services.attrition_wow_digest import round_half_away, table_totals
 from app.services.team_perf_digest_html import FONT_STACK, MONO_STACK
 
 PAGE_WIDTH = 1000
@@ -36,6 +38,10 @@ LW_BOX = "#00B050"
 CELL_GOOD_BG = "#DCFCE7"
 CELL_BAD_BG = "#FEE2E2"
 LINK = "#2563EB"
+TOTALS_BG = "#F9FAFB"
+TOTALS_RULE = "#1B3A5C"  # the page's Totals row: border-t-2 border-[#1B3A5C]
+INACTIVE_RED = "#C00000"
+REACTIVATED_GREEN = "#006100"
 
 SCOPE_BAR = {"UNILINK": "#000000", "CORP": "#C00000", "DFW": "#002060"}
 DASH = "&mdash;"
@@ -289,38 +295,63 @@ def _scope_section(name: str, data: dict, windows: dict) -> str:
     )
 
 
-def _customer_table(rows: list[dict], weeks: list[date]) -> str:
+def _sign_colour(v: float | None) -> str:
+    if v is None:
+        return MUTED
+    return BAD if v < 0 else GOOD if v > 0 else INK
+
+
+def _week_cell(v: float | None, ref: float | None, *, extra: str = "",
+               bold: bool = False, bg_flat: str = "") -> str:
+    """Green when ≥ the reference, red strictly below (page ``cellShade``).
+
+    The colour is in the TEXT as well as the fill — Outlook's print drops fills.
+    """
+    if v is None or ref is None:
+        return _td(DASH if v is None else _num(v), align="right", mono=True,
+                   color=MUTED, size=11, extra=extra, bold=bold, bg=bg_flat)
+    good = v >= ref
+    return _td(_num(v), align="right", mono=True, size=11, extra=extra, bold=bold,
+               bg=CELL_GOOD_BG if good else CELL_BAD_BG, color=GOOD if good else BAD)
+
+
+def _customer_table(rows: list[dict], weeks: list[date], *,
+                    box_col: str = "diff", box: str = LW_BOX,
+                    empty: str = "No customer shipped below its 8-week average last week.") -> str:
+    """One customer table: Team · Customer · 8-week avg · the two Differences ·
+    the 9 weeks, then the Totals row.
+
+    ``box_col`` is the column outlined in ``box`` — "diff" (Difference LW – L8W,
+    the below-average table) or "lw" (the last-week column, inactive /
+    reactivated, as in the request's mock-up). Borders survive a print.
+    """
     if not rows:
-        return _p(
-            f'<span style="font-family:{FONT_STACK};color:{MUTED};">'
-            "No customer shipped below its 8-week average last week.</span>",
-            size=13,
-        )
-    hl = f"border-left:2px solid {LW_BOX};border-right:2px solid {LW_BOX};"
+        return _p(f'<span style="font-family:{FONT_STACK};color:{MUTED};">{empty}</span>',
+                  size=13)
+    side = f"border-left:2px solid {box};border-right:2px solid {box};"
+    top = f"border-top:2px solid {box};"
+    bottom = f"border-bottom:2px solid {box};"
+
+    def boxed(col: str, *, first: bool = False, last: bool = False) -> str:
+        if col != box_col:
+            return ""
+        return side + (top if first else "") + (bottom if last else "")
+
     head = (
         "<tr>"
         + _th("Team", align="left")
         + _th("Customer", align="left")
         + _th("8-week avg")
-        + _th("Difference LW &ndash; L8W", extra=hl + f"border-top:2px solid {LW_BOX};")
+        + _th("Difference LW &ndash; L8W", extra=boxed("diff", first=True))
         + _th("Difference LW &ndash; L2W")
-        + "".join(_th(_short(w)) for w in weeks)
+        + "".join(_th(_short(w), extra=boxed("lw", first=True) if i == 0 else "")
+                  for i, w in enumerate(weeks))
         + "</tr>"
     )
     body = []
-    last = len(rows) - 1
-    for i, r in enumerate(rows):
-        bot = f"border-bottom:2px solid {LW_BOX};" if i == last else ""
-        cells = []
-        for v in r["values"]:
-            if v is None:
-                cells.append(_td(DASH, align="right", mono=True, color=MUTED, size=11))
-            elif v >= r["ref"]:
-                cells.append(_td(_num(v), align="right", mono=True, size=11,
-                                 bg=CELL_GOOD_BG, color=GOOD))
-            else:
-                cells.append(_td(_num(v), align="right", mono=True, size=11,
-                                 bg=CELL_BAD_BG, color=BAD))
+    for r in rows:
+        cells = [_week_cell(v, r["ref"], extra=boxed("lw") if i == 0 else "")
+                 for i, v in enumerate(r["values"])]
         body.append(
             "<tr>"
             # Outlook ignores CSS nowrap: the attribute plus a NON-BREAKING
@@ -329,13 +360,14 @@ def _customer_table(rows: list[dict], weeks: list[date]) -> str:
                   color=MUTED, extra="white-space:nowrap;", nowrap=True)
             + _td(escape(r["customer"]), size=11, color=LINK)
             + _td(_num(r["ref"]), align="right", mono=True, bold=True, size=11)
-            + _td(_num(r["diff"]), align="right", mono=True, size=11, color=BAD,
-                  extra=hl + bot)
+            + _td(_num(r["diff"]), align="right", mono=True, size=11,
+                  color=_sign_colour(r["diff"]), extra=boxed("diff"))
             + _td(_num(r["diff2w"]), align="right", mono=True, size=11,
-                  color=BAD if (r["diff2w"] or 0) < 0 else INK)
+                  color=_sign_colour(r["diff2w"]))
             + "".join(cells)
             + "</tr>"
         )
+    body.append(_totals_row(table_totals(rows), boxed))
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;border:1px solid {BORDER};margin:4px 0 18px 0;">'
@@ -343,8 +375,38 @@ def _customer_table(rows: list[dict], weeks: list[date]) -> str:
     )
 
 
-def _name_list(names: list[str]) -> str:
-    return ", ".join(escape(n) for n in names) + "." if names else "&ndash;"
+def _totals_row(t: dict, boxed) -> str:
+    """The page's Totals row: ruled on top in navy (prints), filled light grey
+    (screen only); the differences shade against 0, the weeks against Σ ref."""
+    rule = f"border-top:2px solid {TOTALS_RULE};"
+    n = t["count"]
+
+    def diff_cell(v: float | None, extra: str = "") -> str:
+        colour = MUTED if v is None else GOOD if v >= 0 else BAD
+        return _td(_num(v), align="right", mono=True, bold=True, size=11, color=colour,
+                   bg=TOTALS_BG, extra=rule + extra)
+
+    return (
+        "<tr>"
+        + _td("Totals", size=11, bold=True, color=TOTALS_RULE, bg=TOTALS_BG, extra=rule)
+        + _td(f"{n} customer{'s' if n != 1 else ''}", size=11, bold=True,
+              color=TOTALS_RULE, bg=TOTALS_BG, extra=rule)
+        + _td(_num(t["ref"]), align="right", mono=True, bold=True, size=11,
+              color=TOTALS_RULE, bg=TOTALS_BG, extra=rule)
+        + diff_cell(t["diff"], boxed("diff", last=True))
+        + diff_cell(t["diff2w"])
+        + "".join(
+            _week_cell(v, t["ref"], bold=True, bg_flat=TOTALS_BG,
+                       extra=rule + (boxed("lw", last=True) if i == 0 else ""))
+            for i, v in enumerate(t["values"]))
+        + "</tr>"
+    )
+
+
+def _list_heading(text: str, colour: str) -> str:
+    """Coloured TEXT, never a fill — it must survive Outlook's print."""
+    return (f'<div style="font-family:{FONT_STACK};font-size:20px;font-weight:800;'
+            f'color:{colour};letter-spacing:0.3px;margin:26px 0 2px 0;">{text}</div>')
 
 
 def _attrition_section(lists: dict, weeks: list[date]) -> str:
@@ -352,20 +414,22 @@ def _attrition_section(lists: dict, weeks: list[date]) -> str:
     out = [_scope_bar_plain("LAST WEEK ATTRITION:")]
     out.append(bullet("Customers below their 8-Week average load volume:"))
     for name in ("CORP", "DFW"):
+        rows = lists[name]["below"]
         out.append(_p(f"{name}:", bold=True, margin="10px 0 6px 0"))
-        out.append(_customer_table(lists[name]["below"], weeks))
-    out.append(bullet("Inactive customers:"))
-    out.append(_p("Shipped the week before last week, but no loads last week.",
-                  size=12, margin="0 0 6px 0"))
-    for name in ("CORP", "DFW"):
-        out.append(_p(f"<b style=\"font-family:{FONT_STACK};\">{name}</b>: "
-                      f"{_name_list(lists[name]['inactive'])}", margin="0 0 6px 18px"))
-    out.append(bullet("Reactivated customers:"))
-    out.append(_p("No loads the week before last week, shipped again last week.",
-                  size=12, margin="0 0 6px 0"))
-    for name in ("CORP", "DFW"):
-        out.append(_p(f"<b style=\"font-family:{FONT_STACK};\">{name}</b>: "
-                      f"{_name_list(lists[name]['reactivated'])}", margin="0 0 6px 18px"))
+        out.append(_customer_table(rows, weeks))
+    for key, title, colour, rule, empty in (
+        ("inactive", "INACTIVE CUSTOMERS", INACTIVE_RED,
+         "Shipped the week before last week, but no loads last week.",
+         "No customer stopped shipping last week."),
+        ("reactivated", "REACTIVATED CUSTOMERS", REACTIVATED_GREEN,
+         "No loads the week before last week, shipped again last week.",
+         "No customer came back last week."),
+    ):
+        # One table, CORP rows then DFW — the Team column tells them apart.
+        rows = [r for name in ("CORP", "DFW") for r in lists[name][key]]
+        out.append(_list_heading(title, colour))
+        out.append(_p(rule, size=12, margin="0 0 6px 0"))
+        out.append(_customer_table(rows, weeks, box_col="lw", box=colour, empty=empty))
     return "".join(out)
 
 

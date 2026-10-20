@@ -39,6 +39,7 @@ from app.services.attrition_wow_digest import (
     reactivated,
     round_half_away,
     subject_for,
+    table_totals,
     week_list,
 )
 
@@ -244,22 +245,82 @@ class TestBelowAverage:
             "RXO", "RUAN TRANSPORT CORPORATION"]
 
 
-class TestInactiveReactivated:
-    def test_inactive_is_week_over_week(self):
-        assert inactive(_rows(CORP_PIVOT)) == [
-            "BALL CORPORATION", "PCA HARRISONBURG", "PCA VERNON"]
+def _names(rows):
+    return [r["customer"] for r in rows]
 
-    def test_reactivated_is_week_over_week(self):
-        assert reactivated(_rows(CORP_PIVOT)) == ["PCA BEDFORD", "WESTROCK"]
+
+class TestInactiveReactivated:
+    """Request 2026-10-19 (Iris): the two lists became TABLES — full rows, not
+    names. Inactive sorts like her mock-up (Team, then Customer); reactivated
+    sorts by last week's loads, biggest comeback first."""
+
+    def test_inactive_is_week_over_week_sorted_by_team(self):
+        assert _names(inactive(_rows(CORP_PIVOT))) == [
+            "PCA HARRISONBURG", "PCA VERNON", "BALL CORPORATION"]
+
+    def test_names_sort_like_the_page_ignoring_punctuation(self):
+        # Mock-up order (week 42): "PAPER, C/O … MCALLEN" before "PAPER MEXICO";
+        # a plain sort puts the space (0x20) before the comma (0x2C).
+        rows = _rows(
+            _pivot("TEAM3", "INTERNATIONAL PAPER MEXICO COMPANY", [None, 2])
+            + _pivot("TEAM3", "INTERNATIONAL PAPER, C/O CTSI MCALLEN", [None, 1])
+            + _pivot("TEAM3", "KRONOSPAN LA GRANDE LLC", [None, 4]))
+        assert _names(inactive(rows)) == [
+            "INTERNATIONAL PAPER, C/O CTSI MCALLEN",
+            "INTERNATIONAL PAPER MEXICO COMPANY",
+            "KRONOSPAN LA GRANDE LLC"]
+
+    def test_reactivated_is_week_over_week_biggest_comeback_first(self):
+        assert _names(reactivated(_rows(CORP_PIVOT))) == ["PCA BEDFORD", "WESTROCK"]
+
+    def test_rows_carry_the_nine_weeks_and_the_reference(self):
+        ball = inactive(_rows(CORP_PIVOT))[-1]
+        assert ball["values"][:3] == [None, 21, 15]
+        assert ball["ref"] == pytest.approx(106 / 8)
+        assert ball["diff"] is None  # no loads last week: the page prints a dash
 
     def test_long_tail_is_neither(self):
         rows = _rows(CORP_PIVOT)
-        assert "INTERNATIONAL PAPER MEXICO COMPANY" not in inactive(rows)
-        assert "INTERNATIONAL PAPER MEXICO COMPANY" not in reactivated(rows)
+        assert "INTERNATIONAL PAPER MEXICO COMPANY" not in _names(inactive(rows))
+        assert "INTERNATIONAL PAPER MEXICO COMPANY" not in _names(reactivated(rows))
 
     def test_dfw_has_none(self):
         rows = _rows(DFW_PIVOT)
         assert inactive(rows) == [] and reactivated(rows) == []
+
+
+class TestTableTotals:
+    """Port of the page's Totals row (PivotsTab.tsx, Bruno R8 / Attrition R):
+    a week sums the rows that HAVE a value (all missing → dash), the 8-week avg
+    is the SUM of the row refs, Diff LW–L8W = LW total − that sum, Diff LW–L2W
+    = LW total − the week-before total."""
+
+    def test_inactive_totals(self):
+        t = table_totals(inactive(_rows(CORP_PIVOT)))
+        # PCA VERNON's explicit 0 makes LW a real 0, not a dash.
+        assert t["values"][0] == 0
+        assert t["values"][1] == 21 + 1 + 2
+        assert t["ref"] == pytest.approx(106 / 8 + 19 / 8 + 4 / 8)
+        assert t["diff"] == pytest.approx(0 - t["ref"])
+        assert t["diff2w"] == -24
+        assert t["count"] == 3
+
+    def test_a_week_nobody_shipped_is_a_dash_not_zero(self):
+        t = table_totals(reactivated(_rows(CORP_PIVOT)))
+        assert t["values"][0] == 4
+        assert t["values"][1] is None
+        assert t["ref"] == pytest.approx(1.0)  # BEDFORD 8/8 + WESTROCK 0
+        assert t["diff"] == pytest.approx(3.0)
+        assert t["diff2w"] is None  # nobody shipped the week before
+
+    def test_below_average_totals(self):
+        t = table_totals(below_average(_rows(DFW_PIVOT)))
+        assert t["values"][0] == 11 + 90
+        assert t["diff2w"] == (11 + 90) - (16 + 89)
+        assert t["count"] == 2
+
+    def test_no_rows_no_totals(self):
+        assert table_totals([]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -339,12 +400,26 @@ class TestBuilder:
         html = digest[0]["html"]
         for needle in ("670.5", "$1,628,564", "+$112,672", "+6.92%", "-1.24pp",
                        "$322", "293.8", "-2.47%", "+4.31%", "Sep 28 &ndash; Oct 4",
-                       "Aug 3 &ndash; Sep 27", "BALL CORPORATION, PCA HARRISONBURG, PCA VERNON.", "PCA BEDFORD, WESTROCK."):
+                       "Aug 3 &ndash; Sep 27"):
             assert needle in html, needle
 
-    def test_an_empty_list_renders_an_explicit_line(self, digest):
-        assert "<b style=\"font-family:" in digest[0]["html"]
-        assert "DFW</b>: &ndash;" in digest[0]["html"]
+    def test_an_empty_list_renders_an_explicit_line(self, monkeypatch):
+        import asyncio
+
+        steady_pivot = _pivot("TEAM1", "STEADY CO", [5, 5, 5, 5, 5, 5, 5, 5, 5])
+        fake = _fake_get_many([])
+
+        async def steady(app, calls):
+            out = await fake(app, calls)
+            return [{"success": True, "data": steady_pivot} if c[0] == "/pivot" else o
+                    for c, o in zip(calls, out)]
+
+        monkeypatch.setattr(svc, "_get_many", steady)
+        monkeypatch.setattr(svc, "cst_now", lambda: datetime(2026, 10, 5, 8, 15))  # noqa: DTZ001
+        html = asyncio.run(svc.build_attrition_wow_digest(app=None))["html"]
+        assert "No customer stopped shipping last week." in html
+        assert "No customer came back last week." in html
+        assert "No customer shipped below its 8-week average last week." in html
 
     def test_mismatched_windows_refuse_to_render(self, monkeypatch):
         import asyncio
@@ -360,6 +435,65 @@ class TestBuilder:
         monkeypatch.setattr(svc, "_get_many", fake)
         with pytest.raises(svc.DigestSourceError):
             asyncio.run(svc.build_attrition_wow_digest(app=None))
+
+
+def _section(html: str, start: str, end: str) -> str:
+    return html[html.index(start):html.index(end)]
+
+
+class TestInactiveReactivatedTables:
+    """Request 2026-10-19: the name lists became 9-week tables with totals."""
+
+    def test_names_are_table_rows_not_a_comma_list(self, digest):
+        html = digest[0]["html"]
+        assert "BALL CORPORATION, PCA HARRISONBURG" not in html
+        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        for name in ("PCA HARRISONBURG", "PCA VERNON", "BALL CORPORATION"):
+            assert f">{name}</td>" in inact
+        react = _section(html, ">REACTIVATED CUSTOMERS<", "Generated ")
+        assert react.index(">PCA BEDFORD</td>") < react.index(">WESTROCK</td>")
+
+    def test_headings_are_coloured_text_not_a_fill(self, digest):
+        from app.services.attrition_wow_digest_html import (
+            INACTIVE_RED,
+            REACTIVATED_GREEN,
+        )
+
+        html = digest[0]["html"]
+        assert re.search(rf'<div style="[^"]*color:{INACTIVE_RED};[^"]*">INACTIVE CUSTOMERS</div>', html)
+        assert re.search(rf'<div style="[^"]*color:{REACTIVATED_GREEN};[^"]*">REACTIVATED CUSTOMERS</div>', html)
+
+    def test_last_week_column_is_boxed_in_the_list_colour(self, digest):
+        from app.services.attrition_wow_digest_html import (
+            INACTIVE_RED,
+            REACTIVATED_GREEN,
+        )
+
+        html = digest[0]["html"]
+        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        react = _section(html, ">REACTIVATED CUSTOMERS<", "Generated ")
+        # the Sep 28 header (= LW) carries the top of the box
+        assert re.search(rf'<th style="[^"]*border-top:2px solid {INACTIVE_RED};[^"]*">Sep 28</th>', inact)
+        assert re.search(rf'<th style="[^"]*border-top:2px solid {REACTIVATED_GREEN};[^"]*">Sep 28</th>', react)
+
+    def test_every_table_has_a_totals_row(self, digest):
+        html = digest[0]["html"]
+        # below-average CORP + DFW, inactive, reactivated
+        assert html.count(">Totals</td>") == 4
+        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        assert ">3 customers</td>" in inact
+
+    def test_inactive_totals_print_the_lost_volume(self, digest):
+        inact = _section(digest[0]["html"], ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        totals = inact[inact.index(">Totals</td>"):]
+        assert ">16</td>" in totals   # Σ 8-week avg 16.125
+        assert ">-16</td>" in totals  # LW 0 − 16.125
+        assert ">-24</td>" in totals  # LW 0 − 24 the week before
+
+    def test_totals_row_is_ruled_not_only_filled(self, digest):
+        # Outlook print drops fills: the row must still read as a totals row.
+        tag = re.search(r'<tr[^>]*>(<td[^>]*>Totals</td>)', digest[0]["html"]).group(1)
+        assert "border-top:2px solid" in tag
 
 
 class TestOutlookSafety:
