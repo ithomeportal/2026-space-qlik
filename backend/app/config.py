@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     MS_CLIENT_SECRET: str = ""
     MS_SEND_FROM: str = "ithome@unilinktransportation.com"
 
+    # Customer load-status e-mails (PCA, services/customer_status_email).
+    # ENABLED is a kill switch (default on). LIVE switches from the TEST
+    # recipients (Jaime as the customer) to the real customer lists — leave it
+    # unset until the company-domain exemption for @packagingcorp.com is
+    # decided; the mail guard refuses those addresses today.
+    CUSTOMER_STATUS_EMAIL_ENABLED: bool = True
+    CUSTOMER_STATUS_EMAIL_LIVE: bool = False
+
     # Public origin of the Next.js frontend. Used ONLY to build the "click here
     # to sign in directly" link in the login-code email, which replaces the old
     # NextAuth magic link. Defaulted to production on purpose so the login mail

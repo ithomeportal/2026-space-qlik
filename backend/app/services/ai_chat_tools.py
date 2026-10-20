@@ -74,7 +74,7 @@ SECTION_ALLOWLIST = frozenset({
     "team-variance", "team-variance-by-team", "team-variance-weekly", "team-weekly-performance",
     "teams-breakdown", "top-lanes-combo", "top5", "trend", "trend-12m", "trend-30d",
     "trend-daily", "trend-yoy", "trends", "trio-tables", "weekly", "weekly-movers",
-    "weekly-performance", "weekly-trends", "workdays", "wow-variation",
+    "weekly-performance", "weekly-trends", "workdays", "wow-variation", "activity",
 })
 # Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
 # queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid
@@ -85,6 +85,8 @@ SECTION_ALLOWLIST = frozenset({
 DENIED_SECTIONS = frozenset({
     "digest-email", "team-digest-email", "delays-email", "explain", "rows",
     "lane-rates", "detail", "top-users", "pending", "closed",
+    # customer-status-email: the rendered customer mail, and its config (addresses).
+    "{key}/preview", "reports",
 })
 # `fresh` bypasses the cockpit cache and fans out to every tile endpoint.
 DENIED_PARAMS = frozenset({"fresh"})

@@ -940,6 +940,35 @@ CUSTOM_REPORTS = [
         # leadership + Operations + both divisions (Augie serves CORP and DFW).
         "roles": ["CEO", "Executive", "Operations", "DFW", "CORP"],
     },
+    {
+        "key": "customer-status-email",  # -> /reports/customer-status-email
+        "title": "Customer E-mail Activity",
+        "description": "Which automated customer load-status e-mails went out, when, to whom and with how many loads - today's send schedule (sent / failed / missed / upcoming) and the full send history, with a live preview of each e-mail",
+        "note": (
+            "Request 2026-10-20. Reads customer_status_email_log (analytics_hub), "
+            "written by the APScheduler job customer_status_emails: the 4 PCA "
+            "e-mails (DONNA REPORT, PCA / CTC REPORT - LAREDO / EL PASO / "
+            "REYNOSA) sent from mvazquez@ at 02:00, 07:00, 12:00, 15:00 (DONNA) "
+            "or 16:00, and 22:00 CST every day. One row per report per slot, "
+            "claimed BEFORE sending so nothing goes twice; a FAILED slot is "
+            "retried at :20. 'Missed' = no row 45 minutes after the hour (the "
+            "job never ran). TEST mode: every e-mail goes to Jaime Anaya (CC "
+            "t1ops, BCC dfrodriguez) until go-live. Preview renders the e-mail "
+            "from live data without sending. Spec: "
+            "docs/SPEC-CUSTOMER-STATUS-EMAIL.md."
+        ),
+        "category": "Operations",
+        "tags": [
+            "customer", "email", "e-mail", "pca", "packaging corp", "donna",
+            "laredo", "el paso", "reynosa", "load status", "track and trace",
+            "activity", "sent", "t1",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15. "OPs people"
+        # (request 2026-10-20): Operations + CORP (the PCA lanes are T1/CORP)
+        # + leadership.
+        "roles": ["CEO", "Executive", "Operations", "CORP"],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

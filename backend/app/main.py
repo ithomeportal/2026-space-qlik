@@ -35,6 +35,7 @@ from app.routers import (
     carriers_savings,
     ceo_cockpit,
     ceo_executive,
+    customer_status_email,
     dfw_access_doors_digest,
     dfw_losses,
     division_payment,
@@ -348,6 +349,24 @@ async def _scheduled_ops_team_digest():
         logger.info(f"Scheduled ops team digest complete: {result}")
     except Exception as e:
         logger.error(f"Scheduled ops team digest failed: {e}")
+
+
+async def _scheduled_customer_status_emails():
+    """Background job: PCA customer load-status e-mails (request 2026-10-20).
+
+    Fires at every CST hour any of the 4 reports sends; ``run_slot`` sends the
+    reports due that hour, ONCE (claimed in customer_status_email_log), to the
+    TEST recipients unless CUSTOMER_STATUS_EMAIL_LIVE. It raises when any
+    report failed — logged here and re-raised so APScheduler records the
+    failure instead of a clean run (cron-job-debug §5)."""
+    from app.services.customer_status_email.sender import run_slot
+
+    try:
+        result = await run_slot(app)
+        logger.info(f"Customer status e-mails: {result}")
+    except Exception as e:
+        logger.error(f"Customer status e-mails FAILED: {e}", exc_info=True)
+        raise
 
 
 async def _scheduled_lane_rates_prewarm():
@@ -1147,6 +1166,16 @@ async def lifespan(app: FastAPI):
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"SONAR rejection cache DDL skipped: {type(e).__name__}")
 
+            # Customer load-status e-mails (PCA, 2026-10-20) — the send-once
+            # log. Own try: without it the job refuses to send (no duplicate
+            # guarantee), but nothing else in the hub may degrade.
+            try:
+                from app.services.customer_status_email.sender import LOG_DDL
+
+                await app.state.pool.execute(LOG_DDL)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"customer_status_email_log DDL failed: {type(e).__name__}: {e}")
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
@@ -1601,6 +1630,39 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Ops Portal Team digest NOT scheduled — missing env vars")
 
+    # PCA customer load-status e-mails — 5 sends/day per report at fixed CST
+    # hours (DONNA 3 PM, the others 4 PM). Needs the gold pool + MS Graph.
+    if (
+        settings.SAVINGS_DATABASE_URL
+        and settings.MS_TENANT_ID
+        and settings.MS_CLIENT_ID
+        and settings.MS_CLIENT_SECRET
+    ):
+        from app.services.customer_status_email.config import SEND_HOURS
+
+        scheduler.add_job(
+            _scheduled_customer_status_emails,
+            # :00 sends; :20 re-claims only a slot that FAILED (send-once log).
+            CronTrigger(
+                hour=",".join(str(h) for h in SEND_HOURS),
+                minute="0,20",
+                timezone="America/Chicago",
+            ),
+            id="customer_status_emails",
+            name="Send PCA customer load-status e-mails",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=900,
+        )
+        logger.info(
+            "Scheduled PCA customer status e-mails at %s:00 CST (live=%s)",
+            ",".join(str(h) for h in SEND_HOURS),
+            settings.CUSTOMER_STATUS_EMAIL_LIVE,
+        )
+    else:
+        logger.warning("PCA customer status e-mails NOT scheduled — missing env vars")
+
     # ---- scheduler roster ------------------------------------------------
     # Every job above is env-gated, and a gate that fails just skips the
     # `add_job` call. Each branch logs its own warning, but those warnings are
@@ -1626,6 +1688,7 @@ async def lifespan(app: FastAPI):
         "daily_projection_snapshot": "Team Monthly Projection history, 02:45 CST",
         "daily_dfw_bonus_roster_sync": "Bonus DFW roster from Time-off, 05:00 CST",
         "daily_dpc_cutoff_snapshot": "Division Payment month-close snapshot, 00:15 CST",
+        "customer_status_emails": "PCA customer load-status e-mails, 02/07/12/15/16/22 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
@@ -1781,6 +1844,7 @@ app.include_router(carrier_sms.router, prefix="/api")
 app.include_router(edi_load_tenders.router, prefix="/api")
 app.include_router(augie_funnel.router, prefix="/api")
 app.include_router(augie_funnel_digest.router, prefix="/api")
+app.include_router(customer_status_email.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")
