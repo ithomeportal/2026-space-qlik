@@ -20,6 +20,7 @@ from app.routers import (
     admin,
     ai_chat,
     admin_cashflow,
+    attrition_pipedrive,
     attrition_wow,
     attrition_wow_digest,
     attrition_wow_team,
@@ -380,6 +381,42 @@ async def _scheduled_customer_status_watch():
         logger.info(f"Customer status e-mail watch: {result}")
     except Exception as e:
         logger.error(f"Customer status e-mail watch FAILED: {e}", exc_info=True)
+        raise
+
+
+async def _scheduled_attrition_pipedrive():
+    """Background job, 04:00 CST: Attrition WoW → Pipedrive REACTIVATION deals
+    (29 days → KAM) and the 90-day reassignment to Sales + notice (request
+    2026-10-20). Read-only unless ATTRITION_PIPEDRIVE_LIVE. On any failure the
+    admins are alerted and the exception is re-raised (cron-job-debug §5)."""
+    from app.services.attrition_pipedrive.runner import run_daily, send_alert
+
+    if not settings.ATTRITION_PIPEDRIVE_ENABLED:
+        logger.warning("Attrition → Pipedrive skipped: ATTRITION_PIPEDRIVE_ENABLED is off")
+        return
+    try:
+        result = await run_daily(app, live=settings.ATTRITION_PIPEDRIVE_LIVE)
+        logger.info(f"Attrition → Pipedrive: {result.counts()}")
+    except Exception as e:
+        logger.error(f"Attrition → Pipedrive FAILED: {e}", exc_info=True)
+        try:
+            await send_alert("⚠ Attrition → Pipedrive run failed", f"{type(e).__name__}: {e}")
+        except Exception as alert_err:  # noqa: BLE001 — the original error is what we raise
+            logger.error(f"Attrition → Pipedrive alert not sent: {alert_err}")
+        raise
+
+
+async def _scheduled_attrition_pipedrive_watch():
+    """Background job, 05:00 CST: alert if today's 04:00 run never finished."""
+    from app.services.attrition_pipedrive.runner import watch_today
+
+    if not settings.ATTRITION_PIPEDRIVE_ENABLED:
+        return
+    try:
+        result = await watch_today(app)
+        logger.info(f"Attrition → Pipedrive watch: {result}")
+    except Exception as e:
+        logger.error(f"Attrition → Pipedrive watch FAILED: {e}", exc_info=True)
         raise
 
 
@@ -1190,6 +1227,15 @@ async def lifespan(app: FastAPI):
             except Exception as e:  # noqa: BLE001
                 logger.error(f"customer_status_email_log DDL failed: {type(e).__name__}: {e}")
 
+            # Attrition → Pipedrive (2026-10-22) — the act-once log + run log.
+            # Own try: without it the job cannot claim and acts on nobody.
+            try:
+                from app.services.attrition_pipedrive.runner import LOG_DDL as AP_LOG_DDL
+
+                await app.state.pool.execute(AP_LOG_DDL)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"attrition_pipedrive_log DDL failed: {type(e).__name__}: {e}")
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
@@ -1691,6 +1737,43 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("PCA customer status e-mails NOT scheduled — missing env vars")
 
+    # Attrition → Pipedrive reactivation deals — 04:00 CST, watched at 05:00.
+    # Needs the gold pool, the Pipedrive token and MS Graph (the 90-day notice).
+    if (
+        settings.SAVINGS_DATABASE_URL
+        and settings.PIPEDRIVE_DOMAIN
+        and settings.PIPEDRIVE_API_TOKEN
+        and settings.MS_TENANT_ID
+        and settings.MS_CLIENT_ID
+        and settings.MS_CLIENT_SECRET
+    ):
+        scheduler.add_job(
+            _scheduled_attrition_pipedrive,
+            CronTrigger(hour=4, minute=0, timezone="America/Chicago"),
+            id="daily_attrition_pipedrive",
+            name="Attrition WoW → Pipedrive reactivation deals",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=1800,
+        )
+        scheduler.add_job(
+            _scheduled_attrition_pipedrive_watch,
+            CronTrigger(hour=5, minute=0, timezone="America/Chicago"),
+            id="daily_attrition_pipedrive_watch",
+            name="Alert when the Attrition → Pipedrive run did not finish",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=1800,
+        )
+        logger.info(
+            "Scheduled Attrition → Pipedrive at 04:00 CST (live=%s, enabled=%s)",
+            settings.ATTRITION_PIPEDRIVE_LIVE, settings.ATTRITION_PIPEDRIVE_ENABLED,
+        )
+    else:
+        logger.warning("Attrition → Pipedrive NOT scheduled — missing env vars")
+
     # ---- scheduler roster ------------------------------------------------
     # Every job above is env-gated, and a gate that fails just skips the
     # `add_job` call. Each branch logs its own warning, but those warnings are
@@ -1718,6 +1801,8 @@ async def lifespan(app: FastAPI):
         "daily_dpc_cutoff_snapshot": "Division Payment month-close snapshot, 00:15 CST",
         "customer_status_emails": "PCA customer load-status e-mails, 02/07/12/15/16/22 CST",
         "customer_status_email_watch": "PCA e-mail not-sent alert, :45 of each send hour",
+        "daily_attrition_pipedrive": "Attrition → Pipedrive reactivation deals, 04:00 CST",
+        "daily_attrition_pipedrive_watch": "Attrition → Pipedrive did-not-run alert, 05:00 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
@@ -1874,6 +1959,7 @@ app.include_router(edi_load_tenders.router, prefix="/api")
 app.include_router(augie_funnel.router, prefix="/api")
 app.include_router(augie_funnel_digest.router, prefix="/api")
 app.include_router(customer_status_email.router, prefix="/api")
+app.include_router(attrition_pipedrive.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
 app.include_router(kam_performance_dfw.router, prefix="/api")

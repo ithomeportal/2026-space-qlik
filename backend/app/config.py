@@ -116,6 +116,17 @@ class Settings(BaseSettings):
     # the holder self-assert any identity on every endpoint.
     TEAMS_BOT_ASSERTION_SECRET: str = ""
 
+    # --- Attrition → Pipedrive (services/attrition_pipedrive, request 2026-10-20) ---
+    # Daily 04:00 CST: a customer 29 days without a load gets a REACTIVATION deal
+    # owned by its team's KAM; at 90 days the deal moves to Sales and a notice is
+    # mailed. Unset token/domain = the job is not scheduled. ENABLED is the kill
+    # switch; LIVE=false runs the whole plan read-only (no writes, no mail).
+    PIPEDRIVE_DOMAIN: str = ""
+    PIPEDRIVE_API_TOKEN: str = ""
+    ATTRITION_PIPEDRIVE_ENABLED: bool = True
+    ATTRITION_PIPEDRIVE_LIVE: bool = False
+    ATTRITION_PIPEDRIVE_ALERT_TO: str = "dfrodriguez@unilinktransportation.com"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
