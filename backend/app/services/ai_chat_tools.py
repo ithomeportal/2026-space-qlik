@@ -1,7 +1,7 @@
 """AI chat tools — read-only, executed IN-PROCESS as the asking user.
 
 Design (docs/SPEC-AI-CHAT.md, contract SPEC-CONTRACTS.md §3): the model never
-touches SQL. It may only call four tools, and every report read is an
+touches SQL. It may only call five tools, and every report read is an
 in-process GET to the report's OWN endpoint (httpx ASGITransport, the CEO
 Cockpit technique §31) carrying the asking user's identity exactly as the
 Vercel proxy would. So each report's `require_report_access` decides, numbers
@@ -40,6 +40,7 @@ from fastapi.routing import APIRoute
 
 from app.clock import CST, cst_today
 from app.config import settings
+from app.services import ai_chat_daily_brief as daily_brief
 from app.services.seed import CUSTOM_REPORTS
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,19 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["report_key", "section"],
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "daily_brief",
+        "description": (
+            "Today's snapshot of every CORP team (TEAM1-TEAM4) this user can open, computed by "
+            "the portal: MTD volume/revenue/profit/margin, avg_prof_day (AVG per day), "
+            "projection, % of budget, today's profit, today's cover forecast, today's profit "
+            "with forecast and its gap to avg_prof_day, budget variances, top 5 customer "
+            "losses, pickup/delivery on-time %, and per-source freshness. Use it for 'how is "
+            "the day looking', and for any question about today's profit (with forecast) or "
+            "AVG per day of a team."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]
 TOOL_NAMES = tuple(t["name"] for t in TOOL_DEFINITIONS)
@@ -474,9 +488,8 @@ def oldest_timestamp(data: Any) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def truncate(text: str) -> str:
-    """Cap at TOOL_RESULT_MAX_CHARS and SAY so — the model must know the list is partial."""
-    limit = TOOL_RESULT_MAX_CHARS
+def truncate(text: str, limit: int = TOOL_RESULT_MAX_CHARS) -> str:
+    """Cap at ``limit`` and SAY so — the model must know the list is partial."""
     if len(text) <= limit:
         return text
     total = len(text)
@@ -485,8 +498,8 @@ def truncate(text: str) -> str:
     return text[:kept] + f"…[truncated: showing the first {kept} chars of {total}]"
 
 
-def _dump(value: Any) -> str:
-    return truncate(json.dumps(value, default=str, separators=(",", ":"), ensure_ascii=False))
+def _dump(value: Any, limit: int = TOOL_RESULT_MAX_CHARS) -> str:
+    return truncate(json.dumps(value, default=str, separators=(",", ":"), ensure_ascii=False), limit)
 
 
 def _forward_headers(identity: dict) -> dict[str, str]:
@@ -536,6 +549,8 @@ class ToolSession:
                 return await self._list_reports()
             if name == "ceo_cockpit_summary":
                 return await self._cockpit()
+            if name == "daily_brief":
+                return await self._daily_brief()
             args = tool_input if isinstance(tool_input, dict) else {}
             if name == "list_report_sections":
                 return await self._sections(args.get("report_key"))
@@ -614,6 +629,19 @@ class ToolSession:
         previous = self.freshness.get(COCKPIT_KEY)
         self.freshness[COCKPIT_KEY] = oldest_of([tile_age, previous]) if previous else tile_age
         return ToolOutcome(_dump({"generated_at": data.get("generated_at"), "tiles": tiles}))
+
+    async def _daily_brief(self) -> ToolOutcome:
+        """Per-team snapshot (services/ai_chat_daily_brief.py). Its own, larger cap:
+        four teams do not fit the generic 6000 chars."""
+        accessible = await self._accessible_reports()
+        results = await daily_brief.collect(self._get, accessible)
+        for result in results:
+            for key, fresh in result.used.items():
+                self._mark_used(key, accessible[key]["title"])
+                stamp = oldest_timestamp(fresh) if fresh is not None else None
+                previous = self.freshness.get(key)
+                self.freshness[key] = oldest_of([stamp, previous]) if previous else stamp
+        return ToolOutcome(_dump(daily_brief.payload_of(results), daily_brief.DAILY_BRIEF_MAX_CHARS))
 
     async def _sections(self, report_key: Any) -> ToolOutcome:
         rows = readable_sections(report_key, catalog_keys=CATALOG_KEYS, get_paths=get_route_table(self.app))

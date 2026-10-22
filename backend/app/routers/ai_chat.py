@@ -1,5 +1,7 @@
 """AI chat — POST /api/custom/ai-chat/ask (contract SPEC-CONTRACTS.md §3).
 
+Optional ``"mode": "daily_brief"`` (contract §5) adds the daily-brief prompt block.
+
 Called by the teams-chat-ai Teams bot with `X-Bot-Assertion` (or, unchanged, by
 the portal proxy). Answers a question by letting Claude call three read-only
 tools that execute IN-PROCESS as the asking user (`app.services.ai_chat_tools`),
@@ -44,6 +46,9 @@ class HistoryItem(BaseModel):
 class AskRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     history: list[HistoryItem] = Field(default_factory=list, max_length=10)
+    # Contract §5: the bot sends "daily_brief" for "How is the day looking?". Anything
+    # else (other strings, wrong case, numbers) is a 422; null/absent = a normal question.
+    mode: Literal["daily_brief"] | None = None
 
 
 class ReportUsed(BaseModel):
@@ -78,6 +83,7 @@ async def ask(
                     message=body.message,
                     history=[h.model_dump() for h in body.history],
                     session=session,
+                    mode=body.mode,
                 ),
                 timeout=AI_CHAT_TIMEOUT_SECONDS,
             )

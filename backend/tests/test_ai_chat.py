@@ -319,7 +319,7 @@ def test_response_shape_matches_contract(client, monkeypatch):
     datetime.fromisoformat(body["generated_at"])
 
 
-def test_model_request_is_built_from_settings_and_the_three_tools(client, monkeypatch):
+def test_model_request_is_built_from_settings_and_the_five_tools(client, monkeypatch):
     script = _Script(_resp(_text("ok")))
     monkeypatch.setattr(ai_chat_agent, "create_message", script)
     _ask(client, history=[{"role": "user", "content": "earlier q"},
@@ -328,6 +328,7 @@ def test_model_request_is_built_from_settings_and_the_three_tools(client, monkey
     assert call["model"] == "claude-sonnet-5-5"
     assert [t["name"] for t in call["tools"]] == [
         "list_reports", "ceo_cockpit_summary", "list_report_sections", "get_report_section",
+        "daily_brief",
     ]
     system = call["system"] if isinstance(call["system"], str) else json.dumps(call["system"])
     assert "never invent" in system.lower()
