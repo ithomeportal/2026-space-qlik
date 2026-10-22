@@ -317,3 +317,39 @@ def payload_of(results: list[TeamResult]) -> dict[str, Any]:
         "teams_not_shown": [{"team": r.team, "reason": r.reason}
                             for r in results if r.snapshot is None],
     }
+
+
+def scoreboard_of(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The Teams card's at-a-glance table: a PROJECTION of the snapshot, never a new number.
+
+    One row per team with numbers; teams that failed and teams the user cannot open are
+    listed by name only (contract §5).
+    """
+    rows, unavailable = [], []
+    for snap in payload.get("teams") or []:
+        if "error" in snap:
+            unavailable.append(snap.get("team"))
+            continue
+        mtd = snap.get("mtd") or {}
+        service = snap.get("service") if isinstance(snap.get("service"), dict) else {}
+        rows.append({
+            "team": snap.get("team"),
+            "today_profit_with_forecast": snap.get("today_profit_with_forecast"),
+            "avg_prof_day": snap.get("avg_prof_day"),
+            "gap_vs_avg_day": snap.get("gap_vs_avg_day"),
+            "gap_pct": snap.get("gap_pct"),
+            "pct_of_budget": snap.get("pct_of_budget"),
+            "proj_profit": snap.get("proj_profit"),
+            "proj_margin_pct": snap.get("proj_margin_pct"),
+            "loss_loads": mtd.get("loss_loads"),
+            "profit_loss": mtd.get("profit_loss"),
+            "pickup_on_time_pct": ((service or {}).get("pickup") or {}).get("on_time_pct"),
+            "delivery_on_time_pct": ((service or {}).get("delivery") or {}).get("on_time_pct"),
+        })
+    return {
+        "today": payload.get("today"),
+        "teams": rows,
+        "unavailable": unavailable,
+        "not_shown": [t.get("team") for t in payload.get("teams_not_shown") or []],
+    }
+

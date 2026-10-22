@@ -534,6 +534,8 @@ class ToolSession:
     tools_used: list[str] = field(default_factory=list)
     reports_used: dict[str, dict] = field(default_factory=dict)
     freshness: dict[str, str | None] = field(default_factory=dict)
+    # The last daily_brief payload, so the route can return its scoreboard (contract §5).
+    brief: dict | None = None
     _accessible: dict[str, dict] | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -641,7 +643,9 @@ class ToolSession:
                 stamp = oldest_timestamp(fresh) if fresh is not None else None
                 previous = self.freshness.get(key)
                 self.freshness[key] = oldest_of([stamp, previous]) if previous else stamp
-        return ToolOutcome(_dump(daily_brief.payload_of(results), daily_brief.DAILY_BRIEF_MAX_CHARS))
+        payload = daily_brief.payload_of(results)
+        self.brief = payload
+        return ToolOutcome(_dump(payload, daily_brief.DAILY_BRIEF_MAX_CHARS))
 
     async def _sections(self, report_key: Any) -> ToolOutcome:
         rows = readable_sections(report_key, catalog_keys=CATALOG_KEYS, get_paths=get_route_table(self.app))

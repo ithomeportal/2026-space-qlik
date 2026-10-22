@@ -27,6 +27,7 @@ from app.config import settings
 from app.routers.bot_identity import require_ai_chat_user
 from app.routers.deps import get_pool
 from app.services import ai_chat_agent
+from app.services import ai_chat_daily_brief as daily_brief
 from app.services.ai_chat_tools import ToolSession, open_inprocess_client
 
 router = APIRouter(prefix="/custom/ai-chat", tags=["ai-chat"])
@@ -63,6 +64,8 @@ class AskResponse(BaseModel):
     reports_used: list[ReportUsed]
     tools_used: list[str]
     generated_at: str
+    # daily_brief only: the per-team scoreboard for the Teams card (null otherwise).
+    brief: dict | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -100,4 +103,5 @@ async def ask(
         reports_used=[ReportUsed(**r) for r in session.reports_used.values()],
         tools_used=list(session.tools_used),
         generated_at=cst_now().isoformat(),
+        brief=daily_brief.scoreboard_of(session.brief) if session.brief else None,
     )

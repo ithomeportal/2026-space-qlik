@@ -312,7 +312,8 @@ def test_response_shape_matches_contract(client, monkeypatch):
     resp = _ask(client)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"answer", "data_as_of", "reports_used", "tools_used", "generated_at"}
+    assert set(body) == {"answer", "data_as_of", "reports_used", "tools_used", "generated_at", "brief"}
+    assert body["brief"] is None  # only a daily_brief run carries the scoreboard (contract §5)
     assert body["answer"] == "**Hello**"
     assert body["data_as_of"] is None
     assert body["reports_used"] == [] and body["tools_used"] == []

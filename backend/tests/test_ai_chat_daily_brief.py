@@ -429,3 +429,45 @@ def test_daily_brief_params_are_declared_by_the_live_routes():
     routes = ai_chat_tools.get_route_table(app)
     for path, params in ai_chat_daily_brief.declared_params(1):
         assert set(params) <= set(routes[path].params), path
+
+
+# ---------------------------------------------------------------- scoreboard (bot card)
+
+
+def test_response_carries_the_scoreboard_copied_from_the_snapshot():
+    result, body, _ = _brief(_identity("Executive"), mode="daily_brief")
+    board = body["brief"]
+    snapshot = {t["team"]: t for t in json.loads(result["content"])["teams"]}
+    assert [r["team"] for r in board["teams"]] == ["TEAM1", "TEAM2", "TEAM3", "TEAM4"]
+    for row in board["teams"]:
+        snap = snapshot[row["team"]]
+        # Every number is the snapshot's own — the card never computes.
+        for key in ("today_profit_with_forecast", "avg_prof_day", "gap_vs_avg_day", "gap_pct",
+                    "pct_of_budget", "proj_profit", "proj_margin_pct"):
+            assert row[key] == snap[key], (row["team"], key)
+        assert row["loss_loads"] == snap["mtd"]["loss_loads"]
+        assert row["profit_loss"] == snap["mtd"]["profit_loss"]
+    assert board["not_shown"] == [] and board["unavailable"] == []
+
+
+def test_scoreboard_respects_access_and_failures():
+    _result, body, _ = _brief(_identity("CORP-T3"))
+    assert [r["team"] for r in body["brief"]["teams"]] == ["TEAM3"]
+    assert body["brief"]["not_shown"] == ["TEAM1", "TEAM2", "TEAM4"]
+    _result, body, _ = _brief(_identity("Executive"), broken_team=2)
+    assert "TEAM2" in body["brief"]["unavailable"]
+    assert "TEAM2" not in [r["team"] for r in body["brief"]["teams"]]
+
+
+def test_no_scoreboard_when_the_brief_tool_did_not_run(monkeypatch):
+    monkeypatch.setattr(ai_chat_agent, "create_message", _Script(_resp(_text("x"))))
+    client = TestClient(_build_app([]))
+    resp = client.post("/api/custom/ai-chat/ask", json={"message": "hi"}, headers=_auth(_identity("Executive")))
+    assert resp.json()["brief"] is None
+
+
+def test_brief_prompt_puts_summary_first_and_bans_raw_field_names():
+    p = ai_chat_agent.DAILY_BRIEF_PROMPT
+    assert p.index("**Summary**") < p.index("### TEAMn")
+    assert "snake_case" in p and "$" in p
+    assert "Do not write a data-freshness line" in p

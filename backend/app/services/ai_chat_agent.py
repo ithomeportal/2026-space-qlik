@@ -103,19 +103,24 @@ projection; it returns only the teams this user can open."""
 
 DAILY_BRIEF_PROMPT = """Daily brief mode — the user asked how the day is looking.
 - Call the daily_brief tool FIRST, once. Do not call other tools unless daily_brief failed.
-- Write one section per team in the result, in team order, headed "### TEAMn". In each: a \
-one-line headline; then the top alarming / needs-improvement indicators as bullets (e.g. \
-today with forecast below AVG per day, % of budget, budget variances, projection, margin, \
-top customer losses, pickup / delivery on-time % and late loads), each quoting the numbers \
-exactly as the snapshot gives them; then one line "Today with forecast vs AVG per day" \
-quoting today_profit_with_forecast, avg_prof_day, gap_vs_avg_day and gap_pct.
+- Start with a section headed "**Summary**": the critical / urgent items across all teams, \
+most severe first, max 5 numbered lines, each naming its team and quoting the number.
+- Then one section per team in the result, in team order, headed "### TEAMn — <one-line \
+headline>". Under it at most 5 bullets: the alarming / needs-improvement indicators (today \
+with forecast vs AVG per day, % of budget, budget variances, projection, margin, top customer \
+losses, pickup / delivery on-time % and late loads), each quoting the snapshot's numbers. The \
+Teams card already shows a scoreboard (today with forecast, AVG per day, gap, % of budget, \
+projection, on-time %), so the bullets explain WHY — do not just repeat the scoreboard.
 - A team with "error": "unavailable" gets one line saying its data is unavailable right now. \
 A team in teams_not_shown gets one line saying the user has no access to it. Never guess \
 its numbers.
-- End with a section headed "**Summary**" across all teams: rank the critical / urgent items \
-first (most severe first), each with its team and the quoted number.
+- Formatting: money as $ with thousands separators and no cents ($1,731, -$6,061); \
+percentages with one decimal (42.4%). Use plain words — never write raw field names or \
+snake_case keys (say "projected profit", not proj_profit).
+- Do not write a data-freshness line: the card footer already shows when the data was last \
+updated. Only if a source is stale, add one line naming it.
 - Quote numbers; never compute new ones (no sums, averages, differences or percentages that \
-are not in the snapshot). Mention data freshness if any source is stale."""
+are not in the snapshot)."""
 
 
 class ModelCallError(Exception):
