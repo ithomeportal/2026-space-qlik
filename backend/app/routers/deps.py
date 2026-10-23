@@ -141,6 +141,21 @@ def require_tag_role(*allowed: str):
 # updates take effect within ~60s without a redeploy.
 # ---------------------------------------------------------------------------
 
+# Roles that READ every report regardless of `role_report_access` (owner decision
+# 2026-10-23: company policy gives the CEO unlimited read access to all reports).
+# ⚠ READ only. `require_admin` (admin/settings/write endpoints) and the deprecated
+# `require_tag_role` deliberately do NOT use this — the CEO is not an admin.
+# Matched case-insensitively (the TagRole is Title-Case `CEO`, `admin` is lowercase).
+READ_ALL_REPORT_ROLES: frozenset[str] = frozenset({"admin", "ceo"})
+
+
+def can_read_all_reports(roles) -> bool:
+    """True when ``roles`` holds a read-all role (admin or CEO). The ONE rule every
+    report-access decision uses: the guards, ReportGuard's /reports/access, the Home
+    list, the AI chat catalog and the CEO Cockpit's re-gated tiles."""
+    return any(str(r).strip().lower() in READ_ALL_REPORT_ROLES for r in (roles or []))
+
+
 # In-process TTL cache keyed by report_key. Avoids hitting the DB on every
 # protected request while still honouring admin-UI updates promptly. The cache
 # is invalidated explicitly from admin mutations (see ``invalidate_report_access_cache``).
@@ -183,7 +198,7 @@ async def get_allowed_roles_for_report(pool, report_key: str) -> frozenset[str]:
 
 
 async def user_has_report_access(request: Request, user: dict, report_key: str) -> bool:
-    """True when ``user`` holds a TagRole granting ``report_key``. Admin always True.
+    """True when ``user`` holds a TagRole granting ``report_key``. Admin / CEO always True.
 
     Read-only companion to ``require_report_access`` for endpoints shared by two
     reports that must behave *differently* depending on which grant let the
@@ -192,7 +207,7 @@ async def user_has_report_access(request: Request, user: dict, report_key: str) 
     60s-TTL ``_ACCESS_CACHE``, so calling it per request is cheap.
     """
     roles = {r.lower() for r in user.get("roles", [])}
-    if "admin" in roles:
+    if can_read_all_reports(roles):
         return True
     allowed = await get_allowed_roles_for_report(get_pool(request), report_key)
     return bool(roles & allowed)
@@ -201,7 +216,8 @@ async def user_has_report_access(request: Request, user: dict, report_key: str) 
 def require_report_access(*report_keys: str):
     """Factory: gate a custom-report endpoint by its DB role assignments.
 
-    Admin always bypasses. Allowed roles come from ``role_report_access`` for the
+    Admin and CEO always bypass (``can_read_all_reports``). Allowed roles come
+    from ``role_report_access`` for the
     matching ``reports.custom_path`` row, refreshed on a 60s TTL (or sooner via
     ``invalidate_report_access_cache``).
 
@@ -219,7 +235,7 @@ def require_report_access(*report_keys: str):
         user: dict = Depends(require_user),
     ) -> dict:
         roles = {r.lower() for r in user.get("roles", [])}
-        if "admin" in roles:
+        if can_read_all_reports(roles):
             return user
         pool = get_pool(request)
         for key in report_keys:

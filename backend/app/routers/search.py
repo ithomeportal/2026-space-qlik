@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.routers.deps import get_pool, require_user, user_uuid
+from app.routers.reports import report_gate_sql
 
 router = APIRouter(tags=["search"])
 
@@ -21,15 +22,13 @@ async def search_reports(
 
     # Search reports by title, description, note, tags
     report_rows = await pool.fetch(
-        """
+        f"""
         SELECT DISTINCT r.id, r.qlik_app_id, r.qlik_sheet_id, r.title,
                r.description, r.note, r.category, r.tags, r.owner_name,
                r.data_sources, r.last_reload,
                'report' AS result_type
         FROM reports r
-        JOIN role_report_access rra ON rra.report_id = r.id
-        JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1
-        WHERE r.is_active = TRUE
+        WHERE r.is_active = TRUE{report_gate_sql(user)}
           AND (r.title ILIKE $2
                OR r.description ILIKE $2
                OR r.note ILIKE $2

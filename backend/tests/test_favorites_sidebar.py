@@ -64,11 +64,24 @@ def _sql_of(func) -> str:
 # Every line that makes `GET /reports` access-controlled. Copied from nothing —
 # `test_gate_lines_are_actually_in_list_reports` proves each one is really there,
 # so a refactor of `list_reports` cannot leave this list asserting a fiction.
+# Since 2026-10-23 the TagRole join lives in ONE place, `reports.report_gate_sql`
+# (the role EXISTS, or the read-all form for admin / CEO), and every catalog
+# statement interpolates it right after `is_active`.
 _GATE_LINES = (
-    "JOIN role_report_access rra ON rra.report_id = r.id",
-    "JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1",
-    "WHERE r.is_active = TRUE",
+    "WHERE r.is_active = TRUE{report_gate_sql(user)}",
 )
+
+# What the shared gate itself must contain for a non-read-all user.
+_ROLE_GATE_LINES = (
+    "FROM role_report_access rra",
+    "JOIN user_roles ur ON ur.role_id = rra.role_id AND ur.user_id = $1",
+    "WHERE rra.report_id = r.id",
+)
+
+
+@pytest.mark.parametrize("line", _ROLE_GATE_LINES)
+def test_shared_gate_is_the_tagrole_join(line: str) -> None:
+    assert line in reports_mod.report_gate_sql({"roles": ["Operations"]})
 
 
 @pytest.mark.parametrize("line", _GATE_LINES)
@@ -85,11 +98,12 @@ def test_favorites_reuses_the_home_access_gate(line: str) -> None:
     )
 
 
-def test_favorites_has_no_admin_bypass() -> None:
-    """`GET /reports` has none either — the rail is a shortcut to what you can
-    already see, not a second door."""
+def test_favorites_has_no_role_name_escape_hatch_of_its_own() -> None:
+    """The only bypass is Home's own (`report_gate_sql`, admin / CEO read all) —
+    the rail is a shortcut to what you can already see on Home, not a second door."""
     src = _sql_of(reports_mod.list_user_favorites)
-    assert "admin" not in src.split('"""')[2], "no role-name escape hatch in the query"
+    assert "admin" not in src and "ceo" not in src.lower(), "no role-name escape hatch"
+    assert "{report_gate_sql(user)}" in src
 
 
 def test_favorites_reads_the_users_own_pins() -> None:

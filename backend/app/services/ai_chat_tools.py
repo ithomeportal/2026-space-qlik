@@ -40,6 +40,7 @@ from fastapi.routing import APIRoute
 
 from app.clock import CST, cst_today
 from app.config import settings
+from app.routers.deps import can_read_all_reports
 from app.services import ai_chat_daily_brief as daily_brief
 from app.services.seed import CUSTOM_REPORTS
 
@@ -211,12 +212,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "daily_brief",
         "description": (
             "Today's snapshot of every CORP team (TEAM1-TEAM4) this user can open, computed by "
-            "the portal: MTD volume/revenue/profit/margin, avg_prof_day (AVG per day), "
-            "projection, % of budget, today's profit, today's cover forecast, today's profit "
-            "with forecast and its gap to avg_prof_day, budget variances, top 5 customer "
-            "losses, pickup/delivery on-time %, and per-source freshness. Use it for 'how is "
-            "the day looking', and for any question about today's profit (with forecast) or "
-            "AVG per day of a team."
+            "the portal: MTD volume/revenue/operational gross profit/margin, avg_prof_day (AVG "
+            "per day), projection, % of budget, today's profit, today's cover forecast, today's "
+            "profit with forecast and its gap to avg_prof_day, budget variances, top 5 customer "
+            "losses, pickup/delivery on-time %, and per-source freshness. For users who can "
+            "open the division reports it also returns `divisions`: CORP (all CORP teams), DFW "
+            "and TOTAL (CORP + DFW, summed by the portal) with the same fields; DFW has no "
+            "budget, so its % of budget is null. Use it for 'how is the day looking', and for "
+            "any question about today's profit (with forecast) or AVG per day of a team or "
+            "division."
         ),
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
@@ -570,17 +574,18 @@ class ToolSession:
     # ---- access -----------------------------------------------------------
 
     async def _accessible_reports(self) -> dict[str, dict]:
-        """key → {title, description} for reports this user may open (admin bypasses)."""
+        """key → {title, description} for reports this user may open (admin / CEO read
+        all — ``can_read_all_reports``, the same rule as ``require_report_access``)."""
         async with self._lock:
             if self._accessible is None:
                 roles = {str(r).lower() for r in (self.identity.get("roles") or [])}
-                is_admin = "admin" in roles
+                read_all = can_read_all_reports(roles)
                 rows = await self.pool.fetch(ACCESSIBLE_REPORTS_SQL)
                 accessible: dict[str, dict] = {}
                 for row in rows:
                     key = (row["custom_path"] or "").replace("/reports/", "", 1)
                     granted = {str(r).lower() for r in (row["roles"] or [])}
-                    if key and (is_admin or roles & granted):
+                    if key and (read_all or roles & granted):
                         accessible[key] = {"title": row["title"], "description": row["description"]}
                 self._accessible = accessible
             return self._accessible

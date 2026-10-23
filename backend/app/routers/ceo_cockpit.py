@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.clock import cst_now, cst_today
 from app.config import settings
 from app.routers.deps import (
+    can_read_all_reports,
     get_allowed_roles_for_report,
     get_pool,
     require_report_access,
@@ -665,7 +666,7 @@ async def summary(
     # Sales holder, who would otherwise read "Pickup On-Time % (MTD)" as the
     # whole company. Re-gate those tiles on GENUINE access, restoring exactly the
     # locked tile they saw before the widening.
-    if "admin" not in roles:
+    if not can_read_all_reports(roles):
         pool = get_pool(request)
         for _tile_key in _BORROWED_ENDPOINT_TILES:
             allowed = await get_allowed_roles_for_report(pool, _tile_key)
@@ -681,10 +682,11 @@ async def summary(
     # user regardless of report access. That advertised sensitive reports (e.g.
     # Bonus Calculator: CEO + HR Manager + OPs Manager only) and a working
     # deep-link to unauthorized cockpit users. Gate each link-tile by the
-    # caller's actual access: admin bypasses; everyone else must share a granting
-    # TagRole (same rule as require_report_access). The cache is keyed by role
-    # set, so per-role filtering is cache-safe.
-    if "admin" in roles:
+    # caller's actual access: admin / CEO read all (`can_read_all_reports`);
+    # everyone else must share a granting TagRole (same rule as
+    # require_report_access). The cache is keyed by role set, so per-role
+    # filtering is cache-safe.
+    if can_read_all_reports(roles):
         visible_links = list(LINK_TILES)
     else:
         pool = get_pool(request)
