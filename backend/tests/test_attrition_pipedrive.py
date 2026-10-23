@@ -201,14 +201,16 @@ def test_find_org_verifies_the_mcleod_code_then_falls_back_to_exact_name():
               # the search hit's McLeod field is a DIFFERENT code → not a match
               ("GET", "v2/organizations/7"): {"id": 7, "custom_fields": {"omc": "WESTROCX"}}}
     client = pipedrive.PipedriveClient("acme", "t", _pd_app(routes, []))
-    assert asyncio.run(client.find_org(PLACEMENT, "WESTROCK CORONA", ("WESTROCA",))) == 3
+    m = asyncio.run(client.find_org(PLACEMENT, "WESTROCK CORONA", ("WESTROCA",)))
+    assert (m.org_id, m.how) == (3, "name")
 
 
 def test_find_org_by_mcleod_code():
     routes = {("GET", "v2/organizations/search"): {"items": [{"item": {"id": 5103}}]},
               ("GET", "v2/organizations/5103"): {"id": 5103, "custom_fields": {"omc": "westroca"}}}
     client = pipedrive.PipedriveClient("acme", "t", _pd_app(routes, []))
-    assert asyncio.run(client.find_org(PLACEMENT, "anything", ("WESTROCA",))) == 5103
+    m = asyncio.run(client.find_org(PLACEMENT, "anything", ("WESTROCA",)))
+    assert (m.org_id, m.how, m.mcleod_on_org) == (5103, "mcleod", "westroca")
 
 
 def test_create_deal_sends_pipeline_stage_owner_and_fields():
@@ -244,7 +246,7 @@ class _Hub:
         if sql == runner.CLAIM_SQL:
             key = a[:4]
             row = self.rows.get(key)
-            if row and row["status"] != "failed":
+            if row and row["status"] not in ("failed", "held"):
                 return None
             self.rows[key] = {"team": a[0], "customer": a[1], "last_load_date": a[2],
                               "action": a[3], "status": "running", "deal_id": None,
@@ -307,6 +309,7 @@ class _FakePd:
         self.fail_on = set(fail_on)
         self.write_error = write_error  # {"deal"|"owner": PipedriveError} raised AFTER/BEFORE the write
         self.searches = 0
+        self.matches: dict = {}  # customer → OrgMatch override (similar / ambiguous)
         self._next = 1000
 
     async def resolve(self):
@@ -319,7 +322,13 @@ class _FakePd:
         if customer in self.fail_on:
             raise pipedrive.PipedriveError("boom", 500)
         self.searches += 1
-        return self.orgs.get(customer)
+        if customer in self.matches:
+            return self.matches[customer]
+        org = self.orgs.get(customer)
+        return pipedrive.OrgMatch(org, "name" if org else "none")
+
+    async def set_org_mcleod(self, p, org_id, code):
+        self.writes.append(("mcleod", org_id, code))
 
     async def create_org(self, p, name, owner_id, mcleod_id):
         self._next += 1
@@ -499,7 +508,8 @@ def test_nothing_due_never_calls_pipedrive(env, monkeypatch):
 
 
 def test_claim_sql_retakes_only_failed_rows():
-    assert "WHERE l.status = 'failed'" in runner.CLAIM_SQL
+    assert "WHERE l.status IN ('failed', 'held')" in runner.CLAIM_SQL
+    assert "'running'" not in runner.CLAIM_SQL.split("WHERE", 1)[1]  # a stuck row is never retaken
     assert "status = 'mail_failed'" in runner.CLAIM_MAIL_SQL
 
 
@@ -661,3 +671,125 @@ def test_the_token_travels_in_a_header_never_the_url():
     asyncio.run(client._request("GET", "v1", "pipelines"))
     assert seen == [("https://acme.pipedrive.com/api/v1/pipelines", "SECRET-TOKEN")]
     assert not calls
+
+
+def test_a_429_is_retried_after_retry_after_then_succeeds(monkeypatch):
+    waits: list = []
+
+    async def no_sleep(sec):
+        waits.append(sec)
+
+    monkeypatch.setattr(pipedrive.asyncio, "sleep", no_sleep)
+    hits = {"n": 0}
+
+    def handler(request):
+        hits["n"] += 1
+        if hits["n"] <= 2:
+            return httpx.Response(429, headers={"retry-after": "3"}, json={"success": False})
+        return httpx.Response(200, json={"success": True, "data": {"items": []}})
+
+    client = pipedrive.PipedriveClient("acme", "t", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert asyncio.run(client.find_org(PLACEMENT, "X", ())).how == "none"
+    assert waits == [3.0, 3.0] and hits["n"] == 3
+
+
+def test_a_persistent_429_surfaces_as_a_failure_after_bounded_retries(monkeypatch):
+    async def no_sleep(sec):
+        pass
+
+    monkeypatch.setattr(pipedrive.asyncio, "sleep", no_sleep)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(429, json={"success": False})
+
+    client = pipedrive.PipedriveClient("acme", "t", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(pipedrive.PipedriveError) as exc:
+        asyncio.run(client.find_org(PLACEMENT, "X", ()))
+    assert exc.value.status == 429 and calls["n"] == pipedrive.RATE_LIMIT_RETRIES + 1
+
+
+# ---------------------------------------------------------------------------
+# similar organizations (operator rule 2026-10-22: attach to ONE similar, hold on several)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("a,b,similar", [
+    ("AZTECA MILLING RACKS", "Azteca Milling", True),
+    ("PCA PEARL MS", "PCA PEARL", True),
+    ("MAGNOLIA BRUSH MFRS. LTD", "Magnolia Brush Manufacturers", True),
+    ("INDUSTRIAS METALICAS LOZANO, S.A. DE C.V", "Industrias Metalicas Lozano", True),
+    ("PCA AKRON", "PCA ATLANTA SPECIALTY PLANT", False),   # one shared token = a brand
+    ("PCA DALLAS FULL LINE", "PCA Dallas Corrugated", False),
+    ("SEEK", "Seek Equipment Rentals", False),            # < 2 significant tokens
+])
+def test_similar_names(a, b, similar):
+    assert pipedrive.is_similar(a, b) is similar
+
+
+def _search_client(similar_items, mcleod_by_id):
+    def search(req):
+        if req.url.params["exact_match"] == "true":
+            return {"items": []}
+        return {"items": [{"item": {"id": i, "name": n}} for i, n in similar_items]}
+    routes = {("GET", "v2/organizations/search"): search}
+    for oid, code in mcleod_by_id.items():
+        routes[("GET", f"v2/organizations/{oid}")] = {"id": oid, "custom_fields": {"omc": code}}
+    return pipedrive.PipedriveClient("acme", "t", _pd_app(routes, []))
+
+
+def test_find_org_one_similar():
+    client = _search_client([(1278, "Azteca Milling"), (7, "Azteca Foods")], {1278: None})
+    m = asyncio.run(client.find_org(PLACEMENT, "AZTECA MILLING RACKS", ("AZTECAT1",)))
+    assert (m.org_id, m.how, m.candidates) == (1278, "similar", ((1278, "Azteca Milling"),))
+
+
+def test_find_org_several_similar_is_ambiguous():
+    client = _search_client([(5359, "PCA PEARL"), (3096, "PCA Pearl")], {})
+    m = asyncio.run(client.find_org(PLACEMENT, "PCA PEARL MS", ()))
+    assert (m.org_id, m.how) == (None, "ambiguous") and len(m.candidates) == 2
+
+
+def test_one_similar_org_gets_the_deal_and_its_empty_mcleod_code(env):
+    env.pd.matches["AZTECA MILLING RACKS"] = pipedrive.OrgMatch(
+        1278, "similar", ((1278, "Azteca Milling"),), None)
+    res = _run(_Hub(), _Gold([_cand(team="TEAM-DFW", customer="AZTECA MILLING RACKS",
+                                    ids=("AZTECAT1",))]))
+    kam = USERS[cfg.CHRISTIAN.email]
+    assert res.outcomes[0].status == "created" and "Azteca Milling" in res.outcomes[0].note
+    assert env.pd.writes == [("mcleod", 1278, "AZTECAT1"),
+                             ("deal", "AZTECA MILLING RACKS", kam, 1278, "AZTECAT1")]
+
+
+def test_a_similar_org_with_its_own_mcleod_code_is_not_overwritten(env):
+    env.pd.matches["X CO"] = pipedrive.OrgMatch(9, "similar", ((9, "X Co Inc"),), "OTHERCOD")
+    _run(_Hub(), _Gold([_cand(customer="X CO", ids=("XCOTX",))]))
+    assert [w[0] for w in env.pd.writes] == ["deal"]
+
+
+def test_several_similar_orgs_hold_write_nothing_notify_and_retry(env, monkeypatch):
+    alerts: list = []
+
+    async def fake_alert(subject, detail):
+        alerts.append((subject, detail))
+        return {"sent": True}
+
+    monkeypatch.setattr(runner, "send_alert", fake_alert)
+    env.pd.matches["PCA PEARL MS"] = pipedrive.OrgMatch(
+        None, "ambiguous", ((3096, "PCA Pearl"), (5359, "PCA PEARL")))
+    hub, gold = _Hub(), _Gold([_cand(team="TEAM2", customer="PCA PEARL MS", ids=("PCAPEAMS",))])
+    res = _run(hub, gold)  # not a failure
+    assert res.outcomes[0].status == "held" and env.pd.writes == []
+    (subject, detail), = alerts
+    assert "PCA PEARL MS" in detail and "PCAPEAMS" in detail and "(5359)" in detail
+    # a human sets ID_McLeod on 5359 → the next run matches by code and creates the deal
+    env.pd.matches["PCA PEARL MS"] = pipedrive.OrgMatch(5359, "mcleod", (), "PCAPEAMS")
+    res = _run(hub, gold)
+    assert res.outcomes[0].status == "created" and env.pd.writes[-1][3] == 5359
+
+
+def test_dry_run_reports_a_hold_without_mailing(env, monkeypatch):
+    monkeypatch.setattr(runner, "send_alert", lambda *a: pytest.fail("mailed"))
+    env.pd.matches["PCA PEARL MS"] = pipedrive.OrgMatch(None, "ambiguous", ((1, "a"), (2, "b")))
+    res = _run(_Hub(), _Gold([_cand(team="TEAM2", customer="PCA PEARL MS")]), live=False, record=False)
+    assert res.outcomes[0].status == "would_hold"

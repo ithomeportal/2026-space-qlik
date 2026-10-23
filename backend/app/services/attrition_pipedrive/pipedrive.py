@@ -13,6 +13,7 @@ Same conventions as ``/BOT/seamless-pipedrive`` (``src/pipedrive/client.ts``):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -25,6 +26,13 @@ from app.services.attrition_pipedrive import config as cfg
 logger = logging.getLogger(__name__)
 
 TIMEOUT_S = 30.0
+# Search has its own, much tighter rate limit: the first production preview
+# (2026-10-22) got HTTP 429 after ~10 searches. A 429 is a REJECTION — nothing
+# was written — so retrying it is safe for writes too. Retry-After is honoured,
+# capped, a bounded number of times; then the 429 surfaces as a failure.
+RATE_LIMIT_RETRIES = 4
+RATE_LIMIT_MAX_WAIT_S = 20.0
+RATE_LIMIT_DEFAULT_WAIT_S = 2.0
 
 
 class PipedriveError(RuntimeError):
@@ -59,9 +67,50 @@ class Deal:
     status: str
 
 
+@dataclass(frozen=True)
+class OrgMatch:
+    """How a customer resolved to an organization.
+
+    ``how``: ``mcleod`` | ``name`` (exact) | ``similar`` (exactly one similar org —
+    operator rule 2026-10-22: attach to it) | ``ambiguous`` (several similar —
+    held for a human) | ``none`` (nothing similar — a new org is created).
+    """
+
+    org_id: Optional[int]
+    how: str
+    candidates: tuple[tuple[int, str], ...] = ()
+    mcleod_on_org: Optional[str] = None
+
+
 def normalize_name(name: str) -> str:
     """Upper-case, single-spaced, trailing punctuation dropped — for exact comparison."""
     return re.sub(r"\s+", " ", (name or "").upper()).strip().rstrip(".,").strip()
+
+
+# Corporate suffixes / filler that differ between McLeod and Pipedrive spellings
+# ("MAGNOLIA BRUSH MFRS. LTD" vs "Magnolia Brush Manufacturers").
+_NAME_NOISE = frozenset({
+    "LTD", "LLC", "INC", "CO", "CORP", "CORPORATION", "COMPANY", "THE", "SA", "DE", "CV",
+    "RL", "S", "A", "C", "V", "R", "L", "MFRS", "MFR", "MFG", "MANUFACTURERS",
+    "MANUFACTURING", "MANUFACTURER",
+})
+MIN_SIMILAR_TOKENS = 2
+
+
+def name_tokens(name: str) -> tuple[str, ...]:
+    words = re.findall(r"[A-Z0-9&]+", (name or "").upper())
+    return tuple(w for w in words if w not in _NAME_NOISE)
+
+
+def is_similar(a: str, b: str) -> bool:
+    """One significant-token list is a prefix of the other, sharing >= 2 tokens.
+
+    "AZTECA MILLING RACKS" ~ "Azteca Milling"; "PCA PEARL MS" ~ "PCA PEARL";
+    but "PCA AKRON" !~ "PCA ATLANTA" (one shared token is a brand, not a plant).
+    """
+    ta, tb = name_tokens(a), name_tokens(b)
+    short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return len(short) >= MIN_SIMILAR_TOKENS and long_[: len(short)] == short
 
 
 class PipedriveClient:
@@ -82,13 +131,19 @@ class PipedriveClient:
         params: Optional[dict[str, Any]] = None, body: Optional[dict[str, Any]] = None,
     ) -> Any:
         query = {k: v for k, v in (params or {}).items() if v is not None}
-        try:
-            resp = await self._http.request(
-                method, f"{self._base}/{version}/{path}", params=query, json=body,
-                headers={"x-api-token": self._token},
-            )
-        except httpx.HTTPError as e:
-            raise PipedriveError(f"{method} /{version}/{path}: {type(e).__name__}") from None
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            try:
+                resp = await self._http.request(
+                    method, f"{self._base}/{version}/{path}", params=query, json=body,
+                    headers={"x-api-token": self._token},
+                )
+            except httpx.HTTPError as e:
+                raise PipedriveError(f"{method} /{version}/{path}: {type(e).__name__}") from None
+            if resp.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+                break
+            wait = _retry_after(resp, attempt)
+            logger.warning("Pipedrive 429 on %s /%s/%s — waiting %.1fs", method, version, path, wait)
+            await asyncio.sleep(wait)
         if resp.status_code >= 400:
             raise PipedriveError(
                 f"{method} /{version}/{path} returned HTTP {resp.status_code}", resp.status_code,
@@ -135,25 +190,50 @@ class PipedriveClient:
 
     # ---- organizations --------------------------------------------------
 
-    async def _search_orgs(self, term: str, fields: str) -> list[dict]:
+    async def _search_orgs(self, term: str, fields: str, exact: bool = True) -> list[dict]:
         data = await self._request(
             "GET", "v2", "organizations/search",
-            {"term": term, "fields": fields, "exact_match": "true", "limit": 10},
+            {"term": term, "fields": fields, "exact_match": "true" if exact else "false",
+             "limit": 20},
         ) or {}
         return [i["item"] for i in data.get("items") or [] if i.get("item")]
 
-    async def find_org(self, p: Placement, customer: str, mcleod_ids: tuple[str, ...]) -> Optional[int]:
-        """McLeod code first (``ID_McLeod``, verified on the record), then exact name."""
+    async def _org_mcleod(self, p: Placement, org_id: int) -> Optional[str]:
+        org = await self._request("GET", "v2", f"organizations/{org_id}") or {}
+        value = (org.get("custom_fields") or {}).get(p.org_mcleod_key)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    async def find_org(self, p: Placement, customer: str, mcleod_ids: tuple[str, ...]) -> OrgMatch:
+        """McLeod code (verified on the record) → exact name → ONE similar name."""
         for code in mcleod_ids:
             for item in await self._search_orgs(code, "custom_fields"):
-                org = await self._request("GET", "v2", f"organizations/{item['id']}") or {}
-                value = (org.get("custom_fields") or {}).get(p.org_mcleod_key)
-                if isinstance(value, str) and value.strip().upper() == code.upper():
-                    return int(org["id"])
+                value = await self._org_mcleod(p, int(item["id"]))
+                if value and value.upper() == code.upper():
+                    return OrgMatch(int(item["id"]), "mcleod", mcleod_on_org=value)
         wanted = normalize_name(customer)
         hits = [i for i in await self._search_orgs(customer, "name")
                 if normalize_name(i.get("name") or "") == wanted]
-        return min(int(i["id"]) for i in hits) if hits else None
+        if hits:
+            return OrgMatch(min(int(i["id"]) for i in hits), "name")
+        tokens = name_tokens(customer)
+        if len(tokens) < MIN_SIMILAR_TOKENS:
+            return OrgMatch(None, "none")
+        similar = {
+            int(i["id"]): i.get("name") or ""
+            for i in await self._search_orgs(" ".join(tokens[:MIN_SIMILAR_TOKENS]), "name", exact=False)
+            if is_similar(customer, i.get("name") or "")
+        }
+        cands = tuple(sorted(similar.items()))
+        if len(cands) == 1:
+            org_id = cands[0][0]
+            return OrgMatch(org_id, "similar", cands, await self._org_mcleod(p, org_id))
+        if cands:
+            return OrgMatch(None, "ambiguous", cands)
+        return OrgMatch(None, "none")
+
+    async def set_org_mcleod(self, p: Placement, org_id: int, code: str) -> None:
+        await self._request("PATCH", "v2", f"organizations/{org_id}",
+                            body={"custom_fields": {p.org_mcleod_key: code}})
 
     async def create_org(self, p: Placement, name: str, owner_id: int, mcleod_id: Optional[str]) -> int:
         body: dict[str, Any] = {"name": name, "owner_id": owner_id}
@@ -205,6 +285,18 @@ class PipedriveClient:
     async def set_owner(self, deal_id: int, owner_id: int) -> Deal:
         data = await self._request("PATCH", "v2", f"deals/{deal_id}", body={"owner_id": owner_id})
         return self._deal(data)
+
+
+def _retry_after(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait before retrying a 429: Retry-After when given, else backoff."""
+    for header in ("retry-after", "x-ratelimit-reset"):
+        try:
+            value = float(resp.headers.get(header, ""))
+        except ValueError:
+            continue
+        if value > 0:
+            return min(value, RATE_LIMIT_MAX_WAIT_S)
+    return min(RATE_LIMIT_DEFAULT_WAIT_S * (2 ** attempt), RATE_LIMIT_MAX_WAIT_S)
 
 
 def _one(rows: list[dict], attr: str, wanted: str, what: str) -> dict:

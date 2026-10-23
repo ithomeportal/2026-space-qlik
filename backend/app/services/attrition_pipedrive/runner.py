@@ -16,7 +16,11 @@ Send-once discipline (same as customer_status_email):
   already with Sales and report ``already_sales`` without ever mailing.
   Only a definite 4xx rejection of the in-flight write is ``failed``;
 * an org created before a failure is stored on the row and reused on the retake
-  (search is eventually consistent — a re-search can miss it and duplicate it).
+  (search is eventually consistent — a re-search can miss it and duplicate it);
+* no exact org but exactly ONE similar one → the deal goes there and the org gets
+  ``ID_McLeod`` (only if empty) — operator rule 2026-10-22. Several similar →
+  ``held`` (nothing written, retaken every run) and listed in one notice to
+  ``ATTRITION_PIPEDRIVE_ALERT_TO`` so a human sets ``ID_McLeod`` on the right org.
 
 Each customer is isolated in its own try; the RUN raises after every customer
 was attempted when any failed (cron-job-debug §4/§5), so APScheduler and the
@@ -44,6 +48,7 @@ from app.services.attrition_pipedrive.candidates import (
 from app.services.attrition_pipedrive.mail import body_for, subject_for
 from app.services.attrition_pipedrive.pipedrive import (
     Deal,
+    OrgMatch,
     PipedriveClient,
     PipedriveError,
     Placement,
@@ -94,7 +99,7 @@ VALUES ($1, $2, $3, $4, 'running', $5)
 ON CONFLICT (team, customer, last_load_date, action) DO UPDATE
   SET status = 'running', error = NULL, days_since = EXCLUDED.days_since,
       claimed_at = NOW(), finished_at = NULL
-  WHERE l.status = 'failed'
+  WHERE l.status IN ('failed', 'held')
 RETURNING action
 """
 
@@ -151,6 +156,14 @@ SELECT id, run_date, mode, status, counts, error, started_at, finished_at
  ORDER BY started_at DESC
 """
 TODAY_RUNS_SQL = "SELECT status FROM attrition_pipedrive_runs WHERE run_date = $1"
+
+
+class OrgHeld(Exception):
+    """Several similar organizations — a human must pick one (set its ID_McLeod)."""
+
+    def __init__(self, candidates: tuple[tuple[int, str], ...]):
+        super().__init__("several similar organizations")
+        self.candidates = candidates
 
 
 class RunFailed(RuntimeError):
@@ -268,6 +281,42 @@ class _Ctx:
         return self.p.user_names.get(user_id) if user_id is not None else None
 
 
+def _describe(m: OrgMatch) -> str:
+    return ", ".join(f"'{n}' ({i})" for i, n in m.candidates)
+
+
+async def _resolve_org(ctx: _Ctx, c: Candidate, o: Outcome) -> tuple[Optional[int], str]:
+    """An existing org for the customer, or (None, '') when nothing similar exists.
+
+    Raises OrgHeld when several similar orgs exist. On a ONE-similar match, writes
+    ``ID_McLeod`` onto the org when it has none, so the next run matches by code.
+    """
+    prior = _prior_org(ctx, c, o.action)
+    if prior is not None:
+        return prior, ""
+    m = await ctx.pd.find_org(ctx.p, c.customer, c.mcleod_ids)
+    if m.how == "ambiguous":
+        raise OrgHeld(m.candidates)
+    if m.how != "similar":
+        return m.org_id, ""
+    code = c.mcleod_ids[0] if c.mcleod_ids else None
+    note = f"matched similar org {_describe(m)}"
+    if code and not m.mcleod_on_org:
+        if not ctx.live:
+            return m.org_id, f"{note}; would set ID_McLeod {code}"
+        o.org_id, o.write_in_flight = m.org_id, True
+        await ctx.pd.set_org_mcleod(ctx.p, m.org_id, code)
+        o.write_in_flight = False
+        note += f"; ID_McLeod {code} set"
+    return m.org_id, note
+
+
+def _held_note(c: Candidate, h: OrgHeld) -> str:
+    code = c.mcleod_ids[0] if c.mcleod_ids else "none"
+    return (f"McLeod {code}; several similar orgs: "
+            f"{_describe(OrgMatch(None, 'ambiguous', h.candidates))}")
+
+
 def _prior_org(ctx: _Ctx, c: Candidate, kind: str) -> Optional[int]:
     for k in (kind, CREATE):
         row = ctx.existing.get(_key(c.team, c.customer, c.last_load_date, k))
@@ -277,9 +326,9 @@ def _prior_org(ctx: _Ctx, c: Candidate, kind: str) -> Optional[int]:
 
 
 async def _org_for(ctx: _Ctx, c: Candidate, o: Outcome, owner_id: int) -> tuple[Optional[int], str]:
-    org_id = _prior_org(ctx, c, o.action) or await ctx.pd.find_org(ctx.p, c.customer, c.mcleod_ids)
+    org_id, note = await _resolve_org(ctx, c, o)
     if org_id is not None:
-        return org_id, ""
+        return org_id, note
     if not ctx.live:
         return None, "would create organization"
     first = c.mcleod_ids[0] if c.mcleod_ids else None
@@ -320,7 +369,12 @@ async def _deal_to_reassign(ctx: _Ctx, c: Candidate) -> tuple[Optional[Deal], Op
         deal = await ctx.pd.get_deal(int(tracked["deal_id"]))
         if deal and deal.status == "open" and deal.pipeline_id == ctx.p.pipeline_id:
             return deal, deal.org_id
-    org_id = _prior_org(ctx, c, REASSIGN) or await ctx.pd.find_org(ctx.p, c.customer, c.mcleod_ids)
+    org_id = _prior_org(ctx, c, REASSIGN)
+    if org_id is None:
+        m = await ctx.pd.find_org(ctx.p, c.customer, c.mcleod_ids)
+        if m.how == "ambiguous":
+            raise OrgHeld(m.candidates)
+        org_id = m.org_id
     deal = await ctx.pd.open_reactivation_deal(ctx.p, org_id) if org_id else None
     return deal, org_id
 
@@ -404,11 +458,14 @@ async def _act(ctx: _Ctx, c: Candidate, kind: str) -> Outcome:
     if prior and prior["status"] == "running":
         o.status, o.error = "stuck", "claimed earlier and never finished — check Pipedrive, then clear the row"
         return o
-    if prior and prior["status"] not in ("failed", "mail_failed"):
+    if prior and prior["status"] not in ("failed", "mail_failed", "held"):
         o.status, o.deal_id = "done_before", prior.get("deal_id")
         return o
     if not ctx.live:
-        await (_do_create if kind == CREATE else _do_reassign)(ctx, c, o)
+        try:
+            await (_do_create if kind == CREATE else _do_reassign)(ctx, c, o)
+        except OrgHeld as h:
+            o.status, o.note = "would_hold", _held_note(c, h)
         return o
     if prior and prior["status"] == "mail_failed":
         if await _retry_mail(ctx, c, o):
@@ -420,6 +477,8 @@ async def _act(ctx: _Ctx, c: Candidate, kind: str) -> Outcome:
         return o
     try:
         await (_do_create if kind == CREATE else _do_reassign)(ctx, c, o)
+    except OrgHeld as h:
+        o.status, o.note = "held", _held_note(c, h)
     except Exception as e:  # noqa: BLE001 — isolate the customer; the run raises later
         o.error = f"{type(e).__name__}: {e}"[:500]
         logger.error("attrition→pipedrive %s %s/%s failed: %s", kind, c.team, c.customer, o.error)
@@ -479,6 +538,18 @@ async def run_daily(app, *, live: bool, record: bool = True,
     finally:
         if pd is not None:
             await pd.aclose()
+    held = [o for o in result.outcomes if o.status == "held"]
+    if held and live and record:
+        try:
+            sent = await send_alert(
+                f"Attrition → Pipedrive: {len(held)} customer(s) need an organization picked",
+                " | ".join(f"{o.team} {o.customer} — {o.note}" for o in held)
+                + " — set ID_McLeod on the right Pipedrive org; the next 04:00 run creates the deal.",
+            )
+            if not sent.get("sent"):
+                logger.error("held-customers notice not sent: %s", sent.get("reason"))
+        except Exception as e:  # noqa: BLE001 — the notice must not fail the run
+            logger.error("held-customers notice failed: %s", e)
     failures = result.failures
     if run_id is not None:
         await hub.execute(
