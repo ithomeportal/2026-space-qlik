@@ -435,8 +435,8 @@ async def _scheduled_lane_rates_prewarm():
 
 
 async def _scheduled_scorecard_mirror_check():
-    """Background job: daily freshness watchdog for the portal-owned
-    mcleod_gld_scorecard_portal mirror.
+    """Background job: daily freshness watchdog for BOTH portal-owned scorecard
+    mirrors (mcleod_gld_scorecard_portal + mcleod_gld_scorecard_incidents_portal).
 
     The portal reads an n8n-maintained TRUNCATE+load mirror (can't bloat), so the
     health signal flipped from "bloated?" to "fresh?". Emails Diego if the n8n
@@ -554,6 +554,14 @@ async def _set_cst_session(conn: asyncpg.Connection) -> None:
     Pairs with ``app.clock.cst_today`` on the Python side.
     """
     await conn.execute("SET TIME ZONE 'America/Chicago'")
+
+
+# Gold-pool queries give up on a held table lock after this long. 2026-10-23: an
+# n8n TRUNCATE+reload of a portal mirror held ACCESS EXCLUSIVE for 94 min, all 8
+# gold connections queued behind it, and EVERY gold report timed out — even ones
+# that never read that table. Longer than a healthy refresh's swap (~1 s), far
+# shorter than command_timeout: a locked table now costs only its own panels.
+GOLD_POOL_LOCK_TIMEOUT = "5s"
 
 
 @asynccontextmanager
@@ -1285,6 +1293,7 @@ async def lifespan(app: FastAPI):
                 min_size=2,
                 max_size=8,
                 command_timeout=42,
+                server_settings={"lock_timeout": GOLD_POOL_LOCK_TIMEOUT},
                 init=_set_cst_session,
             )
             logger.info(
