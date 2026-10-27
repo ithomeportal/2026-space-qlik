@@ -969,6 +969,37 @@ CUSTOM_REPORTS = [
         # + leadership.
         "roles": ["CEO", "Executive", "Operations", "CORP"],
     },
+    {
+        "key": "collections-settlement-forecast",  # -> /reports/collections-settlement-forecast
+        "title": "Collections Settlement Forecast",
+        "description": "Weekly cash forecast - what we expect to collect and to pay this week (collected so far, still due, past due) against carrier settlements and vendor AP, both nets, plus the next 12 weeks, per-customer expected collections and forecast vs actual",
+        "note": (
+            "Request 2026-10-27 (CEO cash-flow question in Teams 2026-10-26). "
+            "Reconciles Daniela's method (AR Collections Weekly Review incl. past "
+            "due + Settlement Projections + AP = COMMITTED net) with Bruce's (each "
+            "customer pays on its McLeod average days to pay; 3-week run-rate "
+            "beyond the pipeline = EXPECTED net). Sat-Fri finance week, TMS. "
+            "Reads UNLK-Financial mirrors (FINANCIAL_DATABASE_URL): "
+            "ar_customer_forecast, ar_customer_directory, cash_receipts, "
+            "customer_expected_payments, payment_schedules, ap_reports. Accuracy "
+            "tab reads cash_forecast_snapshot (analytics_hub, daily 06:30 CST). "
+            "Spec: docs/SPEC-COLLECTIONS-SETTLEMENT-FORECAST.md."
+        ),
+        "category": "Finance",
+        "tags": [
+            "cash flow", "cashflow", "forecast", "collections", "settlements",
+            "ar", "ap", "receipts", "this week", "net", "carrier pay", "finance",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15. "Financial,
+        # admin and Directors divisions" (request 2026-10-27): there is no
+        # Director TagRole — directors are Executive; Admin finance staff are
+        # AdminFinance (+ Members).
+        "roles": [
+            "CEO", "CFO", "Executive", "Finance",
+            "AdminFinance", "AdminFinance - Members",
+        ],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

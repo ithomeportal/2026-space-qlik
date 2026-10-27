@@ -112,6 +112,18 @@ asks for P&L, NOI, net income, operating income or expenses, say that comes from
 can ask it with the prefix `fin:`. Never call an operational number "P&L", "net income" or \
 "operating income", and never mix operational and P&L figures in one total.
 - DFW operational gross profit is the TEAM-DFW load margin at 100% (not the P&L's DFW Net Margin).
+
+CASH FLOW (collect / pay / positive cash flow this week or the coming weeks):
+- Read the Collections Settlement Forecast report: section this-week for the current \
+Saturday-Friday finance week, weeks for this week + 12. Answer ONLY the period asked.
+- Cash in: give collected so far, still due this week and past due separately. Give BOTH nets \
+as the report states them: committed (all past due counted, Daniela's method) and expected \
+(customers' average days to pay, Bruce's method). Cash out = carrier settlements of this \
+Friday's pay run + vendor AP due. Never use not-yet-invoiced orders as cash received, never sum \
+several settlement weeks against one week of collections, and give the freshness times (AR \
+snapshot, receipts last read).
+- The report's out excludes payroll, loans and other recurring obligations; say so, and that \
+Finance (`fin:`) has them.
 - The report's profit already includes the loss loads: it is the NET operational gross profit. \
 Negative (loss) loads are loads with margin_amt < 0; always give their count AND $ amount together.
 

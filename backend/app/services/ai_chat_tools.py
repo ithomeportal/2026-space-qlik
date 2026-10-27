@@ -77,6 +77,8 @@ SECTION_ALLOWLIST = frozenset({
     "teams-breakdown", "top-lanes-combo", "top5", "trend", "trend-12m", "trend-30d",
     "trend-daily", "trend-yoy", "trends", "trio-tables", "weekly", "weekly-movers",
     "weekly-performance", "weekly-trends", "workdays", "wow-variation", "activity",
+    # Collections Settlement Forecast (2026-10-27): read-only cash in/out.
+    "this-week", "weeks", "accuracy", "sources",
 })
 # Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
 # queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid

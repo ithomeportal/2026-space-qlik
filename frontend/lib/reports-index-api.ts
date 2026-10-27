@@ -216,4 +216,8 @@ export const REPORT_OVERLAY: Record<string, ReportOverlay> = {
     kpis: "A/R aging discipline — delivery/BOL/invoice-vs-bill aging, unbilled inventory $",
     related: ["budget-followup-2026", "ops-portal-overview"],
   },
+  "collections-settlement-forecast": {
+    kpis: "This week's cash in (collected / due / past due) vs settlements + AP, committed & expected net, 13-week forecast",
+    related: ["admin-cashflow", "division-payment-calculator"],
+  },
 }

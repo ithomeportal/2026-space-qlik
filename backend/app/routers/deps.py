@@ -70,6 +70,20 @@ def get_ap_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def get_financial_pool(request: Request) -> asyncpg.Pool:
+    """Pool for unlk_financial_portal — UNLK-Financial's own mirrors (AR
+    forecast, cash receipts, settlement schedule, AP). PRIMARY source of the
+    Collections Settlement Forecast, so it 503s when unset; the Bonus
+    Calculator's optional FX prefill reads `app.state` directly instead."""
+    pool = getattr(request.app.state, "financial_pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="UNLK-Financial data source not configured",
+        )
+    return pool
+
+
 def get_pricing_pool(request: Request) -> asyncpg.Pool:
     """Pool for modern_pricing_portal — the quoting portal's own DB
     (spot_report_condensed). Powers the HD Spot report."""

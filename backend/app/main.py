@@ -36,6 +36,7 @@ from app.routers import (
     carriers_savings,
     ceo_cockpit,
     ceo_executive,
+    collections_settlement_forecast,
     customer_status_email,
     dfw_access_doors_digest,
     dfw_losses,
@@ -174,6 +175,57 @@ async def _scheduled_dpc_cutoff_snapshot():
     except Exception as e:
         logger.error(f"Division Payment cutoff snapshot FAILED: {e}", exc_info=True)
         raise
+
+
+#: Strong refs to fire-and-forget startup tasks (the loop keeps only weak ones).
+_BACKGROUND_TASKS: set = set()
+
+
+async def _scheduled_cash_forecast_snapshot():
+    """Background job: store today's Collections Settlement Forecast (06:30 CST).
+
+    The accuracy tab compares each week's forecast with what came in; a forecast
+    recomputed later cannot say what was forecast then (§84). Runs after
+    UNLK-Financial's 01:00 CT McLeod sync.
+
+    ⚠ Logs AND re-raises: APScheduler records a job that returned as a success,
+    so a swallowed exception would read as a healthy run (cron-job-debug §5).
+    """
+    from app.clock import cst_today
+    from app.services.cash_forecast_snapshot import capture_forecast_snapshot
+
+    try:
+        result = await capture_forecast_snapshot(
+            getattr(app.state, "pool", None),
+            getattr(app.state, "financial_pool", None),
+            getattr(app.state, "savings_pool", None),
+            cst_today(),
+        )
+        logger.info(f"Cash forecast snapshot: {result}")
+    except Exception as e:
+        logger.error(f"Cash forecast snapshot FAILED: {e}", exc_info=True)
+        raise
+
+
+async def _startup_cash_forecast_catchup():
+    """Fire-and-forget: a deploy after 06:30 still records today's forecast.
+
+    Never before 06:30 CST — earlier, UNLK-Financial may still hold yesterday's
+    sync and a complete row would outrank the 06:30 run. Skipped when today
+    already has a complete row; failures are logged inside and stop here."""
+    from app.clock import cst_now, cst_today
+    from app.services.cash_forecast_snapshot import has_snapshot
+
+    try:
+        now = cst_now()
+        if (now.hour, now.minute) < (6, 30):
+            return
+        hub = getattr(app.state, "pool", None)
+        if hub is not None and await has_snapshot(hub, cst_today()):
+            return
+        await _scheduled_cash_forecast_snapshot()
+    except Exception:  # noqa: BLE001 — logged inside; the 06:30 run retries
+        pass
 
 
 async def _startup_dpc_cutoff_catchup():
@@ -1211,6 +1263,13 @@ async def lifespan(app: FastAPI):
             await app.state.pool.execute(PROJECTION_HISTORY_INDEX_DDL)
             await app.state.pool.execute(WEEKLY_ACTUALS_DDL)
 
+            # Collections Settlement Forecast (request 2026-10-27) — the daily
+            # stored forecast behind the accuracy tab; a forecast recomputed
+            # later cannot say what was forecast then.
+            from app.services.cash_forecast_snapshot import SNAPSHOT_DDL
+
+            await app.state.pool.execute(SNAPSHOT_DDL)
+
             # Ops Portal "By Lane" Origin/Dest Rejection % (Bruno 2026-10-16
             # R6) — portal-owned 24 h cache of SONAR coverage-guide readings.
             # SONAR's 100 req/min is ACCOUNT-WIDE (shared with the quoting
@@ -1412,11 +1471,11 @@ async def lifespan(app: FastAPI):
             app.state.financial_pool = await asyncpg.create_pool(
                 settings.FINANCIAL_DATABASE_URL,
                 min_size=1,
-                max_size=2,
+                max_size=3,
                 command_timeout=40,
                 init=_set_cst_session,
             )
-            logger.info("Financial pool connected — Bonus Calculator DOF FX suggestion")
+            logger.info("Financial pool connected — Collections Settlement Forecast + Bonus FX")
         except Exception as e:
             logger.warning(
                 f"Financial DB connect failed: {e}. Bonus Calculator FX suggestion disabled."
@@ -1542,6 +1601,25 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Projection snapshot NOT scheduled — SAVINGS_DATABASE_URL unset; "
             "Team Monthly Projection High/Low will stay empty"
+        )
+
+    # Collections Settlement Forecast history at 06:30 CST (request 2026-10-27)
+    # — reads UNLK-Financial, writes analytics_hub. Plus a startup catch-up.
+    if settings.FINANCIAL_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_cash_forecast_snapshot,
+            CronTrigger(hour=6, minute=30, timezone="America/Chicago"),
+            id="daily_cash_forecast_snapshot",
+            name="Record the Collections Settlement Forecast",
+            replace_existing=True,
+        )
+        _catchup = asyncio.create_task(_startup_cash_forecast_catchup())
+        _BACKGROUND_TASKS.add(_catchup)
+        _catchup.add_done_callback(_BACKGROUND_TASKS.discard)
+    else:
+        logger.warning(
+            "Cash forecast snapshot NOT scheduled — FINANCIAL_DATABASE_URL unset; "
+            "the Collections Settlement Forecast accuracy tab will stay empty"
         )
 
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
@@ -1812,6 +1890,7 @@ async def lifespan(app: FastAPI):
         "customer_status_email_watch": "PCA e-mail not-sent alert, :45 of each send hour",
         "daily_attrition_pipedrive": "Attrition → Pipedrive reactivation deals, 04:00 CST",
         "daily_attrition_pipedrive_watch": "Attrition → Pipedrive did-not-run alert, 05:00 CST",
+        "daily_cash_forecast_snapshot": "Collections Settlement Forecast history, 06:30 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
@@ -1968,6 +2047,7 @@ app.include_router(edi_load_tenders.router, prefix="/api")
 app.include_router(augie_funnel.router, prefix="/api")
 app.include_router(augie_funnel_digest.router, prefix="/api")
 app.include_router(customer_status_email.router, prefix="/api")
+app.include_router(collections_settlement_forecast.router, prefix="/api")
 app.include_router(attrition_pipedrive.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
