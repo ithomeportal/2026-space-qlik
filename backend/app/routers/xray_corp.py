@@ -32,7 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
-from app.datalake import budget_team_cte, pad_variants as _pad_variants
+from app.datalake import budget_team_cte, not_dfw_tagged, pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -129,6 +129,9 @@ def _scope_where(
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.datalake.not_dfw_tagged): a
+        # CORP-team row whose `team` says TM1..TM5 is a DFW load.
+        not_dfw_tagged(f"{alias}.team"),
     ]
     if team:
         params.append(_pad_variants([team], width=8))
@@ -183,6 +186,7 @@ def _scorecard_cte(kind: str) -> str:
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard_incidents_portal
     WHERE team_id    IN ({teams_sql})
+      AND {not_dfw_tagged("team_dfw")}
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
       AND stop_type  IN ({stops_sql})
@@ -246,10 +250,11 @@ async def filters(
     """Teams + distinct customer list in scope."""
     pool = get_datalake_gold_pool(request)
     rows = await pool.fetch(
-        """
+        f"""
         SELECT DISTINCT TRIM(customer_name) AS customer_name
         FROM public.mcleod_gld_budget_report_v4
         WHERE TRIM(team_id)    = ANY($1)
+          AND {not_dfw_tagged("team")}
           AND TRIM(company_id) = ANY($2)
           AND TRIM(status)     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
@@ -369,7 +374,7 @@ async def kpis(
                         ORDER BY COUNT(*) DESC, TRIM(team_id)
                     ) AS rn
                 FROM public.mcleod_gld_budget_report_v4
-                WHERE TRIM(team_id) = ANY($3)
+                WHERE TRIM(team_id) = ANY($3) AND {not_dfw_tagged("team")}
                 GROUP BY TRIM(customer_name), TRIM(team_id)
             ) ranked
             WHERE rn = 1
@@ -412,6 +417,7 @@ async def kpis(
                     ) AS rn
                 FROM public.mcleod_gld_budget_report_v4
                 WHERE TRIM(team_id) = ANY(ARRAY['TEAM1','TEAM2','TEAM3','TEAM4','TEAM5'])
+                  AND {not_dfw_tagged("team")}
                 GROUP BY TRIM(customer_name), TRIM(team_id)
             ) ranked
             WHERE rn = 1

@@ -31,6 +31,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.routers import ops_portal_overview as opo
+from app.datalake import not_dfw_tagged
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 
@@ -72,10 +73,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             list(opo.OPEN_STATUSES),
             opo.YEAR_START,
         ]
-        cust_sql = """
+        # ⚠ DFW-marker rule (app.datalake, 2026-10-28): a TEAM3 row tagged
+        # TM1..TM5 is a DFW load — never offer its customer/lane/carrier here.
+        cust_sql = f"""
             SELECT DISTINCT TRIM(customer_name) AS customer_name
             FROM public.mcleod_gld_budget_report_v4
             WHERE TRIM(team_id)    = $1
+              AND {not_dfw_tagged('team')}
               AND TRIM(company_id) = ANY($2)
               AND TRIM(status)     = ANY($3)
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
@@ -88,6 +92,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             SELECT DISTINCT {opo._lane_expr("br4")} AS lane
             FROM public.mcleod_gld_budget_report_v4 br4
             WHERE TRIM(br4.team_id)    = $1
+              AND {not_dfw_tagged('br4.team')}
               AND TRIM(br4.company_id) = ANY($2)
               AND TRIM(br4.status)     = ANY($3)
               AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
@@ -97,12 +102,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             ORDER BY lane
         """
         # Bruno (PDF 2026-07-15) R1: carriers scoped to this team.
-        carrier_sql = """
+        carrier_sql = f"""
             SELECT DISTINCT TRIM(m.payee_name) AS carrier
             FROM public.mcleod_gld_movement m
             JOIN public.mcleod_gld_budget_report_v4 br4
               ON m.order_id = br4.id AND m.company_id = br4.company_id
             WHERE TRIM(br4.team_id)    = $1
+              AND {not_dfw_tagged('br4.team')}
               AND TRIM(br4.company_id) = ANY($2)
               AND TRIM(br4.status)     = ANY($3)
               AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'

@@ -11,7 +11,9 @@ from typing import List, Optional, Sequence, Union
 from app.datalake import pad_variants as _pad_variants
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES
-from ._scope import CORP_SCOPE, DivisionScope, case_variants
+from ._scope import (
+    CORP_SCOPE, SC_MARKER_COL, DivisionScope, case_variants, division_member_sql, sub_team_expr,
+)
 
 # A scope is one team, several teams, or none (= the whole CORP base scope).
 TeamScope = Union[str, Sequence[str], None]
@@ -161,7 +163,7 @@ def _team_id_col(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
     ``GROUP BY``, a predicate. Use ``_team_id_select`` only for a bare SELECT
     item, where the ``AS team_id`` it appends is legal.
     """
-    return f"{alias}.{scope.v4_team_col}"
+    return sub_team_expr(scope, alias, scope.v4_team_col)
 
 
 def _team_id_select(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
@@ -181,7 +183,9 @@ def _team_id_select(alias: str, scope: DivisionScope = CORP_SCOPE) -> str:
     mistake (§81).
     """
     col = _team_id_col(alias, scope)
-    return col if scope.v4_team_col == "team_id" else f"{col} AS team_id"
+    # ALL's column is `team_id` too, but relabelled through a CASE — an
+    # expression needs the alias back or the column comes out named "case".
+    return col if col == f"{alias}.team_id" else f"{col} AS team_id"
 
 
 def _v4_scope_where(
@@ -223,7 +227,7 @@ def _v4_scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        division_member_sql(scope, alias, f"${p_teams}"),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
@@ -243,7 +247,7 @@ def _v4_scope_where(
     team_ids = _team_list(team)
     if team_ids:
         params.append(_sub_team_param(scope, team_ids))
-        parts.append(f"{alias}.{scope.v4_team_col} = ANY(${len(params)})")
+        parts.append(f"{_team_id_col(alias, scope)} = ANY(${len(params)})")
     cust_pred = _customer_any(f"{alias}.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)
@@ -294,7 +298,8 @@ def _scorecard_cte(kind: str, scope: DivisionScope = CORP_SCOPE) -> str:
 
     codes_sql = _lit(codes, width=40)
     stops_sql = _lit(stops, width=2)
-    teams_sql = _lit(scope.base_teams, width=8)
+    teams_sql = "(" + _lit(scope.base_teams, width=8) + ")"
+    member_sql = division_member_sql(scope, "", teams_sql, SC_MARKER_COL)
     companies_sql = _lit(CORP_COMPANIES, width=4)
     statuses_sql = _lit(OPEN_STATUSES, width=1)
     return f"""
@@ -303,7 +308,7 @@ def _scorecard_cte(kind: str, scope: DivisionScope = CORP_SCOPE) -> str:
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard_incidents_portal
-    WHERE team_id    IN ({teams_sql})
+    WHERE {member_sql}
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
       AND stop_type  IN ({stops_sql})
@@ -331,7 +336,7 @@ def _bill_metrics_sql(
     # The output column stays `team_id` whatever it is read from — the wire
     # contract and every by-team panel key off that name (§69: one name, one
     # definition). Under DFW the VALUES become TM1..TM5.
-    team_sel = f"TRIM(br4.{scope.v4_team_col}) AS team_id," if group_by_team else ""
+    team_sel = f"TRIM({_team_id_col('br4', scope)}) AS team_id," if group_by_team else ""
     team_out = "team_id," if group_by_team else ""
     group_clause = "GROUP BY team_id" if group_by_team else ""
     return f"""

@@ -35,6 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from app.datalake import dfw_tagged, not_dfw_tagged, pad_variants, sql_str_list
+
 from ._constants import CORP_TEAMS, DFW_SUB_TEAMS, DFW_TEAM
 
 
@@ -53,6 +55,13 @@ class DivisionScope:
                      for this division. DFW: 0 of its 15 customers appear
                      there (measured 2026-08-21), so every budget panel would
                      render zeros — which is why Bruno's PDF removes them all.
+    ``dfw_marker``   — what the scope does with a CORP-``team_id`` row that
+                     carries a DFW sub-team marker (``app.datalake``, Sergio
+                     Hidalgo 2026-10-28): ``"exclude"`` it (CORP), ``"include"``
+                     it (DFW — it lands in its TM pill), or ``"relabel"`` it as
+                     ``TEAM-DFW`` (ALL, whose rows already cover it). Required,
+                     never defaulted: a defaulted division rule serves the other
+                     division's loads without erroring (§100).
     """
 
     key: str
@@ -63,6 +72,7 @@ class DivisionScope:
     sc_team_col: str
     padded_sub_teams: bool
     has_budget: bool
+    dfw_marker: str
 
 
 CORP_SCOPE = DivisionScope(
@@ -74,6 +84,7 @@ CORP_SCOPE = DivisionScope(
     sc_team_col="team_id",
     padded_sub_teams=True,
     has_budget=True,
+    dfw_marker="exclude",
 )
 
 DFW_SCOPE = DivisionScope(
@@ -85,6 +96,7 @@ DFW_SCOPE = DivisionScope(
     sc_team_col="team_dfw",
     padded_sub_teams=False,
     has_budget=False,
+    dfw_marker="include",
 )
 
 # Erick Mendoza (CEO), 2026-09-24: "me falta el de ALL" — both divisions at
@@ -115,9 +127,70 @@ ALL_SCOPE = DivisionScope(
     sc_team_col="team_id",
     padded_sub_teams=True,
     has_budget=False,
+    dfw_marker="relabel",
 )
 
 SCOPES: dict[str, DivisionScope] = {s.key: s for s in (CORP_SCOPE, DFW_SCOPE, ALL_SCOPE)}
+
+
+# The marker column on each table: ``v4.team`` / ``scorecard.team_dfw``.
+V4_MARKER_COL = "team"
+SC_MARKER_COL = "team_dfw"
+
+_CORP_TEAM_LIT = sql_str_list(pad_variants(CORP_TEAMS, width=8))
+
+
+def division_member_sql(
+    scope: DivisionScope, alias: str, teams_ref: str, marker_col: str = V4_MARKER_COL,
+    *, team_col_expr: str | None = None,
+) -> str:
+    """The division-membership predicate — ``team_id`` PLUS the DFW-marker rule.
+
+    ``teams_ref`` is what ``team_id`` is matched against: a bound ``$n``
+    renders ``= ANY($n)``, anything else is taken as a rendered literal list
+    and renders ``IN (...)``. ``team_col_expr`` overrides the bare
+    ``<alias>.team_id`` (e.g. ``TRIM(team_id)`` in the TRIM-style queries).
+
+      CORP  → ``team_id ∈ CORP AND marker NOT a DFW sub-team``
+      DFW   → ``team_id = TEAM-DFW OR (team_id ∈ CORP AND marker IS a DFW sub-team)``
+      ALL   → ``team_id ∈ CORP ∪ DFW`` (unchanged — every row is already in)
+
+    So CORP + DFW = ALL row for row, and Sergio's Monterrey→Tijuana loads move
+    from CORP T3 to DFW TM4 instead of vanishing. ``_CORP_TEAM_LIT`` carries
+    padded AND unpadded ids, so it matches a bare or a TRIM'd column alike.
+    """
+    a = f"{alias}." if alias else ""
+    col = team_col_expr or f"{a}team_id"
+    if teams_ref.startswith("$"):
+        base = f"{col}    = ANY({teams_ref})"
+    else:
+        base = f"{col} IN {teams_ref}"
+    corp = f"{col} IN {_CORP_TEAM_LIT}"
+    marker = f"{a}{marker_col}"
+    if scope.dfw_marker == "exclude":
+        return f"{base} AND {not_dfw_tagged(marker)}"
+    if scope.dfw_marker == "include":
+        return f"({base} OR ({corp} AND {dfw_tagged(marker)}))"
+    if scope.dfw_marker == "relabel":
+        return base
+    raise ValueError(f"unknown dfw_marker {scope.dfw_marker!r}")
+
+
+def sub_team_expr(
+    scope: DivisionScope, alias: str, team_col: str, marker_col: str = V4_MARKER_COL,
+) -> str:
+    """The scope's sub-team value for a row — the bare column, except under ALL.
+
+    Under ALL the team column is ``team_id``, so a DFW-marked CORP-team row
+    would sit in a CORP pill (TEAM3). It is relabelled ``TEAM-DFW`` so ALL's
+    pills agree with what CORP and DFW each show. CORP and DFW render the bare
+    column — CORP's SQL keeps its shape, and DFW's column already says TM4.
+    """
+    a = f"{alias}." if alias else ""
+    col = f"{a}{team_col}"
+    if scope.dfw_marker != "relabel":
+        return col
+    return f"(CASE WHEN {dfw_tagged(a + marker_col)} THEN '{DFW_TEAM}' ELSE {col} END)"
 
 
 def case_variants(values: Sequence[str]) -> list[str]:

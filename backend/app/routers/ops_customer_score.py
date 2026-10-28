@@ -69,6 +69,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
+from app.division_marker import division_team_id_sql, team_membership_sql
 from app.routers.deps import (
     get_datalake_gold_pool,
     require_report_access,
@@ -87,6 +88,8 @@ DFW_TEAM = "TEAM-DFW"
 ALL_TEAMS = (*CORP_TEAMS, DFW_TEAM)
 DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
 ALL_COMPANIES = ("TMS", "TMS3")
+# The team a scorecard row belongs to (a DFW-marked TEAM3 row is TEAM-DFW).
+_TEAM_OF_ROW = division_team_id_sql("sc", "team_dfw")
 OPEN_STATUSES = ("D", "P")
 
 # Stop-type buckets. Source is now mcleod_gld_incidents_v3 (one row per real
@@ -243,7 +246,9 @@ def _scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): a CORP-team row
+        # whose team_dfw says TM1..TM5 is a DFW load.
+        team_membership_sql(alias, teams, p_teams, "team_dfw"),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
     ]
@@ -781,12 +786,12 @@ async def _overview(
 
     by_team_sql = f"""
     SELECT
-      TRIM(sc.team_id) AS team_id,
+      {_TEAM_OF_ROW} AS team_id,
       COUNT(DISTINCT sc.id) FILTER (WHERE sc.total_charge <> 0) AS orders,
       COUNT(DISTINCT sc.id) FILTER (WHERE {fail_pred}) AS fail
     FROM public.mcleod_gld_scorecard_incidents_portal sc
     WHERE {where}
-    GROUP BY TRIM(sc.team_id)
+    GROUP BY 1
     ORDER BY fail DESC NULLS LAST, team_id
     """
 
@@ -1187,7 +1192,7 @@ async def _fault_rows(
     rows_sql = f"""
     SELECT
       sc.id,
-      TRIM(sc.team_id) AS team_id,
+      {_TEAM_OF_ROW} AS team_id,
       TRIM(sc.team_dfw) AS team_dfw,
       TRIM(sc.customer_name) AS customer_name,
       sc.{arrival_col} AS actual_arrival,

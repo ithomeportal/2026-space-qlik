@@ -16,8 +16,8 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, router
 from ._dates import _resolve_range
-from ._scope import scope_of
-from ._sql import _customer_any, _sub_team_param, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._scope import division_member_sql, scope_of
+from ._sql import _customer_any, _sub_team_param, _team_id_col, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
 
@@ -344,14 +344,14 @@ async def pending_to_cover(
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
     parts = [
-        "br4.team_id    = ANY($1)",
+        division_member_sql(scope, "br4", "$1"),
         "br4.company_id = ANY($2)",
         "br4.status     = ANY($3)",
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
         params.append(_sub_team_param(scope, [team]))
-        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
+        parts.append(f"{_team_id_col('br4', scope)} = ANY(${len(params)})")
     cust_pred = _customer_any("br4.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)
@@ -493,14 +493,14 @@ async def cover(
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
     parts = [
-        "br4.team_id    = ANY($1)",
+        division_member_sql(scope, "br4", "$1"),
         "br4.company_id = ANY($2)",
         "br4.status     = ANY($3)",
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
         params.append(_sub_team_param(scope, [team]))
-        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
+        parts.append(f"{_team_id_col('br4', scope)} = ANY(${len(params)})")
     cust_pred = _customer_any("br4.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)

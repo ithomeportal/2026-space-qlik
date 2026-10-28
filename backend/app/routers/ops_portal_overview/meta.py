@@ -14,7 +14,7 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, OPEN_STATUSES, YEAR_END, YEAR_START, router
-from ._scope import scope_of
+from ._scope import division_member_sql, scope_of
 from ._dates import _count_workdays, _month_bounds
 from ._sql import _lane_expr
 from ._metrics import _safe_float
@@ -40,10 +40,15 @@ async def filters(
         list(OPEN_STATUSES),
         YEAR_START,
     ]
-    cust_sql = """
+    # The DFW-marker rule (app.datalake, 2026-10-28) — the pickers must list
+    # exactly the loads the panels count, or a DFW customer stays pickable on
+    # CORP and selects an empty table.
+    member_v4 = division_member_sql(scope, "", "$1", team_col_expr="TRIM(team_id)")
+    member_br4 = division_member_sql(scope, "br4", "$1", team_col_expr="TRIM(br4.team_id)")
+    cust_sql = f"""
         SELECT DISTINCT TRIM(customer_name) AS customer_name
         FROM public.mcleod_gld_budget_report_v4
-        WHERE TRIM(team_id)    = ANY($1)
+        WHERE {member_v4}
           AND TRIM(company_id) = ANY($2)
           AND TRIM(status)     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
@@ -55,7 +60,7 @@ async def filters(
     lane_sql = f"""
         SELECT DISTINCT {_lane_expr("br4")} AS lane
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE TRIM(br4.team_id)    = ANY($1)
+        WHERE {member_br4}
           AND TRIM(br4.company_id) = ANY($2)
           AND TRIM(br4.status)     = ANY($3)
           AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'
@@ -66,12 +71,12 @@ async def filters(
     """
     # Bruno (PDF 2026-07-15) R1: distinct carriers (first-movement payee) on
     # in-scope YTD orders. ~11 rows — the movement join is order_id-indexed.
-    carrier_sql = """
+    carrier_sql = f"""
         SELECT DISTINCT TRIM(m.payee_name) AS carrier
         FROM public.mcleod_gld_movement m
         JOIN public.mcleod_gld_budget_report_v4 br4
           ON m.order_id = br4.id AND m.company_id = br4.company_id
-        WHERE TRIM(br4.team_id)    = ANY($1)
+        WHERE {member_br4}
           AND TRIM(br4.company_id) = ANY($2)
           AND TRIM(br4.status)     = ANY($3)
           AND UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'

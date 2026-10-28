@@ -16,7 +16,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _last_5_weeks, _resolve_range, _week_label
 from ._scope import scope_of
-from ._sql import _customer_any, _v4_scope_where
+from ._sql import _customer_any, _team_id_col, _v4_scope_where
 from ._metrics import _safe_float, _variance_from_sums
 
 
@@ -626,7 +626,7 @@ async def team_variance_by_team(
         WITH {customer_team_cte(scope, with_budget_team=True)},
         {_variance_legs(
             where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope,
-            prod_grp=f"TRIM(br4.{scope.v4_team_col})",
+            prod_grp=f"TRIM({_team_id_col('br4', scope)})",
             bud_grp="ct.team_id",
         )}
         SELECT

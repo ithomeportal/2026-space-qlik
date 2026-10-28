@@ -42,7 +42,8 @@ from app.attrition_core import (
     last_completed_week as _last_completed_week,
 )
 from app.clock import cst_today
-from app.datalake import pad_variants as _pad_variants
+from app.datalake import dfw_tagged, pad_variants as _pad_variants
+from app.division_marker import team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2025, 1, 1)  # PDF base filter
@@ -139,7 +140,9 @@ def _scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): a CORP-team row
+        # whose `team` says TM1..TM5 is a DFW load — out of CORP, into DFW.
+        team_membership_sql(alias, team_scope, p_teams),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",
@@ -180,8 +183,9 @@ def _team_dim(alias: str) -> str:
     team individually (Bruno 2026-05-28); CORP rows keep their ``team_id``. A
     DFW row with no sub-team falls back to ``TEAM-DFW``. Handles mixed pill
     selections per-row with no mode flag."""
+    # A DFW-marked CORP-team row is a DFW load (DFW-marker rule, 2026-10-28).
     return (
-        f"CASE WHEN TRIM({alias}.team_id) = 'TEAM-DFW' "
+        f"CASE WHEN TRIM({alias}.team_id) = 'TEAM-DFW' OR {dfw_tagged(f'{alias}.team')} "
         f"THEN COALESCE(NULLIF(TRIM({alias}.team), ''), 'TEAM-DFW') "
         f"ELSE TRIM({alias}.team_id) END"
     )

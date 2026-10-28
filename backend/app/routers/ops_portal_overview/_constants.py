@@ -51,23 +51,27 @@ OTD_CODES = ("AL", "D2", "AZ", "AH", "BE", "D1", "A5", "AI", "AF", "A2", "A1", "
 # caller keeps its SQL byte-identical, which is what lets
 # `test_ops_portal_scope.py` keep asserting the CORP baseline.
 def customer_team_cte(scope=None, *, with_budget_team: bool = False) -> str:
-    from ._scope import CORP_SCOPE
+    from ._scope import CORP_SCOPE, division_member_sql, sub_team_expr
 
     sc = scope or CORP_SCOPE
+    team_col = sub_team_expr(sc, "", sc.v4_team_col)
+    member = division_member_sql(
+        sc, "", sql_str_list(sc.base_teams), team_col_expr="TRIM(team_id)",
+    )
     tail = "," + budget_team_cte() if with_budget_team else ""
     return f"""
 customer_team AS (
     SELECT customer_name, team_id FROM (
         SELECT
             TRIM(customer_name) AS customer_name,
-            TRIM({sc.v4_team_col})       AS team_id,
+            TRIM({team_col})       AS team_id,
             ROW_NUMBER() OVER (
                 PARTITION BY TRIM(customer_name)
-                ORDER BY COUNT(*) DESC, TRIM({sc.v4_team_col})
+                ORDER BY COUNT(*) DESC, TRIM({team_col})
             ) AS rn
         FROM public.mcleod_gld_budget_report_v4
-        WHERE TRIM(team_id) IN {sql_str_list(sc.base_teams)}
-        GROUP BY TRIM(customer_name), TRIM({sc.v4_team_col})
+        WHERE {member}
+        GROUP BY TRIM(customer_name), TRIM({team_col})
     ) ranked
     WHERE rn = 1
 ){tail}

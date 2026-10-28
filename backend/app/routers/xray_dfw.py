@@ -29,7 +29,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.clock import cst_today
+from app.datalake import dfw_tagged, sql_str_list
 from app.datalake import pad_variants as _pad_variants
+from app.division_marker import CORP_TEAM_IDS, team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -187,7 +189,10 @@ def _scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): TEAM-DFW plus
+        # any CORP-team row whose `team` says TM1..TM5 — a DFW load McLeod MX
+        # booked under TEAM3.
+        team_membership_sql(alias, DFW_TEAMS, p_teams),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
@@ -255,6 +260,8 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
     codes_sql = _lit(codes, width=40)
     stops_sql = _lit(stops, width=2)
     teams_sql = _lit(DFW_TEAMS, width=8)
+    # DFW-marker rule, 2026-10-28 — same rendering as app.division_marker.
+    corp_teams_sql = sql_str_list(_pad_variants(CORP_TEAM_IDS, width=8))
     companies_sql = _lit(DFW_COMPANIES, width=4)
     statuses_sql = _lit(OPEN_STATUSES, width=1)
 
@@ -271,7 +278,8 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
       TRIM(company_id) AS company_id_key,
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard_incidents_portal
-    WHERE team_id    IN ({teams_sql})
+    WHERE (team_id   IN ({teams_sql})
+           OR (team_id IN {corp_teams_sql} AND {dfw_tagged("team_dfw")}))
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
       AND stop_type  IN ({stops_sql})

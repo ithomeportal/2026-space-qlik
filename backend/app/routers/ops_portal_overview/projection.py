@@ -17,7 +17,7 @@ from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_ac
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _count_workdays, _last_5_weeks, _month_bounds, _week_label
 from ._scope import scope_of
-from ._sql import _customer_any, _customer_list, _parse_team_scope, _v4_scope_where
+from ._sql import _customer_any, _customer_list, _parse_team_scope, _team_id_col, _v4_scope_where
 from ._metrics import _zero_val, _projection_bounds, _projection_from_sums, _safe_float, _team_projection_core
 
 # ⚠ `app.services.projection_history` is imported INSIDE the endpoint, not at
@@ -227,7 +227,7 @@ async def team_projection_by_team(
     rows = await pool.fetch(
         f"""
         SELECT
-          TRIM(br4.{scope.v4_team_col}) AS team_id,
+          TRIM({_team_id_col('br4', scope)}) AS team_id,
           COUNT(*) FILTER (WHERE br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
                              AND br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol_12,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ws} AND ${p_we}
@@ -242,7 +242,7 @@ async def team_projection_by_team(
                             THEN br4.margin_amt END), 0)::numeric AS prof_mtd
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
-        GROUP BY TRIM(br4.{scope.v4_team_col})
+        GROUP BY TRIM({_team_id_col('br4', scope)})
         """,
         *params,
     )

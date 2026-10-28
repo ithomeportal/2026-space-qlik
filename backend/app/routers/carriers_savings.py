@@ -34,6 +34,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.datalake import sql_str_list
+from app.division_marker import division_team_id_sql
 from app.routers.deps import get_savings_pool, require_report_access
 from app.services.lane_rates import (
     Lane,
@@ -53,6 +54,10 @@ DIVISION_TEAMS: dict[str, tuple[str, ...]] = {
 }
 ALL_ALLOWED_TEAMS = tuple(t for teams in DIVISION_TEAMS.values() for t in teams)
 
+# The team a v4 row belongs to: a CORP-team row marked TM1..TM5 votes for
+# TEAM-DFW (DFW-marker rule, 2026-10-28, app.division_marker).
+_TEAM_OF_ROW = division_team_id_sql("")
+
 # Per-customer canonical team, derived from McLeod. One row per customer: the team
 # with the most loads (tiebreak alphabetical). Prepend with `WITH ` when embedding.
 CUSTOMER_TEAM_CTE = f"""
@@ -60,14 +65,14 @@ customer_team AS (
     SELECT customer_name, team_id FROM (
         SELECT
             TRIM(customer_name) AS customer_name,
-            TRIM(team_id)       AS team_id,
+            {_TEAM_OF_ROW} AS team_id,
             ROW_NUMBER() OVER (
                 PARTITION BY TRIM(customer_name)
-                ORDER BY COUNT(*) DESC, TRIM(team_id)
+                ORDER BY COUNT(*) DESC, {_TEAM_OF_ROW}
             ) AS rn
         FROM public.mcleod_gld_budget_report_v4
         WHERE TRIM(team_id) IN {sql_str_list(ALL_ALLOWED_TEAMS)}
-        GROUP BY TRIM(customer_name), TRIM(team_id)
+        GROUP BY TRIM(customer_name), {_TEAM_OF_ROW}
     ) ranked
     WHERE rn = 1
 )

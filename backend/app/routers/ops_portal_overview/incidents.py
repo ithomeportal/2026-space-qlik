@@ -16,7 +16,7 @@ from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, CORP_TEAMS, OPEN_STATUSES, OTD_CODES, OTP_CODES, router
 from ._dates import _resolve_range
-from ._scope import scope_of
+from ._scope import SC_MARKER_COL, division_member_sql, scope_of, sub_team_expr
 from ._sql import _customer_any, _sub_team_param, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
 
@@ -78,7 +78,7 @@ async def service_incident_by_customer(
     statuses_param = _pad_variants(OPEN_STATUSES, width=1)
     params: list = [teams_param, companies_param, statuses_param, s, e]
     parts = [
-        "sc.team_id    = ANY($1)",
+        division_member_sql(scope, "sc", "$1", SC_MARKER_COL),
         "sc.company_id = ANY($2)",
         "sc.status     = ANY($3)",
         "UPPER(COALESCE(sc.customer_name,'')) NOT LIKE '%OILTEX%'",
@@ -87,7 +87,7 @@ async def service_incident_by_customer(
     ]
     if team:
         params.append(_sub_team_param(scope, [team]))
-        parts.append(f"sc.{scope.sc_team_col} = ANY(${len(params)})")
+        parts.append(f"{sub_team_expr(scope, 'sc', scope.sc_team_col, SC_MARKER_COL)} = ANY(${len(params)})")
     cust_pred = _customer_any("sc.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)

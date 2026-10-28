@@ -55,6 +55,7 @@ from fastapi.responses import Response
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
+from app.division_marker import team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 
@@ -265,7 +266,9 @@ def _scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): a CORP-team row
+        # whose team_dfw says TM1..TM5 is a DFW load — out of CORP, into DFW.
+        team_membership_sql(alias, teams, p_teams, "team_dfw"),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
     ]

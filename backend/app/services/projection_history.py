@@ -80,7 +80,7 @@ from app.routers.ops_portal_overview._metrics import (
     _team_projection_core,
 )
 from app.routers.ops_portal_overview._scope import ALL_SCOPE, CORP_SCOPE, DFW_SCOPE, DivisionScope
-from app.routers.ops_portal_overview._sql import _v4_scope_where
+from app.routers.ops_portal_overview._sql import _team_id_col, _v4_scope_where
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +275,7 @@ def _team_count_sql(where: str, scope: DivisionScope) -> str:
     for every DFW scope and inflate utilisation five-fold (§77).
     """
     return (
-        f"SELECT COUNT(DISTINCT br4.{scope.v4_team_col}) "
+        f"SELECT COUNT(DISTINCT {_team_id_col('br4', scope)}) "
         f"FROM public.mcleod_gld_budget_report_v4 br4 WHERE {where}"
     )
 

@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from ._constants import CORP_TEAMS
 from ._dates import _count_workdays, _last_n_business_days_start, _month_bounds
 from ._scope import CORP_SCOPE, DivisionScope
-from ._sql import _team_list, _v4_scope_where
+from ._sql import _team_id_col, _team_list, _v4_scope_where
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ def _projection_sums_sql(
                             THEN br4.total_charge END), 0)::numeric AS rev_mtd,
           COALESCE(SUM(CASE WHEN br4.origin_actual_departure::date BETWEEN ${p_ms2} AND ${p_me}
                             THEN br4.margin_amt END), 0)::numeric AS prof_mtd,
-          COUNT(DISTINCT br4.{scope.v4_team_col}) AS team_count
+          COUNT(DISTINCT {_team_id_col('br4', scope)}) AS team_count
         FROM public.mcleod_gld_budget_report_v4 br4
         WHERE {where}
         {grp}

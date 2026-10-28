@@ -132,7 +132,7 @@ from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import CORP_COMPANIES, router
-from ._scope import scope_of
+from ._scope import division_member_sql, scope_of
 from ._metrics import _safe_float
 from ._sql import _customer_any, _lane_expr, _sub_team_param, _team_id_col
 
@@ -210,7 +210,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
         _pad_variants(EXCLUDED_HOLD_STATUSES, width=1),
     ]
     parts = [
-        "br4.team_id    = ANY($1)",
+        division_member_sql(scope, "br4", "$1"),
         "br4.company_id = ANY($2)",
         # PDF: status NOT IN ('V','A'). `<> ALL` rather than `= ANY(D,P)` so a
         # future McLeod status stays visible instead of silently vanishing.
@@ -225,7 +225,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
     ]
     if team:
         params.append(_sub_team_param(scope, [team]))
-        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
+        parts.append(f"{_team_id_col('br4', scope)} = ANY(${len(params)})")
     cust_pred = _customer_any("br4.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)

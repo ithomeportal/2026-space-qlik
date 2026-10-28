@@ -37,6 +37,7 @@ import json
 import types
 
 import pytest
+from dfw_marker_sql import strip_dfw_marker_rule
 from fastapi import HTTPException
 
 from app.routers import ops_portal_overview as opo
@@ -184,7 +185,8 @@ def _drive(fn, *, division: str, **overrides) -> _StubPool:
 def _blob(pool: _StubPool) -> str:
     out = []
     for sql, params in pool.calls:
-        out.append(sql)
+        # The DFW-marker rule names both divisions on purpose — see dfw_marker_sql.
+        out.append(strip_dfw_marker_rule(sql))
         out.append(json.dumps([list(p) if isinstance(p, (list, tuple)) else str(p)
                                for p in params]))
     return "\n".join(out)

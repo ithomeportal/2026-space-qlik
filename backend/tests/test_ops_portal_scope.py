@@ -29,6 +29,7 @@ import json
 import types
 
 import pytest
+from dfw_marker_sql import strip_dfw_marker_rule
 
 from app.routers import ops_portal_overview as opo
 from app.routers import ops_portal_overview_dfw as dfw
@@ -126,7 +127,8 @@ def _drive(fn, scope=None, **overrides) -> _StubPool:
 def _blob(pool: _StubPool) -> str:
     out = []
     for sql, params in pool.calls:
-        out.append(sql)
+        # The DFW-marker rule names both divisions on purpose — see dfw_marker_sql.
+        out.append(strip_dfw_marker_rule(sql))
         out.append(json.dumps([list(p) if isinstance(p, (list, tuple)) else str(p)
                                for p in params]))
     return "\n".join(out)
@@ -199,7 +201,11 @@ def test_the_customer_team_map_ranks_the_scopes_own_column() -> None:
     dfw_cte = _constants.customer_team_cte(DFW_SCOPE)
     assert "TRIM(team)       AS team_id" in dfw_cte, "output name must stay team_id"
     assert "'TEAM-DFW'" in dfw_cte
-    assert "'TEAM1'" not in dfw_cte
+    # TEAM1..5 appear only inside the DFW-marker rule (2026-10-28): DFW owns
+    # the CORP-team rows tagged TM1..TM5 — anywhere else would be a leak.
+    assert "'TEAM1'" not in strip_dfw_marker_rule(dfw_cte)
+    assert "<dfw-marked-corp-row>" in strip_dfw_marker_rule(dfw_cte)
+    assert "<not-dfw-marked>" in strip_dfw_marker_rule(corp)
 
 
 # ---------------------------------------------------------------------------

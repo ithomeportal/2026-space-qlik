@@ -57,6 +57,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
+from app.division_marker import team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -174,7 +175,9 @@ def _scope_where(
     p_status = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): plus any
+        # CORP-team row whose `team` says TM1..TM5 — a DFW load.
+        team_membership_sql(alias, DFW_TEAMS, p_teams),
         f"{alias}.company_id = ANY(${p_companies})",
         f"{alias}.status     = ANY(${p_status})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",

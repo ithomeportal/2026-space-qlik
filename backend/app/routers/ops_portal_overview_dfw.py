@@ -65,7 +65,12 @@ from app.routers import ops_portal_overview as opo
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.ops_portal_overview._dates import _month_bounds
 from app.routers.ops_portal_overview._metrics import _safe_float
-from app.routers.ops_portal_overview._scope import DFW_SCOPE, scope_of, sub_team_of
+from app.routers.ops_portal_overview._scope import (
+    DFW_SCOPE,
+    division_member_sql,
+    scope_of,
+    sub_team_of,
+)
 from app.routers.ops_portal_overview._sql import _v4_scope_where
 
 REPORT_KEY = "ops-managers-portal-dfw"
@@ -118,10 +123,13 @@ async def filters(request: Request, _user: dict = Depends(gate)):
         list(opo.OPEN_STATUSES),
         opo.YEAR_START,
     ]
-    cust_sql = """
+    # ⚠ DFW-marker rule (app.datalake, 2026-10-28): DFW also owns the CORP-team
+    # rows tagged TM1..TM5, so the pickers list them exactly as the panels count.
+    member = division_member_sql(DFW_SCOPE, "br4", "$1", team_col_expr="TRIM(br4.team_id)")
+    cust_sql = f"""
         SELECT DISTINCT TRIM(br4.customer_name) AS customer_name
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE TRIM(br4.team_id) = ANY($1)
+        WHERE {member}
           AND TRIM(br4.company_id) = ANY($2)
           AND TRIM(br4.status) = ANY($3)
           AND br4.origin_actual_departure >= $4
@@ -132,7 +140,7 @@ async def filters(request: Request, _user: dict = Depends(gate)):
     lane_sql = f"""
         SELECT DISTINCT {opo._lane_expr("br4")} AS lane
         FROM public.mcleod_gld_budget_report_v4 br4
-        WHERE TRIM(br4.team_id) = ANY($1)
+        WHERE {member}
           AND TRIM(br4.company_id) = ANY($2)
           AND TRIM(br4.status) = ANY($3)
           AND br4.origin_actual_departure >= $4
@@ -140,12 +148,12 @@ async def filters(request: Request, _user: dict = Depends(gate)):
           AND TRIM(COALESCE(br4.dest_name,''))   <> ''
         ORDER BY 1
     """
-    carrier_sql = """
+    carrier_sql = f"""
         SELECT DISTINCT TRIM(m.payee_name) AS carrier
         FROM public.mcleod_gld_budget_report_v4 br4
         JOIN public.mcleod_gld_movement m
           ON m.order_id = br4.id AND m.company_id = br4.company_id
-        WHERE TRIM(br4.team_id) = ANY($1)
+        WHERE {member}
           AND TRIM(br4.company_id) = ANY($2)
           AND TRIM(br4.status) = ANY($3)
           AND br4.origin_actual_departure >= $4

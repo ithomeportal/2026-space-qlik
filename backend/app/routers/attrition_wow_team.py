@@ -38,6 +38,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.datalake import pad_variants
+from app.division_marker import team_membership_sql
 from app.routers import attrition_wow as aw
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
@@ -84,12 +85,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         response.headers["Cache-Control"] = aw.CACHE_HEADER
 
         rows = await pool.fetch(
-            """
+            f"""
             SELECT
               DISTINCT TRIM(customer_name) AS entity,
               UPPER(TRIM(COALESCE(contract_type_descr,''))) AS contract_type
-            FROM public.mcleod_gld_budget_report_v4
-            WHERE team_id    = ANY($1)
+            FROM public.mcleod_gld_budget_report_v4 v4
+            -- DFW-marker rule, 2026-10-28 (app.division_marker)
+            WHERE {team_membership_sql("v4", (team,), 1)}
               AND company_id = ANY($2)
               AND status     = ANY($3)
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'
@@ -134,12 +136,13 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         response.headers["Cache-Control"] = "public, max-age=120"
 
         row = await pool.fetchrow(
-            """
+            f"""
             SELECT
               MAX(origin_actual_departure)::date AS last_load_date,
               COUNT(*) AS rows_in_scope
-            FROM public.mcleod_gld_budget_report_v4
-            WHERE team_id    = ANY($1)
+            FROM public.mcleod_gld_budget_report_v4 v4
+            -- DFW-marker rule, 2026-10-28 (app.division_marker)
+            WHERE {team_membership_sql("v4", (team,), 1)}
               AND company_id = ANY($2)
               AND status     = ANY($3)
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%UNILINK%'

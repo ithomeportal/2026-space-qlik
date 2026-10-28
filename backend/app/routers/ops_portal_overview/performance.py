@@ -30,6 +30,7 @@ from ._sql import (
     _customer_any,
     _parse_team_scope,
     _scorecard_cte,
+    _team_id_col,
     _team_id_select,
     _v4_scope_where,
 )
@@ -577,7 +578,7 @@ async def team_performance_by_team(
         WITH otp AS ({_scorecard_cte("otp", scope)}),
              otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
-                SELECT TRIM(br4.{scope.v4_team_col}) AS team_id,
+                SELECT TRIM({_team_id_col('br4', scope)}) AS team_id,
                        br4.id, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
@@ -650,7 +651,7 @@ async def team_performance_by_team(
             "br4", None, customer, load_type, pr,
             lanes, exclude_lanes, carriers, exclude_carriers, scope=scope,
         ),
-        group_col=f"TRIM(br4.{scope.v4_team_col})",
+        group_col=f"TRIM({_team_id_col('br4', scope)})",
     )
 
     # ---- Billing grouped by team_id (Bruno round 2026-07-01 R12) ---------

@@ -17,8 +17,8 @@ from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_ac
 
 from ._constants import customer_team_cte, CORP_COMPANIES, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
 from ._dates import _bucket_end, _count_workdays, _month_bounds, _resolve_grain_window
-from ._scope import scope_of
-from ._sql import _customer_any, _customer_list, _parse_team_scope, _sub_team_param, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
+from ._scope import division_member_sql, scope_of
+from ._sql import _customer_any, _customer_list, _parse_team_scope, _sub_team_param, _team_id_col, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _safe_float, _team_projection_core
 from ._combo_extras import (
     candle_tracking,
@@ -404,14 +404,14 @@ async def cover_forecast(
     status_param = _pad_variants(("A",), width=1)
     params: list = [teams_param, companies_param, status_param]
     parts = [
-        "br4.team_id    = ANY($1)",
+        division_member_sql(scope, "br4", "$1"),
         "br4.company_id = ANY($2)",
         "br4.status     = ANY($3)",
         "UPPER(COALESCE(br4.customer_name,'')) NOT LIKE '%OILTEX%'",
     ]
     if team:
         params.append(_sub_team_param(scope, [team]))
-        parts.append(f"br4.{scope.v4_team_col} = ANY(${len(params)})")
+        parts.append(f"{_team_id_col('br4', scope)} = ANY(${len(params)})")
     cust_pred = _customer_any("br4.customer_name", customer, params)
     if cust_pred:
         parts.append(cust_pred)

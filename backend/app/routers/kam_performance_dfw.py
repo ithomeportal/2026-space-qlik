@@ -50,6 +50,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
+from app.division_marker import team_membership_sql
 from app.routers.deps import (
     get_datalake_gold_pool,
     get_pool,
@@ -130,7 +131,9 @@ def _dfw_scope_where(alias: str, params: list) -> str:
     p_status = len(params)
     return " AND ".join(
         [
-            f"{alias}.team_id    = ANY(${p_teams})",
+            # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): plus any
+            # CORP-team row whose `team` says TM1..TM5 — a DFW load.
+            team_membership_sql(alias, DFW_TEAMS, p_teams),
             f"{alias}.company_id = ANY(${p_companies})",
             f"{alias}.status     = ANY(${p_status})",
             f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%UNILINK%'",

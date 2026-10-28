@@ -69,6 +69,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.clock import cst_today
 from app.datalake import budget_team_cte, pad_variants as _pad_variants
+from app.division_marker import team_label_sql, team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -86,6 +87,10 @@ DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
 ALLOWED_TEAMS = (*CORP_TEAMS, DFW_TEAM_ID)
 # Unified "team" filter values shown in the UI pills (CORP divisions + DFW sub-teams).
 ALL_DIVISION_TEAMS = (*CORP_TEAMS, *DFW_SUB_TEAMS)
+# Team label: DFW rows by sub-team (incl. a DFW-marked CORP-team row — the
+# DFW-marker rule, 2026-10-28, app.division_marker), else team_id.
+_TEAM_LABEL_BR4 = team_label_sql("br4")
+_TEAM_LABEL_BARE = team_label_sql("")
 ALLOWED_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
@@ -171,7 +176,9 @@ def _scope_where(
     p_stat = len(params)
 
     parts = [
-        f"{alias}.team_id    = ANY(${p_teams})",
+        # ⚠ DFW-marker rule, 2026-10-28 (app.division_marker): a CORP-team row
+        # whose `team` says TM1..TM5 is a DFW load — out of CORP, into DFW.
+        team_membership_sql(alias, _division_team_ids(division), p_teams),
         f"{alias}.company_id = ANY(${p_comp})",
         f"{alias}.status     = ANY(${p_stat})",
         f"UPPER(COALESCE({alias}.customer_name,'')) NOT LIKE '%OILTEX%'",
@@ -183,10 +190,10 @@ def _scope_where(
     if team:
         if team in CORP_TEAMS:
             params.append(_pad_variants([team], width=8))
-            parts.append(f"{alias}.team_id = ANY(${len(params)})")
+            parts.append(team_membership_sql(alias, [team], len(params)))
         elif team in DFW_SUB_TEAMS:
             params.append(_pad_variants([DFW_TEAM_ID], width=8))
-            parts.append(f"{alias}.team_id = ANY(${len(params)})")
+            parts.append(team_membership_sql(alias, [DFW_TEAM_ID], len(params)))
             params.append(team)
             # team column width is not documented; TRIM is safe here because
             # team_id has already pruned to one division's rows (~1/6 scan).
@@ -275,25 +282,16 @@ def _customer_team_cte(teams_param_pos: int) -> str:
         SELECT customer_name, division_team FROM (
             SELECT
                 TRIM(customer_name) AS customer_name,
-                CASE
-                  WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
-                  ELSE TRIM(team_id)
-                END AS division_team,
+                {_TEAM_LABEL_BARE} AS division_team,
                 ROW_NUMBER() OVER (
                     PARTITION BY TRIM(customer_name)
                     ORDER BY COUNT(*) DESC,
-                             CASE
-                               WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
-                               ELSE TRIM(team_id)
-                             END
+                             {_TEAM_LABEL_BARE}
                 ) AS rn
             FROM public.mcleod_gld_budget_report_v4
             WHERE team_id = ANY(${teams_param_pos})
             GROUP BY TRIM(customer_name),
-                     CASE
-                       WHEN TRIM(team_id) = '{DFW_TEAM_ID}' THEN TRIM(team)
-                       ELSE TRIM(team_id)
-                     END
+                     {_TEAM_LABEL_BARE}
         ) ranked
         WHERE rn = 1
     )
@@ -493,8 +491,7 @@ async def overview(
         f"""
         WITH agg AS (
           SELECT
-            CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
-                 ELSE TRIM(br4.team_id) END AS team,
+            {_TEAM_LABEL_BR4} AS team,
             COUNT(DISTINCT TRIM(br4.customer_name)) AS cust,
             COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS loads,
             COALESCE(SUM(br4.total_charge), 0)::numeric AS revenue,
@@ -1345,8 +1342,7 @@ async def risk(
         )
         SELECT
           TRIM(br4.id)            AS id,
-          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
-               ELSE TRIM(br4.team_id) END AS team,
+          {_TEAM_LABEL_BR4} AS team,
           COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
           TRIM(br4.customer_name) AS customer,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
@@ -1567,8 +1563,7 @@ async def orders(
     ao_task = pool.fetch(
         f"""
         SELECT
-          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
-               ELSE TRIM(br4.team_id) END AS team,
+          {_TEAM_LABEL_BR4} AS team,
           COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
           TRIM(br4.id)            AS id,
           TRIM(br4.customer_name) AS customer,
@@ -1694,8 +1689,7 @@ async def orders_csv(
     rows = await pool.fetch(
         f"""
         SELECT
-          CASE WHEN TRIM(br4.team_id) = '{DFW_TEAM_ID}' THEN TRIM(br4.team)
-               ELSE TRIM(br4.team_id) END AS team,
+          {_TEAM_LABEL_BR4} AS team,
           COALESCE(TRIM(br4.contract_type_descr), '') AS contract_type,
           TRIM(br4.id)            AS id,
           TRIM(br4.customer_name) AS customer,

@@ -30,6 +30,7 @@ import json
 import re
 
 import pytest
+from dfw_marker_sql import strip_dfw_marker_rule
 
 from app.routers import bonus_calculator as bc
 from app.services import bonus_engine as be
@@ -308,7 +309,7 @@ def test_dfw_reads_the_dfw_division_not_corp_teams() -> None:
     """team_id='TEAM-DFW' + team='TMn', the same split the Ops Portal makes."""
     params: list = []
     where = bc.DFW_SCOPE.scope_where("br4", "dfw-tm-3", params)
-    flat = where + json.dumps([list(p) if isinstance(p, list) else str(p) for p in params])
+    flat = strip_dfw_marker_rule(where) + json.dumps([list(p) if isinstance(p, list) else str(p) for p in params])
     assert "TEAM-DFW" in flat
     assert "TM3" in flat
     for corp_id in ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"):
@@ -316,7 +317,7 @@ def test_dfw_reads_the_dfw_division_not_corp_teams() -> None:
 
     corp_params: list = []
     corp_where = bc.CORP_SCOPE.scope_where("br4", "team-3", corp_params)
-    corp_flat = corp_where + json.dumps(
+    corp_flat = strip_dfw_marker_rule(corp_where) + json.dumps(
         [list(p) if isinstance(p, list) else str(p) for p in corp_params]
     )
     assert "TEAM3" in corp_flat
@@ -451,8 +452,11 @@ def test_the_dfw_report_endpoint_serves_the_dfw_division() -> None:
     assert [t["id"] for t in data["teams"]] == list(bc.DFW_SCOPE.teams)
     assert [t["name"] for t in data["teams"]] == ["TM 1", "TM 2", "TM 3", "TM 4"]
 
-    # ...the datalake read is TEAM-DFW, never a CORP team.
-    g = gold.blob()
+    # ...the datalake read is TEAM-DFW, never a CORP team. The DFW-marker
+    # rule (2026-10-28) names the CORP ids on purpose — DFW also takes a
+    # CORP-team row marked TM1..TM5 — so strip exactly that rendering first;
+    # a CORP id anywhere else still fails.
+    g = strip_dfw_marker_rule(gold.blob())
     assert "TEAM-DFW" in g
     for n in (1, 2, 3, 4):
         assert f"TM{n}" in g

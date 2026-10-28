@@ -87,6 +87,51 @@ def sql_str_list(values) -> str:
     return "(" + ", ".join("'" + str(v).replace("'", "''") + "'" for v in vals) + ")"
 
 
+
+# ---------------------------------------------------------------------------
+# DFW loads booked under a CORP team (Sergio Hidalgo, 2026-10-28)
+# ---------------------------------------------------------------------------
+
+# McLeod MX (company TMS3) books some DFW loads with ``team_id = 'TEAM3'`` but
+# carries the DFW sub-team in ``v4.team`` / ``scorecard.team_dfw``. Every CORP
+# report scoped on ``team_id`` alone counted them as CORP. Measured 2026-10-28:
+# 19 v4 rows in 2026 (18 TMS3 'TM4' UNILINK TRANSPORTATION Monterrey→Tijuana,
+# −$1,778 profit, on CORP T3's October; 1 TMS 'TM1' row) and 35 scorecard rows.
+# Fixed in McLeod by hand more than once; it keeps coming back.
+#
+# The DFW sub-team marker is the deciding fact: on every genuine CORP row the
+# column is '' (175k rows), and DFW's own rows always carry TM1..TM5. So a row
+# is CORP only when it carries NO DFW marker, and a CORP-team row that does
+# carry one is a DFW load. ⚠ Not "team <> ''": a future CORP sub-team value
+# must not silently move rows to DFW — only the five DFW markers do.
+#
+# Case variants because McLeod is not case-clean ('tm4' on 2 rows); COALESCE
+# so a NULL marker reads as "no marker" — ``NULL NOT IN (...)`` is NULL and
+# would DELETE the row rather than keep it (§75).
+DFW_SUB_TEAM_TAGS = ("TM1", "TM2", "TM3", "TM4", "TM5")
+_DFW_TAG_VARIANTS = tuple(v for t in DFW_SUB_TEAM_TAGS for v in (t, t.lower()))
+
+
+def dfw_tagged(col: str) -> str:
+    """``col`` (``v4.team`` / ``scorecard.team_dfw``) carries a DFW sub-team.
+
+    >>> dfw_tagged("br4.team")
+    "br4.team IN ('TM1', 'tm1', 'TM2', 'tm2', 'TM3', 'tm3', 'TM4', 'tm4', 'TM5', 'tm5')"
+    """
+    return f"{col} IN {sql_str_list(_DFW_TAG_VARIANTS)}"
+
+
+def not_dfw_tagged(col: str) -> str:
+    """The CORP side of ``dfw_tagged`` — NULL-safe, so NULL stays CORP.
+
+    AND this onto every CORP ``team_id`` predicate: a CORP-team row carrying a
+    DFW marker is a DFW load.
+
+    >>> not_dfw_tagged("v4.team")
+    "COALESCE(v4.team, '') NOT IN ('TM1', 'tm1', 'TM2', 'tm2', 'TM3', 'tm3', 'TM4', 'tm4', 'TM5', 'tm5')"
+    """
+    return f"COALESCE({col}, '') NOT IN {sql_str_list(_DFW_TAG_VARIANTS)}"
+
 # ---------------------------------------------------------------------------
 # Budget mirror → team map (Bruno PDFs 2026-08-27, Ops Portal + Budget Updates)
 # ---------------------------------------------------------------------------
