@@ -30,6 +30,7 @@ import { NegativeCustomers } from "./tabs/NegativeCustomers"
 import { NegativeOrders } from "./tabs/NegativeOrders"
 import { Trend } from "./tabs/Trend"
 import { WorstLanes } from "./tabs/WorstLanes"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -292,7 +293,7 @@ function OpsMarginsContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Percent className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">OPs Margins</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">OPs Margins<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] text-[#1E40AF]">
             best & worst
           </span>

@@ -23,6 +23,7 @@ import { ActualsByLane } from "@/app/reports/ops-portal-overview/ActualsByLane"
 import { HoldTable } from "@/app/reports/ops-portal-overview/HoldTable"
 import { ByOrder } from "@/app/reports/ops-portal-overview/ByOrder"
 import { DataFreshness } from "@/app/reports/ops-portal-overview/DataFreshness"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -433,7 +434,7 @@ function Body({
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <LayoutGrid className="h-4 w-4 text-[#2563EB]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">{headerBadge}</span>
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs text-[#6B7280]">

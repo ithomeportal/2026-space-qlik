@@ -27,6 +27,7 @@ import { Trends } from "./tabs/Trends"
 import { OrderDetails } from "./tabs/OrderDetails"
 import { WeeklyMovers } from "./tabs/WeeklyMovers"
 import { LaneTrendModal } from "./LaneTrendModal"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -229,7 +230,7 @@ function LossesContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <TrendingDown className="h-4 w-4 text-[#DC2626]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">Top Losses Lanes</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">Top Losses Lanes<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#FEE2E2] px-2 py-0.5 text-xs text-[#991B1B]">
             margin &lt; 0
           </span>

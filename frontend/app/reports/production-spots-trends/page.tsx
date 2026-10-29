@@ -22,6 +22,7 @@ import { TrendChart } from "./TrendChart"
 import { BreakdownTable } from "./BreakdownTable"
 import { ActualsPanel } from "./ActualsPanel"
 import { Note } from "./Ui"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 // April 2026 is the first month clear of the frozen legacy imports — see the
 // router docstring. Earlier ranges would be truthfully but confusingly thin.
@@ -145,7 +146,7 @@ function Content() {
           <PieChart className="h-4 w-4 text-[#1B3A5C]" />
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             Production SPOTS Trends
-          </h1>
+          <FavoriteToggle /></h1>
           <span className="rounded-full bg-[#E0E7FF] px-2 py-0.5 text-xs text-[#4338CA]">
             All spot sources
           </span>

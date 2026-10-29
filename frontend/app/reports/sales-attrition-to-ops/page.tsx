@@ -17,6 +17,7 @@ import {
 import { ErrorBanner } from "./ErrorBanner"
 import { fmtInt, fmtMoney, fmtPct, fmtDate } from "./format"
 import { ReportGuard } from "@/components/ReportGuard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 const ALL_TEAMS = [
   "TEAM1",
   "TEAM2",
@@ -160,7 +161,7 @@ function SaopContent() {
           <UserMinus className="h-4 w-4 text-[#1B3A5C]" />
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             Sales- Attrition to OPs
-          </h1>
+          <FavoriteToggle /></h1>
           <span className="rounded-full bg-[#FEE2E2] px-2 py-0.5 text-[10px] text-[#991B1B]">
             customer attrition signal
           </span>

@@ -16,6 +16,7 @@ import {
 import { KpiCards } from "./KpiCards"
 import { AwardedChart } from "./AwardedChart"
 import { DataTable } from "./DataTable"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 // The live `homedepot` feed's first full month. Earlier data is the frozen
 // `legacy_hd` import, which carries no volume — see the router docstring.
@@ -104,7 +105,7 @@ function HdSpotContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Store className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">HD Spot</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">HD Spot<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1D4ED8]">
             HOME DEPOT
           </span>

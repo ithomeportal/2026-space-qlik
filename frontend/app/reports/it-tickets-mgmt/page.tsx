@@ -39,6 +39,7 @@ import {
 } from "@/lib/it-tickets-api"
 import { ReportGuard } from "@/components/ReportGuard"
 import { parseLocalDate } from "@/lib/local-date"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -225,7 +226,7 @@ function ItTicketsMgmtContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <LifeBuoy className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">IT Tickets Mgmt</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">IT Tickets Mgmt<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1E40AF]">IT</span>
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs text-[#6B7280]">

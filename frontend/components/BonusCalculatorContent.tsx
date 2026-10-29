@@ -15,6 +15,7 @@ import { RosterEditor } from "@/app/reports/bonus-calculator/components/RosterEd
 import { HistoryTab } from "@/app/reports/bonus-calculator/components/HistoryTab"
 import { RulesTab } from "@/app/reports/bonus-calculator/components/RulesTab"
 import { ErrorBanner } from "@/app/reports/bonus-calculator/ErrorBanner"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 type TabKey = "calculator" | "history" | "rules"
 
@@ -100,7 +101,7 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em]">
               <HandCoins className="h-3.5 w-3.5" /> {eyebrow}
             </span>
-            <h1 className="mt-2 text-3xl font-extrabold tracking-tight">{title}</h1>
+            <h1 className="mt-2 text-3xl font-extrabold tracking-tight">{title}<FavoriteToggle /></h1>
           </div>
           <div className="flex items-center gap-2">
             {locked && (

@@ -10,6 +10,7 @@ import { AccuracyPanel } from "./AccuracyPanel"
 import { CustomersPanel } from "./CustomersPanel"
 import { ThisWeekPanel } from "./ThisWeekPanel"
 import { WeeksPanel } from "./WeeksPanel"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const TABS = [
   { k: "this-week", label: "This Week" },
@@ -61,7 +62,7 @@ function ForecastContent() {
         </Link>
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <HandCoins className="h-4 w-4 text-[#1B3A5C]" />
-        <h1 className="text-sm font-semibold text-[#1B3A5C]">Collections Settlement Forecast</h1>
+        <h1 className="text-sm font-semibold text-[#1B3A5C]">Collections Settlement Forecast<FavoriteToggle /></h1>
         <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1D4ED8]">UNILINK US · TMS</span>
       </div>
       <div className="mx-auto w-full max-w-[1600px] space-y-4 px-6 py-4">

@@ -16,6 +16,7 @@ import {
 import { DownloadCsvButton } from "../admin-cashflow/DownloadCsvButton"
 import { CarrierTable } from "./CarrierTable"
 import { fmtCount, fmtDate } from "./format"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const PAGE_SIZES = [50, 100, 250]
 
@@ -173,7 +174,7 @@ function CarrierSmsContent() {
           </Link>
           <h1 className="flex items-center gap-2 text-xl font-semibold text-[#1B3A5C]">
             <ShieldCheck className="h-5 w-5" /> Carrier SMS Score
-          </h1>
+          <FavoriteToggle /></h1>
           <p className="text-xs text-[#6B7280]">
             FMCSA Safety (SMS) Out-of-Service rates, BASIC measures & final MyCarrierPortal risk per carrier.
           </p>

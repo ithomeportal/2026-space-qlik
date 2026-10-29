@@ -14,6 +14,7 @@ import {
   type CockpitLinkTile,
   type TileStatus,
 } from "@/lib/ceo-cockpit-api"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const STATUS_STYLES: Record<
   TileStatus,
@@ -162,7 +163,7 @@ function CockpitContent() {
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Home
             </Link>
-            <h1 className="text-2xl font-bold text-[#1B3A5C]">CEO Cockpit</h1>
+            <h1 className="text-2xl font-bold text-[#1B3A5C]">CEO Cockpit<FavoriteToggle /></h1>
             <p className="mt-0.5 text-sm text-[#6B7280]">
               One headline KPI per report. Click any card to open the full report.
             </p>

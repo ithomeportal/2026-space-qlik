@@ -23,6 +23,7 @@ import { compareColumns } from "@/app/reports/ops-direct-compare/sections/compar
 import { ConcentrationPie } from "@/app/reports/ops-direct-compare/sections/ConcentrationPie"
 import { CustomerLanePivot } from "@/app/reports/ops-direct-compare/sections/CustomerLanePivot"
 import { TrendYoY } from "@/app/reports/ops-direct-compare/sections/TrendYoY"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -290,7 +291,7 @@ function Body({
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <GitCompareArrows className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] text-[#1E40AF]">
             {headerBadge}
           </span>

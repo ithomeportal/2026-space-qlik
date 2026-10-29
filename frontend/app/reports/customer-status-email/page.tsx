@@ -7,6 +7,7 @@ import { ReportGuard } from "@/components/ReportGuard"
 import { useCustomerEmailActivity } from "@/lib/customer-status-email-api"
 import { TodayGrid } from "./TodayGrid"
 import { ActivityTable } from "./ActivityTable"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const WINDOWS = [1, 7, 30, 90] as const
 const REPORTS = [
@@ -50,7 +51,7 @@ function Content() {
           </Link>
           <MailCheck className="h-5 w-5 text-slate-400" />
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">Customer E-mail Activity</h1>
+            <h1 className="text-lg font-semibold text-slate-900">Customer E-mail Activity<FavoriteToggle /></h1>
             <p className="text-xs text-slate-500">
               Automated PCA load-status e-mails: what went out, when, to whom and with how many loads.
             </p>

@@ -26,6 +26,7 @@ import { TeamTable } from "./TeamTable"
 import { LoadsTable } from "./LoadsTable"
 import { FreshnessLine, HowCounted } from "./Notes"
 import { ErrorBlock, LoadingBlock, Panel } from "./Ui"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const NODES: AugieFunnelNode[] = [
   "all", "tracked", "contacted", "captured", "tracked_no_info", "not_tracked",
@@ -150,7 +151,7 @@ function Content() {
           </Link>
           <Workflow className="h-5 w-5 shrink-0 text-[#9CA3AF]" />
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-[#111827]">Funnel Augie Activities</h1>
+            <h1 className="text-lg font-semibold text-[#111827]">Funnel Augie Activities<FavoriteToggle /></h1>
             <p className="text-xs text-[#6B7280]">
               Every load picked up, how many were sent to Augie, how many carriers gave an
               update — and why the rest were not sent.

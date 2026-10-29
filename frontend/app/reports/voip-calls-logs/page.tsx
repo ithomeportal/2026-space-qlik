@@ -45,6 +45,7 @@ import {
   type VoipRange,
 } from "@/lib/voip-calls-api"
 import { ReportGuard } from "@/components/ReportGuard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -164,7 +165,7 @@ function VoipCallsLogsContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Phone className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">VoIP Calls Logs</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">VoIP Calls Logs<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1E40AF]">IT</span>
         </div>
         <div className="ml-auto text-xs text-[#6B7280]">

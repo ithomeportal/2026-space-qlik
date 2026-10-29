@@ -45,6 +45,7 @@ import {
   fmtPct,
   statusPillClass,
 } from "./format"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 // ---------------------------------------------------------------------------
 // Page wrapper
@@ -183,7 +184,7 @@ function Content() {
           <FileText className="h-4 w-4 text-[#1B3A5C]" />
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             Performance for RFPs
-          </h1>
+          <FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] text-[#1E40AF]">
             rfp tracker
           </span>

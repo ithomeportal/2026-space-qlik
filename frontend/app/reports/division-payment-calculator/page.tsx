@@ -10,6 +10,7 @@ import { CalculatorTab } from "./CalculatorTab"
 import { DashboardTab } from "./DashboardTab"
 import { RecalculationsTab } from "./RecalculationsTab"
 import { DPC } from "./theme"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 type TabId = "dashboard" | "calculator" | "recalculations"
 
@@ -88,7 +89,7 @@ function DivisionPaymentCalculator() {
             </Link>
             <h1 className="text-xl font-bold sm:text-2xl" style={{ color: DPC.navy }}>
               Division Payment Calculator
-            </h1>
+            <FavoriteToggle /></h1>
             <p className="text-xs text-[#6B7280]">
               Monthly payment owed to the A&amp;O division — profit, GL deductions, tariff and
               corporate gain

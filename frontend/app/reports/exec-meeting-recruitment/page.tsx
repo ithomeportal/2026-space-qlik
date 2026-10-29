@@ -19,6 +19,7 @@ import { KpiCards } from "./KpiCards"
 import { AnnualMovement } from "./AnnualMovement"
 import { PeopleFlow } from "./PeopleFlow"
 import { OpenCapacity } from "./OpenCapacity"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const ALL = "__all__"
 
@@ -80,7 +81,7 @@ function ExecMeetingRecruitmentContent() {
 
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             Exec Meeting – Recruitment
-          </h1>
+          <FavoriteToggle /></h1>
 
           <label className="flex items-center gap-2 text-xs">
             <span className="font-semibold uppercase tracking-wider text-[#9CA3AF]">

@@ -16,6 +16,7 @@ import { fmtCount, fmtTimestamp } from "@/app/reports/ops-customer-score/format"
 import { PuOverview } from "@/app/reports/ops-customer-score/tabs/PuOverview"
 import { DelOverview } from "@/app/reports/ops-customer-score/tabs/DelOverview"
 import { Detail } from "@/app/reports/ops-customer-score/tabs/Detail"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -260,7 +261,7 @@ function OcsBody({
             </Link>
             <h1 className="ml-3 text-lg font-semibold text-[#111827]">
               {title}
-            </h1>
+            <FavoriteToggle /></h1>
           </div>
           <div className="text-[11px] text-[#6B7280]">
             {fr?.last_updated ? (

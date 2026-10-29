@@ -26,6 +26,7 @@ import { AgingTabs } from "./AgingTabs"
 import { AgingBucketsChart } from "./AgingBucketsChart"
 import { TopDelayedCustomers } from "./TopDelayedCustomers"
 import { fmtCount, fmtUsd } from "./format"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const ALL_COMPANIES = ["TMS", "TMS3"] as const
@@ -191,7 +192,7 @@ function AdminCashflowContent() {
           <Receipt className="h-4 w-4 text-[#1B3A5C]" />
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             Admin Aging Cashflow
-          </h1>
+          <FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] text-[#1E40AF]">
             A/R discipline
           </span>

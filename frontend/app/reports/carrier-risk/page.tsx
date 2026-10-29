@@ -24,6 +24,7 @@ import { LaneTable } from "./LaneTable"
 import { CarrierLaneTable } from "./CarrierLaneTable"
 import { DetailsTable } from "./DetailsTable"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 
@@ -144,7 +145,7 @@ function CarrierRiskContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-[#B45309]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">Risk Asss for Carriers</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">Risk Asss for Carriers<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#FEF3C7] px-2 py-0.5 text-[10px] text-[#92400E]">
             concentration risk
           </span>

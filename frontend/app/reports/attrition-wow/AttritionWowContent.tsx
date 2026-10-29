@@ -16,6 +16,7 @@ import { ReactiveTab } from "./tabs/ReactiveTab"
 import { PivotsTab } from "./tabs/PivotsTab"
 import { TrendsTab } from "./tabs/TrendsTab"
 import { LossesTab } from "./tabs/LossesTab"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"]
@@ -176,7 +177,7 @@ function AttritionBody({
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-[10px] text-[#1E40AF]">
             {badge}
           </span>

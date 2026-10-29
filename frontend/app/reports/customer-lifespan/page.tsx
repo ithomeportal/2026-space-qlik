@@ -16,6 +16,7 @@ import { LifespanPanel } from "./LifespanPanel"
 import { TimelinePanel } from "./TimelinePanel"
 import { TrendPanel } from "./TrendPanel"
 import { Card, ErrorBox, Loading, Segmented } from "./ui"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const TABS = [
   { k: "trends", label: "Trends" },
@@ -95,7 +96,7 @@ function LifespanContent() {
         </Link>
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <Hourglass className="h-4 w-4 text-[#1B3A5C]" />
-        <h1 className="text-sm font-semibold text-[#1B3A5C]">Customer Lifespan</h1>
+        <h1 className="text-sm font-semibold text-[#1B3A5C]">Customer Lifespan<FavoriteToggle /></h1>
         <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1D4ED8]">TMS · since 2016</span>
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <Segmented label="Division" value={division} options={DIVISIONS} onChange={(v) => setParam("division", v, "all")} />

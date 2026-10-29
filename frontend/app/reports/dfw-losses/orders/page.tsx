@@ -1,4 +1,5 @@
 "use client"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 /**
  * DFW Losses — day drill-down (Bruno PDF 2026-08-03 R1).
@@ -155,7 +156,7 @@ function OrdersContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <TrendingDown className="h-4 w-4 text-[#DC2626]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">Orders</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">Orders<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#DBEAFE] px-2 py-0.5 text-xs text-[#1D4ED8]">
             TEAM-DFW
           </span>

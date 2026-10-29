@@ -21,6 +21,7 @@ import { KpiCards } from "./KpiCards"
 import { TrendChart } from "./TrendChart"
 import { CustomerTable } from "./CustomerTable"
 import { ExceptionBoard } from "./ExceptionBoard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const RANGES: { k: EdiRange; label: string }[] = [
   { k: "mtd", label: "Month to Date" },
@@ -92,7 +93,7 @@ function Content() {
           </Link>
           <FileInput className="h-5 w-5 text-slate-400" />
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">EDI Load Tenders</h1>
+            <h1 className="text-lg font-semibold text-slate-900">EDI Load Tenders<FavoriteToggle /></h1>
             <p className="text-xs text-slate-500">
               What our EDI partners tendered, what we turned into an order, and what
               got cancelled on either side.

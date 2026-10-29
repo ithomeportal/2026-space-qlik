@@ -9,6 +9,7 @@ import {
   useReportsCatalog,
   type CatalogReport,
 } from "@/lib/reports-index-api"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 export default function ReportsIndexPage() {
   return (
@@ -75,7 +76,7 @@ function ReportsIndexContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Library className="h-4 w-4 text-[#1B3A5C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">Reports Index</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">Reports Index<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#EEF2FF] px-2 py-0.5 text-xs text-[#3730A3]">
             Directors &amp; Managers
           </span>

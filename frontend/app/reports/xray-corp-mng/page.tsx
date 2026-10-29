@@ -11,6 +11,7 @@ import { Trends } from "./tabs/Trends"
 import { Risk } from "./tabs/Risk"
 import { ContractSpot } from "./tabs/ContractSpot"
 import { ReportGuard } from "@/components/ReportGuard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
@@ -96,7 +97,7 @@ function XrayCorpContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-[#2563EB]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">XRay CORP Mng</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">XRay CORP Mng<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">Management</span>
         </div>
         <div className="ml-auto text-xs text-[#6B7280]">

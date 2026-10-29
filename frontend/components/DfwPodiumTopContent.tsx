@@ -11,6 +11,7 @@ import {
 import { fmtCurrency, fmtInt, fmtPct } from "@/lib/podium-dfw-api"
 import { useDebounce } from "@/lib/use-debounce"
 import { ReportGuard } from "@/components/ReportGuard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 // --- Common Range filter (2026-07-08) --------------------------------------
 // Mirrors the CEO Executive range bar. "Default" keeps the original per-box
@@ -144,7 +145,7 @@ function Body({ apiPrefix, title }: { apiPrefix: string; title: string }) {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Trophy className="h-4 w-4 text-[#C2410C]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">{title}<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#FEF3C7] px-2 py-0.5 text-xs text-[#92400E]">
             DFW
           </span>

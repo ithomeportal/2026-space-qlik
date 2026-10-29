@@ -30,6 +30,7 @@ import { useDebounce } from "@/lib/use-debounce"
 import { TeamSummaryTable } from "./TeamSummaryTable"
 import { MonthlyTotalsChart } from "./MonthlyTotalsChart"
 import { ReportGuard } from "@/components/ReportGuard"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"] as const
 const DFW_TEAMS = ["TEAM-DFW"] as const
@@ -249,7 +250,7 @@ function ESavingsFromCarriersContent() {
           <PiggyBank className="h-4 w-4 text-[#059669]" />
           <h1 className="text-sm font-semibold text-[#1B3A5C]">
             eSavings from Carriers
-          </h1>
+          <FavoriteToggle /></h1>
           <span className="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-xs text-[#6B7280]">
             Operations
           </span>

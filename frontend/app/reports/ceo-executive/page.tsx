@@ -19,6 +19,7 @@ import { Risk } from "./tabs/Risk"
 import { Orders } from "./tabs/Orders"
 import { Attrition } from "./tabs/Attrition"
 import { DirectCompareContent } from "@/components/DirectCompareContent"
+import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -241,7 +242,7 @@ function CeoExecutiveContent() {
         <div className="h-4 w-px bg-[#E5E7EB]" />
         <div className="flex items-center gap-2">
           <Crown className="h-4 w-4 text-[#D97706]" />
-          <h1 className="text-sm font-semibold text-[#1B3A5C]">CEO Executive</h1>
+          <h1 className="text-sm font-semibold text-[#1B3A5C]">CEO Executive<FavoriteToggle /></h1>
           <span className="rounded-full bg-[#FEF3C7] px-2 py-0.5 text-xs text-[#92400E]">Executive</span>
         </div>
         <div className="ml-auto text-xs text-[#6B7280]">
