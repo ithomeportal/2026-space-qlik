@@ -87,6 +87,10 @@ def test_division_scope_filters_and_all_merges_one_month():
         core.merge_rows(ROWS, "mx")
 
 
+def test_future_departures_wait_for_their_day():
+    assert "ship_date <= (now() AT TIME ZONE 'America/Chicago')::date" in core.CUSTOMER_MONTHS_SQL
+
+
 def test_pct_needs_a_positive_base():
     assert core.pct(-50, 500) == -10.0
     assert core.pct(50, -500) is None and core.pct(1, 0) is None

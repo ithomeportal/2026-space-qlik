@@ -21,12 +21,16 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import pairwise
 
+from app.clock import CST_NOW_DATE_SQL
+
 AT_RISK_AFTER_DAYS = 30
 WINDOWS = (60, 90, 180)
 DEFAULT_WINDOW = 90
 DIVISIONS = ("all", "corp", "dfw")
 
-CUSTOMER_MONTHS_SQL = """
+#: Departures dated after today (seen 2026-10-29: one order on 10-30) wait for
+#: their day — they would push as-of into the future and past the month range.
+CUSTOMER_MONTHS_SQL = f"""
 SELECT customer_id,
        date_trunc('month', ship_date)::date                   AS month,
        division,
@@ -38,6 +42,7 @@ SELECT customer_id,
        (ARRAY_AGG(customer_name ORDER BY ship_date DESC))[1]  AS name
   FROM customer_lifespan_orders
  WHERE NOT voided_in_datalake
+   AND ship_date <= {CST_NOW_DATE_SQL}
  GROUP BY customer_id, date_trunc('month', ship_date), division
 """
 
