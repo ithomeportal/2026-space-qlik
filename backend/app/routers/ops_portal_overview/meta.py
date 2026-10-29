@@ -43,7 +43,9 @@ async def filters(
     # The DFW-marker rule (app.datalake, 2026-10-28) — the pickers must list
     # exactly the loads the panels count, or a DFW customer stays pickable on
     # CORP and selects an empty table.
-    member_v4 = division_member_sql(scope, "", "$1", team_col_expr="TRIM(team_id)")
+    member_v4 = division_member_sql(
+        scope, "mcleod_gld_budget_report_v4", "$1", team_col_expr="TRIM(team_id)",
+    )
     member_br4 = division_member_sql(scope, "br4", "$1", team_col_expr="TRIM(br4.team_id)")
     cust_sql = f"""
         SELECT DISTINCT TRIM(customer_name) AS customer_name

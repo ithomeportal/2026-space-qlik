@@ -79,7 +79,7 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             SELECT DISTINCT TRIM(customer_name) AS customer_name
             FROM public.mcleod_gld_budget_report_v4
             WHERE TRIM(team_id)    = $1
-              AND {not_dfw_tagged('team')}
+              AND {not_dfw_tagged('mcleod_gld_budget_report_v4.team')}
               AND TRIM(company_id) = ANY($2)
               AND TRIM(status)     = ANY($3)
               AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'

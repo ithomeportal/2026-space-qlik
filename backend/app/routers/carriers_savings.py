@@ -56,7 +56,7 @@ ALL_ALLOWED_TEAMS = tuple(t for teams in DIVISION_TEAMS.values() for t in teams)
 
 # The team a v4 row belongs to: a CORP-team row marked TM1..TM5 votes for
 # TEAM-DFW (DFW-marker rule, 2026-10-28, app.division_marker).
-_TEAM_OF_ROW = division_team_id_sql("")
+_TEAM_OF_ROW = division_team_id_sql("mcleod_gld_budget_report_v4")  # unaliased FROM
 
 # Per-customer canonical team, derived from McLeod. One row per customer: the team
 # with the most loads (tiebreak alphabetical). Prepend with `WITH ` when embedding.

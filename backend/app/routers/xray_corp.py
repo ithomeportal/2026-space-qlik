@@ -186,7 +186,7 @@ def _scorecard_cte(kind: str) -> str:
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard_incidents_portal
     WHERE team_id    IN ({teams_sql})
-      AND {not_dfw_tagged("team_dfw")}
+      AND {not_dfw_tagged("mcleod_gld_scorecard_incidents_portal.team_dfw")}
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
       AND stop_type  IN ({stops_sql})
@@ -254,7 +254,7 @@ async def filters(
         SELECT DISTINCT TRIM(customer_name) AS customer_name
         FROM public.mcleod_gld_budget_report_v4
         WHERE TRIM(team_id)    = ANY($1)
-          AND {not_dfw_tagged("team")}
+          AND {not_dfw_tagged("mcleod_gld_budget_report_v4.team")}
           AND TRIM(company_id) = ANY($2)
           AND TRIM(status)     = ANY($3)
           AND UPPER(COALESCE(customer_name,'')) NOT LIKE '%OILTEX%'
@@ -374,7 +374,7 @@ async def kpis(
                         ORDER BY COUNT(*) DESC, TRIM(team_id)
                     ) AS rn
                 FROM public.mcleod_gld_budget_report_v4
-                WHERE TRIM(team_id) = ANY($3) AND {not_dfw_tagged("team")}
+                WHERE TRIM(team_id) = ANY($3) AND {not_dfw_tagged("mcleod_gld_budget_report_v4.team")}
                 GROUP BY TRIM(customer_name), TRIM(team_id)
             ) ranked
             WHERE rn = 1
@@ -417,7 +417,7 @@ async def kpis(
                     ) AS rn
                 FROM public.mcleod_gld_budget_report_v4
                 WHERE TRIM(team_id) = ANY(ARRAY['TEAM1','TEAM2','TEAM3','TEAM4','TEAM5'])
-                  AND {not_dfw_tagged("team")}
+                  AND {not_dfw_tagged("mcleod_gld_budget_report_v4.team")}
                 GROUP BY TRIM(customer_name), TRIM(team_id)
             ) ranked
             WHERE rn = 1

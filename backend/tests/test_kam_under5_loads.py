@@ -262,7 +262,8 @@ def test_the_dfw_scope_is_the_shared_one():
 
 def test_the_team_filter_only_honours_TM1_to_TM4():
     gold, _, _ = _drive(sub_teams="TM2,TEAM1,tm3,../*")
-    assert "TRIM(b.team) = ANY($4)" in _sql(gold)
+    # The pill is TM4 for a revenue-code-DFW CORP row (2026-10-29).
+    assert "ELSE TRIM(b.team) END) = ANY($4)" in _sql(gold)
     assert gold.params[0][3] == ["TM2", "TM3"]
 
 

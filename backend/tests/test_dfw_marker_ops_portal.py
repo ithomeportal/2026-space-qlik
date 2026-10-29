@@ -1,12 +1,13 @@
-"""DFW loads booked under a CORP team — the Ops Portal family (2026-10-28).
+"""DFW loads booked under a CORP team — the Ops Portal family (2026-10-28/29).
 
 Sergio Hidalgo (KAM, CORP T3): orders 0007543-45, UNILINK TRANSPORTATION
-Monterrey→Tijuana, sit in McLeod MX (TMS3) with ``team_id = 'TEAM3'`` but
-``team = 'TM4'`` — DFW loads, −$1,778 on CORP T3's October. Fixed in McLeod by
-hand before; it keeps coming back. The rule (``app.datalake.not_dfw_tagged``):
+Monterrey→Tijuana, sit in McLeod MX (TMS3) with ``team_id = 'TEAM3'`` — DFW
+loads, −$1,778 on CORP T3's October. McLeod (10-29): the customer is shared,
+the order's revenue code ``DFW`` decides. The rule (``app.datalake.dfw_tagged``,
+marker fallback for an order not yet mirrored):
 
-  CORP  excludes a CORP-team row carrying a DFW sub-team marker;
-  DFW   includes it (it lands in its TM pill);
+  CORP  excludes a CORP-team row with revenue code DFW;
+  DFW   includes it, in the TM4 pill;
   ALL   keeps it and relabels it TEAM-DFW — so CORP + DFW = ALL row for row.
 
 The leak guards in ``test_ops_portal_scope`` / ``test_ceo_executive_portal``
@@ -29,6 +30,7 @@ from app.routers import ops_portal_overview_dfw as dfw
 from app.routers import ops_portal_overview_team as team_clones
 from app.routers.ops_portal_overview import _constants, _sql
 from app.routers.ops_portal_overview._scope import (
+    _CORP_TEAM_LIT,
     ALL_SCOPE,
     CORP_SCOPE,
     DFW_SCOPE,
@@ -57,13 +59,16 @@ def _routes(router):
 # ---------------------------------------------------------------------------
 
 
-def test_the_marker_rule_is_null_safe_and_case_insensitive() -> None:
-    # NULL NOT IN (...) is NULL → the row would be DELETED, not kept (§75).
-    assert not_dfw_tagged("br4.team").startswith("COALESCE(br4.team, '')")
-    # McLeod carries 'tm4' on 2 rows.
-    assert "'tm4'" in not_dfw_tagged("x") and "'tm4'" in dfw_tagged("x")
+def test_the_rule_is_never_null_and_keeps_a_case_insensitive_fallback() -> None:
+    # NOT NULL is NULL → the row would be DELETED, not kept (§75).
+    assert "ELSE COALESCE(br4.team, '') IN (" in dfw_tagged("br4.team")
+    assert not_dfw_tagged("br4.team") == f"NOT {dfw_tagged('br4.team')}"
+    # The marker fallback: McLeod carries 'tm4' on 2 rows.
+    assert "'tm4'" in dfw_tagged("x.team")
     # Only the five DFW markers move a row — not "any non-blank team".
-    assert "<> ''" not in not_dfw_tagged("x")
+    assert "<> ''" not in dfw_tagged("x.team")
+    # The revenue code is looked up for THIS row (uncorrelated id set).
+    assert "br4.id IN (SELECT rc_d.id FROM mcleod_gld_cash_flow_dinfo" in dfw_tagged("br4.team")
 
 
 def test_each_division_renders_its_side_of_the_rule() -> None:
@@ -79,11 +84,14 @@ def test_each_division_renders_its_side_of_the_rule() -> None:
     assert division_member_sql(ALL_SCOPE, "br4", "$1") == "br4.team_id    = ANY($1)"
 
 
-def test_all_relabels_marked_rows_and_the_divisions_do_not() -> None:
+def test_dfw_pills_say_tm4_and_all_relabels_team_dfw() -> None:
     assert sub_team_expr(CORP_SCOPE, "br4", "team_id") == "br4.team_id"
-    assert sub_team_expr(DFW_SCOPE, "br4", "team") == "br4.team"
+    corp_row = f"br4.team_id IN {_CORP_TEAM_LIT} AND {dfw_tagged('br4.team')}"
+    assert sub_team_expr(DFW_SCOPE, "br4", "team") == (
+        f"(CASE WHEN {corp_row} THEN 'TM4' ELSE br4.team END)"
+    )
     rel = sub_team_expr(ALL_SCOPE, "br4", "team_id")
-    assert rel == f"(CASE WHEN {dfw_tagged('br4.team')} THEN 'TEAM-DFW' ELSE br4.team_id END)"
+    assert rel == f"(CASE WHEN {corp_row} THEN 'TEAM-DFW' ELSE br4.team_id END)"
     # An expression must keep its alias as a SELECT item, or it comes out "case".
     assert _sql._team_id_select("br4", ALL_SCOPE) == f"{rel} AS team_id"
     assert _sql._team_id_select("br4", CORP_SCOPE) == "br4.team_id"
@@ -99,15 +107,18 @@ def test_the_v4_scope_where_carries_the_rule_under_every_division() -> None:
 
 
 def test_the_scorecard_cte_reads_the_scorecard_marker_column() -> None:
+    sc = "mcleod_gld_scorecard_incidents_portal.team_dfw"
     corp = _sql._scorecard_cte("otp", CORP_SCOPE)
-    assert not_dfw_tagged("team_dfw") in corp
+    assert not_dfw_tagged(sc) in corp
     dfw_cte = _sql._scorecard_cte("otd", DFW_SCOPE)
-    assert dfw_tagged("team_dfw") in dfw_cte
+    assert dfw_tagged(sc) in dfw_cte
 
 
 def test_the_customer_team_map_follows_the_rule() -> None:
-    assert not_dfw_tagged("team") in _constants.customer_team_cte(CORP_SCOPE)
-    assert dfw_tagged("team") in _constants.customer_team_cte(DFW_SCOPE)
+    v4 = "mcleod_gld_budget_report_v4.team"
+    assert not_dfw_tagged(v4) in _constants.customer_team_cte(CORP_SCOPE)
+    dfw_map = _constants.customer_team_cte(DFW_SCOPE)
+    assert dfw_tagged(v4) in dfw_map and "THEN 'TM4'" in dfw_map
 
 
 # ---------------------------------------------------------------------------

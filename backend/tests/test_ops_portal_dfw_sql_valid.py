@@ -52,7 +52,7 @@ from app.routers import ops_portal_overview as opo
 from app.routers import ops_portal_overview_dfw as dfw
 from app.routers.ops_portal_overview import _constants, _sql
 from app.routers.ops_portal_overview import hold as hold_mod
-from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE
+from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE, sub_team_expr
 
 _ENDPOINT_MODULES = (
     "meta", "chart", "variance", "performance",
@@ -393,7 +393,8 @@ def test_the_customer_team_cte_renders_a_valid_in_list_under_both_scopes() -> No
 def test_team_id_col_is_a_bare_column_under_every_scope() -> None:
     """Safe to wrap — that is the whole distinction from `_team_id_select`."""
     assert _sql._team_id_col("br4", CORP_SCOPE) == "br4.team_id"
-    assert _sql._team_id_col("br4", DFW_SCOPE) == "br4.team"
+    # DFW: the sub-team, TM4 for a revenue-code-DFW CORP row (2026-10-29).
+    assert _sql._team_id_col("br4", DFW_SCOPE) == sub_team_expr(DFW_SCOPE, "br4", "team")
     for scope in (CORP_SCOPE, DFW_SCOPE):
         assert " AS " not in _sql._team_id_col("br4", scope)
     assert inspect.signature(_sql._team_id_col).parameters["scope"].default is CORP_SCOPE
@@ -439,7 +440,7 @@ def test_team_id_select_is_never_wrapped_in_a_call_anywhere_in_the_package() -> 
 def test_the_hold_board_trims_the_bare_team_column() -> None:
     """The regression itself, on the statement the browser actually causes."""
     for scope, expected in ((CORP_SCOPE, "TRIM(br4.team_id) AS team_id"),
-                            (DFW_SCOPE, "TRIM(br4.team) AS team_id")):
+                            (DFW_SCOPE, f"TRIM({sub_team_expr(DFW_SCOPE, 'br4', 'team')}) AS team_id")):
         pool = _StubPool()
         undo = _patch_pools(pool)
         state = types.SimpleNamespace()

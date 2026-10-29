@@ -299,7 +299,8 @@ def _scorecard_cte(kind: str, scope: DivisionScope = CORP_SCOPE) -> str:
     codes_sql = _lit(codes, width=40)
     stops_sql = _lit(stops, width=2)
     teams_sql = "(" + _lit(scope.base_teams, width=8) + ")"
-    member_sql = division_member_sql(scope, "", teams_sql, SC_MARKER_COL)
+    # Unaliased FROM: the DFW rule correlates on the table name.
+    member_sql = division_member_sql(scope, "mcleod_gld_scorecard_incidents_portal", teams_sql, SC_MARKER_COL)
     companies_sql = _lit(CORP_COMPANIES, width=4)
     statuses_sql = _lit(OPEN_STATUSES, width=1)
     return f"""

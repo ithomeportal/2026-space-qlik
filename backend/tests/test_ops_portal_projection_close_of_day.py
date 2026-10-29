@@ -38,7 +38,7 @@ from app.routers.ops_portal_overview._metrics import (
     _projection_sums_sql,
     _team_projection_core,
 )
-from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE
+from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE, sub_team_expr
 from app.routers.ops_portal_overview._sql import _v4_scope_where
 from app.services import projection_history as ph
 
@@ -216,11 +216,14 @@ def test_the_by_team_breakout_groups_on_the_scopes_team_column() -> None:
     Grouping on it returned one 'TEAM-DFW' row that matched none of TM1..TM5,
     so the DFW Team modal of Monthly Projection showed every team at zero.
     """
-    for scope, col in ((CORP_SCOPE, "team_id"), (DFW_SCOPE, DFW_SCOPE.v4_team_col)):
+    for scope in (CORP_SCOPE, DFW_SCOPE):
+        # DFW: the sub-team column, TM4 for a revenue-code-DFW CORP row.
+        col = sub_team_expr(scope, "br4", scope.v4_team_col)
         pool = _drive_by_team(date(2026, 10, 20), scope=scope)
         sql = pool.calls[0][0]
-        assert f"TRIM(br4.{col}) AS team_id" in sql
-        assert f"GROUP BY TRIM(br4.{col})" in sql
+        assert f"TRIM({col}) AS team_id" in sql
+        assert f"GROUP BY TRIM({col})" in sql
+    assert "br4.team END" in sub_team_expr(DFW_SCOPE, "br4", DFW_SCOPE.v4_team_col)
 
 
 # ---------------------------------------------------------------------------

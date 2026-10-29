@@ -35,6 +35,7 @@ import asyncio
 import types
 
 import pytest
+from dfw_marker_sql import strip_dfw_marker_rule
 
 from app.routers import ops_portal_overview as opo
 from app.routers.ops_portal_overview import hold as hold_mod
@@ -122,7 +123,8 @@ def test_the_filter_is_unbilled_not_on_hold() -> None:
     """
     pool, _ = _run()
     assert f"br4.bill_date < '{hold_mod.BILL_SENTINEL}'::date" in pool.sql
-    where = pool.sql.rsplit("WHERE ", 1)[1].split("ORDER BY")[0]
+    # The DFW rule carries a WHERE of its own (the revenue-code lookup).
+    where = strip_dfw_marker_rule(pool.sql).rsplit("WHERE ", 1)[1].split("ORDER BY")[0]
     assert "on_hold" not in where, "on_hold must not be a filter any more"
     # ...but it is still selected, so the column renders off the DATA.
     assert "(TRIM(COALESCE(br4.on_hold,'')) = 'Y') AS on_hold" in pool.sql
@@ -160,7 +162,8 @@ def test_a_team_pin_narrows_rather_than_replaces_the_corp_scope() -> None:
     pool, _ = _run(team="TEAM2")
     # Count in the main WHERE only: the two LATERALs carry their own WHERE, so
     # the board's predicate is the LAST one.
-    where = pool.sql.rsplit("WHERE ", 1)[1].split("ORDER BY")[0]
+    # The DFW rule carries a WHERE of its own (the revenue-code lookup).
+    where = strip_dfw_marker_rule(pool.sql).rsplit("WHERE ", 1)[1].split("ORDER BY")[0]
     assert where.count("br4.team_id") == 2, "the pin must ADD a predicate"
     assert "TEAM2   " in pool.params[3]
     # The CORP list is still the first predicate.

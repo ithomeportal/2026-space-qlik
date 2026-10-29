@@ -90,7 +90,7 @@ ALL_DIVISION_TEAMS = (*CORP_TEAMS, *DFW_SUB_TEAMS)
 # Team label: DFW rows by sub-team (incl. a DFW-marked CORP-team row — the
 # DFW-marker rule, 2026-10-28, app.division_marker), else team_id.
 _TEAM_LABEL_BR4 = team_label_sql("br4")
-_TEAM_LABEL_BARE = team_label_sql("")
+_TEAM_LABEL_BARE = team_label_sql("mcleod_gld_budget_report_v4")  # unaliased FROM
 ALLOWED_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 

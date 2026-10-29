@@ -39,6 +39,7 @@ from app.routers.ops_portal_overview._scope import (
     DFW_SCOPE,
     case_variants,
     scope_of,
+    sub_team_expr,
 )
 
 CORP_IDS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5")
@@ -187,7 +188,9 @@ def test_sub_team_params_match_how_each_column_is_stored() -> None:
 def test_corp_team_select_carries_no_redundant_alias() -> None:
     """Keeps the CORP SQL byte-identical so the equivalence proof has teeth."""
     assert _sql._team_id_select("br4", CORP_SCOPE) == "br4.team_id"
-    assert _sql._team_id_select("br4", DFW_SCOPE) == "br4.team AS team_id"
+    dfw_col = sub_team_expr(DFW_SCOPE, "br4", "team")
+    assert dfw_col.endswith("THEN 'TM4' ELSE br4.team END)")
+    assert _sql._team_id_select("br4", DFW_SCOPE) == f"{dfw_col} AS team_id"
 
 
 def test_the_customer_team_map_ranks_the_scopes_own_column() -> None:
@@ -199,10 +202,11 @@ def test_the_customer_team_map_ranks_the_scopes_own_column() -> None:
     assert _constants.CUSTOMER_TEAM_CTE == corp
 
     dfw_cte = _constants.customer_team_cte(DFW_SCOPE)
-    assert "TRIM(team)       AS team_id" in dfw_cte, "output name must stay team_id"
+    dfw_col = sub_team_expr(DFW_SCOPE, "mcleod_gld_budget_report_v4", "team")
+    assert f"TRIM({dfw_col})       AS team_id" in dfw_cte, "output name must stay team_id"
     assert "'TEAM-DFW'" in dfw_cte
-    # TEAM1..5 appear only inside the DFW-marker rule (2026-10-28): DFW owns
-    # the CORP-team rows tagged TM1..TM5 — anywhere else would be a leak.
+    # TEAM1..5 appear only inside the DFW rule (2026-10-28/29): DFW owns the
+    # CORP-team rows with revenue code DFW — anywhere else would be a leak.
     assert "'TEAM1'" not in strip_dfw_marker_rule(dfw_cte)
     assert "<dfw-marked-corp-row>" in strip_dfw_marker_rule(dfw_cte)
     assert "<not-dfw-marked>" in strip_dfw_marker_rule(corp)
@@ -286,7 +290,7 @@ def test_by_team_output_reads_the_sub_team_column_under_dfw(path: str) -> None:
     """
     fn = {r.path: r.endpoint for r in dfw.r.routes}[path]
     blob = _blob(_drive(fn, scope=DFW_SCOPE))
-    assert "br4.team AS team_id" in blob or "TRIM(br4.team)" in blob, (
+    assert "ELSE br4.team END) AS team_id" in blob or "ELSE br4.team END))" in blob, (
         f"{path} must project the sub-team column, not the constant team_id"
     )
     # And it must not ALSO be grouping/aliasing on the division constant.

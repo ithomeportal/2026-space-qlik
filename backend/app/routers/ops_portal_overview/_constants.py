@@ -54,9 +54,12 @@ def customer_team_cte(scope=None, *, with_budget_team: bool = False) -> str:
     from ._scope import CORP_SCOPE, division_member_sql, sub_team_expr
 
     sc = scope or CORP_SCOPE
-    team_col = sub_team_expr(sc, "", sc.v4_team_col)
+    # Unaliased FROM: the DFW rule correlates on the table name. CORP's team
+    # column carries no rule, so it stays bare and its SQL byte-identical.
+    row = "" if sc.dfw_marker == "exclude" else "mcleod_gld_budget_report_v4"
+    team_col = sub_team_expr(sc, row, sc.v4_team_col)
     member = division_member_sql(
-        sc, "", sql_str_list(sc.base_teams), team_col_expr="TRIM(team_id)",
+        sc, "mcleod_gld_budget_report_v4", sql_str_list(sc.base_teams), team_col_expr="TRIM(team_id)",
     )
     tail = "," + budget_team_cte() if with_budget_team else ""
     return f"""

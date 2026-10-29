@@ -33,7 +33,7 @@ from app.routers import ops_portal_overview_dfw as dfw
 from app.routers import ops_portal_overview_team as team_mod
 from app.routers.ops_portal_overview._metrics import _projection_from_sums
 from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE
-from app.routers.ops_portal_overview._sql import _v4_scope_where
+from app.routers.ops_portal_overview._sql import _team_id_col, _v4_scope_where
 from app.services import projection_history as ph
 
 
@@ -162,11 +162,12 @@ def test_the_capacity_denominator_uses_the_scope_team_column() -> None:
     Counting `team_id` under DFW returns 1 (it is the constant 'TEAM-DFW'), so
     utilisation would come out five times the panel's. §77.
     """
-    for scope, col in ((CORP_SCOPE, "team_id"), (DFW_SCOPE, "team")):
+    for scope, col in ((CORP_SCOPE, "br4.team_id"), (DFW_SCOPE, "ELSE br4.team END")):
         params: list = []
         where = _v4_scope_where("br4", None, None, None, params,
                                 None, None, None, None, scope=scope)
-        assert f"COUNT(DISTINCT br4.{col})" in ph._team_count_sql(where, scope)
+        assert f"COUNT(DISTINCT {_team_id_col('br4', scope)})" in ph._team_count_sql(where, scope)
+        assert col in _team_id_col("br4", scope)
 
 
 # ---------------------------------------------------------------------------

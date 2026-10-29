@@ -111,26 +111,91 @@ def sql_str_list(values) -> str:
 DFW_SUB_TEAM_TAGS = ("TM1", "TM2", "TM3", "TM4", "TM5")
 _DFW_TAG_VARIANTS = tuple(v for t in DFW_SUB_TEAM_TAGS for v in (t, t.lower()))
 
+# REVENUE-CODE rule, 2026-10-29 (Katerine Meneses, McLeod; supersedes the
+# marker as the deciding fact for McLeod MX). The MX customer UNILSATX is
+# shared by both divisions under ONE salesperson (TEAM3); McLeod tells them
+# apart by the order's revenue code: ``DFW`` → a DFW load, anything else → the
+# salesperson's team. Diego: a ``DFW`` revenue-code load goes to DFW team TM4.
+#
+# v4 has no revenue code; ``mcleod_gld_cash_flow_dinfo.revenue_code_id`` has,
+# keyed on the SAME padded (company_id, id) as v4 and the scorecard
+# (upsert-only — no TRUNCATE lock). Measured 2026-10-29: MX (TMS3) has 60
+# DFW-coded orders of ~3,300 coded ones; on every CORP-team MX row ever, code
+# DFW ⇔ TM marker. An MX order dinfo has not mirrored yet (or with a blank
+# code) falls back to the marker, so a fresh load does not sit in CORP.
+#
+# ⚠ MX only, and UNCORRELATED. A correlated per-row lookup is
+# parallel-restricted in Postgres: it turned the whole scan serial (scorecard
+# OTP CTE 0.67 s → 7.5 s, DFW XRay KPI 0.98 s → 11.3 s — and a reader over 10 s
+# blocks the scorecard reload's TRUNCATE, which then fails on its
+# lock_timeout). Two small hashed id sets keep the plan parallel. US McLeod
+# (TMS) keeps the TM-marker rule: its code and marker agree on every CORP-team
+# row but 3 old ones (TM marker, code DV: 0258326, 0274806, 0331196 — $2,342),
+# which stay DFW as on 10-28.
+DFW_REVENUE_CODE = "DFW"
+DFW_REVENUE_SUB_TEAM = "TM4"
+REVENUE_CODE_TABLE = "mcleod_gld_cash_flow_dinfo"
+REVENUE_CODE_COMPANIES = ("TMS3",)
+
+
+def _row_of(col: str) -> str:
+    """The row reference (alias or table name) of a qualified marker column.
+
+    The rule reads the row's ``company_id`` and ``id`` beside its marker; in a
+    multi-table FROM an unqualified ``id`` is ambiguous or binds to another
+    table, silently — so a bare marker is refused, never guessed.
+    """
+    row, dot, _ = col.rpartition(".")
+    if not dot or not row:
+        raise ValueError(f"DFW rule needs a qualified marker column, got {col!r}")
+    return row
+
+
+def _mx_ids(code_test: str) -> str:
+    """Uncorrelated: the MX order ids whose revenue code passes ``code_test``."""
+    companies = sql_str_list(pad_variants(REVENUE_CODE_COMPANIES, width=4))
+    return (
+        f"(SELECT rc_d.id FROM {REVENUE_CODE_TABLE} rc_d "
+        f"WHERE rc_d.company_id IN {companies} AND {code_test})"
+    )
+
 
 def dfw_tagged(col: str) -> str:
-    """``col`` (``v4.team`` / ``scorecard.team_dfw``) carries a DFW sub-team.
+    """The CORP-team row behind ``col`` is a DFW load (revenue-code rule on MX).
 
-    >>> dfw_tagged("br4.team")
-    "br4.team IN ('TM1', 'tm1', 'TM2', 'tm2', 'TM3', 'tm3', 'TM4', 'tm4', 'TM5', 'tm5')"
+    ``col`` is the row's DFW sub-team marker, qualified: ``br4.team`` (v4) or
+    ``sc.team_dfw`` (scorecard). An MX row: revenue code ``DFW`` → TRUE, any
+    other code → FALSE, no code yet → its marker. Any other row: its TM1..TM5
+    marker. Never NULL, so NOT is safe (§75).
+
+    >>> dfw_tagged("br4.team")  # doctest: +NORMALIZE_WHITESPACE
+    "(CASE WHEN br4.company_id IN ('TMS3') AND br4.id IN (SELECT rc_d.id FROM
+    mcleod_gld_cash_flow_dinfo rc_d WHERE rc_d.company_id IN ('TMS3') AND
+    TRIM(rc_d.revenue_code_id) = 'DFW') THEN TRUE WHEN br4.company_id IN ('TMS3')
+    AND br4.id IN (SELECT rc_d.id FROM mcleod_gld_cash_flow_dinfo rc_d WHERE
+    rc_d.company_id IN ('TMS3') AND NULLIF(TRIM(rc_d.revenue_code_id), '') IS NOT NULL)
+    THEN FALSE ELSE COALESCE(br4.team, '') IN ('TM1', 'tm1', 'TM2', 'tm2', 'TM3',
+    'tm3', 'TM4', 'tm4', 'TM5', 'tm5') END)"
     """
-    return f"{col} IN {sql_str_list(_DFW_TAG_VARIANTS)}"
+    row = _row_of(col)
+    companies = sql_str_list(pad_variants(REVENUE_CODE_COMPANIES, width=4))
+    mx = f"{row}.company_id IN {companies}"
+    dfw_ids = _mx_ids(f"TRIM(rc_d.revenue_code_id) = '{DFW_REVENUE_CODE}'")
+    coded_ids = _mx_ids("NULLIF(TRIM(rc_d.revenue_code_id), '') IS NOT NULL")
+    return (
+        f"(CASE WHEN {mx} AND {row}.id IN {dfw_ids} THEN TRUE "
+        f"WHEN {mx} AND {row}.id IN {coded_ids} THEN FALSE "
+        f"ELSE COALESCE({col}, '') IN {sql_str_list(_DFW_TAG_VARIANTS)} END)"
+    )
 
 
 def not_dfw_tagged(col: str) -> str:
-    """The CORP side of ``dfw_tagged`` — NULL-safe, so NULL stays CORP.
+    """The CORP side of ``dfw_tagged`` — AND it onto every CORP ``team_id`` predicate.
 
-    AND this onto every CORP ``team_id`` predicate: a CORP-team row carrying a
-    DFW marker is a DFW load.
-
-    >>> not_dfw_tagged("v4.team")
-    "COALESCE(v4.team, '') NOT IN ('TM1', 'tm1', 'TM2', 'tm2', 'TM3', 'tm3', 'TM4', 'tm4', 'TM5', 'tm5')"
+    >>> not_dfw_tagged("v4.team").startswith("NOT (CASE WHEN v4.company_id IN ('TMS3') AND v4.id IN (")
+    True
     """
-    return f"COALESCE({col}, '') NOT IN {sql_str_list(_DFW_TAG_VARIANTS)}"
+    return f"NOT {dfw_tagged(col)}"
 
 # ---------------------------------------------------------------------------
 # Budget mirror → team map (Bruno PDFs 2026-08-27, Ops Portal + Budget Updates)

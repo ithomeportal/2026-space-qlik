@@ -42,7 +42,7 @@ from app.attrition_core import (
     last_completed_week as _last_completed_week,
 )
 from app.clock import cst_today
-from app.datalake import dfw_tagged, pad_variants as _pad_variants
+from app.datalake import DFW_REVENUE_SUB_TEAM, dfw_tagged, pad_variants as _pad_variants
 from app.division_marker import team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
@@ -183,10 +183,12 @@ def _team_dim(alias: str) -> str:
     team individually (Bruno 2026-05-28); CORP rows keep their ``team_id``. A
     DFW row with no sub-team falls back to ``TEAM-DFW``. Handles mixed pill
     selections per-row with no mode flag."""
-    # A DFW-marked CORP-team row is a DFW load (DFW-marker rule, 2026-10-28).
+    # A CORP-team row with revenue code DFW is a DFW load in team TM4
+    # (DFW rule, app.datalake.dfw_tagged, 2026-10-29).
     return (
-        f"CASE WHEN TRIM({alias}.team_id) = 'TEAM-DFW' OR {dfw_tagged(f'{alias}.team')} "
+        f"CASE WHEN TRIM({alias}.team_id) = 'TEAM-DFW' "
         f"THEN COALESCE(NULLIF(TRIM({alias}.team), ''), 'TEAM-DFW') "
+        f"WHEN {dfw_tagged(f'{alias}.team')} THEN '{DFW_REVENUE_SUB_TEAM}' "
         f"ELSE TRIM({alias}.team_id) END"
     )
 

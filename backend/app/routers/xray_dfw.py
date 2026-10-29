@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.clock import cst_today
 from app.datalake import dfw_tagged, sql_str_list
 from app.datalake import pad_variants as _pad_variants
-from app.division_marker import CORP_TEAM_IDS, team_membership_sql
+from app.division_marker import CORP_TEAM_IDS, dfw_sub_team_sql, team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 YEAR_START = date(2026, 1, 1)
@@ -41,6 +41,10 @@ YEAR_END = date(2026, 12, 31)
 DFW_TEAM = "TEAM-DFW"
 DFW_TEAMS = (DFW_TEAM,)
 DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
+
+# A row's DFW pill: a CORP-team row with revenue code DFW is TM4 (2026-10-29).
+_SC_TABLE = "mcleod_gld_scorecard_incidents_portal"
+_BR4_SUB_TEAM = dfw_sub_team_sql("br4")
 DFW_COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
@@ -203,7 +207,7 @@ def _scope_where(
         parts.append(f"TRIM(COALESCE({alias}.client,'')) <> ''")
     if sub_teams:
         params.append(sub_teams)
-        parts.append(f"TRIM({alias}.team) = ANY(${len(params)})")
+        parts.append(f"({dfw_sub_team_sql(alias)}) = ANY(${len(params)})")
     if customers:
         params.append(customers)
         parts.append(f"{_entity_expr(alias, view)} = ANY(${len(params)})")
@@ -270,7 +274,7 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
         # team_dfw is varchar(512) — TRIM equality keeps it sargable enough
         # given the small cardinality (4 values) of the DFW filter set.
         in_list = ",".join(f"'{s}'" for s in sub_teams)
-        sub_filter = f"\n      AND TRIM(team_dfw) IN ({in_list})"
+        sub_filter = f"\n      AND ({dfw_sub_team_sql(_SC_TABLE, 'team_dfw')}) IN ({in_list})"
 
     return f"""
     SELECT
@@ -279,7 +283,7 @@ def _scorecard_cte(kind: str, sub_teams: list[str]) -> str:
       COUNT(DISTINCT id) AS {out}
     FROM public.mcleod_gld_scorecard_incidents_portal
     WHERE (team_id   IN ({teams_sql})
-           OR (team_id IN {corp_teams_sql} AND {dfw_tagged("team_dfw")}))
+           OR (team_id IN {corp_teams_sql} AND {dfw_tagged(f"{_SC_TABLE}.team_dfw")}))
       AND company_id IN ({companies_sql})
       AND status     IN ({statuses_sql})
       AND stop_type  IN ({stops_sql})
@@ -657,7 +661,7 @@ async def trio_tables(
             WITH otp AS ({_scorecard_cte("otp", sub_team_list)}),
                  otd AS ({_scorecard_cte("otd", sub_team_list)}),
                  prod AS (
-                    SELECT TRIM(br4.team) AS team_label,
+                    SELECT {_BR4_SUB_TEAM} AS team_label,
                            br4.id, br4.company_id, br4.total_charge, br4.margin_amt,
                            COALESCE(otp.scorecard_count_otp, 0) AS otp_cnt,
                            COALESCE(otd.scorecard_count_otd, 0) AS otd_cnt
@@ -1112,7 +1116,7 @@ async def teams_breakdown(
     rows = await pool.fetch(
         f"""
         SELECT
-          TRIM(br4.team) AS team_label,
+          {_BR4_SUB_TEAM} AS team_label,
           br4.origin_actual_departure::date AS dep_date,
           br4.total_charge, br4.margin_amt
         FROM public.mcleod_gld_budget_report_v4 br4
@@ -2054,7 +2058,7 @@ async def all_orders(
     rows_task = pool.fetch(
         f"""
         SELECT
-          TRIM(br4.team) AS team,
+          {_BR4_SUB_TEAM} AS team,
           br4.id,
           -- On the wire so the client can key a row uniquely: `id` alone is
           -- NOT unique in v4 (281,951 rows / 247,882 distinct ids), and React

@@ -50,7 +50,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
-from app.division_marker import team_membership_sql
+from app.division_marker import dfw_sub_team_sql, team_membership_sql
 from app.routers.deps import (
     get_datalake_gold_pool,
     get_pool,
@@ -68,6 +68,8 @@ router = APIRouter(
 YEAR_START = date(2026, 1, 1)
 YEAR_END = date(2026, 12, 31)
 DFW_TEAMS = ("TEAM-DFW",)
+# A row's DFW pill: a CORP-team row with revenue code DFW is TM4 (2026-10-29).
+_B_SUB_TEAM = dfw_sub_team_sql("b")
 DFW_SUB_TEAMS = ("TM1", "TM2", "TM3", "TM4")
 COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
@@ -874,7 +876,7 @@ async def worst_lanes(
     sub_team_list = _parse_sub_teams(sub_teams)
     if sub_team_list:
         params.append(sub_team_list)
-        where += f" AND TRIM(b.team) = ANY(${len(params)})"
+        where += f" AND ({_B_SUB_TEAM}) = ANY(${len(params)})"
     params.extend([s, e, limit])
     p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
 
@@ -1069,7 +1071,7 @@ async def under_5_loads(
     sub_team_list = _parse_sub_teams(sub_teams)
     if sub_team_list:
         params.append(sub_team_list)
-        where += f" AND TRIM(b.team) = ANY(${len(params)})"
+        where += f" AND ({_B_SUB_TEAM}) = ANY(${len(params)})"
     params.extend([s, e, page_size, (page - 1) * page_size])
     p_s, p_e, p_lim, p_off = (len(params) - 3, len(params) - 2,
                               len(params) - 1, len(params))
@@ -1092,7 +1094,7 @@ async def under_5_loads(
             b.origin_actual_departure::date      AS departure,
             TRIM(b.customer_name)                AS customer,
             {lane_sql}                           AS lane,
-            NULLIF(TRIM(b.team),'')              AS team,
+            NULLIF({_B_SUB_TEAM},'')              AS team,
             b.total_charge::numeric              AS revenue,
             b.margin_amt::numeric                AS profit,
             b.margin_amt::numeric / b.total_charge::numeric * 100 AS margin_pct
@@ -1215,7 +1217,7 @@ async def carrier_sales(
     sub_clause = ""
     if sub_team_list:
         params.append(sub_team_list)
-        sub_clause = f"\n            AND TRIM(b.team) = ANY(${len(params)})"
+        sub_clause = f"\n            AND ({_B_SUB_TEAM}) = ANY(${len(params)})"
     params.extend([s, e, limit])
     p_s, p_e, p_lim = len(params) - 2, len(params) - 1, len(params)
 

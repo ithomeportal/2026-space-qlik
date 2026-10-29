@@ -35,7 +35,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from app.datalake import dfw_tagged, not_dfw_tagged, pad_variants, sql_str_list
+from app.datalake import (
+    DFW_REVENUE_SUB_TEAM,
+    dfw_tagged,
+    not_dfw_tagged,
+    pad_variants,
+    sql_str_list,
+)
 
 from ._constants import CORP_TEAMS, DFW_SUB_TEAMS, DFW_TEAM
 
@@ -56,9 +62,10 @@ class DivisionScope:
                      there (measured 2026-08-21), so every budget panel would
                      render zeros — which is why Bruno's PDF removes them all.
     ``dfw_marker``   — what the scope does with a CORP-``team_id`` row that
-                     carries a DFW sub-team marker (``app.datalake``, Sergio
-                     Hidalgo 2026-10-28): ``"exclude"`` it (CORP), ``"include"``
-                     it (DFW — it lands in its TM pill), or ``"relabel"`` it as
+                     the DFW rule (revenue code ``DFW``, ``app.datalake``;
+                     Sergio Hidalgo 10-28, McLeod 10-29) makes a DFW load:
+                     ``"exclude"`` it (CORP), ``"include"`` it (DFW — it lands
+                     in the TM4 pill), or ``"relabel"`` it as
                      ``TEAM-DFW`` (ALL, whose rows already cover it). Required,
                      never defaulted: a defaulted division rule serves the other
                      division's loads without erroring (§100).
@@ -151,8 +158,8 @@ def division_member_sql(
     and renders ``IN (...)``. ``team_col_expr`` overrides the bare
     ``<alias>.team_id`` (e.g. ``TRIM(team_id)`` in the TRIM-style queries).
 
-      CORP  → ``team_id ∈ CORP AND marker NOT a DFW sub-team``
-      DFW   → ``team_id = TEAM-DFW OR (team_id ∈ CORP AND marker IS a DFW sub-team)``
+      CORP  → ``team_id ∈ CORP AND NOT <DFW rule>``
+      DFW   → ``team_id = TEAM-DFW OR (team_id ∈ CORP AND <DFW rule>)``
       ALL   → ``team_id ∈ CORP ∪ DFW`` (unchanged — every row is already in)
 
     So CORP + DFW = ALL row for row, and Sergio's Monterrey→Tijuana loads move
@@ -179,18 +186,23 @@ def division_member_sql(
 def sub_team_expr(
     scope: DivisionScope, alias: str, team_col: str, marker_col: str = V4_MARKER_COL,
 ) -> str:
-    """The scope's sub-team value for a row — the bare column, except under ALL.
+    """The scope's sub-team value for a row — the bare column, except DFW / ALL.
 
-    Under ALL the team column is ``team_id``, so a DFW-marked CORP-team row
-    would sit in a CORP pill (TEAM3). It is relabelled ``TEAM-DFW`` so ALL's
-    pills agree with what CORP and DFW each show. CORP and DFW render the bare
-    column — CORP's SQL keeps its shape, and DFW's column already says TM4.
+    A CORP-team row the revenue-code rule makes DFW (``app.datalake``) carries
+    a CORP ``team_id`` and whatever sub-team marker McLeod gave it, so:
+    under DFW it is TM4 (Diego 2026-10-29) whatever its marker says; under ALL
+    (column ``team_id``) it is relabelled ``TEAM-DFW`` so ALL's pills agree
+    with what CORP and DFW each show. CORP renders the bare column — its rows
+    are never DFW, and its SQL keeps its shape.
     """
     a = f"{alias}." if alias else ""
     col = f"{a}{team_col}"
-    if scope.dfw_marker != "relabel":
+    if scope.dfw_marker == "exclude":
         return col
-    return f"(CASE WHEN {dfw_tagged(a + marker_col)} THEN '{DFW_TEAM}' ELSE {col} END)"
+    dfw_row = f"{a}team_id IN {_CORP_TEAM_LIT} AND {dfw_tagged(a + marker_col)}"
+    if scope.dfw_marker == "include":
+        return f"(CASE WHEN {dfw_row} THEN '{DFW_REVENUE_SUB_TEAM}' ELSE {col} END)"
+    return f"(CASE WHEN {dfw_row} THEN '{DFW_TEAM}' ELSE {col} END)"
 
 
 def case_variants(values: Sequence[str]) -> list[str]:
