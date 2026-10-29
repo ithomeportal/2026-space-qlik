@@ -553,6 +553,24 @@ async def _scheduled_scorecard_mirror_check():
         logger.error(f"Scorecard mirror check failed: {e}")
 
 
+async def _scheduled_revenue_code_check():
+    """Background job: daily watchdog for the revenue-code lookup (§135).
+
+    Every CORP/DFW scope decides McLeod MX orders by
+    ``mcleod_gld_cash_flow_dinfo.revenue_code_id``; a frozen table falls back
+    to the TM marker SILENTLY. Emails Diego if it froze or MX orders lack a
+    code. SELECT-only. See app/services/revenue_code_monitor.py.
+    """
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.revenue_code_monitor import check_revenue_code_lookup
+
+        result = await check_revenue_code_lookup(pool)
+        logger.info(f"Revenue-code lookup check complete: {result}")
+    except Exception as e:
+        logger.error(f"Revenue-code lookup check failed: {e}")
+
+
 async def _scheduled_keepwarm_check():
     """Background job: daily watchdog for the two keep-warm pingers.
 
@@ -1779,6 +1797,19 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Scheduled scorecard mirror freshness check daily 6:15 AM CST")
 
+    # Schedule daily revenue-code lookup watchdog — 6:20 AM CST, beside the
+    # mirror check. The MX division rule (§135) falls back to the TM marker
+    # without a sound when dinfo freezes; this is the only place it surfaces.
+    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+        scheduler.add_job(
+            _scheduled_revenue_code_check,
+            CronTrigger(hour=6, minute=20, timezone="America/Chicago"),
+            id="daily_revenue_code_check",
+            name="Watch mcleod_gld_cash_flow_dinfo (MX revenue-code rule) freshness",
+            replace_existing=True,
+        )
+        logger.info("Scheduled revenue-code lookup check daily 6:20 AM CST")
+
     # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
     # check so the two ops alerts land together. Alerts only when a pinger has
     # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + Resend.
@@ -1957,6 +1988,7 @@ async def lifespan(app: FastAPI):
         "daily_lane_rates_prewarm": "SONAR / 123LB lane rates, 05:00 CST",
         "datalake_warmup": "Gold buffer warm-up, every 5 min",
         "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
+        "daily_revenue_code_check": "MX revenue-code lookup freshness, 06:20 CST",
         "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
