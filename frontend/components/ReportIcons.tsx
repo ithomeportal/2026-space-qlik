@@ -22,6 +22,7 @@ import {
   Gauge,
   GitCompare,
   HandCoins,
+  Hourglass,
   Headphones,
   LayoutDashboard,
   LayoutGrid,
@@ -200,6 +201,7 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   "Bonus Calculator – DFW":         { icon: Calculator,     family: "hr", tag: "DFW" },
   "Division Payment Calculator":    { icon: Wallet,         family: "finance" },
   "Collections Settlement Forecast": { icon: HandCoins,    family: "finance" },
+  "Customer Lifespan":              { icon: Hourglass,      family: "sales" },
   "Reports Index":                  { icon: Library,        family: "executive" },
   // Title carries an EN DASH (U+2013) — it must stay byte-identical to the
   // `title` in seed.py, or this lookup silently falls through to the fallback.

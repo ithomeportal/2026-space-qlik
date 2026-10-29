@@ -1000,6 +1000,39 @@ CUSTOM_REPORTS = [
             "AdminFinance", "AdminFinance - Members",
         ],
     },
+    {
+        "key": "customer-lifespan",  # -> /reports/customer-lifespan
+        "title": "Customer Lifespan",
+        "description": "Every customer since 2016 - first and last load, lifespan, active / at risk / lost, reactivations, cohorts by first year, survival curve and the monthly new vs lost customer flow, CORP / DFW / all",
+        "note": (
+            "Request 2026-10-29 (Bruce's '2016-2026 Analysis.xlsx'). History "
+            "2016-01 → 2026-08-31 from the workbook (363,028 movements = "
+            "orders), then mcleod_gld_budget_report_v4 nightly at 03:30 CST "
+            "into analytics_hub customer_lifespan_orders. The workbook's last "
+            "two months are re-checked against v4 every night. TMS only. "
+            "Spec: docs/SPEC-CUSTOMER-LIFESPAN.md."
+        ),
+        "category": "Sales",
+        "tags": [
+            "customer", "lifespan", "lifetime", "retention", "churn", "lost",
+            "new customers", "cohort", "survival", "reactivation", "active customers",
+            "2016",
+        ],
+        "owner_name": "Diego",
+        # Seed roles apply only on FIRST creation (xmax=0) — §15. "All
+        # Directors, OPs teams, admin and Sales teams" (request 2026-10-29):
+        # Directors are Executive (no Director TagRole); OPs teams = every
+        # live ops TagRole incl. per-team/KAM ones (decided 2026-10-29).
+        # Names verified against the live `roles` table that day.
+        "roles": [
+            "CEO", "admin", "Executive", "Sales",
+            "Operations", "OPs Manager", "CORP", "DFW",
+            "CORP Team1", "CORP Team2", "CORP Team3", "CORP Team4",
+            "CORP KAM1", "CORP KAM2", "CORP KAM3", "CORP KAM4",
+            "DFW KAM1", "DFW KAM2", "DFW KAM3", "DFW KAM4",
+            "DFW TM1", "DFW - Assistan Ops Manger",
+        ],
+    },
 ]
 
 # (Qlik desktop/mobile report seed lists removed 2026-05-28 — Qlik fully

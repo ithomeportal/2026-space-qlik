@@ -37,6 +37,7 @@ from app.routers import (
     ceo_cockpit,
     ceo_executive,
     collections_settlement_forecast,
+    customer_lifespan,
     customer_status_email,
     dfw_access_doors_digest,
     dfw_losses,
@@ -225,6 +226,52 @@ async def _startup_cash_forecast_catchup():
             return
         await _scheduled_cash_forecast_snapshot()
     except Exception:  # noqa: BLE001 — logged inside; the 06:30 run retries
+        pass
+
+
+async def _scheduled_customer_lifespan_sync():
+    """Background job: re-read every TMS order since 2026-07-01 from v4 (03:30 CST).
+
+    Replaces the v4 rows of ``customer_lifespan_orders`` and re-checks the
+    workbook's last two months against the datalake (Customer Lifespan #69).
+    ⚠ Logs AND re-raises: a swallowed exception reads as a healthy run
+    (cron-job-debug §5); the run is also recorded in customer_lifespan_sync_log.
+    """
+    from app.clock import cst_now
+    from app.routers.customer_lifespan import invalidate_cache
+    from app.services.customer_lifespan_store import sync_from_datalake
+
+    try:
+        result = await sync_from_datalake(
+            getattr(app.state, "pool", None),
+            getattr(app.state, "savings_pool", None),
+            cst_now(),
+        )
+        invalidate_cache()
+        logger.info(f"Customer Lifespan sync: {result}")
+    except Exception as e:
+        logger.error(f"Customer Lifespan sync FAILED: {e}", exc_info=True)
+        raise
+
+
+async def _startup_customer_lifespan_catchup():
+    """Fire-and-forget: a deploy with no successful sync in 20 h syncs now.
+
+    The first deploy has no v4 rows at all; without this the report would wait
+    for 03:30. Failures are logged inside and stop here (the 03:30 run retries).
+    """
+    from datetime import timedelta
+
+    from app.clock import cst_now
+    from app.services.customer_lifespan_store import last_ok_sync
+
+    try:
+        hub = getattr(app.state, "pool", None)
+        last = await last_ok_sync(hub) if hub is not None else None
+        if last is not None and cst_now() - last < timedelta(hours=20):
+            return
+        await _scheduled_customer_lifespan_sync()
+    except Exception:  # noqa: BLE001 — logged inside; the 03:30 run retries
         pass
 
 
@@ -1303,6 +1350,17 @@ async def lifespan(app: FastAPI):
             except Exception as e:  # noqa: BLE001
                 logger.error(f"attrition_pipedrive_log DDL failed: {type(e).__name__}: {e}")
 
+            # Customer Lifespan (#69, request 2026-10-29) — the portal-owned
+            # order history (workbook 2016-2026 + nightly v4) and its sync log.
+            # Own try: a failure here must not drop the hub pool.
+            try:
+                from app.services.customer_lifespan_store import DDL as CL_DDL
+
+                for stmt in CL_DDL:
+                    await app.state.pool.execute(stmt)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"customer_lifespan DDL failed: {type(e).__name__}: {e}")
+
             try:
                 from app.services.division_payment_defaults import seed_division_payment
 
@@ -1622,6 +1680,25 @@ async def lifespan(app: FastAPI):
             "the Collections Settlement Forecast accuracy tab will stay empty"
         )
 
+    # Customer Lifespan (#69) — nightly v4 → analytics_hub sync at 03:30 CST,
+    # plus a startup catch-up when the last good sync is older than 20 h.
+    if settings.SAVINGS_DATABASE_URL:
+        scheduler.add_job(
+            _scheduled_customer_lifespan_sync,
+            CronTrigger(hour=3, minute=30, timezone="America/Chicago"),
+            id="daily_customer_lifespan_sync",
+            name="Customer Lifespan v4 sync + Excel-tail reconciliation",
+            replace_existing=True,
+        )
+        _cl_catchup = asyncio.create_task(_startup_customer_lifespan_catchup())
+        _BACKGROUND_TASKS.add(_cl_catchup)
+        _cl_catchup.add_done_callback(_BACKGROUND_TASKS.discard)
+    else:
+        logger.warning(
+            "Customer Lifespan sync NOT scheduled — SAVINGS_DATABASE_URL unset; "
+            "the report will stop at its last synced day"
+        )
+
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
     # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
     # savings_pool (aivn_datalake_gold) + RESEND_API_KEY.
@@ -1891,6 +1968,7 @@ async def lifespan(app: FastAPI):
         "daily_attrition_pipedrive": "Attrition → Pipedrive reactivation deals, 04:00 CST",
         "daily_attrition_pipedrive_watch": "Attrition → Pipedrive did-not-run alert, 05:00 CST",
         "daily_cash_forecast_snapshot": "Collections Settlement Forecast history, 06:30 CST",
+        "daily_customer_lifespan_sync": "Customer Lifespan v4 sync + reconciliation, 03:30 CST",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)
@@ -2048,6 +2126,7 @@ app.include_router(augie_funnel.router, prefix="/api")
 app.include_router(augie_funnel_digest.router, prefix="/api")
 app.include_router(customer_status_email.router, prefix="/api")
 app.include_router(collections_settlement_forecast.router, prefix="/api")
+app.include_router(customer_lifespan.router, prefix="/api")
 app.include_router(attrition_pipedrive.router, prefix="/api")
 app.include_router(it_tickets.router, prefix="/api")
 app.include_router(admin_cashflow.router, prefix="/api")
