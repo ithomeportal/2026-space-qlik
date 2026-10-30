@@ -20,6 +20,7 @@ import { AnnualMovement } from "./AnnualMovement"
 import { PeopleFlow } from "./PeopleFlow"
 import { OpenCapacity } from "./OpenCapacity"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const ALL = "__all__"
 
@@ -69,7 +70,7 @@ function ExecMeetingRecruitmentContent() {
   return (
     <div className="min-h-[calc(100vh-64px)] bg-[#F9FAFB]">
       {/* Sticky filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center gap-4 px-6 py-3">
           <Link
             href="/"
@@ -118,7 +119,7 @@ function ExecMeetingRecruitmentContent() {
             ) : null}
           </div>
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1400px] space-y-5 px-6 py-6">
         <KpiCards

@@ -20,6 +20,7 @@ import { Orders } from "./tabs/Orders"
 import { Attrition } from "./tabs/Attrition"
 import { DirectCompareContent } from "@/components/DirectCompareContent"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -258,7 +259,7 @@ function CeoExecutiveContent() {
         </div>
       </div>
 
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         {/* Hidden on Direct Compare: that tab drives itself from two independent
             per-panel scopes, so these controls would be completely inert. An
             inert-but-visible filter bar reads as broken. Tab bar stays. */}
@@ -473,7 +474,7 @@ function CeoExecutiveContent() {
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
         {activeTab === "overview" && (

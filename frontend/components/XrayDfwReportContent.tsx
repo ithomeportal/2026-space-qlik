@@ -19,6 +19,7 @@ import { Risk } from "@/app/reports/xray-dfw-mng/tabs/Risk"
 import { ContractSpot } from "@/app/reports/xray-dfw-mng/tabs/ContractSpot"
 import { Gm } from "@/app/reports/xray-dfw-mng/tabs/Gm"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -219,7 +220,7 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
         </div>
       </div>
 
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
@@ -370,7 +371,7 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
         {activeTab === "overview" && <Overview filters={filters} entityLabel={entityLabel} />}

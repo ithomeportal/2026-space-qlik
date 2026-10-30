@@ -17,6 +17,7 @@ import { PivotsTab } from "./tabs/PivotsTab"
 import { TrendsTab } from "./tabs/TrendsTab"
 import { LossesTab } from "./tabs/LossesTab"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const CORP_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5"]
@@ -216,7 +217,7 @@ function AttritionBody({
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
@@ -365,7 +366,7 @@ function AttritionBody({
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Tab body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">

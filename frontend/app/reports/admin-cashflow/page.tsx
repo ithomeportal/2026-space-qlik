@@ -27,6 +27,7 @@ import { AgingBucketsChart } from "./AgingBucketsChart"
 import { TopDelayedCustomers } from "./TopDelayedCustomers"
 import { fmtCount, fmtUsd } from "./format"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 const ALL_COMPANIES = ["TMS", "TMS3"] as const
@@ -207,7 +208,7 @@ function AdminCashflowContent() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           {/* Range */}
           <div className="flex items-center gap-2">
@@ -410,7 +411,7 @@ function AdminCashflowContent() {
             </select>
           </div>
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] space-y-6 px-6 py-4">

@@ -18,6 +18,7 @@ import { ErrorBanner } from "./ErrorBanner"
 import { fmtInt, fmtMoney, fmtPct, fmtDate } from "./format"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 const ALL_TEAMS = [
   "TEAM1",
   "TEAM2",
@@ -175,7 +176,7 @@ function SaopContent() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           {/* Date range */}
           <div className="flex items-center gap-2">
@@ -287,7 +288,7 @@ function SaopContent() {
             <Loader2 className="h-4 w-4 animate-spin text-[#6B7280]" />
           )}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6 space-y-6">

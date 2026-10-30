@@ -23,6 +23,7 @@ import { HrTrendChart } from "./TrendChart"
 import { HrDeptBarChart } from "./DeptBarChart"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -110,7 +111,7 @@ function HrAccessDoorsContent() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
@@ -177,7 +178,7 @@ function HrAccessDoorsContent() {
             </button>
           )}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-5">

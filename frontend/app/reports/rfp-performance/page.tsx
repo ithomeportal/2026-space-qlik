@@ -46,6 +46,7 @@ import {
   statusPillClass,
 } from "./format"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 // ---------------------------------------------------------------------------
 // Page wrapper
@@ -198,7 +199,7 @@ function Content() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto grid w-full max-w-[1920px] grid-cols-2 gap-3 px-6 py-3 md:grid-cols-4 lg:grid-cols-7">
           <DateRange
             from={filters.dateFrom}
@@ -263,7 +264,7 @@ function Content() {
             </button>
           </div>
         )}
-      </div>
+      </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
         <ErrorBanner

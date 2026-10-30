@@ -25,6 +25,7 @@ import { CarrierLaneTable } from "./CarrierLaneTable"
 import { DetailsTable } from "./DetailsTable"
 import { fmtCount, fmtPct, fmtUsd } from "./format"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const ALL_TEAMS = ["TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW"] as const
 
@@ -163,7 +164,7 @@ function CarrierRiskContent() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           {/* Range */}
           <div className="flex items-center gap-2">
@@ -289,7 +290,7 @@ function CarrierRiskContent() {
             </div>
           )}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* KPI bar */}
       <div className="mx-auto w-full max-w-[1920px] px-6 py-4">

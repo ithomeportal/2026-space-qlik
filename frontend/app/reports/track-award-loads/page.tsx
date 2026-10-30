@@ -22,6 +22,7 @@ import { ReportGuard } from "@/components/ReportGuard"
 import { ErrorBanner } from "./ErrorBanner"
 import { daysExpClass, fmtDate, fmtInt, fmtMoney, fmtPct } from "./format"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 type TabKey = "division" | "customer" | "customer-award" | "award-lane"
 
@@ -149,7 +150,7 @@ function Content() {
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto grid w-full max-w-[1920px] grid-cols-1 gap-3 px-6 py-3 md:grid-cols-2 lg:grid-cols-4">
           <FilterPill
             label="Status"
@@ -193,7 +194,7 @@ function Content() {
             </button>
           </div>
         )}
-      </div>
+      </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-4">
         <ExpiryBanner

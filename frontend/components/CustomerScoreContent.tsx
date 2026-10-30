@@ -17,6 +17,7 @@ import { PuOverview } from "@/app/reports/ops-customer-score/tabs/PuOverview"
 import { DelOverview } from "@/app/reports/ops-customer-score/tabs/DelOverview"
 import { Detail } from "@/app/reports/ops-customer-score/tabs/Detail"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
@@ -275,7 +276,8 @@ function OcsBody({
         </div>
 
         {/* Sticky filter bar */}
-        <div className="sticky top-0 z-10 mb-4 rounded-md border border-[#E5E7EB] bg-white p-3 shadow-sm">
+        <CollapsibleFilterBar className="mb-4 rounded-md border border-[#E5E7EB] bg-white shadow-sm">
+          <div className="p-3">
           <div className="flex flex-wrap items-end gap-3">
             {/* Locked-team badge (replaces Division + team pickers) */}
             {locked ? (
@@ -585,6 +587,7 @@ function OcsBody({
             </div>
           </div>
         </div>
+        </CollapsibleFilterBar>
 
         {/* Tabs */}
         <div className="mb-3 flex flex-wrap gap-1 border-b border-[#E5E7EB]">

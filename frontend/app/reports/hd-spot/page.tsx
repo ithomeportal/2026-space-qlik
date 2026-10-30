@@ -17,6 +17,7 @@ import { KpiCards } from "./KpiCards"
 import { AwardedChart } from "./AwardedChart"
 import { DataTable } from "./DataTable"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 // The live `homedepot` feed's first full month. Earlier data is the frozen
 // `legacy_hd` import, which carries no volume — see the router docstring.
@@ -133,7 +134,7 @@ function HdSpotContent() {
       </div>
 
       {/* Sticky filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
@@ -207,7 +208,7 @@ function HdSpotContent() {
             </span>
           )}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-6 px-6 py-6">

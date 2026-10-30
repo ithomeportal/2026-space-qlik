@@ -40,6 +40,7 @@ import {
 import { ReportGuard } from "@/components/ReportGuard"
 import { parseLocalDate } from "@/lib/local-date"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -261,7 +262,7 @@ function ItTicketsMgmtContent() {
       )}
 
       {/* Sticky filter bar */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           {/* Type tabs */}
           <div className="flex items-center gap-2">
@@ -340,7 +341,7 @@ function ItTicketsMgmtContent() {
             )}
           </div>
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       <main className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-4">
         <ErrorBanner

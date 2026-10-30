@@ -15,6 +15,7 @@ import {
 } from "@/lib/podium-dfw-api"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 const RANGE_OPTIONS: { key: PodiumRange; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "wtd", label: "Week to date" },
@@ -242,7 +243,7 @@ function PodiumDfwContent() {
       </div>
 
       {/* Range + Team toggles */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
@@ -328,7 +329,7 @@ function PodiumDfwContent() {
             TEAM-DFW · Rate Conf Received
           </span>
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-5">

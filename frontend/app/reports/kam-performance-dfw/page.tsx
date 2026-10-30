@@ -25,6 +25,7 @@ import { Tab6WorstLanes } from "./Tab6WorstLanes"
 import { Tab7CarrierSales } from "./Tab7CarrierSales"
 import { Tab8Under5Loads } from "./Tab8Under5Loads"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 
 type TabKey =
   | "scorecards"
@@ -91,7 +92,7 @@ function KamPerformanceContent() {
       </div>
 
       {/* Tab nav */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-2 px-6 py-2">
           {TABS.map((t) => (
             <button
@@ -108,7 +109,7 @@ function KamPerformanceContent() {
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] px-6 py-4">

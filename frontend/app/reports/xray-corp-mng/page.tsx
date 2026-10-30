@@ -12,6 +12,7 @@ import { Risk } from "./tabs/Risk"
 import { ContractSpot } from "./tabs/ContractSpot"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
+import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
 const YEAR_START = "2026-01-01"
 const YEAR_END = "2026-12-31"
 
@@ -110,7 +111,7 @@ function XrayCorpContent() {
       </div>
 
       {/* Filter bar — sticky so it stays visible across tabs */}
-      <div className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white shadow-sm">
+      <CollapsibleFilterBar>
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-4 px-6 py-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">Range</label>
@@ -242,7 +243,7 @@ function XrayCorpContent() {
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleFilterBar>
 
       {/* Tab body — only the active tab runs its queries */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
