@@ -1103,6 +1103,36 @@ async def lifespan(app: FastAPI):
             ):
                 await app.state.pool.execute(_bonus_ddl)
 
+            # Effective dating (2026-10-31): a roster / afterhours row is a
+            # member of month P iff (from IS NULL OR from <= P) AND (to IS NULL
+            # OR to >= P), both first-of-month. Without it every month read
+            # every row — an October hire was paid in every earlier month. NULL
+            # = "since always" / "still open", so existing rows are unchanged.
+            # No DEFAULT on purpose: the write path always sets from.
+            for _bonus_tbl in (
+                "bonus_roster", "bonus_dfw_roster", "bonus_afterhours", "bonus_dfw_afterhours",
+            ):
+                await app.state.pool.execute(
+                    f"ALTER TABLE {_bonus_tbl}"
+                    " ADD COLUMN IF NOT EXISTS effective_from DATE NULL,"
+                    " ADD COLUMN IF NOT EXISTS effective_to DATE NULL"
+                )
+                await app.state.pool.execute(
+                    f"""
+                    DO $$ BEGIN
+                      IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = '{_bonus_tbl}_effective_chk'
+                      ) THEN
+                        ALTER TABLE {_bonus_tbl} ADD CONSTRAINT {_bonus_tbl}_effective_chk CHECK (
+                          (effective_from IS NULL OR effective_from = date_trunc('month', effective_from)::date)
+                          AND (effective_to IS NULL OR effective_to = date_trunc('month', effective_to)::date)
+                          AND (effective_from IS NULL OR effective_to IS NULL OR effective_to >= effective_from)
+                        );
+                      END IF;
+                    END $$;
+                    """
+                )
+
             try:
                 from app.services.bonus_defaults import seed_bonus_data
 
@@ -1488,9 +1518,10 @@ async def lifespan(app: FastAPI):
         app.state.itroute_pool = None
 
     # Pool for modern_pricing_portal (the quoting portal's own DB). Read-only,
-    # SELECT on spot_report_condensed only. Powers the HD Spot report's funnel
-    # half; the money half comes from the gold pool and is merged in Python
-    # (the two are separate databases — no dblink/fdw, see §56).
+    # SELECT on spot_report_condensed + fuel_diesel_weekly + fuel_diesel_forecast
+    # only (fuel GRANTs 2026-10-31 — the Ops Portal "Fuel" measure). Powers the
+    # HD Spot report's funnel half; the money half comes from the gold pool and
+    # is merged in Python (the two are separate databases — no dblink/fdw, §56).
     if settings.PRICING_DATABASE_URL:
         try:
             # max_size raised 4 -> 8 for Production SPOTS Trends (2026-09-21).

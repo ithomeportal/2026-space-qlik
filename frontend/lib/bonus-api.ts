@@ -302,6 +302,10 @@ export function useBonusRoster(period: string | undefined, enabled: boolean) {
 // Mutations
 // ---------------------------------------------------------------------------
 
+// 2026-10-31 effective dating: every roster/afterhours write carries the period
+// HR Settings is open on (a new person starts in THAT month; a delete keeps
+// them in earlier months). A write to a Locked · approved month answers 409,
+// surfaced by the onError toasts below.
 export function useBonusMutations() {
   const prefix = useBonusPrefix()
   const qc = useQueryClient()
@@ -317,38 +321,62 @@ export function useBonusMutations() {
   }
 
   const createRoster = useMutation({
-    mutationFn: (b: { team_id: string; name: string; role: string; salary_mxn: number }) =>
+    mutationFn: (b: { team_id: string; name: string; role: string; salary_mxn: number; period_key: string }) =>
       apiSend(prefix, "POST", "/roster", b),
     onSuccess: ok("Employee added"),
     onError: mutationErrorToast("Add employee"),
   })
   const updateRoster = useMutation({
-    mutationFn: ({ id, ...b }: { id: string; team_id: string; name: string; role: string; salary_mxn: number }) =>
-      apiSend(prefix, "PUT", `/roster/${id}`, b),
+    mutationFn: ({
+      id,
+      ...b
+    }: {
+      id: string
+      team_id: string
+      name: string
+      role: string
+      salary_mxn: number
+      period_key: string
+    }) => apiSend(prefix, "PUT", `/roster/${id}`, b),
     onSuccess: ok("Employee saved"),
     onError: mutationErrorToast("Save employee"),
   })
   const deleteRoster = useMutation({
-    mutationFn: (id: string) => apiSend(prefix, "DELETE", `/roster/${id}`),
+    mutationFn: ({ id, period }: { id: string; period: string }) =>
+      apiSend(prefix, "DELETE", `/roster/${id}?period=${encodeURIComponent(period)}`),
     onSuccess: ok("Employee removed"),
     onError: mutationErrorToast("Delete employee"),
   })
   const updateAfterhours = useMutation({
-    mutationFn: ({ id, ...b }: { id: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
-      apiSend(prefix, "PUT", `/afterhours/${id}`, b),
+    mutationFn: ({
+      id,
+      ...b
+    }: {
+      id: string
+      name: string
+      salary_mxn: number
+      receives_bonus: boolean
+      period_key: string
+    }) => apiSend(prefix, "PUT", `/afterhours/${id}`, b),
     onSuccess: ok("Afterhours saved"),
     onError: mutationErrorToast("Save afterhours"),
   })
   // Bruno Bonus R6 (2026-07-15): add an Afterhours (Night/Weekend) worker.
   const createAfterhours = useMutation({
-    mutationFn: (b: { shift_group: string; name: string; salary_mxn: number; receives_bonus: boolean }) =>
-      apiSend(prefix, "POST", "/afterhours", b),
+    mutationFn: (b: {
+      shift_group: string
+      name: string
+      salary_mxn: number
+      receives_bonus: boolean
+      period_key: string
+    }) => apiSend(prefix, "POST", "/afterhours", b),
     onSuccess: ok("Afterhours member added"),
     onError: mutationErrorToast("Add afterhours member"),
   })
   // Bruno Bonus R7 (2026-07-15): remove an Afterhours (Night/Weekend) worker.
   const deleteAfterhours = useMutation({
-    mutationFn: (id: string) => apiSend(prefix, "DELETE", `/afterhours/${id}`),
+    mutationFn: ({ id, period }: { id: string; period: string }) =>
+      apiSend(prefix, "DELETE", `/afterhours/${id}?period=${encodeURIComponent(period)}`),
     onSuccess: ok("Afterhours member removed"),
     onError: mutationErrorToast("Delete afterhours member"),
   })

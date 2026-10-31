@@ -63,6 +63,30 @@ function MiniKpi({ label, value, accent }: { label: string; value: string; accen
   )
 }
 
+// R2 (2026-10-31): the team's BONUS and BONUS / PROFIT sit at the top-right of
+// the header as two bordered, heavier boxes — not in the small KPI row.
+function HeaderStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="min-w-[7.5rem] rounded-lg border-2 bg-white px-3 py-1.5 text-right shadow-sm"
+      style={{ borderColor: COLORS.blueHeader }}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: COLORS.blueHeader }}>
+        {label}
+      </p>
+      <p className="text-lg font-extrabold leading-tight" style={{ color: COLORS.blueHeader }}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
+/** Σ bonus ÷ calendar-month profit; "—" when there is no positive profit to divide by. */
+function bonusOverProfit(bonus: number, profit: number | null | undefined): string {
+  if (profit == null || !isFinite(profit) || profit <= 0) return "—"
+  return pct((bonus / profit) * 100, 2)
+}
+
 function WildcardPanel({ team }: { team: BonusTeam }) {
   // One representative employee per role gives the weekly wildcard math.
   const byRole = (role: string) => team.employees.find((e) => e.role === role)
@@ -300,7 +324,7 @@ export function TeamBlock({ team, report }: { team: BonusTeam; report: BonusRepo
         </div>
         {/* Bruno 2026-05-28: KPIs are the calendar-month cumulative (1st→last
             day), not the sum of the weekly buckets below. */}
-        <div className="flex items-start gap-4">
+        <div className="flex flex-wrap items-start justify-end gap-4">
           <div className="flex flex-wrap gap-5">
             <MiniKpi label="Loads" value={num(team.monthlyLoads)} />
             <MiniKpi label="Profit" value={usd0(team.monthlyProfit)} />
@@ -311,7 +335,10 @@ export function TeamBlock({ team, report }: { team: BonusTeam; report: BonusRepo
               value={team.wildcardEligible ? "Eligible" : "—"}
               accent={team.wildcardEligible ? COLORS.wildcardTitle : "#94A3B8"}
             />
-            <MiniKpi label="Bonus" value={usd0(teamTotalBonus)} accent={COLORS.blueHeader} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <HeaderStat label="Bonus" value={usd(teamTotalBonus)} />
+            <HeaderStat label="Bonus / Profit" value={bonusOverProfit(teamTotalBonus, team.monthlyProfit)} />
           </div>
           <button
             type="button"

@@ -7,9 +7,17 @@ export function AfterhoursCard({ report }: { report: BonusReport }) {
   const perPerson = ns.trackingTracingAverageBonusUsd
   return (
     <section className="rounded-2xl border border-[#EDE9FE] bg-white p-5 shadow-sm">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <MoonStar className="h-5 w-5" style={{ color: COLORS.cardTitle }} />
         <h2 className="text-lg font-bold text-[#1F2937]">T&amp;T, Night and Weekend Bonus</h2>
+        {/* R1 (2026-10-31): Σ of the Bonus (USD) column — the engine's
+            nightShift.totalBonusUsd, so it reconciles with the rows below. */}
+        <span
+          className="ml-auto rounded-full border px-3 py-1 text-xs font-semibold"
+          style={{ borderColor: COLORS.cardTitle, color: COLORS.cardTitle }}
+        >
+          Total <span className="ml-1 font-bold text-[#1F2937]">{usd(ns.totalBonusUsd)}</span>
+        </span>
       </div>
       <p className="mt-1 text-xs text-[#6B7280]">
         Each eligible Afterhours member receives the average of the Tracking &amp; Tracing weekly bonus across the 4 day

@@ -17,10 +17,17 @@ team membership here is *inferred from load postings*: a few loads booked for a
 neighbouring team would move somebody between teams overnight and change their
 pay, with nothing to show it happened. So:
 
-* absent from the roster + placeable  ⇒ INSERT
-* already in the roster               ⇒ LEAVE ALONE (always)
-* in the roster, and Time-off says they are INACTIVE ⇒ remove (they left)
+* absent from the roster + placeable  ⇒ INSERT, effective from the current
+                                        CST month's first day
+* already in the roster               ⇒ LEAVE ALONE (always) — and "in the
+                                        roster" includes CLOSED rows, so a person
+                                        HR removed is never re-inserted
+* in the roster, and Time-off says they are INACTIVE ⇒ close the OPEN row at the
+  previous month (they stay in the months they worked); a row that only began
+  this month is deleted outright, exactly as HR's own DELETE does
 * in the roster and unknown to Time-off ⇒ LEAVE ALONE (HR added them by hand)
+
+Effective dating (2026-10-31): see `app/routers/bonus_roster_writes.py`.
 
 Salary is display-only in the engine (`totalCompMxn = salary + bonus`; it enters
 no payout), so new rows start on the corporate per-role defaults and HR edits
@@ -30,9 +37,10 @@ them in-app.
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from datetime import date
 
 from app.booker_names import name_tokens
+from app.clock import cst_today
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +116,36 @@ def _resolve(key: frozenset, candidates: dict[frozenset, dict]) -> dict | None:
     """
     if key in candidates:
         return candidates[key]
-    hits = [v for k, v in candidates.items() if len(k & key) >= 2 and (k <= key or key <= k)]
+    hits = _subset_hits(key, candidates)
     return hits[0] if len(hits) == 1 else None
+
+
+def _subset_hits(key: frozenset, candidates: dict) -> list:
+    return [v for k, v in candidates.items() if len(k & key) >= 2 and (k <= key or key <= k)]
+
+
+def _already_known(key: frozenset, existing: dict) -> bool:
+    """Is this person ALREADY a row (open or closed) under any spelling of their name?
+
+    ⚠ Deliberately looser than `_resolve`: for "should we INSERT?" an ambiguous
+    match must count as KNOWN, never as absent. Exact-key-only let the job add
+    `Mauricio Mahuad Ortiz` beside HR's `Mauricio Mahuad` on 2026-10-08 — the
+    same person twice, i.e. a second per-load payout.
+    """
+    return key in existing or bool(_subset_hits(key, existing))
+
+
+def _note_similar(key: frozenset, existing: dict, name: str, out: list[str]) -> None:
+    """Name a skip that matched only by subset, so HR can see it was not a typo."""
+    if key not in existing:
+        out.append(f"{name} ~ {', '.join(sorted(_subset_hits(key, existing)))}")
+
+
+def _month_bounds(today: date) -> tuple[date, date]:
+    """(first day of today's month, first day of the previous month)."""
+    first = today.replace(day=1)
+    prev = date(first.year - 1, 12, 1) if first.month == 1 else date(first.year, first.month - 1, 1)
+    return first, prev
 
 
 async def _timeoff_people(timeoff_pool) -> list[dict]:
@@ -157,32 +193,43 @@ def _placement(counts: dict[str, int]) -> tuple[str, float]:
     return team, (n / total if total else 0.0)
 
 
-async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
+async def _existing(primary, table: str) -> tuple[dict, list[dict]]:
+    """({name key: name} over EVERY row — open or closed —, the open rows)."""
+    rows = await primary.fetch(
+        f"SELECT id, employee_name, effective_from, effective_to FROM {table}"
+    )
+    known = {_key(r["employee_name"]): r["employee_name"] for r in rows}
+    open_rows = [
+        {"id": r["id"], "name": r["employee_name"], "from": r["effective_from"]}
+        for r in rows
+        if r["effective_to"] is None
+    ]
+    return known, open_rows
+
+
+async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool, today: date | None = None) -> dict:
     """Additive sync of `bonus_dfw_roster` + `bonus_dfw_afterhours`.
 
     Returns a report naming every insert, removal and person it could not place
     — a count alone cannot distinguish "nothing to do" from "matched nobody".
+    ``today`` exists for tests; production uses the CST date.
     """
     if timeoff_pool is None or gold_pool is None:
         return {"skipped": "timeoff or gold pool unavailable"}
 
+    month_first, prev_month_first = _month_bounds(today or cst_today())
     people = await _timeoff_people(timeoff_pool)
     postings = await _team_postings(gold_pool)
 
-    existing_roster = {
-        _key(r["employee_name"]): r["employee_name"]
-        for r in await primary.fetch("SELECT employee_name FROM bonus_dfw_roster")
-    }
-    existing_after = {
-        _key(r["employee_name"]): r["employee_name"]
-        for r in await primary.fetch("SELECT employee_name FROM bonus_dfw_afterhours")
-    }
+    existing_roster, open_roster = await _existing(primary, "bonus_dfw_roster")
+    existing_after, open_after = await _existing(primary, "bonus_dfw_afterhours")
 
     added_team: list[str] = []
     added_after: list[str] = []
     low_confidence: list[str] = []
     unplaceable: list[str] = []
     removed: list[str] = []
+    similar: list[str] = []  # skipped because a near-identical name is already a row
 
     by_key = {_key(p["name"]): p for p in people}
 
@@ -196,7 +243,8 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
 
         group = AFTERHOURS_GROUP.get(person["shift"])
         if group:
-            if key in existing_after:
+            if _already_known(key, existing_after):
+                _note_similar(key, existing_after, person["name"], similar)
                 continue
             sort = await primary.fetchval(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM bonus_dfw_afterhours"
@@ -204,10 +252,10 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
             await primary.execute(
                 """
                 INSERT INTO bonus_dfw_afterhours
-                  (shift_group, employee_name, salary_mxn, receives_bonus, sort_order)
-                VALUES ($1, $2, $3, TRUE, $4)
+                  (shift_group, employee_name, salary_mxn, receives_bonus, sort_order, effective_from)
+                VALUES ($1, $2, $3, TRUE, $4, $5)
                 """,
-                group, person["name"], DEFAULT_AFTERHOURS_SALARY_MXN, sort,
+                group, person["name"], DEFAULT_AFTERHOURS_SALARY_MXN, sort, month_first,
             )
             existing_after[key] = person["name"]
             added_after.append(f"{person['name']} ({group})")
@@ -216,8 +264,9 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
         role = ROLE_OVERRIDES.get("".join(name_tokens(person["name"]))) or JOB_TITLE_ROLE.get(title)
         if role is None:
             continue  # an unmapped title is a decision, never a default
-        if key in existing_roster:
-            continue  # 🔴 HR owns this row
+        if _already_known(key, existing_roster):
+            _note_similar(key, existing_roster, person["name"], similar)
+            continue  # 🔴 HR owns this row — open OR closed
 
         counts = postings.get(key) or _resolve(key, postings)
         if not counts:
@@ -234,24 +283,25 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
         )
         await primary.execute(
             """
-            INSERT INTO bonus_dfw_roster (team_id, employee_name, role, salary_mxn, sort_order)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO bonus_dfw_roster
+              (team_id, employee_name, role, salary_mxn, sort_order, effective_from)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
-            team_id, person["name"], role, DEFAULT_SALARY_MXN[role], sort,
+            team_id, person["name"], role, DEFAULT_SALARY_MXN[role], sort, month_first,
         )
         existing_roster[key] = person["name"]
         added_team.append(f"{person['name']} -> {team} / {role}")
 
     # Leavers: only somebody Time-off KNOWS and marks inactive. A roster row
     # Time-off has never heard of was added by HR and is none of our business.
-    for table, present in (("bonus_dfw_roster", existing_roster), ("bonus_dfw_afterhours", existing_after)):
-        for key, stored_name in list(present.items()):
+    # Only OPEN rows are touched; the months they worked keep them.
+    for table, open_rows in (("bonus_dfw_roster", open_roster), ("bonus_dfw_afterhours", open_after)):
+        for row in open_rows:
+            key = _key(row["name"])
             src = by_key.get(key) or _resolve(key, by_key)
-            if src is not None and not src["active"]:
-                await primary.execute(
-                    f"DELETE FROM {table} WHERE employee_name = $1", stored_name
-                )
-                removed.append(f"{stored_name} ({table})")
+            if src is None or src["active"]:
+                continue
+            removed.append(await _close_leaver(primary, table, row, month_first, prev_month_first))
 
     report = {
         "added_team": added_team,
@@ -259,6 +309,7 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
         "removed": removed,
         "low_confidence": low_confidence,
         "unplaceable": unplaceable,
+        "skipped_similar_name": similar,
     }
     logger.info(
         "DFW bonus roster sync: +%d team, +%d afterhours, -%d leavers, "
@@ -267,7 +318,20 @@ async def sync_dfw_bonus_roster(primary, timeoff_pool, gold_pool) -> dict:
         len(low_confidence), len(unplaceable),
     )
     for label, names in (("low-confidence placement", low_confidence),
-                         ("could not place (no postings)", unplaceable)):
+                         ("could not place (no postings)", unplaceable),
+                         ("not inserted — a similar name is already a row", similar)):
         if names:
             logger.warning("DFW bonus roster — %s: %s", label, "; ".join(names))
     return report
+
+
+async def _close_leaver(primary, table: str, row: dict, month_first: date, prev_first: date) -> str:
+    """Soft-close a leaver's open row at the previous month; delete one that began this month."""
+    if row["from"] is not None and row["from"] >= month_first:
+        await primary.execute(f"DELETE FROM {table} WHERE id = $1", row["id"])
+        return f"{row['name']} ({table}, deleted — started this month)"
+    await primary.execute(
+        f"UPDATE {table} SET effective_to = $2 WHERE id = $1 AND effective_to IS NULL",
+        row["id"], prev_first,
+    )
+    return f"{row['name']} ({table}, closed {prev_first.isoformat()})"

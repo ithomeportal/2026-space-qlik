@@ -79,7 +79,7 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                   />
                 </label>
                 <button
-                  disabled={m.saveFx.isPending}
+                  disabled={locked || m.saveFx.isPending}
                   onClick={() =>
                     m.saveFx.mutate({ period_key: periodKey, team_fx: Number(fxTeam), night_fx: Number(fxNight) })
                   }
@@ -101,7 +101,21 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
               {d.settings.pinned && (
                 <p className="mt-2 text-[11px] text-[#94A3B8]">Last pinned by {d.settings.updatedBy ?? "—"}.</p>
               )}
+              {locked ? (
+                <p className="mt-3 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-xs font-medium text-[#B91C1C]">
+                  {d.period.label} is Locked · approved — FX, roster and Afterhours edits are disabled. Unlock the
+                  period to edit it.
+                </p>
+              ) : (
+                <p className="mt-3 text-[11px] text-[#6B7280]">
+                  Changes below apply from <strong>{d.period.label}</strong> onward: a new person starts in this month,
+                  a removed person stays in earlier months, and an edit leaves earlier months unchanged.
+                </p>
+              )}
             </section>
+
+            {/* 2026-10-31: a locked month refuses every write (409) — disable the controls. */}
+            <fieldset disabled={locked} className="space-y-6 disabled:opacity-60">
 
             {/* Roster per team */}
             {d.teams.map((team) => {
@@ -111,7 +125,7 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                   <h3 className="text-sm font-bold text-[#1F2937]">{team.name}</h3>
                   <div className="mt-2 space-y-2">
                     {team.employees.map((emp) => (
-                      <RosterRow key={emp.id} teamId={team.id} emp={emp} mutations={m} />
+                      <RosterRow key={emp.id} teamId={team.id} emp={emp} periodKey={periodKey} mutations={m} />
                     ))}
                   </div>
                   <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-dashed border-[#E5E7EB] pt-3">
@@ -147,6 +161,7 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                           name: draft.name,
                           role: draft.role,
                           salary_mxn: Number(draft.salary) || 0,
+                          period_key: periodKey,
                         })
                         setNewRows((p) => ({ ...p, [team.id]: { name: "", role: "tracking_tracing", salary: "0" } }))
                       }}
@@ -164,16 +179,18 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
               <h3 className="text-sm font-bold text-[#1F2937]">Afterhours (Night / Weekend)</h3>
               <div className="mt-2 space-y-2">
                 {d.afterhours.map((a) => (
-                  <AfterhoursRow key={a.id} row={a} mutations={m} />
+                  <AfterhoursRow key={a.id} row={a} periodKey={periodKey} mutations={m} />
                 ))}
               </div>
               <AfterhoursAddForm
                 groups={Array.from(
                   new Set([...d.afterhours.map((a) => a.group), "Night Shift", "Weekend Shift"]),
                 )}
+                periodKey={periodKey}
                 mutations={m}
               />
             </section>
+            </fieldset>
           </div>
         )}
       </div>
@@ -184,10 +201,12 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
 function RosterRow({
   teamId,
   emp,
+  periodKey,
   mutations,
 }: {
   teamId: string
   emp: RosterEmployee
+  periodKey: string
   mutations: ReturnType<typeof useBonusMutations>
 }) {
   const [name, setName] = useState(emp.name)
@@ -208,14 +227,21 @@ function RosterRow({
       <button
         disabled={!dirty || mutations.updateRoster.isPending}
         onClick={() =>
-          mutations.updateRoster.mutate({ id: emp.id, team_id: teamId, name, role, salary_mxn: Number(salary) || 0 })
+          mutations.updateRoster.mutate({
+            id: emp.id,
+            team_id: teamId,
+            name,
+            role,
+            salary_mxn: Number(salary) || 0,
+            period_key: periodKey,
+          })
         }
         className="rounded-md border border-[#E5E7EB] px-2 py-1 text-xs font-medium text-[#475569] enabled:hover:bg-[#F3F4F6] disabled:opacity-40"
       >
         Save
       </button>
       <button
-        onClick={() => mutations.deleteRoster.mutate(emp.id)}
+        onClick={() => mutations.deleteRoster.mutate({ id: emp.id, period: periodKey })}
         className="rounded-md border border-[#FCA5A5] p-1 text-[#B91C1C] hover:bg-[#FEF2F2]"
       >
         <Trash2 className="h-4 w-4" />
@@ -226,9 +252,11 @@ function RosterRow({
 
 function AfterhoursRow({
   row,
+  periodKey,
   mutations,
 }: {
   row: { id: string; group: string; name: string; salaryMxn: number; receivesBonus: boolean }
+  periodKey: string
   mutations: ReturnType<typeof useBonusMutations>
 }) {
   const [name, setName] = useState(row.name)
@@ -246,14 +274,22 @@ function AfterhoursRow({
       </label>
       <button
         disabled={!dirty || mutations.updateAfterhours.isPending}
-        onClick={() => mutations.updateAfterhours.mutate({ id: row.id, name, salary_mxn: Number(salary) || 0, receives_bonus: receives })}
+        onClick={() =>
+          mutations.updateAfterhours.mutate({
+            id: row.id,
+            name,
+            salary_mxn: Number(salary) || 0,
+            receives_bonus: receives,
+            period_key: periodKey,
+          })
+        }
         className="rounded-md border border-[#E5E7EB] px-2 py-1 text-xs font-medium text-[#475569] enabled:hover:bg-[#F3F4F6] disabled:opacity-40"
       >
         Save
       </button>
       {/* Bruno Bonus R7 (2026-07-15): remove an Afterhours worker. */}
       <button
-        onClick={() => mutations.deleteAfterhours.mutate(row.id)}
+        onClick={() => mutations.deleteAfterhours.mutate({ id: row.id, period: periodKey })}
         className="rounded-md border border-[#FCA5A5] p-1 text-[#B91C1C] hover:bg-[#FEF2F2]"
       >
         <Trash2 className="h-4 w-4" />
@@ -266,9 +302,11 @@ function AfterhoursRow({
 // mirrors the per-team roster "Add" row, with a shift-group selector.
 function AfterhoursAddForm({
   groups,
+  periodKey,
   mutations,
 }: {
   groups: string[]
+  periodKey: string
   mutations: ReturnType<typeof useBonusMutations>
 }) {
   const [group, setGroup] = useState(groups[0] ?? "Night Shift")
@@ -313,6 +351,7 @@ function AfterhoursAddForm({
             name,
             salary_mxn: Number(salary) || 0,
             receives_bonus: receives,
+            period_key: periodKey,
           })
           setName("")
           setSalary("0")

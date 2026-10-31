@@ -220,8 +220,12 @@ def test_every_sql_statement_names_its_scopes_table() -> None:
     read and WRITE the corporate roster while every other endpoint looked
     correct.
     """
+    from app.routers import bonus_roster_writes as bw
+
     src = inspect.getsource(bc)
-    body = src[src.index("async def _load_roster") :]
+    # The roster/afterhours writes moved to `bonus_roster_writes` (2026-10-31
+    # effective dating) — scan it too, or its statements escape this guard.
+    body = src[src.index("async def _load_roster") :] + "\n" + inspect.getsource(bw)
     # Only lines that actually address a table — a prose mention of
     # `services/bonus_history.py` in a docstring is not a query.
     sql_ref = re.compile(

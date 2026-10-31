@@ -31,13 +31,22 @@ import logging
 from calendar import month_name
 from datetime import date
 from typing import Optional
-from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.clock import cst_today
 from app.routers import xray_corp, xray_dfw
+from app.routers.bonus_roster_writes import (  # noqa: F401 — models re-exported
+    VALID_ROLES,
+    AfterhoursCreate,
+    AfterhoursRow,
+    RosterRow,
+    assert_period_writable,
+    period_start as _period_first_day,
+    register_roster_writes,
+    visible_in,
+)
 from app.routers.deps import (
     get_datalake_gold_pool,
     get_pool,
@@ -59,7 +68,6 @@ logger = logging.getLogger(__name__)
 
 REPORT_KEY = "bonus-calculator"
 BONUS_TEAMS = ("team-1", "team-2", "team-3", "team-4")  # Q1: TEAM5 excluded (no roster)
-VALID_ROLES = ("kam", "freight_match", "tracking_tracing")
 
 
 # ---------------------------------------------------------------------------
@@ -423,13 +431,21 @@ async def _suggested_dof_fx(financial_pool, on_or_before: date) -> Optional[floa
 # ---------------------------------------------------------------------------
 
 
-async def _load_roster(pool, scope: "BonusScope") -> dict[str, list[dict]]:
+async def _load_roster(pool, period_start: date, scope: "BonusScope") -> dict[str, list[dict]]:
+    """The roster of ONE month (2026-10-31 effective dating).
+
+    ⚠ ``period_start`` (the month's first day) is REQUIRED. Without it every
+    month read every row, so somebody added in October was paid in every
+    earlier month too. See `bonus_roster_writes` for the write semantics.
+    """
     rows = await pool.fetch(
         f"""
         SELECT id, team_id, employee_name, role, salary_mxn, sort_order
         FROM {scope.tbl_roster}
+        WHERE {visible_in("$1")}
         ORDER BY team_id, sort_order, employee_name
-        """
+        """,
+        period_start,
     )
     grouped: dict[str, list[dict]] = {t: [] for t in scope.teams}
     for r in rows:
@@ -444,13 +460,16 @@ async def _load_roster(pool, scope: "BonusScope") -> dict[str, list[dict]]:
     return grouped
 
 
-async def _load_afterhours(pool, scope: "BonusScope") -> list[dict]:
+async def _load_afterhours(pool, period_start: date, scope: "BonusScope") -> list[dict]:
+    """The Afterhours members of ONE month — ``period_start`` REQUIRED (see _load_roster)."""
     rows = await pool.fetch(
         f"""
         SELECT id, shift_group, employee_name, salary_mxn, receives_bonus, sort_order
         FROM {scope.tbl_afterhours}
+        WHERE {visible_in("$1")}
         ORDER BY sort_order, employee_name
-        """
+        """,
+        period_start,
     )
     return [
         {
@@ -527,8 +546,8 @@ async def build_bonus_report_data(
     month_end = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
 
     roster, afterhours, settings, lock, suggested_fx = await asyncio.gather(
-        _load_roster(primary, scope),
-        _load_afterhours(primary, scope),
+        _load_roster(primary, month_start, scope),
+        _load_afterhours(primary, month_start, scope),
         _load_settings(primary, period_key, scope),
         _load_lock(primary, period_key, scope),
         _suggested_dof_fx(financial, start),
@@ -622,42 +641,8 @@ async def build_bonus_report_data(
 # ⚠ MODULE level, not inside the factory — see RosterRow.validate_domain.
 
 
-class RosterRow(BaseModel):
-    team_id: str
-    name: str = Field(min_length=1, max_length=120)
-    role: str
-    salary_mxn: float = Field(ge=0, le=10_000_000)
-
-    def validate_domain(self, scope: "BonusScope") -> None:
-        """⚠ Validated against the CALLER'S scope, not a class-level list.
-
-        A corporate team id POSTed to the DFW roster must be REJECTED, not
-        stored — stored, it would be invisible (the report only reads
-        `scope.teams`) rather than wrong, which is harder to notice.
-
-        The scope arrives as an argument rather than being closed over because
-        these models must live at MODULE level: FastAPI resolves a body
-        annotation through a TypeAdapter, and under
-        `from __future__ import annotations` a class defined inside a function
-        is an unresolvable ForwardRef — which 500s /openapi.json and /docs
-        while the endpoints themselves still appear to work.
-        """
-        if self.team_id not in scope.teams:
-            raise HTTPException(status_code=422, detail=f"team_id must be one of {scope.teams}")
-        if self.role not in VALID_ROLES:
-            raise HTTPException(status_code=422, detail=f"role must be one of {VALID_ROLES}")
-
-
-class AfterhoursRow(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    salary_mxn: float = Field(ge=0, le=10_000_000)
-    receives_bonus: bool = True
-
-
-class AfterhoursCreate(AfterhoursRow):
-    # Bruno Bonus R6 (PDF 2026-07-15): adding an Afterhours worker also needs the
-    # shift group (the "Group" column, e.g. "Night Shift" / "Weekend Shift").
-    shift_group: str = Field(min_length=1, max_length=60)
+# RosterRow / AfterhoursRow / AfterhoursCreate live in `bonus_roster_writes`
+# (module level there) and are re-exported by the import at the top.
 
 
 class FxSettings(BaseModel):
@@ -790,9 +775,11 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         """Editable roster + afterhours + FX settings + lock for HR management."""
         primary = get_pool(request)
         period_key, label, start, _end, _buckets = _period_bounds(period)
+        # HR Settings lists the members of THIS month only (effective dating).
+        month_first = _period_first_day(period_key)
         roster, afterhours, settings, lock, suggested_fx = await asyncio.gather(
-            _load_roster(primary, scope),
-            _load_afterhours(primary, scope),
+            _load_roster(primary, month_first, scope),
+            _load_afterhours(primary, month_first, scope),
             _load_settings(primary, period_key, scope),
             _load_lock(primary, period_key, scope),
             _suggested_dof_fx(getattr(request.app.state, "financial_pool", None), start),
@@ -817,139 +804,9 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
 
 
 
-    @r.post("/roster")
-    async def create_roster_row(
-        request: Request,
-        body: RosterRow,
-        user: dict = Depends(gate),
-    ):
-        body.validate_domain(scope)
-        primary = get_pool(request)
-        next_sort = await primary.fetchval(
-            f"SELECT COALESCE(MAX(sort_order), -1) + 1 FROM {scope.tbl_roster} WHERE team_id = $1", body.team_id
-        )
-        row = await primary.fetchrow(
-            f"""
-            INSERT INTO {scope.tbl_roster} (team_id, employee_name, role, salary_mxn, sort_order)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            """,
-            body.team_id,
-            body.name.strip(),
-            body.role,
-            body.salary_mxn,
-            next_sort,
-        )
-        return {"success": True, "data": {"id": str(row["id"])}}
-
-
-    @r.put("/roster/{row_id}")
-    async def update_roster_row(
-        request: Request,
-        row_id: UUID,
-        body: RosterRow,
-        user: dict = Depends(gate),
-    ):
-        body.validate_domain(scope)
-        primary = get_pool(request)
-        result = await primary.execute(
-            f"""
-            UPDATE {scope.tbl_roster}
-            SET team_id = $2, employee_name = $3, role = $4, salary_mxn = $5
-            WHERE id = $1
-            """,
-            row_id,
-            body.team_id,
-            body.name.strip(),
-            body.role,
-            body.salary_mxn,
-        )
-        if result.endswith("0"):
-            raise HTTPException(status_code=404, detail="Roster row not found")
-        return {"success": True}
-
-
-    @r.delete("/roster/{row_id}")
-    async def delete_roster_row(
-        request: Request,
-        row_id: UUID,
-        user: dict = Depends(gate),
-    ):
-        primary = get_pool(request)
-        result = await primary.execute(f"DELETE FROM {scope.tbl_roster} WHERE id = $1", row_id)
-        if result.endswith("0"):
-            raise HTTPException(status_code=404, detail="Roster row not found")
-        return {"success": True}
-
-
-
-
-
-
-    @r.post("/afterhours")
-    async def create_afterhours_row(
-        request: Request,
-        body: AfterhoursCreate,
-        user: dict = Depends(gate),
-    ):
-        """Bruno Bonus R6 (2026-07-15): HR adds an Afterhours (Night/Weekend) worker."""
-        primary = get_pool(request)
-        next_sort = await primary.fetchval(
-            f"SELECT COALESCE(MAX(sort_order), -1) + 1 FROM {scope.tbl_afterhours}"
-        )
-        row = await primary.fetchrow(
-            f"""
-            INSERT INTO {scope.tbl_afterhours} (shift_group, employee_name, salary_mxn, receives_bonus, sort_order)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            """,
-            body.shift_group.strip(),
-            body.name.strip(),
-            body.salary_mxn,
-            body.receives_bonus,
-            next_sort,
-        )
-        return {"success": True, "data": {"id": str(row["id"])}}
-
-
-    @r.put("/afterhours/{row_id}")
-    async def update_afterhours_row(
-        request: Request,
-        row_id: UUID,
-        body: AfterhoursRow,
-        user: dict = Depends(gate),
-    ):
-        primary = get_pool(request)
-        result = await primary.execute(
-            f"""
-            UPDATE {scope.tbl_afterhours}
-            SET employee_name = $2, salary_mxn = $3, receives_bonus = $4
-            WHERE id = $1
-            """,
-            row_id,
-            body.name.strip(),
-            body.salary_mxn,
-            body.receives_bonus,
-        )
-        if result.endswith("0"):
-            raise HTTPException(status_code=404, detail="Afterhours row not found")
-        return {"success": True}
-
-
-    @r.delete("/afterhours/{row_id}")
-    async def delete_afterhours_row(
-        request: Request,
-        row_id: UUID,
-        user: dict = Depends(gate),
-    ):
-        """Bruno Bonus R7 (2026-07-15): HR removes an Afterhours (Night/Weekend) worker."""
-        primary = get_pool(request)
-        result = await primary.execute(f"DELETE FROM {scope.tbl_afterhours} WHERE id = $1", row_id)
-        if result.endswith("0"):
-            raise HTTPException(status_code=404, detail="Afterhours row not found")
-        return {"success": True}
-
-
+    # Roster + afterhours writes are effective-dated and lock-guarded
+    # (2026-10-31) — see app/routers/bonus_roster_writes.py.
+    register_roster_writes(r, scope, gate)
 
 
     @r.put("/settings")
@@ -961,6 +818,8 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         """HR pins the board-approved team FX + night FX for a period (Q3/Q5)."""
         _parse_period(body.period_key)  # validates format
         primary = get_pool(request)
+        # FX is per-period: only THIS month's approval refuses it (409).
+        await assert_period_writable(primary, scope, body.period_key, carries_forward=False)
         await primary.execute(
             f"""
             INSERT INTO {scope.tbl_settings} (period_key, team_fx, night_fx, updated_by, updated_at)
