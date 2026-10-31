@@ -481,12 +481,11 @@ export interface SavingsLaneRate {
 
 export interface SavingsLaneRates {
   sonar: SavingsLaneRate | null
-  lb123: SavingsLaneRate | null
   skip_reason?: "non-us" | "unparseable"
 }
 
 /**
- * Per-lane SONAR + 123LB benchmark rates for the same set of lanes returned
+ * Per-lane SONAR benchmark rates for the same set of lanes returned
  * by `useSavingsLanes`. Keyed by `${customer_id}|${origin_name}|${dest_name}`.
  * First call may be slow (cold cache); subsequent loads of the same month
  * are instant. Cross-border (non-US) lanes return `null` rates.

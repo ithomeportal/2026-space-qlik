@@ -1,8 +1,11 @@
 """Nightly pre-warm of lane_market_rates for the eSavings report.
 
 Runs at 5 AM CST. For every distinct US lane in the current MTD month + the
-previous closed month, ensures both SONAR and 123LB caches are populated.
+previous closed month, ensures the SONAR cache is populated.
 Closed-month rows that already exist are skipped (they never change).
+
+SONAR-only since 2026-10-31: the 123LoadBoard contract ended and its API was
+shut off, so the lb123 fetch was removed (historical lb123 rows are kept).
 """
 
 from __future__ import annotations
@@ -16,7 +19,6 @@ import httpx
 from app.clock import cst_today
 from app.services.lane_rates import (
     Lane,
-    fetch_lb123_history,
     fetch_sonar_history,
     get_cached_rates,
     make_lane,
@@ -67,7 +69,6 @@ async def prewarm_lane_market_rates(pool) -> dict:
     yms = [f"{m.year:04d}-{m.month:02d}" for m in months]
 
     cached_sonar = await get_cached_rates(pool, lanes, yms, "sonar")
-    cached_lb123 = await get_cached_rates(pool, lanes, yms, "lb123")
 
     def _missing(ln: Lane, cache) -> bool:
         # If either of the two months is missing, refetch (the API call covers
@@ -79,11 +80,9 @@ async def prewarm_lane_market_rates(pool) -> dict:
         )
 
     todo_sonar = [ln for ln in lanes if _missing(ln, cached_sonar)]
-    todo_lb123 = [ln for ln in lanes if _missing(ln, cached_lb123)]
 
     sem = asyncio.Semaphore(_PREWARM_CONCURRENCY)
     sonar_ok = sonar_err = 0
-    lb123_ok = lb123_err = 0
 
     async def _do_sonar(client: httpx.AsyncClient, ln: Lane) -> None:
         nonlocal sonar_ok, sonar_err
@@ -100,25 +99,9 @@ async def prewarm_lane_market_rates(pool) -> dict:
                 logger.info("[lane-rates prewarm] sonar fail %s→%s: %s",
                             ln.origin_city, ln.dest_city, exc)
 
-    async def _do_lb123(client: httpx.AsyncClient, ln: Lane) -> None:
-        nonlocal lb123_ok, lb123_err
-        async with sem:
-            try:
-                history = await fetch_lb123_history(client, ln, months=12)
-                if history:
-                    await upsert_rates(pool, ln, "lb123", history)
-                    lb123_ok += 1
-                else:
-                    lb123_err += 1
-            except Exception as exc:
-                lb123_err += 1
-                logger.info("[lane-rates prewarm] lb123 fail %s→%s: %s",
-                            ln.origin_city, ln.dest_city, exc)
-
     async with httpx.AsyncClient() as client:
         await asyncio.gather(
             *(_do_sonar(client, ln) for ln in todo_sonar),
-            *(_do_lb123(client, ln) for ln in todo_lb123),
             return_exceptions=True,
         )
 
@@ -130,8 +113,6 @@ async def prewarm_lane_market_rates(pool) -> dict:
     degraded = [] if sonar["ok"] else ["sonar"]
     if todo_sonar and sonar_ok == 0 and "sonar" not in degraded:
         degraded.append("sonar")
-    if todo_lb123 and lb123_ok == 0:
-        degraded.append("lb123")
 
     summary = {
         "status": "degraded" if degraded else "ok",
@@ -141,7 +122,6 @@ async def prewarm_lane_market_rates(pool) -> dict:
             "refetched": len(todo_sonar), "ok": sonar_ok, "err": sonar_err,
             "credential_ok": sonar["ok"], "reason": sonar["reason"],
         },
-        "lb123": {"refetched": len(todo_lb123), "ok": lb123_ok, "err": lb123_err},
         "months": yms,
     }
     if degraded:

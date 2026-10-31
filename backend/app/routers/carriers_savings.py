@@ -38,7 +38,6 @@ from app.division_marker import division_team_id_sql
 from app.routers.deps import get_savings_pool, require_report_access
 from app.services.lane_rates import (
     Lane,
-    fetch_lb123_history,
     fetch_sonar_history,
     get_cached_rates,
     make_lane,
@@ -778,11 +777,11 @@ async def _resolve_month(pool, requested: Optional[date]) -> Optional[date]:
 
 
 # ============================================================================
-# Lane market rates  (SONAR + 123LoadBoard, monthly historical benchmarks)
+# Lane market rates  (SONAR monthly historical benchmarks; 123LB removed 2026-10-31)
 # ============================================================================
 
 # SONAR is hard-capped at 100 req/min globally. We bound parallelism well below
-# that since each call also costs a 123LB request.
+# that so a cold page cannot burn the global budget.
 _RATE_FETCH_CONCURRENCY = 8
 
 
@@ -806,7 +805,7 @@ async def lane_rates(
     variance_sign: Optional[str] = Query(None, description="positive (variance >= 0) | negative (variance < 0)"),
     _user: dict = Depends(require_report_access("esavings-carriers")),
 ):
-    """Return SONAR + 123LB monthly benchmark rates for the same lanes /lanes returns.
+    """Return SONAR monthly benchmark rates for the same lanes /lanes returns.
 
     Mirrors /lanes filters/sort/paging exactly so the frontend can join row-for-row
     by `customer_id|origin_name|dest_name`. Per lane we look up the cache; on miss
@@ -881,15 +880,13 @@ async def lane_rates(
                 seen.add(key)
                 unique_lanes.append(ln)
 
-    # 1) Bulk cache lookup for both providers, just for this month.
+    # 1) Bulk cache lookup for SONAR, just for this month.
     cached_sonar = await get_cached_rates(pool, unique_lanes, [year_month], "sonar")
-    cached_lb123 = await get_cached_rates(pool, unique_lanes, [year_month], "lb123")
 
     def _key_for(ln: Lane) -> tuple:
         return (ln.origin_city, ln.origin_state, ln.dest_city, ln.dest_state, ln.equipment, year_month)
 
     missing_sonar = [ln for ln in unique_lanes if _key_for(ln) not in cached_sonar]
-    missing_lb123 = [ln for ln in unique_lanes if _key_for(ln) not in cached_lb123]
 
     sem = asyncio.Semaphore(_RATE_FETCH_CONCURRENCY)
 
@@ -907,26 +904,11 @@ async def lane_rates(
                     cached_sonar[_key_for(ln)] = m
                     break
 
-    async def _fill_lb123(client: httpx.AsyncClient, ln: Lane) -> None:
-        async with sem:
-            history = await fetch_lb123_history(client, ln, months=12)
-            if history:
-                try:
-                    await upsert_rates(pool, ln, "lb123", history)
-                except Exception as exc:
-                    _logger.warning("[123LB] upsert failed %s→%s: %s",
-                                    ln.origin_city, ln.dest_city, exc)
-            for m in history:
-                if m.year_month == year_month:
-                    cached_lb123[_key_for(ln)] = m
-                    break
-
-    if missing_sonar or missing_lb123:
+    if missing_sonar:
         async with httpx.AsyncClient() as client:
             await asyncio.gather(
                 *(_fill_sonar(client, ln) for ln in missing_sonar),
-                *(_fill_lb123(client, ln) for ln in missing_lb123),
-                return_exceptions=True,
+                    return_exceptions=True,
             )
 
     # Build the response, keyed how the frontend keys lane rows.
@@ -935,15 +917,13 @@ async def lane_rates(
         row_key = f"{r['customer_id']}|{r['origin_name']}|{r['dest_name']}"
         if not ln or not ln.is_us:
             out[row_key] = {
-                "sonar": None, "lb123": None, "skip_reason": "non-us"
+                "sonar": None, "skip_reason": "non-us"
                 if (ln and not ln.is_us) else "unparseable",
             }
             continue
         s = cached_sonar.get(_key_for(ln))
-        l = cached_lb123.get(_key_for(ln))
         out[row_key] = {
             "sonar": _serialize_rate(s),
-            "lb123": _serialize_rate(l),
         }
     return {
         "success": True,

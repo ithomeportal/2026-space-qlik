@@ -79,10 +79,6 @@ services:
         sync: false
       - key: SONAR_PASSWORD
         sync: false
-      - key: LB123_CLIENT_ID
-        sync: false
-      - key: LB123_CLIENT_SECRET
-        sync: false
 
       # --- MS Graph (admin-ms-api app) — daily digests ---
       - key: MS_TENANT_ID

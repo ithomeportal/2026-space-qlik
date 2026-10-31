@@ -520,9 +520,10 @@ async def _scheduled_attrition_pipedrive_watch():
 
 
 async def _scheduled_lane_rates_prewarm():
-    """Background job: pre-warm SONAR + 123LB monthly rates for lanes in the
+    """Background job: pre-warm SONAR monthly rates for lanes in the
     current and previous month so the eSavings report never blocks on a cold
-    cache. Runs daily at 5 AM CST."""
+    cache. Runs daily at 5 AM CST. SONAR-only since 2026-10-31 (123LB contract
+    ended; the job id is unchanged so EXPECTED_JOBS / the heartbeat stay valid)."""
     try:
         pool = getattr(app.state, "savings_pool", None)
         from app.services.lane_rates_prewarm import prewarm_lane_market_rates
@@ -1756,13 +1757,14 @@ async def lifespan(app: FastAPI):
         logger.info("Scheduled Bonus Calculator history finalize at 1:00 AM CST")
 
     # Schedule nightly lane_market_rates pre-warm at 5:00 AM CST. Skips when
-    # neither SONAR nor 123LB credentials are present (the prewarm just no-ops).
+    # SONAR credentials are absent (the prewarm just no-ops). SONAR-only since
+    # 2026-10-31 — 123LB removed; job id kept for EXPECTED_JOBS continuity.
     if settings.SAVINGS_DATABASE_URL:
         scheduler.add_job(
             _scheduled_lane_rates_prewarm,
             CronTrigger(hour=5, minute=0, timezone="America/Chicago"),
             id="daily_lane_rates_prewarm",
-            name="Pre-warm SONAR + 123LB lane market rates",
+            name="Pre-warm SONAR lane market rates",
             replace_existing=True,
         )
         logger.info("Scheduled lane-rates prewarm at 5:00 AM CST")
@@ -1985,7 +1987,7 @@ async def lifespan(app: FastAPI):
         "daily_headcount_snapshot": "Monthly headcount snapshot, 02:30 CST",
         "daily_losses_alert": "DFW Losses e-mail, 07:00 CST",
         "daily_bonus_history_finalize": "Bonus period snapshot, 01:00 CST",
-        "daily_lane_rates_prewarm": "SONAR / 123LB lane rates, 05:00 CST",
+        "daily_lane_rates_prewarm": "SONAR lane rates, 05:00 CST",
         "datalake_warmup": "Gold buffer warm-up, every 5 min",
         "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
         "daily_revenue_code_check": "MX revenue-code lookup freshness, 06:20 CST",

@@ -1,4 +1,7 @@
-"""SONAR + 123LoadBoard monthly rate clients (Python port).
+"""SONAR monthly rate client (Python port).
+
+123LoadBoard was removed 2026-10-31 (contract ended; API shut off). Historical
+`source='lb123'` rows in lane_market_rates are kept but never written again.
 
 Purpose
 -------
@@ -9,12 +12,12 @@ cached permanently; the current MTD month is soft-cached for 24h.
 Why a Python port (vs calling /BOT/quoting over HTTP)?
 - Portal backend is FastAPI on Render; quoting is Node on Vercel — separate
   cold-start surface, separate auth, separate latency budget.
-- The two endpoints we actually need (TRAC Statistics, Rate History Monthly)
-  are <150 LOC each; trivial to port and now self-contained.
+- The one endpoint we actually need (SONAR TRAC Statistics) is <150 LOC;
+  trivial to port and self-contained.
 
 Scope guards
 - US-only: lanes with non-2-char states (e.g. "CI" Chihuahua) skip the API
-  call entirely and return None — both providers are US-only.
+  call entirely and return None — SONAR is US-only.
 - Equipment: defaults to "VAN" (UNILINK lanes are overwhelmingly van).
 """
 
@@ -27,7 +30,6 @@ import json
 import logging
 import os
 import re
-from base64 import b64encode
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -98,7 +100,7 @@ def make_lane(origin_name: str, dest_name: str, equipment: str = "VAN") -> Optio
 
 @dataclass
 class MonthlyRate:
-    """Normalized output shared by both providers."""
+    """Normalized monthly rate row (one per lane x month x source)."""
     year_month: str           # 'YYYY-MM'
     avg_rate: Optional[float]
     min_rate: Optional[float]
@@ -417,141 +419,6 @@ async def fetch_sonar_history(
             loads_included=_int(entry.get("avg_total_load_count") or entry.get("total_load_count")),
             mileage=_int(miles),
             raw=entry,
-        ))
-    return out
-
-
-# ============================================================================
-# 123LoadBoard — Rate History, Monthly
-# ============================================================================
-
-_LB123_BASE = "https://api.123loadboard.com"
-_LB123_API_VERSION = "1.3"
-_LB123_TIMEOUT = 30.0
-_lb123_token: dict[str, float | str] | None = None
-
-
-async def _lb123_token_value(client: httpx.AsyncClient) -> Optional[str]:
-    global _lb123_token
-
-    if _lb123_token and float(_lb123_token["expires_at"]) > datetime.now(timezone.utc).timestamp():
-        return str(_lb123_token["token"])
-
-    cid = os.environ.get("LB123_CLIENT_ID")
-    secret = os.environ.get("LB123_CLIENT_SECRET")
-    if not cid or not secret:
-        return None
-
-    basic = b64encode(f"{cid}:{secret}".encode()).decode()
-    try:
-        r = await client.post(
-            f"{_LB123_BASE}/token",
-            content="grant_type=client_credentials&scope=ratecheck",
-            headers={
-                "123LB-Api-Version": _LB123_API_VERSION,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Authorization": f"Basic {basic}",
-            },
-            timeout=_LB123_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        token = data.get("access_token")
-        if not token:
-            return None
-        _lb123_token = {
-            "token": token,
-            "expires_at": datetime.now(timezone.utc).timestamp()
-            + max(60, int(data.get("expires_in", 3600)) - 60),
-        }
-        return token
-    except Exception as exc:
-        logger.warning("[123LB] auth failed: %s", exc)
-        return None
-
-
-def _map_lb123_equipment(equipment: str) -> str:
-    m = {"VAN": "Van", "REEFER": "Reefer", "FLATBED": "Flatbed",
-         "V": "Van", "R": "Reefer", "F": "Flatbed"}
-    return m.get(equipment.upper(), "Van")
-
-
-async def fetch_lb123_history(
-    client: httpx.AsyncClient,
-    lane: Lane,
-    months: int = 12,
-) -> list[MonthlyRate]:
-    """One row per month from 123LB /ratechecks/history (timeSpan=Monthly)."""
-    if not lane.is_us:
-        return []
-
-    token = await _lb123_token_value(client)
-    if not token:
-        return []
-
-    today = cst_today()
-    end_d = today
-    start = date(today.year, today.month, 1)
-    for _ in range(months - 1):
-        start = (start.replace(day=1) - _ONE_DAY).replace(day=1)
-
-    body = {
-        "origin": {"city": lane.origin_city, "state": lane.origin_state},
-        "destination": {"city": lane.dest_city, "state": lane.dest_state},
-        "equipment": _map_lb123_equipment(lane.equipment),
-        "timeSpan": "Monthly",
-        "startDate": start.isoformat(),
-        "endDate": end_d.isoformat(),
-    }
-
-    try:
-        r = await client.post(
-            f"{_LB123_BASE}/ratechecks/history",
-            json=body,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "123LB-Api-Version": _LB123_API_VERSION,
-                "123LB-AID": "analytics-hub-portal",
-                "Content-Type": "application/json",
-                "User-Agent": "Unilink-AnalyticsHub/1.0 (ithome@unilinkportal.com)",
-            },
-            timeout=_LB123_TIMEOUT,
-        )
-        if r.status_code >= 400:
-            logger.info("[123LB] %s→%s status=%s body=%s",
-                        lane.origin_city, lane.dest_city, r.status_code, r.text[:200])
-            return []
-        data = r.json() or {}
-    except Exception as exc:
-        logger.warning("[123LB] %s→%s request failed: %s", lane.origin_city, lane.dest_city, exc)
-        return []
-
-    items = data.get("revenues") or data.get("lanes") or []
-    out: list[MonthlyRate] = []
-    for it in items:
-        ym_obj = it.get("yearMonth")
-        ds = it.get("date") or it.get("startDate") or it.get("start_date")
-        if isinstance(ym_obj, dict) and ym_obj.get("year") and ym_obj.get("month"):
-            ym = f"{int(ym_obj['year']):04d}-{int(ym_obj['month']):02d}"
-        elif isinstance(ds, str) and len(ds) >= 7:
-            ym = ds[:7]
-        else:
-            continue
-        avg_rpm = _num(it.get("avgRatePerMile") or it.get("averageRatePerMile"))
-        min_rpm = _num(it.get("ratePerMileMin") or it.get("ratePerMileMinimum"))
-        max_rpm = _num(it.get("ratePerMileMax") or it.get("ratePerMileMaximum"))
-        miles = _num(it.get("totalMileage")) or _num(it.get("mileage"))
-        out.append(MonthlyRate(
-            year_month=ym,
-            avg_rate=_mul(avg_rpm, miles) or _num(it.get("averageRateForMileage")),
-            min_rate=_mul(min_rpm, miles) or _num(it.get("minRateForMileage")),
-            max_rate=_mul(max_rpm, miles) or _num(it.get("maxRateForMileage")),
-            avg_rpm=avg_rpm,
-            min_rpm=min_rpm,
-            max_rpm=max_rpm,
-            loads_included=_int(it.get("loadsIncluded")),
-            mileage=_int(miles),
-            raw=it,
         ))
     return out
 

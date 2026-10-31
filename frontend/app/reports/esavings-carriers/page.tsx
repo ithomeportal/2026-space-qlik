@@ -228,8 +228,8 @@ function ESavingsFromCarriersContent() {
   const totalLanes = lanesRes?.meta?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(totalLanes / limit))
 
-  // SONAR + 123LB monthly benchmark rates for the same page of lanes.
-  // First call against a cold lane is slow (external APIs); subsequent loads
+  // SONAR monthly benchmark rates for the same page of lanes.
+  // First call against a cold lane is slow (external API); subsequent loads
   // of the same month are instant (cache hit on lane_market_rates).
   const { data: rateRes, isFetching: loadingRates } = useSavingsLaneRates(lanesFilters)
   const rateMap = rateRes?.data ?? {}
@@ -585,18 +585,12 @@ function ESavingsFromCarriersContent() {
                       >
                         SONAR $
                       </th>
-                      <th
-                        className="px-3 py-2 text-right font-medium"
-                        title="123LoadBoard rate-history monthly avg for this lane"
-                      >
-                        123LB $
-                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#F3F4F6]">
                     {loadingLanes && lanes.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="px-3 py-6 text-center">
+                        <td colSpan={9} className="px-3 py-6 text-center">
                           <Loader2 className="mx-auto h-5 w-5 animate-spin text-[#6B7280]" />
                         </td>
                       </tr>
@@ -604,7 +598,7 @@ function ESavingsFromCarriersContent() {
                     {!loadingLanes && lanes.length === 0 && (
                       <tr>
                         <td
-                          colSpan={10}
+                          colSpan={9}
                           className="px-3 py-6 text-center text-xs text-[#9CA3AF]"
                         >
                           No lanes match the current filters
@@ -662,11 +656,6 @@ function ESavingsFromCarriersContent() {
                           </td>
                           <RateCell
                             rate={rates?.sonar ?? null}
-                            skipReason={rates?.skip_reason}
-                            loading={loadingRates && !rates}
-                          />
-                          <RateCell
-                            rate={rates?.lb123 ?? null}
                             skipReason={rates?.skip_reason}
                             loading={loadingRates && !rates}
                           />
@@ -839,7 +828,7 @@ function RateCell({ rate, skipReason, loading }: RateCellProps) {
     return (
       <td
         className="px-3 py-2 text-right text-xs text-[#9CA3AF]"
-        title="Cross-border lane — SONAR/123LB are US-only"
+        title="Cross-border lane — SONAR is US-only"
       >
         n/a
       </td>

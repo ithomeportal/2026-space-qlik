@@ -82,7 +82,7 @@ SECTION_ALLOWLIST = frozenset({
 })
 # Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
 # queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid
-# SONAR / 123LB APIs per lane and UPSERTs — `equipment` is free text, so every call
+# SONAR API per lane and UPSERTs — `equipment` is free text, so every call
 # can miss), and the require_user-only call / ticket detail (other employees' free
 # text and phone identifiers, company-wide). `.csv` exports are never allowlisted.
 # Documentation for the decided-test; the gate itself is SECTION_ALLOWLIST alone.
