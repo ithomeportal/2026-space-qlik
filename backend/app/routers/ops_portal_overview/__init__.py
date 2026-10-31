@@ -42,6 +42,8 @@ Endpoints (all under /api/custom/ops-portal-overview, all guarded by
   /team-projection     → §6 — single-row team rolling 14d projection
   /profit-tm-gauge     → bottom-middle Profit-TM gauge (MTD profit vs budget)
   /actuals             → bottom Actuals per-customer roll-up
+  /fuel                → KPI chart "Fuel" measure — EIA weekly diesel $/gal
+                         (modern_pricing_portal; market data, ignores filters)
 
 Date-filter semantics:
   - /combo, /team-projection, /workdays, /profit-tm-gauge IGNORE the Date filter
@@ -158,6 +160,8 @@ from .orders import (  # noqa: F401
 # Bruno PDF 2026-08-19 R1 — the Hold board. Its own module rather than more
 # lines in orders.py, which is already 595 of the package's 800-line cap.
 from .hold import hold_board  # noqa: F401
+# 2026-10-31 — the KPI chart's "Fuel" measure (EIA diesel, pricing pool).
+from .fuel import fuel  # noqa: F401
 from .incidents import (  # noqa: F401
     service_by_carrier,
     service_incident_by_customer,
@@ -220,6 +224,7 @@ __all__ = [
     "customer_variance",
     "data_freshness",
     "filters",
+    "fuel",
     "margin_distribution",
     "pending_to_cover",
     "profit_tm_gauge",

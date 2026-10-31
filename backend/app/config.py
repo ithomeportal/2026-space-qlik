@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     # Percent-encode $ -> %24 in the URL (Render strips $$).
     AP_DATABASE_URL: str = ""
     # Aiven modern_pricing_portal — the quoting portal's own DB. Read-only,
-    # SELECT on spot_report_condensed ONLY (role spaceqlik_pricing_ro).
-    # Source of the HD Spot funnel (offered/quoted/awarded).
+    # SELECT on spot_report_condensed + fuel_diesel_weekly + fuel_diesel_forecast
+    # ONLY (role spaceqlik_pricing_ro; the fuel GRANTs added 2026-10-31).
+    # Source of the HD Spot funnel (offered/quoted/awarded) and of the Ops
+    # Portal KPI chart's "Fuel" measure (EIA diesel $/gal).
     # Percent-encode $ -> %24 in the URL (Render strips $$).
     PRICING_DATABASE_URL: str = ""
     # Aiven recruit_unilink — the Jobs portal's own DB (jobs.unilinktransportation.com).

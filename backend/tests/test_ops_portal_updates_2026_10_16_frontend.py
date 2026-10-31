@@ -63,7 +63,8 @@ def test_external_hrefs_render_as_a_plain_anchor_in_a_new_tab() -> None:
 
 
 def test_not_billed_is_gone_from_the_frontend() -> None:
-    for path in (_OPP / "SidePanels.tsx", _API):
+    # SidePanels.tsx was split into one file per panel (layout 2026-10-28).
+    for path in (*_OPP.glob("*Panel*.tsx"), _API):
         src = path.read_text()
         assert "customer-not-billed" not in src
         assert "NotBilled" not in src
@@ -72,10 +73,12 @@ def test_not_billed_is_gone_from_the_frontend() -> None:
 def test_the_over_pay_panel_calls_the_new_endpoint_and_drills() -> None:
     api = _API.read_text()
     assert "/customer-overpay${qs(f)}" in api
-    panels = (_OPP / "SidePanels.tsx").read_text()
-    assert "<CustomerOverPay filters={filters} onPickCustomer={onPickCustomer} />" in panels
-    assert 'title="Over Pay"' in panels
-    assert "meta?.totals as OppCustomerOverPayTotals" in panels
+    # Mounted by the overview grid (layout 2026-10-28), defined in its own file.
+    grid = (_OPP / "OverviewPanelGrid.tsx").read_text()
+    assert "<CustomerOverPay filters={filters} onPickCustomer={onPickCustomer} />" in grid
+    panel = (_OPP / "OverPayPanel.tsx").read_text()
+    assert 'title="Over Pay"' in panel
+    assert "meta?.totals as OppCustomerOverPayTotals" in panel
 
 
 # ---- R3 — PickUp / Delivery toggle -----------------------------------------

@@ -39,7 +39,12 @@ const BUCKET_COLOR: Record<BucketKey, string> = {
   gte_20: "bg-[#15803D]",
 }
 
-export function MarginDistribution({ filters }: { filters: OppFilters }) {
+/**
+ * `compact` (layout 2026-10-28): the panel sits in a quarter-width column next
+ * to Over Pay, so the six buckets render 3 × 2 and the header totals wrap under
+ * the title. Same data, same band, same totals — only the geometry changes.
+ */
+export function MarginDistribution({ filters, compact = false }: { filters: OppFilters; compact?: boolean }) {
   const { data, isLoading, isError } = useOppMarginDistribution(filters)
 
   // R18: per-bucket count + header summary read ORDERS, not customers.
@@ -63,13 +68,19 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
   const hasData = rows.some((r) => r.orders > 0)
 
   return (
-    <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+    <div className={`min-w-0 rounded-xl border border-[#E5E7EB] bg-white shadow-sm ${compact ? "p-3" : "p-4"}`}>
       {isError && (
         <div className="mb-2 rounded border border-[#DC2626] bg-[#FEF2F2] px-2 py-1 text-[11px] text-[#DC2626]">
           Margin distribution failed to load.
         </div>
       )}
-      <div className="mb-2 flex items-center justify-between">
+      <div
+        className={
+          compact
+            ? "mb-2 flex flex-col items-start gap-0.5"
+            : "mb-2 flex items-center justify-between"
+        }
+      >
         <h3 className="text-sm font-semibold text-[#1B3A5C]">
           Margin distribution
         </h3>
@@ -99,11 +110,11 @@ export function MarginDistribution({ filters }: { filters: OppFilters }) {
               )
             })}
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-2 text-xs md:grid-cols-6">
+          <div className={`mt-2 grid grid-cols-3 gap-2 text-xs ${compact ? "" : "md:grid-cols-6"}`}>
             {rows.map((r) => (
               <div
                 key={r.bucket}
-                className="rounded border border-[#E5E7EB] px-2 py-1"
+                className="min-w-0 rounded border border-[#E5E7EB] px-2 py-1"
               >
                 <div className="flex items-center gap-1">
                   <span className={`inline-block h-2 w-2 rounded-full ${BUCKET_COLOR[r.bucket]}`} />

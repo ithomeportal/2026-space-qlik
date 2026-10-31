@@ -71,6 +71,9 @@ UNSCOPED_BY_DESIGN = {
     "data-freshness",
     # Calendar arithmetic only (Mon-Fri ex-holidays).
     "workdays",
+    # EIA diesel prices (2026-10-31) — market data, the same for every team
+    # and division; it reads modern_pricing_portal, which has no team column.
+    "fuel",
 }
 
 # Emits no SQL at all — a strict subset of the above. Kept separate because
@@ -102,7 +105,7 @@ class _StubPool:
 
 _ENDPOINT_MODULES = (
     "meta", "chart", "variance", "performance",
-    "projection", "actuals", "orders", "hold", "incidents",
+    "projection", "actuals", "orders", "hold", "incidents", "fuel",
 )
 
 
@@ -111,11 +114,17 @@ def _patch_pools(pool):
     import importlib
 
     originals = []
+    pricing_originals = []
     for name in _ENDPOINT_MODULES:
         m = importlib.import_module(f"app.routers.ops_portal_overview.{name}")
         if hasattr(m, "get_datalake_gold_pool"):
             originals.append((m, m.get_datalake_gold_pool))
             m.get_datalake_gold_pool = lambda request, _p=pool: _p
+        # /fuel reads the PRICING pool; without this it fails soft before
+        # emitting anything and its parity check would be vacuous.
+        if hasattr(m, "get_pricing_pool"):
+            pricing_originals.append((m, m.get_pricing_pool))
+            m.get_pricing_pool = lambda request, _p=pool: _p
     for m in (dfw,):
         originals.append((m, m.get_datalake_gold_pool))
         m.get_datalake_gold_pool = lambda request, _p=pool: _p
@@ -135,6 +144,8 @@ def _patch_pools(pool):
             mod.get_datalake_gold_pool = fn
         for mod, fn in hub_originals:
             mod.get_pool = fn
+        for mod, fn in pricing_originals:
+            mod.get_pricing_pool = fn
 
     return undo
 

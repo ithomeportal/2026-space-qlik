@@ -14,9 +14,7 @@ import {
   type OppRange,
 } from "@/lib/ops-portal-overview-api"
 import { ComboChart } from "@/app/reports/ops-portal-overview/Chart"
-import { SidePanels } from "@/app/reports/ops-portal-overview/SidePanels"
-import { ServiceIncidentTables } from "@/app/reports/ops-portal-overview/ServiceIncidentTables"
-import { MarginDistribution } from "@/app/reports/ops-portal-overview/MarginDistribution"
+import { OverviewPanelGrid } from "@/app/reports/ops-portal-overview/OverviewPanelGrid"
 import { Actuals } from "@/app/reports/ops-portal-overview/Actuals"
 import type { ActualsCompare } from "@/app/reports/ops-portal-overview/ActualsCells"
 import { ActualsByLane } from "@/app/reports/ops-portal-overview/ActualsByLane"
@@ -712,21 +710,20 @@ function Body({
           10-pixel gap between the last table and the small blank space at the
           bottom". `pt-4` keeps the top spacing; only the bottom changes. */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 pt-4 pb-[10px]">
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
-          <div className="space-y-4">
+        {/* Layout 2026-10-28: Performance | chart | Projection + Customer
+            Variance; Service Incident · By Carrier; then Budget · Losses ·
+            Over Pay · Margin distribution — see OverviewPanelGrid.tsx. */}
+        <OverviewPanelGrid
+          filters={filters}
+          chart={
             <ComboChart filters={filters} loadType={loadType} setLoadType={setLoadType} hideBudget={hideBudget} />
-            <ServiceIncidentTables filters={filters} onPickCustomer={pickCustomer} onPickCarrier={pickCarrier} />
-          </div>
-          <SidePanels
-            filters={filters}
-            onPickCustomer={pickCustomer}
-            lockedTeam={lockedTeam}
-            hideBudget={hideBudget}
-            customerVarianceBasis={customerVarianceBasis}
-          />
-        </div>
-
-        <MarginDistribution filters={filters} />
+          }
+          onPickCustomer={pickCustomer}
+          onPickCarrier={pickCarrier}
+          lockedTeam={lockedTeam}
+          hideBudget={hideBudget}
+          customerVarianceBasis={customerVarianceBasis}
+        />
 
         <Actuals
           filters={filters}

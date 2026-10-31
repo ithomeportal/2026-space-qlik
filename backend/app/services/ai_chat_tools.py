@@ -79,6 +79,8 @@ SECTION_ALLOWLIST = frozenset({
     "weekly-performance", "weekly-trends", "workdays", "wow-variation", "activity",
     # Collections Settlement Forecast (2026-10-27): read-only cash in/out.
     "this-week", "weeks", "accuracy", "sources",
+    # Ops Portal KPI chart "Fuel" (2026-10-31): public EIA diesel prices, read-only.
+    "fuel",
 })
 # Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
 # queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid

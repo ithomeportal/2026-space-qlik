@@ -318,6 +318,18 @@ async def cover_forecast(
         _user=_user,
     )
 
+@r.get("/{division}/fuel")
+async def fuel(
+    request: Request,
+    grain: str = Query('month'),
+    start: Optional[date] = Query(None),
+    end: Optional[date] = Query(None),
+    _user: dict = Depends(gate),
+):
+    # EIA diesel market data — division-blind by design (the division is
+    # still pinned by the router dependency; there is just nothing to scope).
+    return await opo.fuel(request=request, grain=grain, start=start, end=end, _user=_user)
+
 @r.get("/{division}/team-variance")
 async def team_variance(
     request: Request,

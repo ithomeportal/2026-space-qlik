@@ -1087,6 +1087,49 @@ export function useOppCoverForecast(
   })
 }
 
+// 2026-10-31: the KPI chart's "Fuel" measure — EIA weekly retail diesel
+// ($/gal) per region, bucketed like /combo. MARKET data: the backend ignores
+// team / customer / lane / carrier, so they are deliberately NOT sent and NOT
+// in the key — the key covers every param this call serialises (§50).
+export interface OppFuelRegion {
+  code: string
+  name: string
+}
+export interface OppFuelPoint {
+  bucket_start: string
+  /** EIA Monday the value belongs to (week/day grains); null for month. */
+  period: string | null
+  values: Record<string, number>
+  /** $/gal change: WoW (week/day) or vs the prior month's average (month). */
+  wow: Record<string, number>
+}
+export interface OppFuelForecastPoint {
+  bucket_start: string
+  values: Record<string, number>
+}
+export interface OppFuel {
+  grain: OppGrain
+  change_basis: "wow" | "mom"
+  regions: OppFuelRegion[]
+  points: OppFuelPoint[]
+  forecast: OppFuelForecastPoint[]
+  freshness: { latest_period: string | null; fetched_at: string | null }
+  /** Set when the source failed soft — points are then empty. */
+  unavailable: string | null
+}
+
+export function useOppFuel(grain: OppGrain, enabled: boolean) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [prefix, "opp-fuel", grain],
+    queryFn: () => apiFetch<OppFuel>(`${prefix}/fuel?${new URLSearchParams({ grain })}`),
+    enabled,
+    // Weekly data loaded Mondays — no need to refetch on every focus.
+    staleTime: 10 * 60_000,
+    ...RETRY,
+  })
+}
+
 // Bruno R4: "Team Weekly Performance" modal data.
 export function useOppTeamWeekly(
   f: Pick<OppFilters, "team" | "customers" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,

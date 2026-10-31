@@ -462,6 +462,18 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
+    # ---- /fuel (2026-10-31) -----------------------------------------------
+    # EIA diesel market data: no team to lock, but still behind THIS gate.
+    @r.get("/fuel")
+    async def fuel(
+        request: Request,
+        grain: str = Query("month"),
+        start: Optional[date] = Query(None),
+        end: Optional[date] = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        return await opo.fuel(request=request, grain=grain, start=start, end=end, _user=_user)
+
     # ---- /data-freshness --------------------------------------------------
     # Source-level, not team-scoped: staleness is a property of the ETL feed,
     # so every portal reports the same answer (and shares the 60s cache).

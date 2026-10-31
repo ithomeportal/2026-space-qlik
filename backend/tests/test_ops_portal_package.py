@@ -52,6 +52,8 @@ EXPECTED_PATHS = {
     "/custom/ops-portal-overview/pending-to-cover",
     "/custom/ops-portal-overview/cover",
     "/custom/ops-portal-overview/cover-forecast",
+    # 2026-10-31 — KPI chart "Fuel" measure (EIA diesel, pricing pool).
+    "/custom/ops-portal-overview/fuel",
     "/custom/ops-portal-overview/data-freshness",
     "/custom/ops-portal-overview/team-weekly-performance",
     "/custom/ops-portal-overview/team-performance-by-team",

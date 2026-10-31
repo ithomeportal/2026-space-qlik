@@ -22,6 +22,10 @@ interface Props {
   /** Bruno (PDF 2026-07-23) R3: clicking a carrier in the By Carrier table
    *  applies it as the single included carrier filter across every panel. */
   onPickCarrier?: (carrier: string) => void
+  /** Layout 2026-10-28: extra grid classes from the parent (e.g. `xl:col-span-2`)
+   *  so the two panels sit as one grid item spanning the overview's left +
+   *  centre columns instead of the full width. */
+  className?: string
 }
 
 // Bruno (PDF 2026-08-31) R5: every column in all three tables sorts.
@@ -53,11 +57,13 @@ const CAPPED_NOTE = "Sorting applies to the rows shown — the server sends only
 // mounted, so switching fetches it on demand (React Query caches both after).
 // The backend still caps each at the top 100 by fail count; we scroll within
 // the panel and R11 lets it expand to the full table in a modal.
-export function ServiceIncidentTables({ filters, onPickCustomer, onPickCarrier }: Props) {
+export function ServiceIncidentTables({ filters, onPickCustomer, onPickCarrier, className = "" }: Props) {
   // Was three-up (PU · Del · By Carrier, Bruno 2026-07-15 R8); with PU/Del
   // merged it is two equal halves: incidents (toggled) · By Carrier.
+  // `min-w-0` on both levels: grid items default to min-width:auto, so a wide
+  // table would otherwise push the page into horizontal scroll.
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    <div className={`grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2 [&>*]:min-w-0 ${className}`}>
       <IncidentPanel filters={filters} onPickCustomer={onPickCustomer} />
       <CarrierPanel filters={filters} onPickCarrier={onPickCarrier} />
     </div>

@@ -35,6 +35,7 @@ import { LegendChip, LegendLabel } from "./ChartLegend"
 import { KpiBox, ProfitTmGauge } from "./ChartFooter"
 import { CustomersTooltip, NEW_CUSTOMER_COLOR, renderCustomerBars } from "./CustomersSeries"
 import { isCandleMeasure, renderCandle, withKpiExtras } from "./ProjectedCandle"
+import { FuelSeries } from "./FuelSeries"
 
 interface Props {
   filters: OppFilters
@@ -55,7 +56,11 @@ interface Props {
 // combo for OTP%/OTD% lines (same data as the standalone Service chart above).
 // Bruno PDF 2026-10-16 R1: "Customers" — distinct customers per bucket, with
 // the ones new vs the previous bucket stacked on top (CustomersSeries.tsx).
-type Measure = "volume" | "revenue" | "profit" | "margin_pct" | "customers" | "service"
+// 2026-10-31: "Fuel" — EIA diesel $/gal on a right axis over the bars of the
+// measure picked BEFORE it (FuelSeries.tsx).
+type Measure = "volume" | "revenue" | "profit" | "margin_pct" | "customers" | "service" | "fuel"
+type BarMeasure = "volume" | "revenue" | "profit" | "margin_pct"
+const BAR_MEASURES = new Set<Measure>(["volume", "revenue", "profit", "margin_pct"])
 
 const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
   { k: "volume",     label: "Vol.",    fmt: fmtCount },
@@ -64,6 +69,7 @@ const MEASURES: { k: Measure; label: string; fmt: (v: number) => string }[] = [
   { k: "margin_pct", label: "Marg.%",  fmt: fmtPct },
   { k: "customers",  label: "Customers", fmt: fmtCount },
   { k: "service",    label: "Service", fmt: (v) => `${v.toFixed(1)}%` },
+  { k: "fuel",       label: "Fuel",    fmt: (v) => `$${v.toFixed(3)}` },
 ]
 
 // Bruno 2026-06-17: default the brush to the most recent 8 buckets for Week
@@ -99,6 +105,10 @@ const GRAINS: { k: OppGrain; label: string }[] = [
 type SeriesKey =
   | "bars" | "budget" | "variance" | "avgLq" | "projected" | "losses"
   | "cover" | "forecastTotal"
+
+// 2026-10-31 R1a: only the measure bars start ON; every overlay is one click
+// away. Variance (a tooltip row, Actual − Budget) follows the BDGT chip.
+const DEFAULT_HIDDEN: readonly SeriesKey[] = ["budget", "avgLq", "projected", "losses"]
 
 // Bruno (PDF 2026-07-30) R4: the "Forecast" stack — Production + Cover as one
 // cumulative bar. RGB(176,62,212) exactly as specified in the PDF.
@@ -159,7 +169,13 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
   const [measure, setMeasure] = useState<Measure>("profit")
   // Bruno (PDF 2026-07-30) R4: "Forecast" — stacks Cover on top of Production.
   const [forecast, setForecast] = useState(false)
-  const [hidden, setHidden] = useState<Set<SeriesKey>>(new Set())
+  const [hidden, setHidden] = useState<Set<SeriesKey>>(() => new Set(DEFAULT_HIDDEN))
+  // The bars Fuel draws under its price lines: the measure picked before it.
+  const [fuelBase, setFuelBase] = useState<BarMeasure>("profit")
+  const pickMeasure = (m: Measure) => {
+    if (m === "fuel" && BAR_MEASURES.has(measure)) setFuelBase(measure as BarMeasure)
+    setMeasure(m)
+  }
   const toggle = (k: SeriesKey) => {
     setHidden((prev) => {
       const next = new Set(prev)
@@ -172,8 +188,9 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
 
   const isService = measure === "service"
   const isCustomers = measure === "customers"
+  const isFuel = measure === "fuel"
   // Budget / Losses / Projected have no customer-count analogue (R1 2026-10-16).
-  const showBudget = !hideBudget && !isCustomers
+  const showBudget = !hideBudget && !isCustomers && !isFuel
   const showProjected = isCandleMeasure(measure)
 
   const { data: comboRes, isLoading: comboLoading, error: comboError } = useOppCombo(cf, grain)
@@ -416,7 +433,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
     : measure === "volume"   ? "losses_vol"
     : "losses_margin_pct"
   )
-  const showLosses = measure !== "revenue" && !isService && !isCustomers
+  const showLosses = measure !== "revenue" && !isService && !isCustomers && !isFuel
 
   const measureMeta = MEASURES.find((m) => m.k === measure)!
   const fmt = measureMeta.fmt
@@ -492,7 +509,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
         <PillGroup
           options={MEASURES.map((m) => ({ k: m.k, label: m.label }))}
           value={measure}
-          onChange={setMeasure}
+          onChange={pickMeasure}
         />
         {/* Bruno (PDF 2026-07-30) R4: Forecast = Production + Cover, stacked.
             Only offered for the additive measures. */}
@@ -550,7 +567,7 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
           ) : (
             <>
               <LegendChip
-                label={measureMeta.label}
+                label={isFuel ? MEASURES.find((m) => m.k === fuelBase)!.label : measureMeta.label}
                 color="#7DD3FC"
                 active={!isHidden("bars")}
                 onClick={() => toggle("bars")}
@@ -568,13 +585,15 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                   tooltip row, not a series — so a STATIC label, not a toggle
                   (Bruno PDF 2026-10-16 R1). */}
               {showBudget && <LegendLabel label="Variance" color="#F59E0B" />}
-              <LegendChip
-                label="Avg. LQ"
-                color="#9333EA"
-                dashed
-                active={!isHidden("avgLq")}
-                onClick={() => toggle("avgLq")}
-              />
+              {!isFuel && (
+                <LegendChip
+                  label="Avg. LQ"
+                  color="#9333EA"
+                  dashed
+                  active={!isHidden("avgLq")}
+                  onClick={() => toggle("avgLq")}
+                />
+              )}
               {showProjected && (
                 <LegendChip
                   label="Projected"
@@ -608,6 +627,22 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
           <div className="flex h-[380px] items-center justify-center text-sm text-[#DC2626]">
             Failed to load chart
           </div>
+        ) : isFuel ? (
+          <FuelSeries
+            rows={baseData}
+            grain={grain}
+            barKey={fuelBase}
+            barLabel={MEASURES.find((m) => m.k === fuelBase)!.label}
+            showBars={!isHidden("bars")}
+            fmt={MEASURES.find((m) => m.k === fuelBase)!.fmt}
+            labelFmt={(v) => labelFmt(fuelBase, v)}
+            brush={comboBrush}
+            onBrush={(start, end) => {
+              userScrolledRef.current = true
+              setBrush({ start, end })
+            }}
+            dataEpoch={dataEpoch}
+          />
         ) : isService ? (
           /* Bruno R5 #2: Service mode — OTP%/OTD% lines (same as the chart above). */
           <ResponsiveContainer width="100%" height={380}>
@@ -698,7 +733,8 @@ export function ComboChart({ filters, loadType, setLoadType, hideBudget = false 
                     // a tooltip row is as much a rendered number as a line is.
                     ...(!showBudget ? [] : [
                       { key: "budget" as SeriesKey,   label: "Budget",   color: "#16A34A", value: budgetVal },
-                      { key: "variance" as SeriesKey, label: "Variance", color: "#F59E0B", value: actualVal - budgetVal },
+                      // Actual − Budget ⇒ it follows the BDGT chip (R1a 2026-10-31).
+                      { key: "budget" as SeriesKey, label: "Variance", color: "#F59E0B", value: actualVal - budgetVal },
                     ]),
                     { key: "avgLq" as SeriesKey,     label: "Avg",       color: "#9333EA", value: avgLq },
                     ...(!showProjected ? [] : candle ? [
