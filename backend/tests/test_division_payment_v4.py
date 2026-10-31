@@ -346,14 +346,107 @@ def test_every_cutoff_endpoint_is_access_gated():
         assert "Depends(_access)" in src, f"{route.path} is ungated"
 
 
-def test_sql_reads_v4_team_dfw_by_departure_without_tz_conversion():
+def test_sql_buckets_v4_team_dfw_on_delivery_without_tz_conversion():
+    """2026-10-31: the month is the load's DELIVERY (customer_windows
+    .dest_actual_arrival), joined on BOTH key columns verbatim."""
     for sql in (v4.MONTH_TOTALS_SQL, v4.MONTH_ORDERS_SQL):
+        flat = " ".join(sql.split())
         assert "mcleod_gld_budget_report_v4" in sql
         assert "_v5" not in sql
+        assert "JOIN public.mcleod_gld_customer_windows cw" in flat
+        assert "ON cw.id = br4.id AND cw.company_id = br4.company_id" in flat
+        assert "LEFT JOIN" not in sql
+        assert "TRIM" not in sql.upper() and "UPPER(" not in sql.upper()
         assert "br4.team_id = $1" in sql
-        assert "origin_actual_departure >= $2" in sql and "origin_actual_departure <  $3" in sql
+        assert "cw.dest_actual_arrival >= $2" in sql and "cw.dest_actual_arrival <  $3" in sql
+        # No departure pre-filter: arrivals trail departures by up to ~206 days.
+        assert "origin_actual_departure" not in sql
         assert "AT TIME ZONE" not in sql  # gold is already naive CST (§112)
+    assert "EXTRACT(YEAR FROM cw.dest_actual_arrival)" in v4.MONTH_TOTALS_SQL
+    assert "EXTRACT(MONTH FROM cw.dest_actual_arrival)" in v4.MONTH_TOTALS_SQL
     assert v4.DFW_TEAM_ID == "TEAM-DFW"
+
+
+def test_departure_variant_survives_for_pre_switch_snapshots_only():
+    sql = v4.MONTH_ORDERS_BY_DEPARTURE_SQL
+    assert "br4.origin_actual_departure >= $2" in sql
+    assert "br4.origin_actual_departure <  $3" in sql
+    assert "customer_windows" not in sql and "AT TIME ZONE" not in sql
+    # Same columns as the arrival query — diff_orders reads both alike.
+    head = lambda q: q.split("FROM", 1)[0]  # noqa: E731
+    assert head(sql) == head(v4.MONTH_ORDERS_SQL)
+
+
+def test_cutoff_basis_departure_through_september_2026_arrival_after():
+    assert v4.ARRIVAL_BASIS_FIRST_MONTH == (2026, 10)
+    assert v4.cutoff_basis(2026, 9) == "departure"
+    assert v4.cutoff_basis(2025, 12) == "departure"
+    assert v4.cutoff_basis(2026, 10) == "arrival"
+    assert v4.cutoff_basis(2027, 1) == "arrival"
+
+
+class _SqlSpy:
+    def __init__(self):
+        self.calls = []
+
+    async def fetch(self, sql, team, lo, hi):
+        self.calls.append((sql, lo, hi))
+        return []
+
+
+@pytest.mark.asyncio
+async def test_recalculations_diff_reads_the_snapshot_basis():
+    """A ≤2026-09 cutoff (frozen on departure) is diffed on departure; a
+    ≥2026-10 cutoff on arrival — never ~100 phantom bucket moves."""
+
+    class _Pool:
+        async def fetch(self, sql, *args):
+            return []
+
+    gold = _SqlSpy()
+    await dpc._month_diff(_Pool(), gold, 2026, "september", 9)
+    await dpc._month_diff(_Pool(), gold, 2026, "october", 10)
+    assert gold.calls[0][0] == v4.MONTH_ORDERS_BY_DEPARTURE_SQL
+    assert gold.calls[0][1] == datetime(2026, 9, 1)
+    assert gold.calls[1][0] == v4.MONTH_ORDERS_SQL
+    assert gold.calls[1][1] == datetime(2026, 10, 1)
+
+
+@pytest.mark.asyncio
+async def test_live_totals_use_arrival_for_every_month_including_old_ones():
+    gold = _SqlSpy()
+    await v4.fetch_month_totals(gold, v4.FIRST_MONTH, (2026, 10))
+    assert [c[0] for c in gold.calls] == [v4.MONTH_TOTALS_SQL]
+    assert gold.calls[0][1] == datetime(2025, 1, 1)
+    gold = _SqlSpy()
+    await v4.fetch_month_orders(gold, 2025, 3)
+    assert gold.calls[0][0] == v4.MONTH_ORDERS_SQL
+
+
+@pytest.mark.asyncio
+async def test_capture_of_october_2026_freezes_on_arrival():
+    hub = _Hub(captured=[(2026, "september")])
+    gold = _SqlSpy()
+
+    async def fetch(sql, team, lo, hi):
+        gold.calls.append((sql, lo, hi))
+        if sql == v4.MONTH_TOTALS_SQL:
+            return [{"year": lo.year, "month_num": lo.month, "revenue": 1,
+                     "carrier_cost": 1, "profit": 1, "order_count": 1}]
+        return [_o("10-1", 10, 8, 2)]
+
+    gold.fetch = fetch
+    out = await v4.capture_due_cutoffs(hub, gold, date(2026, 11, 11), datetime(2026, 11, 11))
+    assert out["captured"] == {"October 2026": 1}
+    order_reads = [c for c in gold.calls if c[0] != v4.MONTH_TOTALS_SQL]
+    assert [c[0] for c in order_reads] == [v4.MONTH_ORDERS_SQL]
+
+
+def test_no_past_month_is_recaptured_implicitly():
+    """The catch-up only captures months with NO snapshot — September 2026
+    (departure) is never re-frozen on arrival by a deploy or a restart."""
+    assert v4.due_cutoff_months(date(2026, 11, 11), {(2026, 9)}) == [(2026, 10)]
+    assert v4.due_cutoff_months(date(2026, 10, 31), {(2026, 9)}) == []
 
 
 def test_old_free_form_inputs_endpoint_is_gone():

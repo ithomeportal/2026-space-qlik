@@ -80,7 +80,8 @@ function parseDraft(draft: string, allowNegative: boolean): number | null {
  * "A&O — Division Payment Calculator" input card.
  *
  * Bruno PDF 2026-10-05: the three figures now come from the datalake (v4,
- * TEAM-DFW, by origin_actual_departure) and each may be manually overridden.
+ * TEAM-DFW, bucketed on delivery — customer_windows.dest_actual_arrival since
+ * 2026-10-31, origin_actual_departure before) and each may be manually overridden.
  * Profit is NO LONGER Revenue − Carrier Cost computed here — it is
  * SUM(margin_amt) from the backend (or its override). `summary.inputs.*` is the
  * effective value; this card never derives a money figure, it only decides

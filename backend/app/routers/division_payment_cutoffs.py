@@ -11,6 +11,13 @@ Replaces the five vendor demo recalculation records with the real thing:
   diffed in Python because the snapshot (analytics_hub) and v4 (gold) live in
   different databases.
 
+⚠ BASIS (2026-10-31). The ``live`` totals are bucketed on delivery
+(``dest_actual_arrival``) for every month. A tracked month's Δ is diffed on the
+basis its snapshot was frozen on — ``departure`` for September 2026, ``arrival``
+from October 2026 (``cutoff_basis``) — so the switch does not surface as ~100
+phantom added/removed orders. For a departure-basis month live − snapshot is
+therefore NOT the Δ; the per-order diff is.
+
 ⚠ DISPLAY ONLY (Diego 2026-10-05). The 25 % / 75 % split is shown, but nothing
 here feeds a month's net payment — the Δ keeps moving while v4 changes, and
 auto-applying it would shift numbers that were already approved.
@@ -47,8 +54,9 @@ from app.services.division_payment_v4 import (
     add_months,
     cutoff_date,
     cutoff_status,
+    cutoff_basis,
     diff_orders,
-    fetch_month_orders,
+    fetch_cutoff_orders,
     fetch_month_totals,
     month_index,
     month_label,
@@ -86,7 +94,9 @@ async def _snapshot_orders(pool, year: int, month: str) -> list:
 async def _month_diff(pool, gold, year: int, month: str, month_num: int) -> dict[str, Any]:
     snapshot = await _snapshot_orders(pool, year, month)
     try:
-        live = await fetch_month_orders(gold, year, month_num)
+        # The snapshot's OWN basis: a pre-2026-10 snapshot was frozen on
+        # departure, so its live side is read on departure too (no phantoms).
+        live = await fetch_cutoff_orders(gold, year, month_num)
     except Exception as e:  # noqa: BLE001 — a 503, never an empty diff
         logger.error("Division Payment cutoff diff read failed: %s", e, exc_info=True)
         raise HTTPException(status_code=503, detail="Datalake unavailable") from e
@@ -152,6 +162,9 @@ async def cutoffs(request: Request, user: dict = Depends(_access)):
                     "profit": _money(snap["profit"]),
                     "order_count": snap["order_count"],
                     "captured_at": snap["captured_at"].isoformat(),
+                    # "departure" (pre-2026-10 snapshot) or "arrival" — the
+                    # basis the Δ is diffed on; ``live`` is always arrival.
+                    "basis": cutoff_basis(y, mn),
                 },
                 "delta": {
                     "revenue": _money(tot["total_charge"]),
@@ -184,6 +197,7 @@ async def cutoff_orders(year: int, month: str, request: Request, user: dict = De
     return {"success": True, "data": {
         "year": year, "month": month,
         "captured_at": snap["captured_at"].isoformat(),
+        "basis": cutoff_basis(year, month_num),
         "changes": [
             {**c, "before": _amounts_out(c["before"]), "after": _amounts_out(c["after"]),
              "delta": _amounts_out(c["delta"])}

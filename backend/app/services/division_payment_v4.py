@@ -6,9 +6,22 @@ onto ``public.mcleod_gld_budget_report_v4`` (aivn_datalake_gold):
 
 * **A&O inputs** — ``SUM(total_charge)``, ``SUM(total_carrier_pay)`` and
   ``SUM(margin_amt)`` over ``team_id = 'TEAM-DFW'`` for the selected month.
-  The month is bucketed on ``origin_actual_departure``, the column the Ops
-  Portal DFW and XRay DFW already use for revenue and profit (Diego 2026-10-05:
-  bill_date differed by ~$340k on Sep-2026 and was not chosen).
+  The month is bucketed on the load's **delivery** — ``dest_actual_arrival``
+  from ``public.mcleod_gld_customer_windows`` (Diego 2026-10-31; until then it
+  was v4 ``origin_actual_departure``, and before that bill_date was rejected —
+  ~$340k off on Sep-2026). An in-transit load joins a month only once it is
+  delivered. Every month from January 2025 is re-based live; see the
+  snapshot-basis rule below for the one exception.
+* **Snapshot basis** — the cutoff snapshots captured BEFORE the switch
+  (``dpc_cutoff_orders`` for months < :data:`ARRIVAL_BASIS_FIRST_MONTH`, i.e.
+  September 2026) were frozen on DEPARTURE. Their Recalculations diff keeps
+  reading live v4 on departure, so it compares like with like; re-diffing them
+  on arrival would list ~100 phantom "added/removed" orders that only moved
+  bucket. :func:`cutoff_basis` decides by the MONTH, and both the capture and
+  the diff go through :func:`fetch_cutoff_orders`, so one rule governs both.
+  ⚠ The ``dpc_cutoffs`` row of such a month stores departure totals, while the
+  Recalculations row's ``live`` totals are arrival — live − snapshot is NOT the
+  Δ for those months; the Δ is the per-order diff, as always.
 * **Month close** — a month is finalised on the **10th of the following month**.
   On the first run after that cutoff every TEAM-DFW order of the month is frozen
   into ``dpc_cutoff_orders``; the Recalculations tab then lists the orders whose
@@ -59,6 +72,10 @@ MIN_CAPTURE_RATIO = Decimal("0.5")
 TRACKING_START = (2026, 9)
 # The first month the calculator lists — the portal's history starts here.
 FIRST_MONTH = (2025, 1)
+# The first month whose cutoff snapshot is captured on dest_actual_arrival
+# (Diego 2026-10-31). Earlier snapshots (September 2026) were frozen on
+# origin_actual_departure and keep being diffed on it — see cutoff_basis().
+ARRIVAL_BASIS_FIRST_MONTH = (2026, 10)
 
 AMOUNT_COLS = ("total_charge", "total_carrier_pay", "margin_amt")
 
@@ -66,21 +83,45 @@ AMOUNT_COLS = ("total_charge", "total_carrier_pay", "margin_amt")
 # SQL — module constants so the live replay executes the SAME text (never a
 # hand-written mirror of it).
 # ---------------------------------------------------------------------------
+# The month bucket is the DELIVERY: dest_actual_arrival lives on
+# customer_windows (one row per load, PK (id, company_id)), joined on BOTH key
+# columns verbatim — company_id is space-padded on both sides, a 100 % match;
+# TRIM/UPPER would only make the join non-sargable. Not-yet-delivered loads
+# carry the 1900-01-01 sentinel, which the >= month lower bound excludes.
+# ⚠ No origin_actual_departure pre-filter "to use the index": arrivals trail
+# departures by up to ~206 days, so any window drops real orders.
 MONTH_TOTALS_SQL = """
-SELECT EXTRACT(YEAR FROM br4.origin_actual_departure)::int  AS year,
-       EXTRACT(MONTH FROM br4.origin_actual_departure)::int AS month_num,
+SELECT EXTRACT(YEAR FROM cw.dest_actual_arrival)::int  AS year,
+       EXTRACT(MONTH FROM cw.dest_actual_arrival)::int AS month_num,
        COALESCE(SUM(br4.total_charge), 0)      AS revenue,
        COALESCE(SUM(br4.total_carrier_pay), 0) AS carrier_cost,
        COALESCE(SUM(br4.margin_amt), 0)        AS profit,
        COUNT(*)                                AS order_count
   FROM public.mcleod_gld_budget_report_v4 br4
+  JOIN public.mcleod_gld_customer_windows cw
+    ON cw.id = br4.id AND cw.company_id = br4.company_id
  WHERE br4.team_id = $1
-   AND br4.origin_actual_departure >= $2
-   AND br4.origin_actual_departure <  $3
+   AND cw.dest_actual_arrival >= $2
+   AND cw.dest_actual_arrival <  $3
  GROUP BY 1, 2
 """
 
 MONTH_ORDERS_SQL = """
+SELECT br4.id, br4.company_id, br4.customer_id, br4.customer_name,
+       COALESCE(br4.total_charge, 0)      AS total_charge,
+       COALESCE(br4.total_carrier_pay, 0) AS total_carrier_pay,
+       COALESCE(br4.margin_amt, 0)        AS margin_amt
+  FROM public.mcleod_gld_budget_report_v4 br4
+  JOIN public.mcleod_gld_customer_windows cw
+    ON cw.id = br4.id AND cw.company_id = br4.company_id
+ WHERE br4.team_id = $1
+   AND cw.dest_actual_arrival >= $2
+   AND cw.dest_actual_arrival <  $3
+"""
+
+# ⚠ LEGACY BASIS — kept ONLY for the cutoff snapshots frozen on departure
+# (months < ARRIVAL_BASIS_FIRST_MONTH). Never use it for a live total.
+MONTH_ORDERS_BY_DEPARTURE_SQL = """
 SELECT br4.id, br4.company_id, br4.customer_id, br4.customer_name,
        COALESCE(br4.total_charge, 0)      AS total_charge,
        COALESCE(br4.total_carrier_pay, 0) AS total_carrier_pay,
@@ -155,6 +196,16 @@ def cutoff_status(year: int, month_num: int, today: date, has_snapshot: bool) ->
     return "snapshot_pending"
 
 
+def cutoff_basis(year: int, month_num: int) -> str:
+    """``departure`` for a month whose snapshot was frozen before 2026-10-31's
+    switch to delivery bucketing, ``arrival`` from :data:`ARRIVAL_BASIS_FIRST_MONTH`.
+
+    Keyed on the MONTH, not on ``captured_at``: the capture and the diff then
+    follow the same rule even if a pre-switch month were ever re-captured.
+    """
+    return "arrival" if (year, month_num) >= ARRIVAL_BASIS_FIRST_MONTH else "departure"
+
+
 def due_cutoff_months(today: date, captured: set[tuple[int, int]]) -> list[tuple[int, int]]:
     """Closed, tracked months that have no snapshot yet — what the job captures."""
     prev = add_months(today.year, today.month, -1)
@@ -189,8 +240,10 @@ async def fetch_month_totals(
 ) -> dict[tuple[int, int], MonthTotals]:
     """TEAM-DFW totals for every month in [start, end], zero-filled.
 
-    One scan for the whole range (``idx_v4_dep`` on origin_actual_departure).
-    A month with no orders is a real $0 month, not a missing one.
+    One scan for the whole range, bucketed on ``dest_actual_arrival`` for EVERY
+    month (no index on it: a parallel seq scan of customer_windows + the v4 PK
+    — measured acceptable 2026-10-31). A month with no orders is a real $0
+    month, not a missing one.
     """
     lo, _ = month_bounds(*start)
     _, hi = month_bounds(*end)
@@ -204,9 +257,21 @@ async def fetch_month_totals(
     return out
 
 
-async def fetch_month_orders(gold, year: int, month_num: int) -> list:
+async def fetch_month_orders(
+    gold, year: int, month_num: int, *, by_departure: bool = False,
+) -> list:
+    """The month's TEAM-DFW orders, on delivery unless ``by_departure``."""
     lo, hi = month_bounds(year, month_num)
-    return await gold.fetch(MONTH_ORDERS_SQL, DFW_TEAM_ID, lo, hi)
+    sql = MONTH_ORDERS_BY_DEPARTURE_SQL if by_departure else MONTH_ORDERS_SQL
+    return await gold.fetch(sql, DFW_TEAM_ID, lo, hi)
+
+
+async def fetch_cutoff_orders(gold, year: int, month_num: int) -> list:
+    """The orders on the month's SNAPSHOT basis — the one read both the capture
+    and the Recalculations diff use, so the diff compares like with like."""
+    return await fetch_month_orders(
+        gold, year, month_num, by_departure=cutoff_basis(year, month_num) == "departure",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +295,8 @@ def diff_orders(snapshot: Iterable, live: Iterable) -> dict[str, Any]:
 
     * ``modified`` — present on both sides, any of the three amounts moved;
     * ``added``    — in v4 now, absent at the cutoff (late-posted, or its
-      departure date / team moved INTO this month after the close);
+      bucket date — delivery, or departure for a pre-switch snapshot — or
+      team moved INTO this month after the close);
     * ``removed``  — frozen at the cutoff, gone from this month's v4 slice now.
 
     Unchanged orders contribute a zero delta, so ``totals`` equals live total −
@@ -283,7 +349,7 @@ async def capture_month(hub, gold, year: int, month_num: int, now: datetime) -> 
     Fetch-then-write: the gold read completes before the hub transaction opens,
     so no connection idles in a transaction across the network call.
     """
-    orders = await fetch_month_orders(gold, year, month_num)
+    orders = await fetch_cutoff_orders(gold, year, month_num)
     prev = add_months(year, month_num, -1)
     prev_count = (await fetch_month_totals(gold, prev, prev))[prev].order_count
     if not orders or len(orders) < prev_count * MIN_CAPTURE_RATIO:
