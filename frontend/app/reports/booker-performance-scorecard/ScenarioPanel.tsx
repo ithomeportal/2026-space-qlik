@@ -36,9 +36,10 @@ interface Props {
  * path is what guarantees the Scenario tab at step 0 is arithmetically the
  * Scorecard tab (§69).
  *
- * Revenue deliberately does NOT move: carrier cost is derived as
- * `revenue − profit`, so the two deltas cancel. This models negotiating carrier
- * pay down, not charging the customer more.
+ * Revenue deliberately does NOT move: the server lowers carrier cost (v4
+ * `override_pay_amt` since 2026-10-28) and raises profit by the same delta and
+ * never touches revenue. This models negotiating carrier pay down, not
+ * charging the customer more.
  *
  * The chart is shown for fidelity with the original tab and costs nothing: it
  * carries no money, so its query key is unchanged and React Query serves the

@@ -72,6 +72,20 @@ function OnTime({ ok }: { ok: boolean }) {
 }
 
 /**
+ * Threshold Variance % colour (Bruno PDF 2026-10-28 R4) — ONE rule for the
+ * row cells and the Totals cell. The value is 1 − Cost / Threshold: positive
+ * = under threshold (green), negative = over (red), exactly 0 = equal at
+ * cents (yellow; the backend snaps cent-equal orders to 0). null = "—",
+ * uncoloured.
+ */
+function varianceTone(v: number | null | undefined): string {
+  if (v === null || v === undefined) return ""
+  if (v > 0) return "font-semibold text-emerald-700"
+  if (v < 0) return "font-semibold text-red-700"
+  return "font-semibold text-amber-600"
+}
+
+/**
  * Sorting is SERVER-side: the table paginates, and sorting only the current
  * page would reorder 200 rows out of thousands while looking like it sorted
  * everything.
@@ -288,16 +302,16 @@ export function OrdersTable({ filters, valueFilterable = false }: Props) {
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#991B1B]">
                         {fmtUsd(r.cost_overrun)}
                       </td>
-                      {/* R2 — Carrier Cost / Threshold. Over 100% is the same
-                          fact the Threshold cell flags, coloured to match. */}
+                      {/* 2026-10-28 R4 — 1 − Carrier Cost / Threshold, signed:
+                          + under (green), − over (red), 0 equal (yellow). */}
                       <td
-                        className={`px-3 py-1.5 text-right tabular-nums ${
-                          broken ? "font-semibold text-[#B45309]" : ""
-                        }`}
+                        className={`px-3 py-1.5 text-right tabular-nums ${varianceTone(
+                          r.threshold_variance_pct,
+                        )}`}
                         title={
                           r.threshold_variance_pct === null
                             ? undefined
-                            : "Carrier cost as a share of this order's threshold — under 100% came in below it."
+                            : "1 − Carrier Cost ÷ Threshold. Positive = came in under the threshold, negative = over it, 0 = exactly on it."
                         }
                       >
                         {fmtPct(r.threshold_variance_pct)}
@@ -348,15 +362,21 @@ export function OrdersTable({ filters, valueFilterable = false }: Props) {
                   <td className="px-3 py-1.5 text-right tabular-nums text-[#065F46]">
                     {fmtUsd(totals.cost_saving)}
                   </td>
-                  {/* Σ of the Cost Overrun column over the FULL universe,
-                      server-side — not a sum of this page (§44). */}
+                  {/* The SAME `cost_overrun` the KPI card renders (2026-10-28
+                      R3) = Σ of the column over the FULL universe, server-side
+                      — not a sum of this page (§44). */}
                   <td className="px-3 py-1.5 text-right tabular-nums text-[#991B1B]">
                     {fmtUsd(totals.cost_overrun)}
                   </td>
-                  {/* Σcost / Σthreshold over the comparable orders, computed
+                  {/* 1 − Σcost / Σthreshold over the comparable orders, computed
                       server-side. ⚠ NOT the mean of the column above it: a
-                      $900 order would otherwise outvote a $9,000 one (§96). */}
-                  <td className="px-3 py-1.5 text-right tabular-nums">
+                      $900 order would otherwise outvote a $9,000 one (§96).
+                      Coloured by the same rule as the rows. */}
+                  <td
+                    className={`px-3 py-1.5 text-right tabular-nums ${varianceTone(
+                      totals.threshold_variance_pct,
+                    )}`}
+                  >
                     {fmtPct(totals.threshold_variance_pct)}
                   </td>
                 </tr>

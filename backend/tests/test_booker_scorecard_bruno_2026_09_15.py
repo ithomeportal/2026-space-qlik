@@ -3,7 +3,8 @@
 Three requests:
 
 * **R1** a "Cost Savings" column at the end of the table
-* **R2** a "Threshold Variance %" column right after it, = Carrier Cost / Threshold
+* **R2** a "Threshold Variance %" column right after it — redefined by Bruno
+  PDF 2026-10-28 R4 as 1 − Carrier Cost / Threshold (signed; + = under)
 * **R3** sorting on EVERY column
 
 R1 and R2 are per-order legs of figures that until now existed only as
@@ -63,8 +64,13 @@ def _row(
     otp=True,
     otd=True,
     rc_count=1,
+    carrier_cost=...,
 ):
-    """One `base` CTE row, carrier cost derived exactly as the SQL derives it."""
+    """One `base` CTE row. Since 2026-10-28 the SQL reads carrier cost from v4
+    `override_pay_amt`; these stubs default it to revenue − profit (the numbers
+    the cases were written in) and accept an explicit `carrier_cost=`."""
+    if carrier_cost is ...:
+        carrier_cost = None if revenue is None or profit is None else revenue - profit
     return {
         "order_id": order_id,
         "team": team,
@@ -74,7 +80,7 @@ def _row(
         "contract_type": "CONTRACT",
         "revenue": revenue,
         "profit": profit,
-        "carrier_cost": None if revenue is None or profit is None else revenue - profit,
+        "carrier_cost": carrier_cost,
         "otp_on_time": otp,
         "otd_on_time": otd,
         "rc_count": rc_count,
@@ -164,16 +170,17 @@ def test_broken_orders_keep_their_own_flag():
 
 
 # --------------------------------------------------------------------------
-# R2 — Threshold Variance % = Carrier Cost / Threshold
+# R2 — Threshold Variance % = 1 − Carrier Cost / Threshold (2026-10-28 R4)
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "threshold,cost,expected",
     [
-        (10_000.0, 9_400.0, 0.94),   # 94% of threshold
-        (10_000.0, 10_600.0, 1.06),  # 6% over
-        (10_000.0, 10_000.0, 1.0),   # exactly on
+        (1_000.0, 900.0, 0.10),      # under → +10% (green)
+        (1_000.0, 1_100.0, -0.10),   # over  → −10% (red)
+        (1_000.0, 1_000.0, 0.0),     # exactly on → 0 (yellow)
+        (1_000.0, 1_000.004, 0.0),   # equal at CENTS → exactly 0, not −4e-6
         (0.0, 5_000.0, None),        # never ZeroDivisionError
         (None, 5_000.0, None),
         (10_000.0, None, None),
@@ -192,16 +199,16 @@ def test_threshold_variance_is_a_fraction_not_a_percentage():
     value prints 100× wrong with no error anywhere (§95)."""
     rows = [_row("A", revenue=10_000.0, profit=600.0)]  # cost 9,400
     _, data = _orders(rows, {"A": 10_000.0})
-    assert data["rows"][0]["threshold_variance_pct"] == pytest.approx(0.94)
-    assert data["totals"]["threshold_variance_pct"] == pytest.approx(0.94)
+    assert data["rows"][0]["threshold_variance_pct"] == pytest.approx(0.06)
+    assert data["totals"]["threshold_variance_pct"] == pytest.approx(0.06)
 
 
 def test_totals_variance_is_weighted_not_a_mean_of_ratios():
-    """Σcost / Σthreshold, so a $900 order cannot outvote a $9,000 one.
+    """1 − Σcost / Σthreshold, so a $900 order cannot outvote a $9,000 one.
 
-    The mean of the two per-order ratios here is 0.75; the weighted ratio is
-    0.9818. A totals cell showing 75% under a table whose big order came in at
-    99% of threshold is the §96 failure this pins.
+    The mean of the two per-order variances here is 0.255; the weighted one is
+    0.0333. A totals cell showing +25.5% under a table whose big order came in
+    1% under threshold is the §96 failure this pins.
     """
     rows = [
         _row("BIG", revenue=20_000.0, profit=200.0),   # cost 19,800 / 20,000 = 0.99
@@ -210,9 +217,9 @@ def test_totals_variance_is_weighted_not_a_mean_of_ratios():
     _, data = _orders(rows, {"BIG": 20_000.0, "SMALL": 1_000.0})
 
     ratios = [r["threshold_variance_pct"] for r in data["rows"]]
-    assert sorted(ratios) == pytest.approx([0.5, 0.99])
+    assert sorted(ratios) == pytest.approx([0.01, 0.5])
     mean_of_ratios = sum(ratios) / len(ratios)
-    weighted = (19_800.0 + 500.0) / (20_000.0 + 1_000.0)
+    weighted = 1 - (19_800.0 + 500.0) / (20_000.0 + 1_000.0)
     assert data["totals"]["threshold_variance_pct"] == pytest.approx(weighted)
     assert data["totals"]["threshold_variance_pct"] != pytest.approx(mean_of_ratios)
 
@@ -226,7 +233,7 @@ def test_totals_variance_spans_the_comparable_population_only():
     ]
     _, data = _orders(rows, {"A": 10_000.0})
     assert data["totals"]["threshold_orders"] == 1
-    assert data["totals"]["threshold_variance_pct"] == pytest.approx(0.9)
+    assert data["totals"]["threshold_variance_pct"] == pytest.approx(0.1)
 
 
 def test_ap_outage_yields_none_never_zero():
@@ -383,11 +390,11 @@ def test_scenario_feeds_the_adjusted_cost_into_both_new_columns():
     _, lifted = _orders(rows, {"A": 9_000.0}, adjustment=15.0)
 
     assert base["rows"][0]["cost_saving"] is None  # broken by $10
-    assert base["rows"][0]["threshold_variance_pct"] == pytest.approx(9_010 / 9_000)
+    assert base["rows"][0]["threshold_variance_pct"] == pytest.approx(1 - 9_010 / 9_000)
 
     assert lifted["rows"][0]["carrier_cost"] == pytest.approx(8_995.0)
     assert lifted["rows"][0]["cost_saving"] == pytest.approx(5.0)
-    assert lifted["rows"][0]["threshold_variance_pct"] == pytest.approx(8_995 / 9_000)
+    assert lifted["rows"][0]["threshold_variance_pct"] == pytest.approx(1 - 8_995 / 9_000)
     assert lifted["totals"]["cost_saving"] == pytest.approx(5.0)
 
 
@@ -427,6 +434,8 @@ def test_the_two_new_columns_have_exactly_one_definition_each():
         bs._row_threshold_variance,
         bs._row_cost_overrun,
         bs._threshold_stats,
+        # 2026-10-28 R4 — the shared 1 − cost/threshold definition.
+        bs._variance_fraction,
     ):
         outside = outside.replace(inspect.getsource(fn), "")
     assert "cost / threshold" not in outside

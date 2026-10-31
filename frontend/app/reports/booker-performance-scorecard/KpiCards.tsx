@@ -22,7 +22,13 @@ interface CardProps {
   value: string
   sub?: string
   title?: string
-  tone?: "default" | "warn"
+  tone?: "default" | "warn" | "bad"
+}
+
+const TONE_CLASS: Record<NonNullable<CardProps["tone"]>, string> = {
+  default: "text-[#1B3A5C]",
+  warn: "text-[#B45309]",
+  bad: "text-[#B91C1C]",
 }
 
 function Card({ label, value, sub, title, tone = "default" }: CardProps) {
@@ -35,9 +41,7 @@ function Card({ label, value, sub, title, tone = "default" }: CardProps) {
         {label}
       </div>
       <div
-        className={`mt-1 text-xl font-semibold ${
-          tone === "warn" ? "text-[#B45309]" : "text-[#1B3A5C]"
-        }`}
+        className={`mt-1 text-xl font-semibold ${TONE_CLASS[tone]}`}
       >
         {value}
       </div>
@@ -102,8 +106,15 @@ export function KpiCards({ filters, baseline }: Props) {
       ? "threshold source unavailable"
       : `over ${fmtCount(k.under_threshold)} orders under threshold`
 
+  // Bruno PDF 2026-10-28 R3 — the other side of the same comparison. The count
+  // is `broken_threshold`, the very orders the sum runs over (§96).
+  const overrunSub =
+    k?.cost_overrun === null || k?.cost_overrun === undefined
+      ? "threshold source unavailable"
+      : `over ${fmtCount(k.broken_threshold)} orders over threshold`
+
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-5 xl:grid-cols-10">
       <Card label="# Orders" value={fmtCount(k?.orders)} />
       <Card
         label="Profit"
@@ -136,13 +147,20 @@ export function KpiCards({ filters, baseline }: Props) {
         // is gone — an amber card beside a 96% figure reads as an alarm.
         value={fmtPct(k?.compliance_threshold_pct)}
         sub={complianceSub}
-        title="Share of orders whose Carrier Cost (Revenue − Profit) is at or under the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold are excluded from both the numerator and the denominator."
+        title="Share of orders whose Carrier Cost (McLeod carrier pay) is at or under the threshold typed in Loads to Cover — 1 − Broken Threshold. Orders with no threshold are excluded from both the numerator and the denominator."
       />
       <Card
         label="Cost Saving"
         value={fmtUsd(k?.cost_saving)}
         sub={savingSub}
         title="Σ (threshold − Carrier Cost) across orders that came in UNDER their threshold. Orders at or above the threshold contribute nothing."
+      />
+      <Card
+        label="Cost Overrun"
+        value={fmtUsd(k?.cost_overrun)}
+        sub={overrunSub}
+        tone="bad"
+        title="Σ (threshold − Carrier Cost) across orders that came in OVER their threshold, so it is ≤ 0. Same figure as the Cost Overrun total in the Orders table. Orders at or under the threshold contribute nothing."
       />
       <Card
         label="OTP"

@@ -200,6 +200,11 @@ export interface BookerSummary {
   cost_saving: number | null
   /** How many orders contributed to cost_saving. */
   under_threshold: number | null
+  /** Bruno PDF 2026-10-28 R3 — Σ (threshold − carrier cost) over orders coming
+   *  in OVER threshold, so ≤ 0; null when the AP source is unavailable. The
+   *  same figure as the Orders Totals cell and Σ of the per-row column; its
+   *  count is `broken_threshold`. */
+  cost_overrun: number | null
   otp_pct: number | null
   otd_pct: number | null
   /** Orders rate-confirmed MORE THAN ONCE as of the window end (rc_count > 1).
@@ -240,9 +245,9 @@ export interface BookerOrderRow {
    */
   cost_overrun: number | null
   /**
-   * Bruno PDF 2026-09-15 R2 — `carrier_cost / threshold`, as a FRACTION.
-   * A ratio, not a variance from a baseline: 0.94 = came in at 94% of
-   * threshold, 1.06 = 6% over. Feed it to `fmtPct`, never pre-scale it.
+   * Bruno PDF 2026-10-28 R4 — `1 − carrier_cost / threshold`, a signed
+   * FRACTION: +0.10 = 10% under threshold (green), −0.10 = 10% over (red),
+   * 0 = equal at cents (yellow). Feed it to `fmtPct`, never pre-scale it.
    */
   threshold_variance_pct: number | null
 }
@@ -264,11 +269,12 @@ export interface BookerOrders {
     compliance_threshold_pct: number | null
     cost_saving: number | null
     under_threshold: number | null
-    /** Σcost / Σthreshold over the comparable orders only — weighted, never a
-     *  mean of the per-row ratios (§96). */
+    /** 1 − Σcost / Σthreshold over the comparable orders only — weighted,
+     *  never a mean of the per-row variances (§96). */
     threshold_variance_pct: number | null
-    /** Σ of the per-row `cost_overrun` over the full universe (≤ 0); null when
-     *  the threshold source is unavailable. */
+    /** The /summary Cost Overrun KPI figure (≤ 0) = Σ of the per-row
+     *  `cost_overrun` over the full universe; null when the threshold source
+     *  is unavailable. */
     cost_overrun: number | null
     /** Same server-side definition as the KPI card (§69). */
     recoveries: number

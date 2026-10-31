@@ -191,7 +191,7 @@ def test_the_roster_is_still_not_the_podium_roster():
     from app.routers.podium_top import BOOKER_NAMES
 
     assert set(bs.RANK_ROSTER) != set(BOOKER_NAMES)
-    assert len(bs.RANK_ROSTER) == 15
+    assert len(bs.RANK_ROSTER) == 16
     # The name the round deliberately drops is on neither list.
     from app.booker_names import matches_roster, roster_keys
 

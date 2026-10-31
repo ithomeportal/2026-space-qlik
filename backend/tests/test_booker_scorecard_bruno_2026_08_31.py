@@ -364,7 +364,7 @@ def test_the_rank_roster_is_not_the_podium_roster():
     from app.routers.podium_top import BOOKER_NAMES
 
     assert set(bs.RANK_ROSTER) != set(BOOKER_NAMES)
-    assert len(bs.RANK_ROSTER) == 15
+    assert len(bs.RANK_ROSTER) == 16
 
 
 def test_rank_takes_only_its_own_date_parameters():

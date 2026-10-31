@@ -233,11 +233,12 @@ CUSTOM_REPORTS = [
         "description": "Per-booker scorecard over the DFW Bookings universe — Rank, #Orders, Profit, Margin %, Avg Margin/Load, Compliance Threshold, OTP/OTD + 10-week trend",
         "note": (
             "TEAM-DFW only · same Rate-Conf-Received universe as Podium Set DFW · "
-            "Carrier Cost = Revenue − Profit · Compliance Threshold (1 − broken) "
+            "Carrier Cost = McLeod carrier pay (v4 override_pay_amt) · "
+            "Compliance Threshold (1 − broken) "
             "joins AP_module loads_to_cover.thresh (hand-entered, ~60% coverage — "
             "always read it against 'of N orders with a threshold') · orders with a "
-            "carrier cost of 0, and the 150/150, 250/150 and 200/150 placeholder rates, are "
-            "excluded from the table AND the KPIs · OTP/OTD from "
+            "carrier cost of 0, and the 150/150, 250/150 and 200/150 placeholder rates "
+            "(both judged on Revenue − Profit), are excluded from the table AND the KPIs · OTP/OTD from "
             "scorecard_incidents_portal, orders not yet picked up count as on-time · "
             "the 10-week chart ignores the date filter by design"
         ),

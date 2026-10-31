@@ -308,6 +308,12 @@ def _base_sql(
             TRIM(br.company_id)      AS company_key,
             br.margin_amt::float     AS profit,
             br.total_charge::float   AS revenue,
+            -- Bruno PDF 2026-10-28 R2 — Carrier Cost is McLeod's carrier pay,
+            -- v4 `override_pay_amt` (one row per order), REPORT-WIDE. It used
+            -- to be derived as Revenue − Profit; the two differ wherever the
+            -- margin carries anything besides carrier pay. COALESCE to 0: an
+            -- order with no carrier pay posted yet costs 0, not "unknown".
+            COALESCE(br.override_pay_amt, 0)::float AS override_pay,
             rp.rc_count              AS rc_count
         FROM (
             SELECT id, posted_date, posted_by_name,
@@ -384,6 +390,13 @@ def _base_sql(
           -- up with three different populations (§16, §96). Measured MTD
           -- 2026-08: 1,425 → 1,395 orders, profit $312,582 → $295,042.
           --
+          -- ⚠ 2026-10-28: these exclusions STAY keyed on
+          -- total_charge − margin_amt even though Carrier Cost is now
+          -- override_pay_amt (see `override_pay` above). Bruno's placeholder
+          -- pairs were identified on the old derived cost, and re-keying them
+          -- would silently change WHICH orders are in the universe — the
+          -- population is deliberately unchanged by the cost switch.
+          --
           -- ⚠ Row-wise IS DISTINCT FROM, never `NOT (a = 150 AND b = 150)`:
           -- against a NULL total_charge the NOT form evaluates to NULL and the
           -- row is DELETED with no error. An order whose revenue has not been
@@ -420,9 +433,11 @@ def _base_sql(
     base AS (
         SELECT
             rc.*,
-            -- Carrier Cost = Revenue − Profit (Bruno Request 3).
-            CASE WHEN rc.revenue IS NULL OR rc.profit IS NULL
-                 THEN NULL ELSE rc.revenue - rc.profit END AS carrier_cost,
+            -- Carrier Cost = v4 override_pay_amt (Bruno PDF 2026-10-28 R2;
+            -- was Revenue − Profit, Bruno Request 3). The ONE column every
+            -- consumer reads: Orders column + Totals, /summary threshold
+            -- stats, per-row Saving/Overrun/Variance, Rank, Scenario, filters.
+            rc.override_pay AS carrier_cost,
             (COALESCE(sc.otp_fail, 0) = 0) AS otp_on_time,
             (COALESCE(sc.otd_fail, 0) = 0) AS otd_on_time
         FROM rate_conf rc
@@ -506,10 +521,16 @@ def _threshold_stats(
       so the count and the ratio can never span two populations (§96)
     - ``cost_saving``          Σ (thresh − carrier_cost) where cost is UNDER it
     - ``under_threshold``      how many orders contributed to that sum
-    - ``threshold_variance_pct`` Σ carrier_cost / Σ thresh over the SAME
-      comparable population — the totals-row twin of the per-order column added
-      on 2026-09-15. A weighted ratio, never an average of ratios: the mean of
-      per-order percentages would let a $900 order outvote a $9,000 one (§96)
+    - ``cost_overrun``         Σ (thresh − carrier_cost) where cost is OVER it,
+      so signed and ≤ 0 (Bruno PDF 2026-10-28 R3). Runs over exactly the
+      ``broken_threshold`` orders — that count is the card's sub-line (§96) —
+      and equals Σ `_row_cost_overrun` over the same rows, so the KPI card, the
+      Totals cell and the column cannot disagree (§16/§69)
+    - ``threshold_variance_pct`` 1 − Σ carrier_cost / Σ thresh over the SAME
+      comparable population (Bruno PDF 2026-10-28 R4) — the totals-row twin of
+      `_row_threshold_variance`. A weighted ratio, never an average of ratios:
+      the mean of per-order percentages would let a $900 order outvote a $9,000
+      one (§96)
 
     Deliberately one function rather than two (§69): "broken" and "saving" are
     the two sides of the same comparison, and computing them apart would let
@@ -528,12 +549,14 @@ def _threshold_stats(
             "compliant_threshold": None,
             "cost_saving": None,
             "under_threshold": None,
+            "cost_overrun": None,
             "threshold_variance_pct": None,
         }
     broken = 0
     comparable = 0
     under = 0
     saving = 0.0
+    overrun = 0.0
     cost_total = 0.0
     thresh_total = 0.0
     for r in rows:
@@ -546,6 +569,7 @@ def _threshold_stats(
         thresh_total += t
         if cc > t:
             broken += 1
+            overrun += t - cc
         elif cc < t:
             under += 1
             saving += t - cc
@@ -577,8 +601,9 @@ def _threshold_stats(
         "compliant_threshold": comparable - broken,
         "cost_saving": saving,
         "under_threshold": under,
-        # Bruno PDF 2026-09-15 R2 — the Totals cell under the new
-        # "Threshold Variance %" column. Σcost / Σthresh over the comparable
+        "cost_overrun": overrun,
+        # Bruno PDF 2026-09-15 R2, redefined 2026-10-28 R4 — the Totals cell
+        # under "Threshold Variance %": 1 − Σcost / Σthresh over the comparable
         # orders ONLY, i.e. the very population `cost_saving` and
         # `compliance_threshold_pct` run over, so the three cells in that
         # corner of the table describe one set of orders (§96).
@@ -586,8 +611,27 @@ def _threshold_stats(
         # ⚠ `thresh_total` cannot be 0 while `comparable > 0` in practice
         # (AP_module constrains `thresh` to $100-$9,999) but the guard stays:
         # a future row with thresh = 0 would otherwise 500 the whole endpoint.
-        "threshold_variance_pct": (cost_total / thresh_total) if thresh_total else None,
+        "threshold_variance_pct": _variance_fraction(thresh_total, cost_total),
     }
+
+
+def _variance_fraction(threshold: Optional[float], cost: Optional[float]) -> Optional[float]:
+    """1 − cost / threshold, as a signed FRACTION — ONE definition (§69) shared
+    by the per-row column and its Totals cell (Bruno PDF 2026-10-28 R4).
+
+    Positive = came in UNDER the threshold (good, green), negative = OVER it
+    (red). Compared at CENTS first: a cost equal to its threshold to the cent
+    returns exactly 0.0 (yellow), so float noise like 999.9999999 cannot paint
+    an on-threshold order green. A fraction because `fmtPct` multiplies by 100
+    (§95). ``None`` when either side is missing or the threshold is 0 — a
+    ZeroDivisionError here would 500 an endpoint that otherwise degrades
+    gracefully through an AP outage.
+    """
+    if threshold is None or cost is None or threshold == 0:
+        return None
+    if round(cost, 2) == round(threshold, 2):
+        return 0.0
+    return 1.0 - cost / threshold
 
 
 def _row_cost_saving(threshold: Optional[float], cost: Optional[float]) -> Optional[float]:
@@ -633,24 +677,17 @@ def _row_cost_overrun(threshold: Optional[float], cost: Optional[float]) -> Opti
 def _row_threshold_variance(
     threshold: Optional[float], cost: Optional[float]
 ) -> Optional[float]:
-    """Carrier Cost / Threshold, as a FRACTION (Bruno PDF 2026-09-15 R2).
+    """1 − Carrier Cost / Threshold, as a signed FRACTION (Bruno PDF 2026-10-28 R4).
 
-    Bruno's formula verbatim. Note it is a RATIO, not a variance from a
-    baseline: 0.94 means the order came in at 94% of its threshold (good),
-    1.06 means 6% over (the same orders the Threshold cell already flags), and
-    exactly 1.0 is the on-threshold case that contributes to neither
-    `cost_saving` nor `broken_threshold`.
+    🔴 Redefined 2026-10-28. It was Cost / Threshold (0.94 = good, 1.06 = over);
+    it is now the distance from the threshold: T=1000, C=900 → +0.10 (under,
+    green); C=1100 → −0.10 (over, red); C == T at cents → 0 (yellow). Higher
+    now means BETTER — the `variance_*` sort tokens are unchanged, so
+    `variance_desc` now leads with the best orders (nulls still last).
 
-    A fraction because `fmtPct` multiplies by 100 on the way out — handing it
-    an already-scaled value prints 100× wrong with no error (§95).
-
-    ``None`` when either side is missing, and when the threshold is 0: a
-    ZeroDivisionError here would 500 an endpoint that is otherwise degrading
-    gracefully through an AP outage.
+    See `_variance_fraction` for the cents comparison and the None rules.
     """
-    if threshold is None or cost is None or threshold == 0:
-        return None
-    return cost / threshold
+    return _variance_fraction(threshold, cost)
 
 
 def _resolve_adjustment(value: Optional[float]) -> float:
@@ -672,10 +709,15 @@ def _resolve_adjustment(value: Optional[float]) -> float:
 def _apply_scenario(rows, adjustment: float):
     """Per-order what-if: profit +adjustment, carrier cost −adjustment.
 
-    **Revenue is invariant by construction.** ``carrier_cost`` is derived as
-    ``revenue − profit``, so adding the delta to one side and subtracting it
-    from the other leaves revenue untouched — which is the whole point: this
-    models negotiating carrier pay down, not charging the customer more.
+    **Revenue is never touched.** This models negotiating carrier pay down by
+    the delta, not charging the customer more: every dollar taken off carrier
+    pay lands in profit, so both move by the same amount in opposite
+    directions. Since 2026-10-28 ``carrier_cost`` is v4 ``override_pay_amt``
+    and no longer equals ``revenue − profit`` — the invariance used to hold by
+    construction and now holds because revenue is simply not adjusted. The
+    maths does not depend on that identity: the adjusted cost is still the
+    order's own cost − delta, and threshold comparisons read that adjusted
+    cost directly.
 
     Returns the rows UNTOUCHED at adjustment 0, so the Scenario tab at zero and
     the Scorecard tab run byte-identical arithmetic rather than merely similar
@@ -894,7 +936,7 @@ async def summary(
             "margin_pct": (profit / revenue) if revenue else None,
             "avg_margin_per_load": (profit / orders) if orders else None,
             # broken_threshold / threshold_orders / broken_threshold_pct /
-            # cost_saving / under_threshold — see _threshold_stats.
+            # cost_saving / under_threshold / cost_overrun — see _threshold_stats.
             **stats,
             "otp_pct": (otp_on_time / orders) if orders else None,
             "otd_pct": (otd_on_time / orders) if orders else None,
@@ -1145,13 +1187,6 @@ async def orders(
     carrier_cost = sum(r["carrier_cost"] or 0.0 for r in enriched)
     otp_on_time = sum(1 for r in enriched if r["otp_on_time"])
     otd_on_time = sum(1 for r in enriched if r["otd_on_time"])
-    # Σ of the per-row overruns over the SAME `enriched` list (§96). None when
-    # the threshold source is down, so the cell reads "—" rather than a $0 that
-    # would claim "nobody went over".
-    cost_overrun = (
-        None if thresholds is None
-        else sum(r["cost_overrun"] or 0.0 for r in enriched)
-    )
 
     return {
         "success": True,
@@ -1167,8 +1202,11 @@ async def orders(
                 "otd_pct": (otd_on_time / total) if total else None,
                 # Same helper, same full-universe rows as /summary (§69).
                 "recoveries": _recoveries(enriched),
+                # Includes `cost_overrun` — the SAME `_threshold_stats` figure
+                # the /summary card shows (Bruno PDF 2026-10-28 R3), and equal
+                # to Σ of the per-row column over `enriched` (§16/§69). None
+                # when the threshold source is down, so the cell reads "—".
                 **stats,
-                "cost_overrun": cost_overrun,
             },
             "adjustment": adj,
             "thresholds_available": thresholds is not None,
@@ -1437,7 +1475,7 @@ async def freshness(
 # /rank — the "Rank" tab (Bruno PDF 2026-08-31, page 1)
 # --------------------------------------------------------------------------
 
-# Bruno's 15-name roster. It is NOT the same list as podium_top.BOOKER_NAMES
+# Bruno's roster — 15 names on 2026-08-31, 16 since 2026-10-28 (+ Ali Cisneros). It is NOT the same list as podium_top.BOOKER_NAMES
 # (they overlap on 10; each carries 4-5 the other does not), so the two stay
 # separate — only the normalisation in app/booker_names.py is shared (§69).
 #
@@ -1490,6 +1528,9 @@ RANK_ROSTER: tuple[str, ...] = (
     "Ruben Aguilar",
     "Cindy de los Santos",
     "Daniel Galindo",
+    # Bruno PDF 2026-10-28 R1 — posts as `ALI CISNEROS` (user acisneros);
+    # normalised key `alicisneros` collides with no other roster entry.
+    "Ali Cisneros",
 )
 _RANK_ROSTER_KEYS = _roster_keys(RANK_ROSTER)
 
