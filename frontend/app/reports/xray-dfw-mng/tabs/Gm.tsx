@@ -14,6 +14,12 @@ import type { XrayDfwFilters } from "@/lib/xray-dfw-api"
  * R4 plus BOL (`blnum`) and PO (`po`) from `mcleod_gld_customer_view`
  * R5 ordered Order DESC, then PO DESC
  *
+ * Bruno PDF 2026-11-02 (GM R1): orders sharing an 8-digit PO show ONCE, on the
+ * order whose BOL matches the PO, with the group's summed revenue/profit and a
+ * link badge — `collapseDupPo`, backend `app/xray_po_merge.py`. A pair is
+ * dated by its kept order (decision 2026-11-02), so this tab's monthly Totals
+ * can differ from Contract vs Spot's by the legs that straddle a boundary.
+ *
  * ⚠ The customer pin REPLACES the page's customer multi-select rather than
  * intersecting with it. Intersecting would let the global Customer filter
  * empty a tab whose entire purpose is one customer, and the empty table would
@@ -60,6 +66,7 @@ export function Gm({ filters, onLaneClick }: Props) {
         sortLabel="Order, then PO, descending"
         showRefs
         includeZeroCharge
+        collapseDupPo
         onError={setErr}
       />
     </div>

@@ -64,7 +64,7 @@ def _drive(**overrides):
             range="mtd", start_date=None, end_date=None, sub_teams=None,
             customers=None, lanes=None, contract_type=None, equipment=None,
             view=None, limit=500, page=1, sort="departure_desc",
-            include_zero_charge=False, _user={},
+            include_zero_charge=False, collapse_dup_po=False, _user={},
         )
         call.update(overrides)
         resp = asyncio.run(x.all_orders(request=request, **call))

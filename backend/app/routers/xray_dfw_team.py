@@ -435,6 +435,9 @@ def _make_team_router(tm: str, role: str) -> APIRouter:
             sub_teams=tm, customers=customers, lanes=lanes, view=view,
             contract_type=contract_type, equipment=equipment, limit=limit,
             page=page, sort=sort, include_zero_charge=include_zero_charge,
+            # The GM tab (the only merge consumer) is division-only. Explicit
+            # False, never omitted: a direct call gets a truthy FieldInfo (§40).
+            collapse_dup_po=False,
             _user=_user,
         )
 

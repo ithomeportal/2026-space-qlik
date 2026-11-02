@@ -357,6 +357,13 @@ export interface XrayDfwAllOrder {
    */
   bol: string | null
   po: string | null
+  /**
+   * Only with `collapseDupPo` (Bruno PDF 2026-11-02, GM R1): how many orders
+   * share this row's 8-digit PO. >1 ⇒ revenue/profit/margin above are the
+   * GROUP's sums and `merged_orders` lists each member's own amounts.
+   */
+  dup_po_count?: number
+  merged_orders?: XrayDfwMergedOrder[] | null
 }
 
 export interface XrayDfwLaneAnalysisRow {
@@ -375,6 +382,14 @@ export interface XrayDfwLaneAnalysisRow {
   diff_20: number
 }
 
+export interface XrayDfwMergedOrder {
+  id: string
+  bol: string | null
+  departure: string | null
+  revenue: number | null
+  profit: number | null
+}
+
 // Bruno 2026-06-03: /all-orders is server-paginated (500/page) and both
 // Contract-vs-Spot tables carry full-universe Totals rows.
 export interface XrayDfwAllOrdersTotals {
@@ -387,6 +402,10 @@ export interface XrayDfwAllOrdersTotals {
    * rather than a loss.
    */
   unbilled: number
+  /** `collapseDupPo` only: v4 orders inside the rows (`loads` counts rows). */
+  orders?: number
+  /** `collapseDupPo` only: rows that merged 2+ orders sharing a PO. */
+  merged_pos?: number
   revenue: number
   profit: number
   margin_pct: number
@@ -661,6 +680,12 @@ export interface XrayDfwAllOrdersOpts {
    * profit $192,837 → $56,462. Defaults false so every other tab is unmoved.
    */
   includeZeroCharge?: boolean
+  /**
+   * Merge orders sharing an 8-digit PO into the one whose BOL matches it
+   * (Bruno PDF 2026-11-02, GM tab only). Rows, paging, sort and Totals all
+   * run over the merged rows. Backend: `app/xray_po_merge.py`.
+   */
+  collapseDupPo?: boolean
 }
 
 export function useXrayDfwAllOrders(
@@ -670,20 +695,20 @@ export function useXrayDfwAllOrders(
   opts: XrayDfwAllOrdersOpts = {},
 ) {
   const prefix = useApiPrefix()
-  const { sort = "departure_desc", includeZeroCharge = false } = opts
+  const { sort = "departure_desc", includeZeroCharge = false, collapseDupPo = false } = opts
   return useQuery({
     ...XRAY_DFW_RETRY,
     enabled,
     // ⚠ Both options belong in the key: they change the response, and a key
     // that does not cover every query-string input serves another tab's
     // cached rows under this tab's heading.
-    queryKey: [prefix, "all-orders", f, page, sort, includeZeroCharge],
+    queryKey: [prefix, "all-orders", f, page, sort, includeZeroCharge, collapseDupPo],
     queryFn: () => {
       const qs = dfwQs(f)
       const sep = qs ? "&" : "?"
       const extra = `page=${page}&sort=${sort}${
         includeZeroCharge ? "&include_zero_charge=true" : ""
-      }`
+      }${collapseDupPo ? "&collapse_dup_po=true" : ""}`
       return apiFetch<XrayDfwAllOrdersPage>(`${prefix}/all-orders${qs}${sep}${extra}`)
     },
     placeholderData: (prev) => prev,

@@ -13,18 +13,18 @@ import {
   type XrayDfwTrioRow,
 } from "@/lib/xray-dfw-api"
 import { useSortable, SortableTh } from "@/components/SortableTable"
+import { dfwProfitGoal } from "@/lib/xray-dfw-goal"
 import { XrayDfwErrorBanner } from "../ErrorBanner"
 import { WeeklyPerformanceModal } from "../WeeklyPerformanceModal"
 
 interface Props {
   filters: XrayDfwFilters
   entityLabel?: string
+  /** Set by the scope-locked TM clones, which send no `subTeams` (see dfwProfitGoal). */
+  lockedTeam?: string
 }
 
-const PROFIT_GOAL_PER_TEAM = 55000
-const ALL_SUB_TEAMS_COUNT = 4
-
-export function Overview({ filters, entityLabel = "Customer" }: Props) {
+export function Overview({ filters, entityLabel = "Customer", lockedTeam }: Props) {
   const [showWeekly, setShowWeekly] = useState(false)
   const { data: kpiRes, isLoading: loadingKpis, error: kpiErr } = useXrayDfwKpis(filters)
   const k = kpiRes?.data
@@ -39,8 +39,7 @@ export function Overview({ filters, entityLabel = "Customer" }: Props) {
   const p = projRes?.data
   const trio = trioRes?.data
 
-  const goalTeams = filters.subTeams && filters.subTeams.length ? filters.subTeams.length : ALL_SUB_TEAMS_COUNT
-  const goalTotal = PROFIT_GOAL_PER_TEAM * goalTeams
+  const goalTotal = dfwProfitGoal({ subTeams: filters.subTeams, lockedTeam })
   const goalPct = k && goalTotal ? (k.profit_tm / goalTotal) * 100 : 0
 
   return (

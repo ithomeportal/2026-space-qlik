@@ -374,7 +374,9 @@ function Body({ title, lockedTeam }: { title: string; lockedTeam?: Props["locked
       </CollapsibleFilterBar>
 
       <div className="mx-auto w-full max-w-[1920px] flex-1 px-6 py-6">
-        {activeTab === "overview" && <Overview filters={filters} entityLabel={entityLabel} />}
+        {activeTab === "overview" && (
+          <Overview filters={filters} entityLabel={entityLabel} lockedTeam={lockedTeam} />
+        )}
         {activeTab === "customers" && (
           <CustomersLanes
             filters={filters}

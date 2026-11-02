@@ -12,6 +12,7 @@ import {
 } from "@/lib/xray-dfw-api"
 import { useSortable, SortableTh } from "@/components/SortableTable"
 import { ClickName } from "./ClickName"
+import { DupPoBadge } from "./DupPoBadge"
 
 /**
  * The "All Orders" table, shared by the Contract vs Spot tab and the GM tab
@@ -40,6 +41,8 @@ interface Props {
   showRefs?: boolean
   /** Drop the `total_charge <> 0` filter (R3). */
   includeZeroCharge?: boolean
+  /** Merge orders sharing an 8-digit PO (Bruno PDF 2026-11-02, GM tab). */
+  collapseDupPo?: boolean
   onError?: (err: unknown) => void
 }
 
@@ -52,6 +55,7 @@ export function AllOrdersTable({
   sortLabel = "most recent departure first",
   showRefs = false,
   includeZeroCharge = false,
+  collapseDupPo = false,
   onError,
 }: Props) {
   // Bruno 2026-06-03: server-paginated, 500/page. Reset to page 1 whenever the
@@ -67,7 +71,7 @@ export function AllOrdersTable({
     filters,
     page,
     true,
-    { sort, includeZeroCharge },
+    { sort, includeZeroCharge, collapseDupPo },
   )
   // ⚠ MIRROR the hook's error, never latch it. `if (ordErr) onError?.(ordErr)`
   // is a one-way latch: when React Query clears `error` on a successful
@@ -101,7 +105,11 @@ export function AllOrdersTable({
         <div>
           All Orders
           <span className="ml-2 text-xs font-normal text-[#6B7280]">
-            {fmtCount(totalOrders)} orders
+            {collapseDupPo && ordersTotals?.orders != null
+              ? `${fmtCount(totalOrders)} rows · ${fmtCount(ordersTotals.orders)} orders · ${fmtCount(
+                  ordersTotals.merged_pos ?? 0,
+                )} POs merged`
+              : `${fmtCount(totalOrders)} orders`}
             {/* ⚠ Bruno PDF 2026-09-15 R3 drops the `total_charge <> 0` filter,
                 which admits real moving loads whose revenue has not posted yet
                 — `margin_amt = −carrier_pay` on every one of them. Saying how
@@ -138,9 +146,16 @@ export function AllOrdersTable({
       </div>
       {includeZeroCharge && (ordersTotals?.unbilled ?? 0) > 0 && (
         <p className="border-b border-[#FDE68A] bg-[#FFFBEB] px-3 py-1.5 text-[11px] text-[#92400E]">
-          Includes {fmtCount(ordersTotals?.unbilled)} unbilled order
+          Includes {fmtCount(ordersTotals?.unbilled)} unbilled {collapseDupPo ? "row" : "order"}
           {(ordersTotals?.unbilled ?? 0) === 1 ? "" : "s"} — revenue has not posted yet, so
           their carrier pay counts against Profit below.
+        </p>
+      )}
+      {collapseDupPo && (ordersTotals?.merged_pos ?? 0) > 0 && (
+        <p className="border-b border-[#DBEAFE] bg-[#EFF6FF] px-3 py-1.5 text-[11px] text-[#1E40AF]">
+          Orders sharing a PO show once — on the order whose BOL matches the PO — with
+          $ Revenue and $ Profit summed over all of them (hover the link badge for each
+          order). A pair is dated by that order, even when its partner falls outside the range.
         </p>
       )}
       {loadingOrd && orders.length === 0 ? (
@@ -174,7 +189,8 @@ export function AllOrdersTable({
               {ordersTotals && (
                 <tr className="sticky top-[29px] z-10 bg-[#FDE68A] font-semibold">
                   <td className="px-3 py-1.5" colSpan={leadCols}>
-                    Totals ({fmtCount(ordersTotals.loads)} orders)
+                    Totals ({fmtCount(ordersTotals.loads)}{" "}
+                    {collapseDupPo ? "rows" : "orders"})
                   </td>
                   <td className="px-3 py-1.5 text-right">{fmtUsd(ordersTotals.revenue)}</td>
                   <td
@@ -222,7 +238,14 @@ export function AllOrdersTable({
                     {r.departure ? r.departure.substring(0, 16).replace("T", " ") : "—"}
                   </td>
                   {showRefs && <td className="px-3 py-1.5">{r.bol ?? "—"}</td>}
-                  {showRefs && <td className="px-3 py-1.5">{r.po ?? "—"}</td>}
+                  {showRefs && (
+                    <td className="whitespace-nowrap px-3 py-1.5">
+                      {r.po ?? "—"}
+                      {(r.dup_po_count ?? 1) > 1 && (
+                        <DupPoBadge count={r.dup_po_count ?? 2} members={r.merged_orders} />
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
                   <td
                     className={`px-3 py-1.5 text-right ${r.profit < 0 ? "text-[#DC2626]" : ""}`}

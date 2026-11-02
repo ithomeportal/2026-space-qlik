@@ -23,6 +23,7 @@ contract as CORP, except it sends ``sub_teams=TM1,TM2`` (CSV) instead of
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -31,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.clock import cst_today
 from app.datalake import dfw_tagged, sql_str_list
 from app.datalake import pad_variants as _pad_variants
+from app import xray_po_merge
 from app.division_marker import CORP_TEAM_IDS, dfw_sub_team_sql, team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
@@ -1982,6 +1984,11 @@ async def all_orders(
     page: int = Query(1, ge=1),
     sort: str = Query("departure_desc"),
     include_zero_charge: bool = Query(False),
+    # Bruno PDF 2026-11-02 (GM R1): merge orders sharing a PO into the order
+    # whose BOL matches it — `app/xray_po_merge.py`. Default False: Contract vs
+    # Spot and the 4 TM clones keep their exact population (the clones forward
+    # an explicit False — §40).
+    collapse_dup_po: bool = Query(False),
     _user: dict = Depends(require_report_access("xray-dfw-mng")),
 ):
     """All Orders — server-paginated (Bruno 2026-06-03: 500/page).
@@ -2043,6 +2050,17 @@ async def all_orders(
     lanes_list = _parse_list(lanes)
     contract_type_list = _parse_list(contract_type)
     equipment_list = _parse_list(equipment)
+
+    if collapse_dup_po:
+        return await _all_orders_merged(
+            pool, sort=sort, charge_filter=charge_filter, s=s, e=e, view=view,
+            limit=limit, page=page,
+            scope=dict(
+                sub_teams=sub_team_list, customers=customers_list, view=view,
+                lanes=lanes_list, contract_types=contract_type_list,
+                equipment=equipment_list,
+            ),
+        )
 
     params: list = []
     where = _scope_where(
@@ -2158,6 +2176,114 @@ async def all_orders(
                 "revenue": tot_revenue,
                 "profit": tot_profit,
                 "margin_pct": (tot_profit / tot_revenue * 100.0) if tot_revenue > 0 else 0.0,
+            },
+        },
+    }
+
+
+def _merged_cte_for(scope: dict, params: list, charge_filter: str, view, s, e) -> str:
+    """Append scope + (s, e) to ``params`` and return the merge CTE over them."""
+    where = _scope_where(
+        "br4", scope["sub_teams"], scope["customers"], params, view=scope["view"],
+        lanes=scope["lanes"], contract_types=scope["contract_types"],
+        equipment=scope["equipment"],
+    )
+    params.extend([s, e])
+    return xray_po_merge.merged_cte(
+        where=where, p_start=len(params) - 1, p_end=len(params),
+        charge_filter=charge_filter, sub_team_expr=_BR4_SUB_TEAM,
+        entity_expr=_entity_expr("br4", view),
+    )
+
+
+async def _all_orders_merged(
+    pool, *, sort: str, charge_filter: str, s: date, e: date, view: Optional[str],
+    limit: int, page: int, scope: dict,
+) -> dict:
+    """`/all-orders` with duplicate-PO orders merged (Bruno PDF 2026-11-02).
+
+    Rows, paging, sort AND the Totals row all run over the MERGED rows, so
+    Totals = the sum of the rows on screen (§16/§96). `totals.loads` counts
+    rows (one per PO group), `totals.orders` the v4 orders inside them.
+    """
+    order_by = xray_po_merge.MERGED_SORT[sort]
+    params: list = []
+    cte = _merged_cte_for(scope, params, charge_filter, view, s, e)
+    kept = xray_po_merge.kept_in_window(len(params) - 1, len(params))
+    params.extend([limit, (page - 1) * limit])
+    rows_task = pool.fetch(
+        f"""
+        {cte}
+        SELECT
+          r.team, r.id, TRIM(r.company_id) AS company_id, r.customer,
+          COALESCE(mov.payee_name, '—') AS carrier,
+          r.origin, r.destination, r.departure,
+          r.grp_revenue AS revenue,
+          r.grp_profit  AS profit,
+          CASE WHEN r.grp_revenue > 0 THEN r.grp_profit / r.grp_revenue * 100 ELSE 0 END AS margin_pct,
+          r.contract_type, r.equipment_group, r.bol, r.po,
+          r.grp_n AS dup_po_count,
+          CASE WHEN r.grp_n > 1 THEN r.grp_members END AS merged_orders
+        FROM r
+        LEFT JOIN LATERAL (
+            SELECT m.payee_name
+            FROM public.mcleod_gld_movement m
+            WHERE m.order_id = r.id AND m.company_id = r.company_id
+            ORDER BY m.movement_id ASC
+            LIMIT 1
+        ) mov ON TRUE
+        WHERE {kept}
+        ORDER BY {order_by}
+        LIMIT ${len(params)-1} OFFSET ${len(params)}
+        """,
+        *params,
+    )
+    tot_params: list = []
+    tot_cte = _merged_cte_for(scope, tot_params, charge_filter, view, s, e)
+    tot_kept = xray_po_merge.kept_in_window(len(tot_params) - 1, len(tot_params))
+    tot_task = pool.fetchrow(
+        f"""
+        {tot_cte}
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(r.grp_revenue), 0)::numeric AS revenue,
+          COALESCE(SUM(r.grp_profit), 0)::numeric  AS profit,
+          -- Same population as the rows: a merged row is unbilled only when
+          -- its COMBINED revenue is still 0.
+          COUNT(*) FILTER (WHERE r.grp_revenue = 0) AS unbilled,
+          COUNT(*) FILTER (WHERE r.grp_n > 1)       AS merged_pos,
+          COALESCE(SUM(r.grp_n), 0)                 AS orders
+        FROM r
+        WHERE {tot_kept}
+        """,
+        *tot_params,
+    )
+    rows, tot = await asyncio.gather(rows_task, tot_task)
+    out = []
+    for r in rows:
+        d = dict(r)
+        dep = d.pop("departure")
+        d["departure"] = dep.isoformat() if dep else None
+        members = d.get("merged_orders")
+        d["merged_orders"] = json.loads(members) if isinstance(members, str) else members
+        out.append(d)
+    revenue = float(tot["revenue"] or 0)
+    profit = float(tot["profit"] or 0)
+    return {
+        "success": True,
+        "data": {
+            "rows": out,
+            "total": int(tot["total"] or 0),
+            "page": page,
+            "page_size": limit,
+            "totals": {
+                "loads": int(tot["total"] or 0),
+                "orders": int(tot["orders"] or 0),
+                "merged_pos": int(tot["merged_pos"] or 0),
+                "unbilled": int(tot["unbilled"] or 0),
+                "revenue": revenue,
+                "profit": profit,
+                "margin_pct": (profit / revenue * 100.0) if revenue > 0 else 0.0,
             },
         },
     }
