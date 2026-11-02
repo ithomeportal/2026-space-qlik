@@ -164,6 +164,15 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   const coverTotals = coverMeta?.totals
   const coverUniverse = coverMeta?.covered ?? coverRows.length
   const coverTruncated = coverUniverse > coverRows.length
+  // §143: loads McLeod already picked up / closed that the datalake still has
+  // as status A — kept off the board, counted here so nothing vanishes silently.
+  const coverLiveMoved = coverMeta?.live_moved ?? 0
+  const coverLiveNote =
+    coverLiveMoved > 0
+      ? ` · ${coverLiveMoved.toLocaleString()} already picked up / delivered / voided in McLeod — hidden, awaiting datalake sync`
+      : coverMeta?.live_status === "unavailable"
+        ? " · live McLeod status unavailable"
+        : ""
   const rows: OppOrderRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppOrderTotals | undefined
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
@@ -297,6 +306,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               Status A · carrier assigned
               {coverTruncated &&
                 ` · showing ${coverRows.length.toLocaleString()} of ${coverUniverse.toLocaleString()}`}
+              {coverLiveNote}
             </span>
           ) : (
             <span>Status A · no carrier assigned</span>
@@ -344,7 +354,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
                 {view === "pending"
                   ? `${(pending.data?.data ?? []).length.toLocaleString()} pending · Status A · no carrier`
                   : view === "cover"
-                    ? `${coverRows.length.toLocaleString()} covered · Status A · carrier assigned`
+                    ? `${coverRows.length.toLocaleString()} covered · Status A · carrier assigned${coverLiveNote}`
                     : `${filtered.length.toLocaleString()} orders · all on one page`}
               </span>
               <div className="ml-auto flex items-center gap-3 text-[10px] text-[#6B7280]">

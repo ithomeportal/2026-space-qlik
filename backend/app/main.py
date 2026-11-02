@@ -573,6 +573,24 @@ async def _scheduled_revenue_code_check():
         logger.error(f"Revenue-code lookup check failed: {e}")
 
 
+async def _scheduled_mirror_status_lag_check():
+    """Background job: daily watchdog for the gold McLeod mirror's order status (§143).
+
+    From the 2026-11-01 DST fall-back v4 kept ``status='A'`` on loads McLeod had
+    already picked up, while every freshness check stayed green. Compares v4
+    against the n8n live feed and emails Diego when more than a handful lag.
+    SELECT-only. See app/services/mirror_status_lag_monitor.py.
+    """
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.mirror_status_lag_monitor import check_mirror_status_lag
+
+        result = await check_mirror_status_lag(pool)
+        logger.info(f"Mirror status-lag check complete: {result}")
+    except Exception as e:
+        logger.error(f"Mirror status-lag check failed: {e}")
+
+
 async def _scheduled_keepwarm_check():
     """Background job: daily watchdog for the two keep-warm pingers.
 
@@ -1844,6 +1862,19 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Scheduled revenue-code lookup check daily 6:20 AM CST")
 
+    # Schedule daily gold-mirror status-lag watchdog — 6:25 AM CST, beside the
+    # other ops alerts. v4 skipping McLeod status changes is invisible to every
+    # freshness check (§143); this is where it surfaces.
+    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+        scheduler.add_job(
+            _scheduled_mirror_status_lag_check,
+            CronTrigger(hour=6, minute=25, timezone="America/Chicago"),
+            id="daily_mirror_status_lag_check",
+            name="Watch v4 order status vs the McLeod live feed",
+            replace_existing=True,
+        )
+        logger.info("Scheduled mirror status-lag check daily 6:25 AM CST")
+
     # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
     # check so the two ops alerts land together. Alerts only when a pinger has
     # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + Resend.
@@ -2023,6 +2054,7 @@ async def lifespan(app: FastAPI):
         "datalake_warmup": "Gold buffer warm-up, every 5 min",
         "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
         "daily_revenue_code_check": "MX revenue-code lookup freshness, 06:20 CST",
+        "daily_mirror_status_lag_check": "v4 order status vs McLeod live feed, 06:25 CST",
         "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",

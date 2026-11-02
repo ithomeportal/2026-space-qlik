@@ -618,6 +618,11 @@ export interface OppCoverMeta {
   total: number
   /** The carrier-assigned subset the board actually renders. */
   covered: number
+  /** §143: carrier-assigned loads McLeod already moved to P/D/V (live feed),
+   *  hidden from the board while the datalake catches up. */
+  live_moved?: number
+  /** "unavailable" ⇒ the live feed could not be read; board = datalake only. */
+  live_status?: "ok" | "unavailable"
   totals: OppCoverTotals
 }
 

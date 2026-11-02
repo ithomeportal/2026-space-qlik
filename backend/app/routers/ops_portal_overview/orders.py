@@ -19,6 +19,7 @@ from ._dates import _resolve_range
 from ._scope import division_member_sql, scope_of
 from ._sql import _customer_any, _sub_team_param, _team_id_col, _ASSIGNED, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _safe_float
+from ._live_status import fetch_live_moved_keys, live_moved_pred, live_status_label
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +362,10 @@ async def pending_to_cover(
     if exclude_lanes:
         params.append(exclude_lanes)
         parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
+    # §143: McLeod already moved it past 'A' (live feed) ⇒ not open, whatever v4 says.
+    live_keys = await fetch_live_moved_keys(pool)
+    params.append(live_keys or [])
+    parts.append(f"NOT {live_moved_pred('br4', f'${len(params)}')}")
     where = " AND ".join(parts)
     params.append(limit)
     p_lim = len(params)
@@ -411,7 +416,11 @@ async def pending_to_cover(
         }
         for r in rows
     ]
-    return {"success": True, "data": out, "meta": {"returned": len(out), "limit": limit}}
+    return {
+        "success": True,
+        "data": out,
+        "meta": {"returned": len(out), "limit": limit, "live_status": live_status_label(live_keys)},
+    }
 
 
 @router.get("/cover")
@@ -510,11 +519,20 @@ async def cover(
     if exclude_lanes:
         params.append(exclude_lanes)
         parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
+    # §143: an order McLeod already moved past 'A' (live feed) leaves the board.
+    # It is FLAGGED, not filtered, in the inner query so the window aggregates
+    # can both exclude it from the totals and count it for the caption; the
+    # outer query drops it before the LIMIT.
+    live_keys = await fetch_live_moved_keys(pool)
+    params.append(live_keys or [])
+    live = live_moved_pred("br4", f"${len(params)}")
     where = " AND ".join(parts)
     params.append(limit)
     p_lim = len(params)
+    open_assigned = f"({_ASSIGNED}) AND NOT ({live})"
 
     sql = f"""
+      SELECT q.* FROM (
         SELECT
           TRIM(br4.id)      AS order_id,
           TRIM(br4.team_id) AS team_id,
@@ -529,6 +547,8 @@ async def cover(
           to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
           to_char(win.sched_late,  'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_late,
           to_char(win.arrive_late, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_arrive_late,
+          win.arrive_late AS sort_key,
+          ({live}) AS live_moved,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric      AS revenue,
           COALESCE(br4.total_carrier_pay, 0)::numeric AS carrier_cost,
@@ -536,13 +556,14 @@ async def cover(
           -- §44 pinned-Totals + truncation signal. Window aggregates are
           -- evaluated after WHERE but BEFORE LIMIT, so these describe the FULL
           -- universe even when the row list is capped. The money totals are
-          -- FILTERed to carrier-assigned rows because that is exactly the subset
-          -- the Cover board renders (§16 KPI = detail).
-          COUNT(*) OVER ()                                            AS n_all,
-          COUNT(*) FILTER (WHERE {_ASSIGNED}) OVER ()                 AS n_covered,
-          COALESCE(SUM(COALESCE(br4.total_charge,0))      FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_revenue,
-          COALESCE(SUM(COALESCE(br4.total_carrier_pay,0)) FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_carrier_cost,
-          COALESCE(SUM(COALESCE(br4.margin_amt,0))        FILTER (WHERE {_ASSIGNED}) OVER (), 0)::numeric AS t_profit
+          -- FILTERed to carrier-assigned, still-open rows because that is
+          -- exactly the subset the Cover board renders (§16 KPI = detail).
+          COUNT(*) FILTER (WHERE NOT ({live})) OVER ()                AS n_all,
+          COUNT(*) FILTER (WHERE {open_assigned}) OVER ()             AS n_covered,
+          COUNT(*) FILTER (WHERE ({_ASSIGNED}) AND ({live})) OVER ()  AS n_live_moved,
+          COALESCE(SUM(COALESCE(br4.total_charge,0))      FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_revenue,
+          COALESCE(SUM(COALESCE(br4.total_carrier_pay,0)) FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_carrier_cost,
+          COALESCE(SUM(COALESCE(br4.margin_amt,0))        FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_profit
         FROM public.mcleod_gld_budget_report_v4 br4
         LEFT JOIN LATERAL (
             SELECT MAX(CASE WHEN cw.orig_orig_sched_early > '2000-01-01' THEN cw.orig_orig_sched_early END) AS sched_early,
@@ -559,8 +580,10 @@ async def cover(
             LIMIT 1
         ) mov ON TRUE
         WHERE {where}
-        ORDER BY win.arrive_late ASC NULLS LAST
-        LIMIT ${p_lim}
+      ) q
+      WHERE NOT q.live_moved
+      ORDER BY q.sort_key ASC NULLS LAST
+      LIMIT ${p_lim}
     """
 
     rows = await pool.fetch(sql, *params)
@@ -569,6 +592,7 @@ async def cover(
     # reduce() over the (possibly LIMIT-capped) list.
     n_all = int(rows[0]["n_all"]) if rows else 0
     n_covered = int(rows[0]["n_covered"]) if rows else 0
+    n_live_moved = int(rows[0]["n_live_moved"]) if rows else 0
     t_revenue = _safe_float(rows[0]["t_revenue"]) if rows else 0.0
     t_profit = _safe_float(rows[0]["t_profit"]) if rows else 0.0
     totals = {
@@ -608,6 +632,10 @@ async def cover(
             # renders. `returned < total` is the truncation signal the UI shows.
             "total": n_all,
             "covered": n_covered,
+            # §143: carrier-assigned status='A' loads McLeod already moved to
+            # P/D/V (live feed) — off the board, awaiting the datalake sync.
+            "live_moved": n_live_moved,
+            "live_status": live_status_label(live_keys),
             "totals": totals,
         },
     }

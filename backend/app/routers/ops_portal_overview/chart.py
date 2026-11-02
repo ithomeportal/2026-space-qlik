@@ -20,6 +20,7 @@ from ._dates import _bucket_end, _count_workdays, _month_bounds, _resolve_grain_
 from ._scope import division_member_sql, scope_of
 from ._sql import _customer_any, _customer_list, _parse_team_scope, _sub_team_param, _team_id_col, _ASSIGNED, _carrier_first_expr, _lane_expr, _scorecard_cte, _v4_scope_where
 from ._metrics import _empty_rows, _safe_float, _team_projection_core
+from ._live_status import fetch_live_moved_keys, live_moved_pred, live_status_label
 from ._combo_extras import (
     candle_tracking,
     candles_for_anchors,
@@ -430,6 +431,11 @@ async def cover_forecast(
     if exclude_carriers:
         params.append(exclude_carriers)
         parts.append(f"{_carrier_first_expr('br4')} <> ALL(${len(params)})")
+    # §143: same live-status guard as /cover — a load McLeod already picked up
+    # is not a covered load still to come, whatever the stale v4 status says.
+    live_keys = await fetch_live_moved_keys(pool)
+    params.append(live_keys or [])
+    parts.append(f"NOT {live_moved_pred('br4', f'${len(params)}')}")
     where = " AND ".join(parts)
 
     trunc = {
@@ -484,4 +490,5 @@ async def cover_forecast(
     return {
         "success": True,
         "data": {"grain": grain, "buckets": buckets, "unscheduled": unscheduled},
+        "meta": {"live_status": live_status_label(live_keys)},
     }
