@@ -10,9 +10,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 
 export function Header() {
   const { data: session } = useSession()
+  const pathname = usePathname()
+
+  // Floor-TV displays (`app/public/*`) are full-screen and have no session:
+  // no logo link into the portal, no sign-in chrome.
+  if (pathname?.startsWith("/public/")) return null
 
   return (
     <header className="sticky top-0 z-50 h-16 border-b border-[#E5E7EB] bg-white">

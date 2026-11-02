@@ -17,6 +17,7 @@ from slowapi.util import get_remote_address
 from app.config import settings
 from app.services.keepwarm_monitor import classify_keepwarm_source
 from app.routers import (
+    public_display,
     admin,
     ai_chat,
     admin_cashflow,
@@ -2203,6 +2204,8 @@ for _bonus_router in bonus_calculator.BONUS_ROUTERS:
 app.include_router(auth_email.router, prefix="/api")
 # AI chat for the Teams bot (docs/SPEC-AI-CHAT.md). 503 until ANTHROPIC_API_KEY is set.
 app.include_router(ai_chat.router, prefix="/api")
+# Floor-TV public displays (docs/SPEC-PUBLIC-DISPLAY.md). Proxy-secret only, fail-closed.
+app.include_router(public_display.router, prefix="/api")
 
 
 @app.get("/api/health")
