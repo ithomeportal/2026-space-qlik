@@ -363,18 +363,27 @@ async def pending_to_cover(
         params.append(exclude_lanes)
         parts.append(f"{_lane_expr('br4')} <> ALL(${len(params)})")
     # §143: McLeod already moved it past 'A' (live feed) ⇒ not open, whatever v4 says.
+    # Flagged (not filtered) inside so the hidden loads can be COUNTED for the
+    # caption, then dropped by the outer query before the LIMIT — same shape as
+    # /cover. When every row is hidden, ONE sentinel row still carries the count.
     live_keys = await fetch_live_moved_keys(pool)
     params.append(live_keys or [])
-    parts.append(f"NOT {live_moved_pred('br4', f'${len(params)}')}")
+    live = live_moved_pred("br4", f"${len(params)}")
     where = " AND ".join(parts)
     params.append(limit)
     p_lim = len(params)
 
     sql = f"""
+      SELECT q.* FROM (
         SELECT
           TRIM(br4.id)      AS order_id,
           TRIM(br4.team_id) AS team_id,
           br4.customer_name AS customer_name,
+          ({live}) AS live_moved,
+          win.sched_late AS sort_key,
+          COUNT(*) FILTER (WHERE NOT ({live})) OVER () AS n_open,
+          COUNT(*) FILTER (WHERE {live}) OVER ()       AS n_live_moved,
+          ROW_NUMBER() OVER ()                         AS rn,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric AS revenue,
           to_char(win.sched_early, 'YYYY-MM-DD"T"HH24:MI:SS') AS orig_sched_early,
@@ -398,11 +407,15 @@ async def pending_to_cover(
         ) mov ON TRUE
         WHERE {where}
           AND COALESCE(TRIM(mov.payee_name), '') = ''
-        ORDER BY win.sched_late ASC NULLS LAST
-        LIMIT ${p_lim}
+      ) q
+      WHERE NOT q.live_moved OR (q.n_open = 0 AND q.rn = 1)
+      ORDER BY q.sort_key ASC NULLS LAST
+      LIMIT ${p_lim}
     """
 
     rows = await pool.fetch(sql, *params)
+    n_live_moved = int(rows[0]["n_live_moved"]) if rows else 0
+    rows = [r for r in rows if not r["live_moved"]]
     out = [
         {
             "order_id":            r["order_id"],
@@ -419,7 +432,14 @@ async def pending_to_cover(
     return {
         "success": True,
         "data": out,
-        "meta": {"returned": len(out), "limit": limit, "live_status": live_status_label(live_keys)},
+        "meta": {
+            "returned": len(out),
+            "limit": limit,
+            # §143: uncovered status='A' loads McLeod already moved to P/D/V
+            # (live feed) — off the board, awaiting the datalake sync.
+            "live_moved": n_live_moved,
+            "live_status": live_status_label(live_keys),
+        },
     }
 
 
@@ -561,6 +581,7 @@ async def cover(
           COUNT(*) FILTER (WHERE NOT ({live})) OVER ()                AS n_all,
           COUNT(*) FILTER (WHERE {open_assigned}) OVER ()             AS n_covered,
           COUNT(*) FILTER (WHERE ({_ASSIGNED}) AND ({live})) OVER ()  AS n_live_moved,
+          ROW_NUMBER() OVER ()                                        AS rn,
           COALESCE(SUM(COALESCE(br4.total_charge,0))      FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_revenue,
           COALESCE(SUM(COALESCE(br4.total_carrier_pay,0)) FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_carrier_cost,
           COALESCE(SUM(COALESCE(br4.margin_amt,0))        FILTER (WHERE {open_assigned}) OVER (), 0)::numeric AS t_profit
@@ -581,7 +602,8 @@ async def cover(
         ) mov ON TRUE
         WHERE {where}
       ) q
-      WHERE NOT q.live_moved
+      -- Every row hidden ⇒ keep ONE sentinel so the counts still arrive.
+      WHERE NOT q.live_moved OR (q.n_all = 0 AND q.rn = 1)
       ORDER BY q.sort_key ASC NULLS LAST
       LIMIT ${p_lim}
     """
@@ -603,7 +625,7 @@ async def cover(
         "margin_pct":   (t_profit / t_revenue * 100.0) if t_revenue else 0.0,
     }
     out = []
-    for r in rows:
+    for r in (r for r in rows if not r["live_moved"]):  # drop the all-hidden sentinel
         revenue = _safe_float(r["revenue"])
         profit = _safe_float(r["profit"])
         out.append({

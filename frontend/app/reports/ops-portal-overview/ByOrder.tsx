@@ -20,6 +20,8 @@ import {
   useOppPendingToCover,
   type OppFilters,
   type OppCoverMeta,
+  type OppPendingMeta,
+  liveMovedNote,
   type OppOrderRow,
   type OppOrderTotals,
 } from "@/lib/ops-portal-overview-api"
@@ -166,13 +168,8 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
   const coverTruncated = coverUniverse > coverRows.length
   // §143: loads McLeod already picked up / closed that the datalake still has
   // as status A — kept off the board, counted here so nothing vanishes silently.
-  const coverLiveMoved = coverMeta?.live_moved ?? 0
-  const coverLiveNote =
-    coverLiveMoved > 0
-      ? ` · ${coverLiveMoved.toLocaleString()} already picked up / delivered / voided in McLeod — hidden, awaiting datalake sync`
-      : coverMeta?.live_status === "unavailable"
-        ? " · live McLeod status unavailable"
-        : ""
+  const coverLiveNote = liveMovedNote(coverMeta)
+  const pendingLiveNote = liveMovedNote(pending.data?.meta as OppPendingMeta | undefined)
   const rows: OppOrderRow[] = data?.data ?? []
   const totals = data?.meta?.totals as OppOrderTotals | undefined
   const returned = (data?.meta?.returned as number | undefined) ?? rows.length
@@ -309,7 +306,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               {coverLiveNote}
             </span>
           ) : (
-            <span>Status A · no carrier assigned</span>
+            <span>Status A · no carrier assigned{pendingLiveNote}</span>
           )}
         </div>
       </div>
@@ -352,7 +349,7 @@ export function ByOrder({ filters, onPickCustomer, onPickLane }: Props) {
               {/* R16: expand shows every row on one page (no pager). */}
               <span className="text-[10px] uppercase tracking-wider text-[#6B7280]">
                 {view === "pending"
-                  ? `${(pending.data?.data ?? []).length.toLocaleString()} pending · Status A · no carrier`
+                  ? `${(pending.data?.data ?? []).length.toLocaleString()} pending · Status A · no carrier${pendingLiveNote}`
                   : view === "cover"
                     ? `${coverRows.length.toLocaleString()} covered · Status A · carrier assigned${coverLiveNote}`
                     : `${filtered.length.toLocaleString()} orders · all on one page`}

@@ -626,6 +626,24 @@ export interface OppCoverMeta {
   totals: OppCoverTotals
 }
 
+/** §143 — Pending to Cover meta: same live-feed guard as /cover. */
+export interface OppPendingMeta {
+  returned: number
+  limit: number
+  /** Uncovered status='A' loads McLeod already moved to P/D/V (hidden). */
+  live_moved?: number
+  live_status?: "ok" | "unavailable"
+}
+
+/** §143 — caption suffix for loads the live McLeod feed hid from a board. */
+export function liveMovedNote(meta?: { live_moved?: number; live_status?: string }): string {
+  const n = meta?.live_moved ?? 0
+  if (n > 0) {
+    return ` · ${n.toLocaleString()} already picked up / delivered / voided in McLeod — hidden, awaiting datalake sync`
+  }
+  return meta?.live_status === "unavailable" ? " · live McLeod status unavailable" : ""
+}
+
 /** "Data as of …" — headline is the STALEST source, not the newest. */
 export interface OppFreshnessSource {
   key: string
