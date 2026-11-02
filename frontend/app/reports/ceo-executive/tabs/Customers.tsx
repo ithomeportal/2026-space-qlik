@@ -11,23 +11,25 @@ import {
   Tooltip,
 } from "recharts"
 import {
-  fmtCount,
   fmtPct,
   fmtUsd,
   useCeoCustomers,
-  type CeoCustomerRow,
-  type CeoCustomerTotals,
   type CeoFilters,
   type CeoTop5Row,
 } from "@/lib/ceo-api"
 import { CeoErrorBanner } from "../ErrorBanner"
-import { marginCellClass } from "../margin-color"
 import { CustomerLink } from "../customer-cell"
+import { CustomerTable } from "../CustomerTable"
+import type { CustomerSort } from "../customer-table-sort"
 
 interface Props {
   filters: CeoFilters
   onCustomerSelect?: (customer: string) => void
 }
+
+// Server order of each list — the tables open in it and return to its wording.
+const PROFIT_DEFAULT_SORT: CustomerSort = { key: "profit", dir: "desc" }
+const WORST_DEFAULT_SORT: CustomerSort = { key: "profit", dir: "asc" }
 
 const DONUT_COLORS = ["#0F766E", "#9F1239", "#CA8A04", "#7C3AED", "#0891B2", "#9CA3AF"]
 
@@ -45,8 +47,10 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           tone="green"
           rows={d?.by_customer ?? []}
           loading={isLoading}
-          sortHint="sorted by highest profit"
+          defaultSort={PROFIT_DEFAULT_SORT}
+          defaultHint="sorted by highest profit"
           count={d?.customer_count}
+          showCount
           totals={d?.totals}
           onCustomerSelect={onCustomerSelect}
         />
@@ -55,7 +59,9 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           tone="red"
           rows={d?.worst_by_customer ?? []}
           loading={isLoading}
-          sortHint="sorted by worst profit"
+          defaultSort={WORST_DEFAULT_SORT}
+          defaultHint="sorted by worst profit"
+          count={d?.customer_count}
           totals={d?.totals}
           onCustomerSelect={onCustomerSelect}
         />
@@ -79,99 +85,6 @@ export function Customers({ filters, onCustomerSelect }: Props) {
           onCustomerSelect={onCustomerSelect}
         />
       </section>
-    </div>
-  )
-}
-
-function CustomerTable({
-  title,
-  tone,
-  rows,
-  loading,
-  sortHint,
-  count,
-  totals,
-  onCustomerSelect,
-}: {
-  title: string
-  tone: "green" | "red"
-  rows: CeoCustomerRow[]
-  loading?: boolean
-  sortHint?: string
-  /** Distinct-customer count for the header. Server-side over the full
-   *  universe — never `rows.length`, which is LIMIT-200 capped (§44). */
-  count?: number
-  /** Pinned Totals row, server-side over the FULL universe (§44). Both customer
-   *  tables share one universe and therefore ONE totals object — that is what
-   *  makes them reconcile. Renders "—" if absent rather than a wrong number. */
-  totals?: CeoCustomerTotals
-  onCustomerSelect?: (customer: string) => void
-}) {
-  const head = tone === "red" ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#D1FAE5] text-[#065F46]"
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
-      <div className={`${head} px-3 py-2 text-sm font-semibold`}>
-        {title}
-        {/* Bruno PDF 2026-07-22 Overview R1: customer count at the top. */}
-        {!loading && count !== undefined && (
-          <span className="ml-2 rounded-full bg-white/60 px-2 py-0.5 text-xs font-semibold tabular-nums">
-            {count.toLocaleString("en-US")}
-          </span>
-        )}
-        {sortHint && <span className="ml-2 text-xs font-normal opacity-75">· {sortHint}</span>}
-      </div>
-      {loading ? (
-        <div className="flex h-40 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[#6B7280]" />
-        </div>
-      ) : (
-        <div className="max-h-[620px] overflow-auto">
-          <table className="w-full text-[13px] tabular-nums">
-            <thead className={`${head} sticky top-0`}>
-              <tr>
-                <th className="px-2 py-1.5 text-left">Customer</th>
-                <th className="px-1 py-1.5 text-right">Loads</th>
-                <th className="px-1 py-1.5 text-right">Revenue</th>
-                <th className="px-1 py-1.5 text-right">Profit</th>
-                <th className="px-1 py-1.5 text-right">Margin %</th>
-                <th className="px-1 py-1.5 text-right">Conc %</th>
-                <th className="px-1 py-1.5 text-right">AVG P / L</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="sticky top-[30px] bg-[#F3F4F6] font-semibold">
-                <td className="px-2 py-1.5">Totals</td>
-                <td className="px-1 py-1.5 text-right">{totals ? fmtCount(totals.loads) : "—"}</td>
-                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.revenue) : "—"}</td>
-                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.profit) : "—"}</td>
-                <td className={`px-1 py-1.5 text-right ${totals ? marginCellClass(totals.margin_pct) : ""}`}>
-                  {totals ? fmtPct(totals.margin_pct) : "—"}
-                </td>
-                <td className="px-1 py-1.5 text-right">{totals ? fmtPct(totals.conc_pct) : "—"}</td>
-                <td className="px-1 py-1.5 text-right">{totals ? fmtUsd(totals.avg_p_per_l) : "—"}</td>
-              </tr>
-              {rows.map((r) => (
-                <tr key={r.customer} className="border-t border-[#F3F4F6]">
-                  <td className="px-2 py-1.5">
-                    <CustomerLink
-                      name={r.customer}
-                      onSelect={onCustomerSelect}
-                      className="block truncate max-w-[260px]"
-                    />
-                  </td>
-                  <td className="px-1 py-1.5 text-right">{fmtCount(r.loads)}</td>
-                  <td className="px-1 py-1.5 text-right">{fmtUsd(r.revenue)}</td>
-                  <td className="px-1 py-1.5 text-right">{fmtUsd(r.profit)}</td>
-                  <td className={`px-1 py-1.5 text-right ${marginCellClass(r.margin_pct)}`}>{fmtPct(r.margin_pct)}</td>
-                  <td className="px-1 py-1.5 text-right">{fmtPct(r.conc_pct)}</td>
-                  <td className="px-1 py-1.5 text-right">{fmtUsd(r.avg_p_per_l)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }
