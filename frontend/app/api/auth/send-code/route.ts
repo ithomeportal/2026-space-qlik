@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { issueLoginCode } from "@/lib/auth-backend"
 import { isOrgEmail } from "@/lib/allowed-domains"
+import { safeReturnPath } from "@/lib/login-return"
 
 // Replaces `signIn("resend", …)` as the "send me a code" step. The old flow used
 // NextAuth's Email provider, whose `sendVerificationRequest` wrote the code to
@@ -35,10 +36,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const res = await issueLoginCode(
-    normalised,
-    typeof callbackUrl === "string" && callbackUrl ? callbackUrl : "/",
-  )
+  const res = await issueLoginCode(normalised, safeReturnPath(callbackUrl))
 
   if (!res.ok) {
     // Never surface the backend's own message: it can carry provider detail.

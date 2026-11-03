@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { isOrgEmail } from "@/lib/allowed-domains"
+import { returnPathFromLocation, withReturnPath } from "@/lib/login-return"
 
 export default function LoginPage() {
   const { status } = useSession()
@@ -15,7 +16,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      window.location.href = "/"
+      window.location.href = returnPathFromLocation()
     }
   }, [status])
 
@@ -32,6 +33,7 @@ export default function LoginPage() {
     }
 
     setLoading(true)
+    const returnPath = returnPathFromLocation()
     try {
       // Was signIn("resend", …), whose sendVerificationRequest wrote the code
       // to Postgres with Prisma. Issuing now happens in the FastAPI backend so
@@ -39,7 +41,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, callbackUrl: returnPath }),
       })
 
       if (!res.ok) {
@@ -50,7 +52,7 @@ export default function LoginPage() {
       }
 
       // Redirect to verify page with email in query params
-      window.location.href = `/login/verify?email=${encodeURIComponent(email)}`
+      window.location.href = withReturnPath(`/login/verify?email=${encodeURIComponent(email)}`, returnPath)
     } catch {
       setError("Failed to send verification code")
       setLoading(false)

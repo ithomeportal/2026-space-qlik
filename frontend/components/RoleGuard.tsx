@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react"
 import { redirect } from "next/navigation"
 import type { ReactNode } from "react"
+import { loginUrlForCurrentPage } from "@/lib/login-return"
 
 interface RoleGuardProps {
   roles: string[]
@@ -18,7 +19,7 @@ export function RoleGuard({ roles, children, fallback }: RoleGuardProps) {
   }
 
   if (!session?.user) {
-    redirect("/login")
+    redirect(loginUrlForCurrentPage())
   }
 
   const userRolesLower = (session.user.roles ?? []).map((r) => r.toLowerCase())

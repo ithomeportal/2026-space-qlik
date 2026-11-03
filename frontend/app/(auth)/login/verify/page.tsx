@@ -6,6 +6,7 @@ import { signIn } from "next-auth/react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { safeReturnPath } from "@/lib/login-return"
 
 function VerifyForm() {
   const searchParams = useSearchParams()
@@ -63,7 +64,7 @@ function VerifyForm() {
         return
       }
 
-      window.location.href = "/"
+      window.location.href = safeReturnPath(searchParams.get("callbackUrl"))
     } catch {
       setError("Verification failed. Please try again.")
       setLoading(false)

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useSession } from "next-auth/react"
 import { redirect } from "next/navigation"
 import type { ReactNode } from "react"
+import { loginUrlForCurrentPage } from "@/lib/login-return"
 
 interface ReportGuardProps {
   reportKey: string
@@ -48,7 +49,7 @@ export function ReportGuard({ reportKey, children, fallback }: ReportGuardProps)
     return <div className="flex h-full items-center justify-center p-8">Loading...</div>
   }
   if (authStatus !== "authenticated" || !session?.user) {
-    redirect("/login")
+    redirect(loginUrlForCurrentPage())
   }
 
   const data = accessQ.data?.data

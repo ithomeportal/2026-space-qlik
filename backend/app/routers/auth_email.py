@@ -47,9 +47,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -64,6 +66,10 @@ router = APIRouter(prefix="/custom/auth", tags=["auth"])
 
 CODE_TTL_MINUTES = 10
 CODE_DIGITS = 8
+HOME_PATH = "/"
+RETURN_PATH_MAX_LENGTH = 1000
+NOT_A_RETURN_PAGE = re.compile(r"/(login|api)(?:[/?#]|$)")
+DOT_SEGMENT = re.compile(r"(^|/)(\.|%2e){1,2}(/|$)", re.IGNORECASE)
 
 
 def _hash_code(code: str) -> str:
@@ -100,6 +106,31 @@ class IssueRequest(BaseModel):
 class VerifyRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     code: str = Field(min_length=CODE_DIGITS, max_length=CODE_DIGITS)
+
+
+def safe_return_path(raw: object) -> str:
+    """The path if it is a page on this site, otherwise home.
+
+    Anyone can POST any ``callback_url``, and it ends up in a link mailed to a
+    real user. Same rules as the frontend's ``lib/login-return.ts``; one test
+    table drives both (tests/test_login_return_path.py).
+    """
+    if not isinstance(raw, str) or len(raw) > RETURN_PATH_MAX_LENGTH:
+        return HOME_PATH
+    if not raw.startswith("/") or raw.startswith("//"):
+        return HOME_PATH
+    # A browser reads a backslash as "/" and drops tabs and newlines, so both can
+    # turn a path into another site.
+    if "\\" in raw or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+        return HOME_PATH
+    # Login would loop back to itself; an API route is not a page to land on.
+    if NOT_A_RETURN_PAGE.match(raw):
+        return HOME_PATH
+    # A browser resolves "/x/../api" to "/api" before loading it, so a dot segment
+    # in the path could reach what the check above refuses.
+    if DOT_SEGMENT.search(re.split(r"[?#]", raw, maxsplit=1)[0]):
+        return HOME_PATH
+    return raw
 
 
 def _login_email_html(code: str, direct_url: Optional[str]) -> str:
@@ -148,6 +179,7 @@ async def issue_email_code(
 
     code = _new_code()
     expires = datetime.now(timezone.utc) + timedelta(minutes=CODE_TTL_MINUTES)
+    return_path = safe_return_path(body.callback_url)
     pool = _hub_pool(request)
 
     async with pool.acquire() as conn:
@@ -161,7 +193,7 @@ async def issue_email_code(
                 """,
                 email,
                 _hash_code(code),
-                body.callback_url,
+                return_path,
                 expires,
             )
 
@@ -172,9 +204,14 @@ async def issue_email_code(
         import resend
 
         resend.api_key = settings.RESEND_API_KEY
+        # Percent-encoded whole, so a quote in the path cannot leave the href.
+        return_param = (
+            "" if return_path == HOME_PATH
+            else f"&callbackUrl={quote(return_path, safe='')}"
+        )
         direct = (
             f"{settings.APP_BASE_URL.rstrip('/')}/login/verify"
-            f"?email={email}&code={code}"
+            f"?email={email}&code={code}{return_param}"
             if settings.APP_BASE_URL
             else None
         )
