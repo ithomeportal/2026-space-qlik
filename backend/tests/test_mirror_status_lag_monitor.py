@@ -11,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import pytest
+from graph_fake import capture
 
 from app.services import mirror_status_lag_monitor as m
 
@@ -71,8 +72,7 @@ class _Pool:
 def sent(monkeypatch):
     mails: list[dict] = []
     monkeypatch.setattr(m, "cst_today", lambda: TODAY)
-    monkeypatch.setattr(m.settings, "RESEND_API_KEY", "re_test")
-    monkeypatch.setattr(m.resend.Emails, "send", lambda msg: mails.append(msg))
+    monkeypatch.setattr(m, "send_notification", capture(mails))
     return mails
 
 

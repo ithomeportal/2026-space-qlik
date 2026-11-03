@@ -16,6 +16,7 @@ from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.services.keepwarm_monitor import classify_keepwarm_source
+from app.services.msgraph_mailer import graph_configured
 from app.routers import (
     public_display,
     admin,
@@ -1770,8 +1771,8 @@ async def lifespan(app: FastAPI):
 
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
     # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
-    # savings_pool (aivn_datalake_gold) + RESEND_API_KEY.
-    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+    # savings_pool (aivn_datalake_gold) + the MS Graph mail creds (Resend = OTP only).
+    if settings.SAVINGS_DATABASE_URL and graph_configured():
         scheduler.add_job(
             _scheduled_losses_alert,
             CronTrigger(hour=7, minute=0, timezone="America/Chicago"),
@@ -1787,8 +1788,8 @@ async def lifespan(app: FastAPI):
         missing = []
         if not settings.SAVINGS_DATABASE_URL:
             missing.append("SAVINGS_DATABASE_URL")
-        if not settings.RESEND_API_KEY:
-            missing.append("RESEND_API_KEY")
+        if not graph_configured():
+            missing.append("MS_TENANT_ID/MS_CLIENT_ID/MS_CLIENT_SECRET")
         logger.warning(
             "Losses alert NOT scheduled — missing env vars: %s", ", ".join(missing)
         )
@@ -1838,8 +1839,8 @@ async def lifespan(app: FastAPI):
     # Schedule daily scorecard-mirror freshness watchdog — 6:15 AM CST. The
     # portal reads an n8n TRUNCATE+load mirror (mcleod_gld_scorecard_portal) that
     # can't bloat, so we watch freshness instead: alert if the n8n refresh has
-    # stalled or the mirror is missing/empty. SELECT-only + RESEND_API_KEY.
-    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+    # stalled or the mirror is missing/empty. SELECT-only + MS Graph mail creds.
+    if settings.SAVINGS_DATABASE_URL and graph_configured():
         scheduler.add_job(
             _scheduled_scorecard_mirror_check,
             CronTrigger(hour=6, minute=15, timezone="America/Chicago"),
@@ -1852,7 +1853,7 @@ async def lifespan(app: FastAPI):
     # Schedule daily revenue-code lookup watchdog — 6:20 AM CST, beside the
     # mirror check. The MX division rule (§135) falls back to the TM marker
     # without a sound when dinfo freezes; this is the only place it surfaces.
-    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+    if settings.SAVINGS_DATABASE_URL and graph_configured():
         scheduler.add_job(
             _scheduled_revenue_code_check,
             CronTrigger(hour=6, minute=20, timezone="America/Chicago"),
@@ -1865,7 +1866,7 @@ async def lifespan(app: FastAPI):
     # Schedule daily gold-mirror status-lag watchdog — 6:25 AM CST, beside the
     # other ops alerts. v4 skipping McLeod status changes is invisible to every
     # freshness check (§143); this is where it surfaces.
-    if settings.SAVINGS_DATABASE_URL and settings.RESEND_API_KEY:
+    if settings.SAVINGS_DATABASE_URL and graph_configured():
         scheduler.add_job(
             _scheduled_mirror_status_lag_check,
             CronTrigger(hour=6, minute=25, timezone="America/Chicago"),
@@ -1877,8 +1878,8 @@ async def lifespan(app: FastAPI):
 
     # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
     # check so the two ops alerts land together. Alerts only when a pinger has
-    # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + Resend.
-    if settings.RESEND_API_KEY:
+    # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + MS Graph.
+    if graph_configured():
         scheduler.add_job(
             _scheduled_keepwarm_check,
             CronTrigger(hour=6, minute=10, timezone="America/Chicago"),

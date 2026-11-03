@@ -43,12 +43,10 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-import resend
-
 from app.clock import CST_NOW_DATE_SQL, cst_today
-from app.config import settings
 from app.datalake import pad_variants, sql_str_list
 from app.services.allowed_domains import partition_recipients
+from app.services.msgraph_mailer import send_notification
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -73,7 +71,6 @@ V4_TABLE = "public.mcleod_gld_budget_report_v4"
 COMPANIES = ("TMS",)
 MOVED_STATUSES = ("P", "D", "V")
 
-FROM_ADDRESS = "UNILINK Space <noreply@unilinkportal.com>"
 TO_RECIPIENTS: tuple[str, ...] = ("dfrodriguez@unilinktransportation.com",)
 # Owner of the McLeod → gold load (Data / BI) — Omar Orozco, added 2026-11-03.
 CC_RECIPIENTS: tuple[str, ...] = ("oorozco@unilinktransportation.com",)
@@ -336,9 +333,6 @@ async def _alert(
     verdict_text: str | None,
 ) -> dict[str, Any]:
     base = {"checked": True, "healthy": False, "problems": problems, "verdict": verdict_text, **stats}
-    if not settings.RESEND_API_KEY:
-        logger.warning("check_mirror_status_lag: unhealthy but RESEND_API_KEY not set")
-        return {**base, "alerted": False, "reason": "no_resend_key"}
     to_list, blocked_to = partition_recipients([a for a in to if a])
     to_lower = {a.lower() for a in to_list}
     cc_list, blocked_cc = partition_recipients([a for a in cc if a and a.lower() not in to_lower])
@@ -350,22 +344,19 @@ async def _alert(
         )
     if not to_list:
         return {**base, "alerted": False, "reason": "no_recipients"}
-    message: dict[str, Any] = {
-        "from": FROM_ADDRESS,
-        "to": to_list,
-        "subject": f"[UNILINK Space] Gold McLeod mirror behind — {stats['stuck']} orders still 'A'",
-        "html": html,
-    }
-    if cc_list:
-        message["cc"] = cc_list
-    try:
-        resend.api_key = settings.RESEND_API_KEY
-        resend.Emails.send(message)
-        logger.info(
-            "check_mirror_status_lag: alert sent to %d + cc %d recipient(s)",
-            len(to_list), len(cc_list),
-        )
-        return {**base, "alerted": True, "to": to_list, "cc": cc_list}
-    except Exception as e:
-        logger.exception("check_mirror_status_lag: Resend send failed")
-        return {**base, "alerted": False, "reason": "resend_failed", "error": str(e)}
+    # Notification → Microsoft Graph (Resend is login-OTP only). Never raises.
+    result = await send_notification(
+        to=to_list,
+        cc=cc_list or None,
+        subject=f"[UNILINK Space] Gold McLeod mirror behind — {stats['stuck']} orders still 'A'",
+        html_body=html,
+    )
+    if not result.get("sent"):
+        logger.error("check_mirror_status_lag: alert NOT sent (%s)", result.get("reason"))
+        return {**base, "alerted": False, "reason": result.get("reason"),
+                "error": result.get("error")}
+    logger.info(
+        "check_mirror_status_lag: alert sent to %d + cc %d recipient(s)",
+        len(to_list), len(cc_list),
+    )
+    return {**base, "alerted": True, "to": to_list, "cc": cc_list}

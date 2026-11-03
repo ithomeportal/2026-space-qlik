@@ -1,7 +1,10 @@
 """Microsoft Graph mail sender (client-credentials, application permission).
 
-Used by ``rfp_daily_digest`` to send the 5:30 PM CST RFP Performance digest
-from ``ithome@unilinktransportation.com``. Avoids adding ``msal`` as a
+THE transport for every NOTIFICATION this service mails (digests, watchdog
+alerts, customer-status mail). Resend is reserved for the login access code
+(``app/routers/auth_email.py``) — fleet policy 2026-11-03. Watchdogs call
+``send_notification`` (settings-bound); digests call ``send_mail`` directly.
+Mail goes out from ``ithome@unilinktransportation.com`` (``MS_SEND_FROM``). Avoids adding ``msal`` as a
 dependency by talking to the OAuth2 token endpoint directly with the
 existing ``httpx`` async client.
 
@@ -34,6 +37,7 @@ from typing import Any, Iterable, Optional
 
 import httpx
 
+from app.config import settings
 from app.services.allowed_domains import partition_recipients
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,34 @@ SENDMAIL_URL_TEMPLATE = "https://graph.microsoft.com/v1.0/users/{user}/sendMail"
 
 _token_cache: dict[str, tuple[float, str]] = {}
 _token_lock = asyncio.Lock()
+
+DEFAULT_SEND_FROM = "ithome@unilinktransportation.com"
+# Mailbox limit is ~30 msgs/min; on 429 we honour Retry-After ONCE, capped so a
+# scheduler job never stalls for minutes on a hostile header.
+MAX_RETRY_AFTER_S = 30.0
+
+
+def _http_client(timeout: float) -> httpx.AsyncClient:
+    """Factory seam — tests swap this for an ``httpx.MockTransport`` client."""
+    return httpx.AsyncClient(timeout=timeout)
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+def _retry_after_seconds(r: httpx.Response) -> float:
+    try:
+        return min(MAX_RETRY_AFTER_S, max(0.0, float(r.headers.get("Retry-After", "5"))))
+    except ValueError:
+        return 5.0
+
+
+def _graph_error_code(r: httpx.Response) -> str:
+    try:
+        return str((r.json().get("error") or {}).get("code") or "")
+    except Exception:  # noqa: BLE001 - non-JSON error body
+        return ""
 
 
 class GraphMailError(RuntimeError):
@@ -70,7 +102,7 @@ async def _get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
             "client_secret": client_secret,
             "scope": GRAPH_SCOPE,
         }
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with _http_client(20.0) as client:
             r = await client.post(url, data=data)
         if r.status_code != 200:
             raise GraphMailError(
@@ -111,7 +143,13 @@ async def send_mail(
     if not to_list:
         return {"sent": False, "reason": "no_to_recipients"}
     if not (tenant_id and client_id and client_secret and from_address):
-        return {"sent": False, "reason": "missing_graph_config"}
+        # Fail LOUD — a silent skip here once read as "sent" to the scheduler.
+        logger.error(
+            "Graph sendMail NOT sent: missing MS_TENANT_ID / MS_CLIENT_ID / "
+            "MS_CLIENT_SECRET / MS_SEND_FROM (subject=%r)", subject,
+        )
+        return {"sent": False, "reason": "missing_graph_config",
+                "error": "Microsoft Graph mail credentials are not configured"}
 
     # Company-domain guard. This path sends DKIM-aligned first-party mail from a
     # real UNILINK mailbox, and two admin endpoints feed it recipients straight
@@ -159,8 +197,13 @@ async def send_mail(
         "Content-Type": "application/json",
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with _http_client(30.0) as client:
             r = await client.post(url, headers=headers, json=payload)
+            if r.status_code == 429:
+                wait = _retry_after_seconds(r)
+                logger.warning("MS Graph sendMail throttled (429); retrying once in %.0fs", wait)
+                await _sleep(wait)
+                r = await client.post(url, headers=headers, json=payload)
     except Exception as e:
         logger.exception("MS Graph sendMail HTTP failed: %s", e)
         return {"sent": False, "reason": "http_failed", "error": str(e)}
@@ -181,11 +224,46 @@ async def send_mail(
         }
 
     body_preview = r.text[:500] if r.text else ""
+    code = _graph_error_code(r)
     logger.error(
-        "MS Graph sendMail failed: status=%s body=%s", r.status_code, body_preview
+        "MS Graph sendMail failed: status=%s code=%s body=%s",
+        r.status_code, code or "-", body_preview,
     )
     return {
         "sent": False,
         "reason": f"graph_status_{r.status_code}",
+        "status": r.status_code,
+        "code": code,
         "error": body_preview,
     }
+
+
+def graph_configured() -> bool:
+    """True when the settings-bound Graph credentials are all present."""
+    return bool(settings.MS_TENANT_ID and settings.MS_CLIENT_ID and settings.MS_CLIENT_SECRET)
+
+
+async def send_notification(
+    *,
+    to: Iterable[str],
+    subject: str,
+    html_body: str,
+    cc: Iterable[str] | None = None,
+    bcc: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Send a notification with the service's own Graph credentials.
+
+    Same contract as ``send_mail`` (never raises; ``{"sent": bool, "reason"…}``)
+    so watchdog callers map the result without a try/except of their own.
+    """
+    return await send_mail(
+        tenant_id=settings.MS_TENANT_ID,
+        client_id=settings.MS_CLIENT_ID,
+        client_secret=settings.MS_CLIENT_SECRET,
+        from_address=settings.MS_SEND_FROM or DEFAULT_SEND_FROM,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        subject=subject,
+        html_body=html_body,
+    )

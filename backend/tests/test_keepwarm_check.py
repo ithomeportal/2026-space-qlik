@@ -8,6 +8,7 @@ notification noise this change removed.
 """
 
 import pytest
+from graph_fake import capture
 
 from app.services import keepwarm_monitor as km
 
@@ -60,10 +61,9 @@ def _row(source, *, age_seconds=10, stale=False, max_gap=0, window_seconds=86400
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Capture Resend sends instead of emailing anyone."""
+    """Capture Graph sends instead of emailing anyone."""
     calls = []
-    monkeypatch.setattr(km.settings, "RESEND_API_KEY", "test-key", raising=False)
-    monkeypatch.setattr(km.resend.Emails, "send", lambda payload: calls.append(payload))
+    monkeypatch.setattr(km, "send_notification", capture(calls))
     monkeypatch.setattr(
         km, "partition_recipients", lambda addrs: (list(addrs), [])
     )
@@ -194,24 +194,9 @@ async def test_gap_window_is_reset_after_each_check(sent):
 
 
 @pytest.mark.asyncio
-async def test_missing_resend_key_degrades_quietly(monkeypatch):
-    monkeypatch.setattr(km.settings, "RESEND_API_KEY", "", raising=False)
-    pool = _FakePool([
-        _row(km.SOURCE_N8N, age_seconds=5400, stale=True),
-        _row(km.SOURCE_SYSTEMD),
-    ])
-    r = await km.check_keepwarm(pool)
-    assert r["degraded"] is True and r["alerted"] is False
-    assert r["reason"] == "no_resend_key"
-
-
-@pytest.mark.asyncio
-async def test_resend_failure_never_raises(monkeypatch):
-    def boom(_payload):
-        raise RuntimeError("resend 502")
-
-    monkeypatch.setattr(km.settings, "RESEND_API_KEY", "test-key", raising=False)
-    monkeypatch.setattr(km.resend.Emails, "send", boom)
+async def test_missing_graph_creds_is_reported_not_sent(monkeypatch):
+    monkeypatch.setattr(km, "send_notification", capture(
+        [], {"sent": False, "reason": "missing_graph_config", "error": "x"}))
     monkeypatch.setattr(km, "partition_recipients", lambda a: (list(a), []))
     pool = _FakePool([
         _row(km.SOURCE_N8N, age_seconds=5400, stale=True),
@@ -219,7 +204,21 @@ async def test_resend_failure_never_raises(monkeypatch):
     ])
     r = await km.check_keepwarm(pool)
     assert r["degraded"] is True and r["alerted"] is False
-    assert r["reason"] == "resend_failed"
+    assert r["reason"] == "missing_graph_config"
+
+
+@pytest.mark.asyncio
+async def test_graph_failure_never_raises(monkeypatch):
+    monkeypatch.setattr(km, "send_notification", capture(
+        [], {"sent": False, "reason": "graph_status_502", "error": "bad gateway"}))
+    monkeypatch.setattr(km, "partition_recipients", lambda a: (list(a), []))
+    pool = _FakePool([
+        _row(km.SOURCE_N8N, age_seconds=5400, stale=True),
+        _row(km.SOURCE_SYSTEMD),
+    ])
+    r = await km.check_keepwarm(pool)
+    assert r["degraded"] is True and r["alerted"] is False
+    assert r["reason"] == "graph_status_502"
 
 
 @pytest.mark.asyncio
@@ -228,8 +227,7 @@ async def test_non_company_recipients_are_dropped_not_emailed(monkeypatch):
     # at the transport. If it strips every recipient we must degrade quietly
     # rather than attempt a send.
     sends = []
-    monkeypatch.setattr(km.settings, "RESEND_API_KEY", "test-key", raising=False)
-    monkeypatch.setattr(km.resend.Emails, "send", lambda p: sends.append(p))
+    monkeypatch.setattr(km, "send_notification", capture(sends))
     monkeypatch.setattr(
         km, "partition_recipients", lambda a: ([], ["outsider@example.com"])
     )

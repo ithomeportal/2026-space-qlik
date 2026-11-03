@@ -10,8 +10,9 @@ BCC recipients stay hidden. Previously this looped one send per address
 to keep the To: line clean — that's no longer the right shape since
 Erick/Christian need to see who else is on the thread.
 
-Gracefully no-ops when:
-    - ``settings.RESEND_API_KEY`` is empty (env var not set on Render)
+Sent through Microsoft Graph as the ithome@ mailbox (Resend is login-OTP
+only, fleet policy 2026-11-03). Does not send when:
+    - the MS_* Graph credentials are missing (logged at ERROR, returned)
     - ``app.state.savings_pool`` is unavailable (datalake down)
 
 Scheduler wiring lives in ``app/main.py`` lifespan; this module exports
@@ -25,13 +26,11 @@ import logging
 from datetime import date
 from typing import Any, Iterable
 
-import resend
-
 from app.clock import cst_today
-from app.config import settings
 from app.routers.losses_lanes import compute_weekly_movers
 
 from app.services.allowed_domains import partition_recipients
+from app.services.msgraph_mailer import graph_configured, send_notification
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,6 @@ BCC_RECIPIENTS: tuple[str, ...] = (
     "dfrodriguez@unilinktransportation.com",   # Diego F. Rodriguez
 )
 
-FROM_ADDRESS = "UNILINK Space <noreply@unilinkportal.com>"
 
 
 # ---------------------------------------------------------------------------
@@ -260,11 +258,11 @@ async def send_weekly_movers_email(
     it. Never raises; swallows and logs exceptions so a transient failure
     doesn't take down the next day's job.
     """
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "send_weekly_movers_email: RESEND_API_KEY not set; skipping send"
+    if not graph_configured():
+        logger.error(
+            "send_weekly_movers_email: MS Graph credentials not set; NOT sending"
         )
-        return {"sent": False, "reason": "no_resend_key"}
+        return {"sent": False, "reason": "missing_graph_config"}
 
     if pool is None:
         logger.warning("send_weekly_movers_email: savings_pool is None; skipping")
@@ -287,7 +285,6 @@ async def send_weekly_movers_email(
         f"(Top-{top_n}, {cst_today().isoformat()})"
     )
 
-    resend.api_key = settings.RESEND_API_KEY
     # Company-domain guard — see app/services/allowed_domains.py.
     to_list, _blocked_to = partition_recipients(list(to))
     cc_list, _blocked_cc = partition_recipients(list(cc))
@@ -306,21 +303,16 @@ async def send_weekly_movers_email(
         logger.warning("send_weekly_movers_email: empty TO list; skipping send")
         return {"sent": False, "reason": "no_to_recipients"}
 
-    try:
-        # Single send: To: line shows Erick + Christian, CC line shows Jennifer
-        # + Bruce, BCC stays hidden (Melany + Diego). Resend Python SDK accepts
-        # `to`, `cc`, `bcc` as either string or list.
-        payload: dict[str, Any] = {
-            "from": FROM_ADDRESS,
-            "to": to_list,
-            "subject": subject,
-            "html": html,
-        }
-        if cc_list:
-            payload["cc"] = cc_list
-        if bcc_list:
-            payload["bcc"] = bcc_list
-        resend.Emails.send(payload)
+    # Single send: To: line shows Erick + Christian, CC line shows Jennifer
+    # + Bruce, BCC stays hidden (Melany + Diego). Graph transport, never raises.
+    result = await send_notification(
+        to=to_list,
+        cc=cc_list or None,
+        bcc=bcc_list or None,
+        subject=subject,
+        html_body=html,
+    )
+    if result.get("sent"):
         logger.info(
             "send_weekly_movers_email: sent (to=%d cc=%d bcc=%d), %d total changes",
             len(to_list), len(cc_list), len(bcc_list), total_changes,
@@ -337,6 +329,5 @@ async def send_weekly_movers_email(
             },
             "subject": subject,
         }
-    except Exception as e:
-        logger.exception("send_weekly_movers_email: Resend send failed: %s", e)
-        return {"sent": False, "reason": "resend_failed", "error": str(e)}
+    logger.error("send_weekly_movers_email: NOT sent (%s)", result.get("reason"))
+    return {"sent": False, "reason": result.get("reason"), "error": result.get("error")}

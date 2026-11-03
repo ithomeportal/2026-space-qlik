@@ -27,10 +27,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-import resend
-
 from app.clock import cst_today
-from app.config import settings
 from app.datalake import (
     REVENUE_CODE_COMPANIES,
     REVENUE_CODE_TABLE,
@@ -38,6 +35,7 @@ from app.datalake import (
     sql_str_list,
 )
 from app.services.allowed_domains import partition_recipients
+from app.services.msgraph_mailer import send_notification
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -46,7 +44,6 @@ COVERAGE_MIN_AGE_DAYS = 1
 COVERAGE_MAX_AGE_DAYS = 30
 SAMPLE_IDS = 10
 
-FROM_ADDRESS = "UNILINK Space <noreply@unilinkportal.com>"
 TO_RECIPIENTS: tuple[str, ...] = ("dfrodriguez@unilinktransportation.com",)
 
 MONO_STACK = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace"
@@ -147,9 +144,6 @@ async def check_revenue_code_lookup(
 
 async def _alert(to: tuple[str, ...], problems: list[str], stats: dict[str, Any]) -> dict[str, Any]:
     base = {"checked": True, "healthy": False, "problems": problems, **stats}
-    if not settings.RESEND_API_KEY:
-        logger.warning("check_revenue_code_lookup: unhealthy but RESEND_API_KEY not set")
-        return {**base, "alerted": False, "reason": "no_resend_key"}
     to_list, blocked = partition_recipients([a for a in to if a])
     if blocked:
         logger.error(
@@ -158,16 +152,15 @@ async def _alert(to: tuple[str, ...], problems: list[str], stats: dict[str, Any]
         )
     if not to_list:
         return {**base, "alerted": False, "reason": "no_recipients"}
-    try:
-        resend.api_key = settings.RESEND_API_KEY
-        resend.Emails.send({
-            "from": FROM_ADDRESS,
-            "to": to_list,
-            "subject": "[UNILINK Space] Revenue-code lookup stale — MX division rule falling back",
-            "html": _render_html(problems, stats),
-        })
-        logger.info("check_revenue_code_lookup: alert sent to %d recipient(s)", len(to_list))
-        return {**base, "alerted": True, "to": to_list}
-    except Exception as e:
-        logger.exception("check_revenue_code_lookup: Resend send failed")
-        return {**base, "alerted": False, "reason": "resend_failed", "error": str(e)}
+    # Notification → Microsoft Graph (Resend is login-OTP only). Never raises.
+    result = await send_notification(
+        to=to_list,
+        subject="[UNILINK Space] Revenue-code lookup stale — MX division rule falling back",
+        html_body=_render_html(problems, stats),
+    )
+    if not result.get("sent"):
+        logger.error("check_revenue_code_lookup: alert NOT sent (%s)", result.get("reason"))
+        return {**base, "alerted": False, "reason": result.get("reason"),
+                "error": result.get("error")}
+    logger.info("check_revenue_code_lookup: alert sent to %d recipient(s)", len(to_list))
+    return {**base, "alerted": True, "to": to_list}

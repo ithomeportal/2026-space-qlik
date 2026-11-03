@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from graph_fake import capture
 
 from app.services import revenue_code_monitor as m
 
@@ -56,8 +57,7 @@ class _Pool:
 @pytest.fixture
 def sent(monkeypatch):
     mails: list[dict] = []
-    monkeypatch.setattr(m.settings, "RESEND_API_KEY", "re_test")
-    monkeypatch.setattr(m.resend.Emails, "send", lambda msg: mails.append(msg))
+    monkeypatch.setattr(m, "send_notification", capture(mails))
     return mails
 
 
@@ -125,10 +125,13 @@ def test_no_pool_is_a_skip_not_a_crash() -> None:
     assert asyncio.run(m.check_revenue_code_lookup(None))["reason"] == "no_pool"
 
 
-def test_without_a_resend_key_it_reports_but_cannot_mail(monkeypatch) -> None:
-    monkeypatch.setattr(m.settings, "RESEND_API_KEY", "")
+def test_without_graph_creds_it_reports_but_cannot_mail(monkeypatch) -> None:
+    calls: list[dict] = []
+    monkeypatch.setattr(m, "send_notification", capture(
+        calls, {"sent": False, "reason": "missing_graph_config", "error": "x"}))
     out = _run(_Conn(missing=["0007601"]))
-    assert out["healthy"] is False and out["reason"] == "no_resend_key"
+    assert out["healthy"] is False and out["alerted"] is False
+    assert out["reason"] == "missing_graph_config"
 
 
 # ---------------------------------------------------------------------------

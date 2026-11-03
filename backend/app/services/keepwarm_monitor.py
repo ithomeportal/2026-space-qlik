@@ -33,11 +33,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable
 
-import resend
-
 from app.clock import cst_today
-from app.config import settings
 from app.services.allowed_domains import partition_recipients
+from app.services.msgraph_mailer import send_notification
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -57,7 +55,6 @@ SOURCE_LABELS = {
     SOURCE_SYSTEMD: "spaceqlik-keepwarm.timer (BACKSTOP)",
 }
 
-FROM_ADDRESS = "UNILINK Space <noreply@unilinkportal.com>"
 TO_RECIPIENTS: tuple[str, ...] = ("dfrodriguez@unilinktransportation.com",)
 
 MONO_STACK = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace"
@@ -239,10 +236,6 @@ async def check_keepwarm(
 
 
 async def _alert(to, rows, problems, stats) -> dict[str, Any]:
-    if not settings.RESEND_API_KEY:
-        logger.warning("check_keepwarm: degraded but RESEND_API_KEY not set")
-        return {"checked": True, "degraded": True, "alerted": False,
-                "reason": "no_resend_key", "problems": problems, **stats}
     to_list, blocked = partition_recipients([a for a in to if a])
     if blocked:
         logger.error(
@@ -251,18 +244,17 @@ async def _alert(to, rows, problems, stats) -> dict[str, Any]:
     if not to_list:
         return {"checked": True, "degraded": True, "alerted": False,
                 "reason": "no_recipients", "problems": problems, **stats}
-    try:
-        resend.api_key = settings.RESEND_API_KEY
-        resend.Emails.send({
-            "from": FROM_ADDRESS,
-            "to": to_list,
-            "subject": "[UNILINK Space] Backend keep-warm degraded — a pinger has stalled",
-            "html": _render_html(rows, problems),
-        })
-        logger.info("check_keepwarm: alert sent to %d recipient(s)", len(to_list))
-        return {"checked": True, "degraded": True, "alerted": True,
-                "to": to_list, "problems": problems, **stats}
-    except Exception as e:
-        logger.exception("check_keepwarm: Resend send failed: %s", e)
+    # Notification → Microsoft Graph (Resend is login-OTP only). Never raises.
+    result = await send_notification(
+        to=to_list,
+        subject="[UNILINK Space] Backend keep-warm degraded — a pinger has stalled",
+        html_body=_render_html(rows, problems),
+    )
+    if not result.get("sent"):
+        logger.error("check_keepwarm: alert NOT sent (%s)", result.get("reason"))
         return {"checked": True, "degraded": True, "alerted": False,
-                "reason": "resend_failed", "error": str(e), "problems": problems, **stats}
+                "reason": result.get("reason"), "error": result.get("error"),
+                "problems": problems, **stats}
+    logger.info("check_keepwarm: alert sent to %d recipient(s)", len(to_list))
+    return {"checked": True, "degraded": True, "alerted": True,
+            "to": to_list, "problems": problems, **stats}
