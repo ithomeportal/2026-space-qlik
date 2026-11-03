@@ -7,8 +7,11 @@ a new deal; the same lapse is never acted on twice.
 Send-once discipline (same as customer_status_email):
 * an action is CLAIMED atomically before any Pipedrive write;
 * ``failed`` is written only when nothing was written — the next run retakes it;
-* ``mail_failed`` = the owner changed but the notice did not leave — the next
-  run retries the MAIL only;
+* ``mail_failed`` = the deal was created or its owner changed but the notice did
+  not leave — the next run retries the MAIL only, never the Pipedrive write;
+* the 30-day notice goes out only for a deal THIS job created, from inside the
+  create itself. So an ``adopted`` deal, a row logged by an earlier release and a
+  deal created at 90 days for Sales never get it, and there is no backlog to flood;
 * a row stuck at ``running`` is never retaken (Pipedrive may have been written
   before the process died) — it is reported as a failure until a human clears it;
 * a write whose outcome is UNKNOWN (timeout, 5xx) leaves the row ``running``
@@ -45,7 +48,12 @@ from app.services.attrition_pipedrive.candidates import (
     assert_fresh,
     fetch_candidates,
 )
-from app.services.attrition_pipedrive.mail import body_for, subject_for
+from app.services.attrition_pipedrive.mail import (
+    body_30_days,
+    body_for,
+    subject_30_days,
+    subject_for,
+)
 from app.services.attrition_pipedrive.pipedrive import (
     Deal,
     OrgMatch,
@@ -103,11 +111,11 @@ ON CONFLICT (team, customer, last_load_date, action) DO UPDATE
 RETURNING action
 """
 
-# The owner already changed; only the notice is retried.
+# The Pipedrive write already happened; only that action's notice is retried.
 CLAIM_MAIL_SQL = """
 UPDATE attrition_pipedrive_log
    SET status = 'running', error = NULL, claimed_at = NOW(), finished_at = NULL
- WHERE team = $1 AND customer = $2 AND last_load_date = $3 AND action = 'reassign'
+ WHERE team = $1 AND customer = $2 AND last_load_date = $3 AND action = $4
    AND status = 'mail_failed'
 RETURNING deal_id, deal_title, owner_to
 """
@@ -351,7 +359,7 @@ async def _do_create(ctx: _Ctx, c: Candidate, o: Outcome) -> None:
         return
     if not ctx.live:
         o.status, o.owner, o.deal_title = "would_create", route.kam.name, c.customer
-        o.note = note
+        o.note = "; ".join(x for x in (note, "30-day e-mail") if x)
         return
     o.write_in_flight = True
     deal = await ctx.pd.create_deal(
@@ -359,8 +367,12 @@ async def _do_create(ctx: _Ctx, c: Candidate, o: Outcome) -> None:
         mcleod_id=c.mcleod_ids[0] if c.mcleod_ids else None,
     )
     o.write_in_flight = False
-    o.status, o.deal_id, o.deal_title, o.owner = "created", deal.id, deal.title, route.kam.name
+    o.deal_id, o.deal_title, o.owner = deal.id, deal.title, route.kam.name
     o.note = note
+    sent = await _send_30_day_notice(c, deal.title)
+    o.status = "created" if sent.get("sent") else "mail_failed"
+    if not sent.get("sent"):
+        o.error = f"notice not sent: {sent.get('reason')}"
 
 
 async def _deal_to_reassign(ctx: _Ctx, c: Candidate) -> tuple[Optional[Deal], Optional[int]]:
@@ -379,15 +391,24 @@ async def _deal_to_reassign(ctx: _Ctx, c: Candidate) -> tuple[Optional[Deal], Op
     return deal, org_id
 
 
-async def _send_notice(c: Candidate, deal_title: str) -> dict:
+async def _mail_team(c: Candidate, subject: str, html_body: str) -> dict:
     route = cfg.ROUTING[c.team]
     return await send_mail(
         tenant_id=settings.MS_TENANT_ID, client_id=settings.MS_CLIENT_ID,
         client_secret=settings.MS_CLIENT_SECRET, from_address=settings.MS_SEND_FROM,
         to=list(route.notify_to), cc=list(route.notify_cc),
-        subject=subject_for(deal_title, route.sales.name),
-        html_body=body_for(deal_title, route.sales.name),
+        subject=subject, html_body=html_body,
     )
+
+
+async def _send_notice(c: Candidate, deal_title: str) -> dict:
+    sales = cfg.ROUTING[c.team].sales.name
+    return await _mail_team(c, subject_for(deal_title, sales), body_for(deal_title, sales))
+
+
+async def _send_30_day_notice(c: Candidate, deal_title: str) -> dict:
+    kam = cfg.ROUTING[c.team].kam.name
+    return await _mail_team(c, subject_30_days(deal_title), body_30_days(deal_title, kam))
 
 
 async def _do_reassign(ctx: _Ctx, c: Candidate, o: Outcome) -> None:
@@ -428,14 +449,20 @@ async def _do_reassign(ctx: _Ctx, c: Candidate, o: Outcome) -> None:
 
 
 async def _retry_mail(ctx: _Ctx, c: Candidate, o: Outcome) -> bool:
-    """A reassignment whose notice failed: re-send the notice only. True if handled."""
-    row = await ctx.hub.fetchrow(CLAIM_MAIL_SQL, c.team, c.customer, c.last_load_date)
+    """A deal or reassignment whose notice failed: re-send the notice only. True if handled."""
+    row = await ctx.hub.fetchrow(CLAIM_MAIL_SQL, c.team, c.customer, c.last_load_date, o.action)
     if row is None:
         return False
     o.deal_id, o.deal_title = row["deal_id"], row["deal_title"]
-    o.owner = cfg.ROUTING[c.team].sales.name
-    sent = await _send_notice(c, row["deal_title"] or c.customer)
-    o.status = "reassigned" if sent.get("sent") else "mail_failed"
+    title = row["deal_title"] or c.customer
+    if o.action == CREATE:
+        o.owner = cfg.ROUTING[c.team].kam.name
+        sent = await _send_30_day_notice(c, title)
+        o.status = "created" if sent.get("sent") else "mail_failed"
+    else:
+        o.owner = cfg.ROUTING[c.team].sales.name
+        sent = await _send_notice(c, title)
+        o.status = "reassigned" if sent.get("sent") else "mail_failed"
     o.note = "notice re-sent"
     o.error = None if sent.get("sent") else f"notice not sent: {sent.get('reason')}"
     return True

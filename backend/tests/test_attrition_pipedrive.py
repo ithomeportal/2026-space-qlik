@@ -123,6 +123,25 @@ def test_notice_text_is_verbatim():
     )
 
 
+def test_30_day_notice_text_is_the_request_pdf():
+    assert mail.subject_30_days("PCA AKRON") == (
+        "PCA AKRON | 30 days without loads \u2013 New PipeDrive deal created for account reactivation")
+    text = re.sub(r"<[^>]+>", "", mail.body_30_days("PCA AKRON", "Ruben Rodriguez"))
+    assert text == (
+        "Team,"
+        "The deal PCA AKRON has reached 30 days without any loads moved. A new deal has been "
+        "created in PipeDrive to track the account reactivation process."
+        "Ruben Rodriguez, please follow up with the customer and update the deal in PipeDrive "
+        "with your progress."
+        "Thank you,"
+    )
+
+
+def test_30_day_notice_escapes_names():
+    body = mail.body_30_days("<script>x</script>", "A & B")
+    assert "<script>" not in body and "A &amp; B" in body
+
+
 def test_notice_escapes_names():
     assert "<script>" not in mail.body_for("<script>x</script>", "A & B")
     assert "A &amp; B" in mail.body_for("x", "A & B")
@@ -256,7 +275,7 @@ class _Hub:
 
     async def fetchrow(self, sql, *a):
         assert sql == runner.CLAIM_MAIL_SQL
-        row = self.rows.get((*a, "reassign"))
+        row = self.rows.get(a)
         if not row or row["status"] != "mail_failed":
             return None
         row["status"] = "running"
@@ -397,7 +416,13 @@ def test_create_makes_org_and_deal_owned_by_the_kam_once(env):
                              ("deal", "AZTECA MILLING RACKS", kam, 1001, "AZTEMIRA")]
     again = _run(hub, gold)
     assert [o.status for o in again.outcomes] == ["done_before"] and len(env.pd.writes) == 2
-    assert [r["status"] for r in hub.runs] == ["ok", "ok"] and env.sent == []
+    assert [r["status"] for r in hub.runs] == ["ok", "ok"]
+    # The 30-day notice left exactly once, to the team's list, naming the KAM.
+    (m,) = env.sent
+    assert m["subject"].startswith("AZTECA MILLING RACKS | 30 days without loads")
+    assert m["to"] == list(cfg.ROUTING["TEAM-DFW"].notify_to)
+    assert m["cc"] == list(cfg.ROUTING["TEAM-DFW"].notify_cc)
+    assert "Christian Mendoza, please follow up" in m["html_body"]
 
 
 def test_an_existing_open_reactivation_deal_is_adopted_not_duplicated(env):
@@ -406,6 +431,8 @@ def test_an_existing_open_reactivation_deal_is_adopted_not_duplicated(env):
     res = _run(_Hub(), _Gold([_cand(team="TEAM2", customer="COPPEL SA DE CV", days=40)]))
     o = res.outcomes[0]
     assert (o.status, o.deal_id, o.owner) == ("adopted", 9148, "JAMES") and env.pd.writes == []
+    # Operator 2026-11-03: the text says "a new deal has been created" - false for a kept deal.
+    assert env.sent == []
 
 
 def test_reassign_moves_the_tracked_deal_to_sales_and_mails_the_team(env):
@@ -418,7 +445,8 @@ def test_reassign_moves_the_tracked_deal_to_sales_and_mails_the_team(env):
     assert res.outcomes[0].days_since == 90
     assert [o.status for o in res.outcomes] == ["reassigned"]
     assert env.pd.writes[-1] == ("owner", deal_id, USERS[cfg.MIGUEL.email])
-    (m,) = env.sent
+    (first, m) = env.sent
+    assert "30 days without loads" in first["subject"]
     assert m["subject"] == "PCA ATLANTA SPECIALTY PLANT has been reassigned to Miguel Millan"
     assert m["to"] == list(cfg.ROUTING["TEAM2"].notify_to)
     assert m["cc"] == list(cfg.ROUTING["TEAM2"].notify_cc)
@@ -459,6 +487,36 @@ def test_a_failed_notice_is_retried_without_a_second_owner_change(env):
     res = _run(hub, gold)
     assert [o.status for o in res.outcomes] == ["reassigned"]
     assert len(env.pd.writes) == 1 and len(env.sent) == 2
+
+
+def test_a_failed_30_day_notice_keeps_the_deal_and_retries_the_mail_only(env):
+    env.mail_ok = False
+    hub, gold = _Hub(), _Gold([_cand(team="TEAM3", customer="X", days=29, ids=())])
+    with pytest.raises(runner.RunFailed) as exc:
+        _run(hub, gold)
+    assert [o.status for o in exc.value.result.outcomes] == ["mail_failed"]
+    deals = [w for w in env.pd.writes if w[0] == "deal"]
+    assert len(deals) == 1 and hub.runs[-1]["status"] == "failed"
+    env.mail_ok = True
+    res = _run(hub, gold)
+    assert [o.status for o in res.outcomes] == ["created"]
+    # No second deal, the second attempt carries the 30-day text and the KAM's name.
+    assert [w for w in env.pd.writes if w[0] == "deal"] == deals and len(env.sent) == 2
+    assert "30 days without loads" in env.sent[1]["subject"]
+    assert "Sergio Hidalgo, please follow up" in env.sent[1]["html_body"]
+    again = _run(hub, gold)
+    assert [o.status for o in again.outcomes] == ["done_before"] and len(env.sent) == 2
+
+
+def test_deals_logged_before_the_30_day_notice_are_not_mailed(env):
+    """No flood: a row already `created` by an earlier release stays done."""
+    c = _cand(team="TEAM1", customer="OLD", days=40)
+    hub = _Hub()
+    hub.rows[(c.team, c.customer, c.last_load_date, "create")] = {
+        "team": c.team, "customer": c.customer, "last_load_date": c.last_load_date,
+        "action": "create", "status": "created", "deal_id": 7, "deal_title": "OLD"}
+    res = _run(hub, _Gold([c]))
+    assert [o.status for o in res.outcomes] == ["done_before"] and env.sent == []
 
 
 def test_one_customer_failing_does_not_stop_the_next_and_the_run_raises(env):
@@ -511,6 +569,7 @@ def test_claim_sql_retakes_only_failed_rows():
     assert "WHERE l.status IN ('failed', 'held')" in runner.CLAIM_SQL
     assert "'running'" not in runner.CLAIM_SQL.split("WHERE", 1)[1]  # a stuck row is never retaken
     assert "status = 'mail_failed'" in runner.CLAIM_MAIL_SQL
+    assert "action = $4" in runner.CLAIM_MAIL_SQL  # create and reassign retry their own notice
 
 
 # ---------------------------------------------------------------------------
