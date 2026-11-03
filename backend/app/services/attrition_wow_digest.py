@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/custom/attrition-wow"
 REPORT_URL = "https://space.unilinkportal.com/reports/attrition-wow"
-PERFORMANCE_URL = f"{REPORT_URL}?tab=pivots"
+PERFORMANCE_URL = f"{REPORT_URL}?tab=pivots&dim=customer"
 
 # Scope → the `teams` query the PAGE sends (AttritionWowContent.tsx). UNILINK
 # sends no `teams` at all, which the backend resolves to ALL_TEAMS. CORP is the

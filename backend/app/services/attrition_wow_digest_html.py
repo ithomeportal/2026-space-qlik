@@ -429,8 +429,8 @@ def _inactive_summary_lines(summaries: dict[str, tuple[str, str]]) -> str:
 def _performance_note(url: str) -> str:
     link = (f'<a href="{escape(url)}" style="font-family:{FONT_STACK};color:{LINK};">'
             f"{escape(url)}</a>")
-    return _p("For more details on weekly customer performance go to: "
-              f"{link} select &ldquo;View by Customer&rdquo;", margin="10px 0 0 0")
+    return _p(f"For more details on weekly customer performance go to: {link}",
+              margin="10px 0 0 0")
 
 
 def _attrition_section(lists: dict, inactive_summaries: dict[str, tuple[str, str]],

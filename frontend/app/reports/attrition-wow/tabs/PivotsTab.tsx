@@ -72,6 +72,12 @@ function dimLabel(key: Dim, entityLabel: string): string {
 
 const DIM_KEYS: Dim[] = ["team", "customer", "customer_lane"]
 
+// Request 2026-11-03: the weekly e-mail links to ?tab=pivots&dim=customer. An
+// unknown or missing value returns undefined, so the tab keeps its own default.
+export function parsePivotDim(raw: string | null): Dim | undefined {
+  return DIM_KEYS.includes(raw as Dim) ? (raw as Dim) : undefined
+}
+
 export function PivotsTab({
   filters,
   onCustomerClick,

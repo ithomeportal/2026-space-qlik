@@ -13,7 +13,7 @@ import {
 import { fmtTimestamp, fmtWeekRange } from "./format"
 import { OverviewTab } from "./tabs/OverviewTab"
 import { ReactiveTab } from "./tabs/ReactiveTab"
-import { PivotsTab } from "./tabs/PivotsTab"
+import { parsePivotDim, PivotsTab } from "./tabs/PivotsTab"
 import { TrendsTab } from "./tabs/TrendsTab"
 import { LossesTab } from "./tabs/LossesTab"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
@@ -85,6 +85,7 @@ function AttritionBody({
   const customer = searchParams.get("customer") || ""
   const contract = searchParams.get("contract") || ""
   const lane = searchParams.get("lane") || ""
+  const urlDim = parsePivotDim(searchParams.get("dim"))
 
   const updateUrl = useCallback(
     (patch: Record<string, string | null | undefined>) => {
@@ -391,6 +392,7 @@ function AttritionBody({
               // column ascending (lowest → highest) across all metrics + views.
               defaultSortKey="diff"
               defaultSortDir="asc"
+              defaultDim={urlDim}
             />
             <TrendsTab filters={filters} />
           </div>

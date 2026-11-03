@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 import re
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -529,7 +530,8 @@ class TestInactiveSummaryAndLinks:
                 "moved any loads in 1&ndash;4 weeks, while the other has been "
                 "inactive for 5&ndash;9 weeks.")
     LINK_NOTE = "For more details on weekly customer performance go to:"
-    URL = "https://space.unilinkportal.com/reports/attrition-wow?tab=pivots"
+    # &amp; because this is the escaped HTML; the link opens the by-Customer view.
+    URL = "https://space.unilinkportal.com/reports/attrition-wow?tab=pivots&amp;dim=customer"
 
     def test_ranges_count_only_the_two_inactive_buckets(self):
         assert svc.inactive_ranges(_reactive(12, 11)) == {"weeks_1_4": 12, "weeks_5_9": 11}
@@ -602,9 +604,22 @@ class TestInactiveSummaryAndLinks:
         for section in (inact, react):
             assert section.rindex("</table>") < section.index(self.LINK_NOTE)
             assert f'<a href="{self.URL}"' in section
-            assert f">{self.URL}</a> select &ldquo;View by Customer&rdquo;" in section
+            assert f">{self.URL}</a>" in section
+            # The link opens that view itself, so no "select" instruction remains.
+            assert "View by Customer" not in section
         # After the summary, as in the mock-up.
         assert inact.index(self.DFW_LINE) < inact.index(self.LINK_NOTE)
+
+    def test_the_page_opens_the_view_the_link_asks_for(self):
+        """No JS test runner here (frontend/CLAUDE.md): the wiring is read from the TSX."""
+        root = Path(__file__).resolve().parents[2] / "frontend/app/reports/attrition-wow"
+        content = (root / "AttritionWowContent.tsx").read_text(encoding="utf-8")
+        pivots = (root / "tabs/PivotsTab.tsx").read_text(encoding="utf-8")
+        assert 'parsePivotDim(searchParams.get("dim"))' in content
+        assert "defaultDim={urlDim}" in content
+        # An unknown ?dim= must fall back to the tab's own default, never reach setDim.
+        assert "export function parsePivotDim" in pivots
+        assert "PIVOT_DIM_KEYS.includes" in pivots or "DIM_KEYS.includes" in pivots
 
     def test_the_old_headings_are_gone(self, digest):
         html = digest[0]["html"]
