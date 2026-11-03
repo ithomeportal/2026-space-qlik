@@ -4,9 +4,11 @@ Mirrors the request PDF (2026-10-05): intro + LAST WEEK HIGHLIGHTS prose, then
 per scope (UNILINK black / CORP red / DFW navy bar) the period chips, the Lane
 and Customer Attrition cards and the metric table with the LAST WEEK block
 boxed in green; then LAST WEEK ATTRITION — customers below their 8-week average
-(CORP, DFW), then INACTIVE and REACTIVATED customers as 9-week tables (request
-2026-10-19, Iris's mock-up: red / green heading, last week boxed in the same
-colour). Every customer table ends in the page's Totals row.
+(CORP, DFW), then LAST WEEK INACTIVE and LAST WEEK REACTIVATED customers as
+9-week tables (request 2026-10-19, Iris's mock-up: red / green heading, last week
+boxed in the same colour). Every customer table ends in the page's Totals row.
+Request 2026-11-03: a CORP / DFW 1–4 and 5–9 week summary below the inactive
+table, and a link note to the customer pivots below both tables.
 
 Outlook rules (SPEC-CODE-RULES §21): FONT_STACK / MONO_STACK inline on EVERY
 td / th / div / span / a, hex colours only, tables for layout, no webfonts.
@@ -409,7 +411,30 @@ def _list_heading(text: str, colour: str) -> str:
             f'color:{colour};letter-spacing:0.3px;margin:26px 0 2px 0;">{text}</div>')
 
 
-def _attrition_section(lists: dict, weeks: list[date]) -> str:
+def _prose(text: str) -> str:
+    return escape(text, quote=False).replace("–", "&ndash;")
+
+
+def _inactive_summary_lines(summaries: dict[str, tuple[str, str]]) -> str:
+    """One line per division, bold lead as in the mock-up. No detail = no colon."""
+    lines = []
+    for name in ("CORP", "DFW"):
+        lead, detail = summaries[name]
+        tail = f": {_prose(detail)}" if detail else "."
+        lines.append(_p(f'<b style="font-family:{FONT_STACK};">{_prose(lead)}</b>{tail}',
+                        margin="10px 0 0 0"))
+    return "".join(lines)
+
+
+def _performance_note(url: str) -> str:
+    link = (f'<a href="{escape(url)}" style="font-family:{FONT_STACK};color:{LINK};">'
+            f"{escape(url)}</a>")
+    return _p("For more details on weekly customer performance go to: "
+              f"{link} select &ldquo;View by Customer&rdquo;", margin="10px 0 0 0")
+
+
+def _attrition_section(lists: dict, inactive_summaries: dict[str, tuple[str, str]],
+                       weeks: list[date], performance_url: str) -> str:
     bullet = lambda t: _p(f"&bull;&nbsp;&nbsp;{t}", bold=True, margin="18px 0 8px 0")  # noqa: E731
     out = [_scope_bar_plain("LAST WEEK ATTRITION:")]
     out.append(bullet("Customers below their 8-Week average load volume:"))
@@ -418,10 +443,10 @@ def _attrition_section(lists: dict, weeks: list[date]) -> str:
         out.append(_p(f"{name}:", bold=True, margin="10px 0 6px 0"))
         out.append(_customer_table(rows, weeks))
     for key, title, colour, rule, empty in (
-        ("inactive", "INACTIVE CUSTOMERS", INACTIVE_RED,
+        ("inactive", "LAST WEEK INACTIVE CUSTOMERS", INACTIVE_RED,
          "Shipped the week before last week, but no loads last week.",
          "No customer stopped shipping last week."),
-        ("reactivated", "REACTIVATED CUSTOMERS", REACTIVATED_GREEN,
+        ("reactivated", "LAST WEEK REACTIVATED CUSTOMERS", REACTIVATED_GREEN,
          "No loads the week before last week, shipped again last week.",
          "No customer came back last week."),
     ):
@@ -430,6 +455,9 @@ def _attrition_section(lists: dict, weeks: list[date]) -> str:
         out.append(_list_heading(title, colour))
         out.append(_p(rule, size=12, margin="0 0 6px 0"))
         out.append(_customer_table(rows, weeks, box_col="lw", box=colour, empty=empty))
+        if key == "inactive":
+            out.append(_inactive_summary_lines(inactive_summaries))
+        out.append(_performance_note(performance_url))
     return "".join(out)
 
 
@@ -443,9 +471,10 @@ def _scope_bar_plain(text: str) -> str:
 
 
 def render_html(*, subject: str, week_no: int, windows: dict, scopes: dict,
-                highlights: dict, lists: dict, weeks: list[date],
+                highlights: dict, lists: dict,
+                inactive_summaries: dict[str, tuple[str, str]], weeks: list[date],
                 generated: datetime, data_as_of: Optional[str],
-                report_url: str) -> str:
+                report_url: str, performance_url: str) -> str:
     intro = _p(
         f"Please find below the Attrition WoW highlights for Week {week_no} "
         f"({_range(windows['lw'])}). Based on Link "
@@ -475,6 +504,7 @@ def render_html(*, subject: str, week_no: int, windows: dict, scopes: dict,
         f'<table role="presentation" width="{PAGE_WIDTH}" cellpadding="0" cellspacing="0" '
         f'style="width:{PAGE_WIDTH}px;border-collapse:collapse;"><tr>'
         f'<td style="font-family:{FONT_STACK};padding:16px;color:{INK};">'
-        f"{intro}{hl}{sections}{_attrition_section(lists, weeks)}{footer}"
+        f"{intro}{hl}{sections}"
+        f"{_attrition_section(lists, inactive_summaries, weeks, performance_url)}{footer}"
         "</td></tr></table></body></html>"
     )

@@ -13,6 +13,10 @@ page — the windows, the population, the /8 and the attrition sign all stay in
   /summary  × 3 scopes (UNILINK / CORP / DFW) → cards + metric table + prose
   /pivot?dim=customer&metric=loads × 2 (CORP, DFW) → the customer lists
   /freshness → newest departure, so n8n can refuse a frozen feed
+  /reactive-summary × 2 (CORP, DFW) → the inactive summary (request 2026-11-03):
+      rows in the page's Customer Performance containers, 8-28 days ("1–4 weeks"
+      in the request's words) and 29-63 days ("5–9 weeks"). They count days from
+      TODAY, so the mail shows send-time numbers and the page moves on after it.
 
 Customer lists — the page computes these in the BROWSER (``PivotsTab.tsx``), so
 the arithmetic is ported here and pinned by tests against the request's PDF
@@ -55,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/custom/attrition-wow"
 REPORT_URL = "https://space.unilinkportal.com/reports/attrition-wow"
+PERFORMANCE_URL = f"{REPORT_URL}?tab=pivots"
 
 # Scope → the `teams` query the PAGE sends (AttritionWowContent.tsx). UNILINK
 # sends no `teams` at all, which the backend resolves to ALL_TEAMS. CORP is the
@@ -70,6 +75,11 @@ PIVOT_WEEKS = 12    # what the page requests (PivotsTab `useState(12)`)
 SHOWN_WEEKS = 9     # LW + the 8 baseline weeks, as in the PDF
 BASELINE_WEEKS = 8
 
+# The two Customer Performance containers the inactive summary reads, by the
+# bucket /reactive-summary assigns: 8-28 days and 29-63 days since the last load.
+BUCKET_1_4_WEEKS = "l2_4w"
+BUCKET_5_9_WEEKS = "l5_9w"
+
 
 class DigestSourceError(RuntimeError):
     """A report endpoint failed — never render a partial e-mail."""
@@ -79,7 +89,7 @@ class DigestStaleError(DigestSourceError):
     """The datalake has not loaded all of last week — never report on it."""
 
 
-# One build at a time: each runs 6 datalake reads, and an n8n retry overlapping
+# One build at a time: each runs 8 datalake reads, and an n8n retry overlapping
 # a slow first attempt (or an admin preview) would otherwise double the load on
 # the shared max_size=8 pool. A waiter just gets the next fresh build.
 _BUILD_LOCK = asyncio.Lock()
@@ -229,6 +239,35 @@ def reactivated(rows: list[dict]) -> list[dict]:
     """Nothing the week before LW, shipped in LW — biggest comeback first."""
     out = [r for r in rows if r["prev"] == 0 and r["lw"] > 0]
     return sorted(out, key=lambda r: (-r["lw"], r["team"] or "", _name_key(r["customer"])))
+
+
+def inactive_ranges(rows: list[dict]) -> dict[str, int]:
+    """Customers per Customer Performance container — one row is one customer,
+    exactly as ``ReactiveTab.tsx`` counts them. The endpoint owns the buckets."""
+    return {
+        "weeks_1_4": sum(1 for r in rows if r.get("bucket") == BUCKET_1_4_WEEKS),
+        "weeks_5_9": sum(1 for r in rows if r.get("bucket") == BUCKET_5_9_WEEKS),
+    }
+
+
+def inactive_summary(scope: str, ranges: dict[str, int]) -> tuple[str, str]:
+    """(bold lead, detail) in the request's words, right for ANY pair of counts."""
+    recent, older = ranges["weeks_1_4"], ranges["weeks_5_9"]
+    total = recent + older
+    window = "over the last 9 weeks"
+    if total == 0:
+        return f"{scope} has no inactive customers {window}", ""
+    noun = "customer" if total == 1 else "customers"
+    lead = f"{scope} has {total} inactive {noun} {window}"
+
+    moved = f"{'hasn' if recent == 1 else 'haven'}'t moved any loads in 1–4 weeks"
+    if older == 0:
+        return lead, f"{recent} {moved}."
+    if recent == 0:
+        verb = "has" if older == 1 else "have"
+        return lead, f"{older} {verb} been inactive for 5–9 weeks."
+    rest = "the other has" if older == 1 else f"the remaining {older} have"
+    return lead, f"{recent} {moved}, while {rest} been inactive for 5–9 weeks."
 
 
 def _sum_present(values: list[float | None]) -> float | None:
@@ -399,6 +438,17 @@ async def _build(app) -> dict[str, Any]:
             "reactivated": reactivated(rows),
         }
 
+    # After assert_fresh: a stale feed is refused without two more 540-day reads.
+    reactive = await _get_many(app, [
+        ("/reactive-summary", _scope_params(teams[name])) for name in LIST_SCOPES
+    ])
+    ranges: dict[str, dict[str, int]] = {}
+    for name, payload in zip(LIST_SCOPES, reactive):
+        reactive_lw = (payload.get("meta") or {}).get("windows", {}).get("lw")
+        if reactive_lw != windows["lw"]:  # a midnight straddle between calls
+            raise DigestSourceError(f"{name} /reactive-summary windows differ")
+        ranges[name] = inactive_ranges(payload["data"])
+
     highlights = {name: highlight(data) for name, data in scopes.items()}
     generated = cst_now()
     week_no = lw_monday.isocalendar()[1]
@@ -410,10 +460,12 @@ async def _build(app) -> dict[str, Any]:
         scopes=scopes,
         highlights=highlights,
         lists=lists,
+        inactive_summaries={n: inactive_summary(n, ranges[n]) for n in LIST_SCOPES},
         weeks=week_list(lw_monday, SHOWN_WEEKS),
         generated=generated,
         data_as_of=data_as_of,
         report_url=REPORT_URL,
+        performance_url=PERFORMANCE_URL,
     )
     return {
         "subject": subject,
@@ -427,5 +479,6 @@ async def _build(app) -> dict[str, Any]:
             "below_average": {n: len(lists[n]["below"]) for n in lists},
             "inactive": {n: len(lists[n]["inactive"]) for n in lists},
             "reactivated": {n: len(lists[n]["reactivated"]) for n in lists},
+            "inactive_ranges": ranges,
         },
     }

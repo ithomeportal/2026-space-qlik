@@ -15,6 +15,8 @@ What can go wrong silently here, and which test pins it:
   * the inactive / reactivated basis is WEEK-OVER-WEEK (decision 2026-10-05);
     an "any load in 8 weeks" basis lists long-tail customers the PDF does not;
   * a failed source endpoint must be a 502, never a partial e-mail;
+  * the inactive summary reads the Customer Performance buckets (8-28 d and
+    29-63 d) — the "lw" bucket (the page's 29) is an ACTIVE customer;
   * the machine bearer must FAIL CLOSED.
 """
 from __future__ import annotations
@@ -152,6 +154,17 @@ DFW = _summary(
 )
 
 
+def _reactive(l2_4w: int, l5_9w: int) -> list[dict]:
+    """/reactive-summary rows; the other buckets must never reach the summary."""
+    counts = {"l2_4w": l2_4w, "l5_9w": l5_9w, "lw": 29, "spot_recent": 18,
+              "spot_stale": 7, "gt_1y": 10, "no_load": 3}
+    return [{"team": "TEAM1", "customer": f"{bucket} {i}", "bucket": bucket}
+            for bucket, n in counts.items() for i in range(n)]
+
+
+LW_WINDOWS = {"windows": {"lw": {"start": "2026-09-28", "end": "2026-10-04"}}}
+
+
 def _fake_get_many(calls_seen: list):
     async def fake(app, calls):
         calls_seen.append(calls)
@@ -166,6 +179,11 @@ def _fake_get_many(calls_seen: list):
             elif path == "/pivot":
                 out.append({"success": True,
                             "data": DFW_PIVOT if teams == "TEAM-DFW" else CORP_PIVOT})
+            elif path == "/reactive-summary":
+                # The request PDF's own counts: CORP 12 + 11, DFW 1 + 1.
+                out.append({"success": True, "meta": LW_WINDOWS,
+                            "data": _reactive(1, 1) if teams == "TEAM-DFW"
+                            else _reactive(12, 11)})
             else:
                 raise AssertionError(path)
         return out
@@ -387,13 +405,17 @@ class TestBuilder:
 
     def test_scopes_are_the_pages_and_batches_fit_the_pool(self, digest):
         _, seen = digest
-        summary_calls, second = seen
+        summary_calls, second, third = seen
         pivot_calls = [c for c in second if c[0] == "/pivot"]
         assert [c[0] for c in second] == ["/pivot", "/pivot", "/freshness"]
         assert [p.get("teams") for _, p in summary_calls] == [
             None, "TEAM1,TEAM2,TEAM3,TEAM4,TEAM5", "TEAM-DFW"]
         assert all(p["dim"] == "customer" and p["metric"] == "loads"
                    and p["weeks"] == 12 for _, p in pivot_calls)
+        assert third == [
+            ("/reactive-summary", {"teams": "TEAM1,TEAM2,TEAM3,TEAM4,TEAM5"}),
+            ("/reactive-summary", {"teams": "TEAM-DFW"}),
+        ]
         assert max(len(b) for b in seen) <= 3
 
     def test_html_shows_the_pdf_numbers(self, digest):
@@ -447,10 +469,10 @@ class TestInactiveReactivatedTables:
     def test_names_are_table_rows_not_a_comma_list(self, digest):
         html = digest[0]["html"]
         assert "BALL CORPORATION, PCA HARRISONBURG" not in html
-        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        inact = _section(html, ">LAST WEEK INACTIVE CUSTOMERS<", ">LAST WEEK REACTIVATED CUSTOMERS<")
         for name in ("PCA HARRISONBURG", "PCA VERNON", "BALL CORPORATION"):
             assert f">{name}</td>" in inact
-        react = _section(html, ">REACTIVATED CUSTOMERS<", "Generated ")
+        react = _section(html, ">LAST WEEK REACTIVATED CUSTOMERS<", "Generated ")
         assert react.index(">PCA BEDFORD</td>") < react.index(">WESTROCK</td>")
 
     def test_headings_are_coloured_text_not_a_fill(self, digest):
@@ -460,8 +482,8 @@ class TestInactiveReactivatedTables:
         )
 
         html = digest[0]["html"]
-        assert re.search(rf'<div style="[^"]*color:{INACTIVE_RED};[^"]*">INACTIVE CUSTOMERS</div>', html)
-        assert re.search(rf'<div style="[^"]*color:{REACTIVATED_GREEN};[^"]*">REACTIVATED CUSTOMERS</div>', html)
+        assert re.search(rf'<div style="[^"]*color:{INACTIVE_RED};[^"]*">LAST WEEK INACTIVE CUSTOMERS</div>', html)
+        assert re.search(rf'<div style="[^"]*color:{REACTIVATED_GREEN};[^"]*">LAST WEEK REACTIVATED CUSTOMERS</div>', html)
 
     def test_last_week_column_is_boxed_in_the_list_colour(self, digest):
         from app.services.attrition_wow_digest_html import (
@@ -470,8 +492,8 @@ class TestInactiveReactivatedTables:
         )
 
         html = digest[0]["html"]
-        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
-        react = _section(html, ">REACTIVATED CUSTOMERS<", "Generated ")
+        inact = _section(html, ">LAST WEEK INACTIVE CUSTOMERS<", ">LAST WEEK REACTIVATED CUSTOMERS<")
+        react = _section(html, ">LAST WEEK REACTIVATED CUSTOMERS<", "Generated ")
         # the Sep 28 header (= LW) carries the top of the box
         assert re.search(rf'<th style="[^"]*border-top:2px solid {INACTIVE_RED};[^"]*">Sep 28</th>', inact)
         assert re.search(rf'<th style="[^"]*border-top:2px solid {REACTIVATED_GREEN};[^"]*">Sep 28</th>', react)
@@ -480,11 +502,11 @@ class TestInactiveReactivatedTables:
         html = digest[0]["html"]
         # below-average CORP + DFW, inactive, reactivated
         assert html.count(">Totals</td>") == 4
-        inact = _section(html, ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        inact = _section(html, ">LAST WEEK INACTIVE CUSTOMERS<", ">LAST WEEK REACTIVATED CUSTOMERS<")
         assert ">3 customers</td>" in inact
 
     def test_inactive_totals_print_the_lost_volume(self, digest):
-        inact = _section(digest[0]["html"], ">INACTIVE CUSTOMERS<", ">REACTIVATED CUSTOMERS<")
+        inact = _section(digest[0]["html"], ">LAST WEEK INACTIVE CUSTOMERS<", ">LAST WEEK REACTIVATED CUSTOMERS<")
         totals = inact[inact.index(">Totals</td>"):]
         assert ">16</td>" in totals   # Σ 8-week avg 16.125
         assert ">-16</td>" in totals  # LW 0 − 16.125
@@ -494,6 +516,148 @@ class TestInactiveReactivatedTables:
         # Outlook print drops fills: the row must still read as a totals row.
         tag = re.search(r'<tr[^>]*>(<td[^>]*>Totals</td>)', digest[0]["html"]).group(1)
         assert "border-top:2px solid" in tag
+
+
+class TestInactiveSummaryAndLinks:
+    """Request 2026-11-03: renamed headings, the 1-4 / 5-9 week summary below the
+    inactive table, and a link note below both tables."""
+
+    CORP_LINE = ("CORP has 23 inactive customers over the last 9 weeks</b>: 12 "
+                 "haven't moved any loads in 1&ndash;4 weeks, while the remaining "
+                 "11 have been inactive for 5&ndash;9 weeks.")
+    DFW_LINE = ("DFW has 2 inactive customers over the last 9 weeks</b>: 1 hasn't "
+                "moved any loads in 1&ndash;4 weeks, while the other has been "
+                "inactive for 5&ndash;9 weeks.")
+    LINK_NOTE = "For more details on weekly customer performance go to:"
+    URL = "https://space.unilinkportal.com/reports/attrition-wow?tab=pivots"
+
+    def test_ranges_count_only_the_two_inactive_buckets(self):
+        assert svc.inactive_ranges(_reactive(12, 11)) == {"weeks_1_4": 12, "weeks_5_9": 11}
+        assert svc.inactive_ranges(_reactive(0, 0)) == {"weeks_1_4": 0, "weeks_5_9": 0}
+
+    @pytest.mark.parametrize(
+        ("weeks_1_4", "weeks_5_9", "lead", "detail"),
+        [
+            (12, 11, "CORP has 23 inactive customers over the last 9 weeks",
+             ("12 haven't moved any loads in 1\u20134 weeks, while the remaining 11 "
+              "have been inactive for 5\u20139 weeks.")),
+            (1, 1, "CORP has 2 inactive customers over the last 9 weeks",
+             ("1 hasn't moved any loads in 1\u20134 weeks, while the other has been "
+              "inactive for 5\u20139 weeks.")),
+            (5, 1, "CORP has 6 inactive customers over the last 9 weeks",
+             ("5 haven't moved any loads in 1\u20134 weeks, while the other has been "
+              "inactive for 5\u20139 weeks.")),
+            (1, 5, "CORP has 6 inactive customers over the last 9 weeks",
+             ("1 hasn't moved any loads in 1\u20134 weeks, while the remaining 5 "
+              "have been inactive for 5\u20139 weeks.")),
+            (3, 0, "CORP has 3 inactive customers over the last 9 weeks",
+             "3 haven't moved any loads in 1\u20134 weeks."),
+            (1, 0, "CORP has 1 inactive customer over the last 9 weeks",
+             "1 hasn't moved any loads in 1\u20134 weeks."),
+            (0, 3, "CORP has 3 inactive customers over the last 9 weeks",
+             "3 have been inactive for 5\u20139 weeks."),
+            (0, 1, "CORP has 1 inactive customer over the last 9 weeks",
+             "1 has been inactive for 5\u20139 weeks."),
+            (0, 0, "CORP has no inactive customers over the last 9 weeks", ""),
+        ],
+    )
+    def test_the_sentence_reads_right_for_every_count(self, weeks_1_4, weeks_5_9, lead, detail):
+        ranges = {"weeks_1_4": weeks_1_4, "weeks_5_9": weeks_5_9}
+        assert svc.inactive_summary("CORP", ranges) == (lead, detail)
+
+    def test_the_pdf_sentences_sit_below_the_inactive_table(self, digest):
+        inact = _section(digest[0]["html"], ">LAST WEEK INACTIVE CUSTOMERS<",
+                         ">LAST WEEK REACTIVATED CUSTOMERS<")
+        table_end = inact.rindex("</table>")
+        assert table_end < inact.index(self.CORP_LINE) < inact.index(self.DFW_LINE)
+
+    def test_a_zero_scope_says_so_without_a_colon(self, monkeypatch):
+        import asyncio
+
+        fake = _fake_get_many([])
+
+        async def quiet_dfw(app, calls):
+            out = await fake(app, calls)
+            return [{**o, "data": _reactive(0, 0)}
+                    if c == ("/reactive-summary", {"teams": "TEAM-DFW"}) else o
+                    for c, o in zip(calls, out)]
+
+        monkeypatch.setattr(svc, "_get_many", quiet_dfw)
+        monkeypatch.setattr(svc, "cst_now", lambda: datetime(2026, 10, 5, 8, 15))  # noqa: DTZ001
+        data = asyncio.run(svc.build_attrition_wow_digest(app=None))
+        assert "DFW has no inactive customers over the last 9 weeks</b>." in data["html"]
+        assert data["meta"]["inactive_ranges"]["DFW"] == {"weeks_1_4": 0, "weeks_5_9": 0}
+
+    def test_meta_carries_the_counts(self, digest):
+        assert digest[0]["meta"]["inactive_ranges"] == {
+            "CORP": {"weeks_1_4": 12, "weeks_5_9": 11},
+            "DFW": {"weeks_1_4": 1, "weeks_5_9": 1},
+        }
+
+    def test_the_link_note_closes_both_tables_only(self, digest):
+        html = digest[0]["html"]
+        assert html.count(self.LINK_NOTE) == 2
+        inact = _section(html, ">LAST WEEK INACTIVE CUSTOMERS<", ">LAST WEEK REACTIVATED CUSTOMERS<")
+        react = _section(html, ">LAST WEEK REACTIVATED CUSTOMERS<", "Generated ")
+        for section in (inact, react):
+            assert section.rindex("</table>") < section.index(self.LINK_NOTE)
+            assert f'<a href="{self.URL}"' in section
+            assert f">{self.URL}</a> select &ldquo;View by Customer&rdquo;" in section
+        # After the summary, as in the mock-up.
+        assert inact.index(self.DFW_LINE) < inact.index(self.LINK_NOTE)
+
+    def test_the_old_headings_are_gone(self, digest):
+        html = digest[0]["html"]
+        assert ">INACTIVE CUSTOMERS<" not in html
+        assert ">REACTIVATED CUSTOMERS<" not in html
+
+    def test_a_failed_summary_source_refuses_to_render(self, monkeypatch):
+        import asyncio
+
+        fake = _fake_get_many([])
+
+        async def boom(app, calls):
+            if calls[0][0] == "/reactive-summary":
+                raise svc.DigestSourceError("/reactive-summary returned 500")
+            return await fake(app, calls)
+
+        monkeypatch.setattr(svc, "_get_many", boom)
+        with pytest.raises(svc.DigestSourceError):
+            asyncio.run(svc.build_attrition_wow_digest(app=None))
+
+    @pytest.mark.parametrize("meta", [
+        {"windows": {"lw": {"start": "2026-10-05", "end": "2026-10-11"}}},  # midnight straddle
+        {},
+    ])
+    def test_a_summary_from_another_week_refuses_to_render(self, monkeypatch, meta):
+        import asyncio
+
+        fake = _fake_get_many([])
+
+        async def straddle(app, calls):
+            out = await fake(app, calls)
+            return [{**o, "meta": meta} if c[0] == "/reactive-summary" else o
+                    for c, o in zip(calls, out)]
+
+        monkeypatch.setattr(svc, "_get_many", straddle)
+        with pytest.raises(svc.DigestSourceError):
+            asyncio.run(svc.build_attrition_wow_digest(app=None))
+
+    def test_a_stale_feed_is_refused_before_the_summary_reads(self, monkeypatch):
+        import asyncio
+
+        seen: list = []
+        fake = _fake_get_many(seen)
+
+        async def thursday(app, calls):
+            out = await fake(app, calls)
+            return [{"success": True, "data": {"last_load_date": "2026-10-01"}}
+                    if c[0] == "/freshness" else o for c, o in zip(calls, out)]
+
+        monkeypatch.setattr(svc, "_get_many", thursday)
+        with pytest.raises(svc.DigestStaleError):
+            asyncio.run(svc.build_attrition_wow_digest(app=None))
+        assert not any(c[0] == "/reactive-summary" for batch in seen for c in batch)
 
 
 class TestOutlookSafety:
