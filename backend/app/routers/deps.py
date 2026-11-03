@@ -264,6 +264,38 @@ def require_report_access(*report_keys: str):
     return _check
 
 
+async def user_can_write_report(
+    request: Request, user: dict, report_key: str, read_only_roles: frozenset[str]
+) -> bool:
+    """True when ``user`` may WRITE through ``report_key``.
+
+    Same rule as ``require_report_access`` (admin / CEO always pass), except a
+    TagRole in ``read_only_roles`` (lower-case) grants READ only: the caller must
+    hold some OTHER role the report is granted to. Added 2026-11-03 for the
+    Bonus Calculator — the Financial (``CFO``) TagRole views payroll, HR edits it.
+    """
+    roles = {r.lower() for r in user.get("roles", [])}
+    if can_read_all_reports(roles):
+        return True
+    allowed = await get_allowed_roles_for_report(get_pool(request), report_key)
+    return bool(roles & (allowed - read_only_roles))
+
+
+def require_report_write(report_key: str, read_only_roles: frozenset[str]):
+    """Factory: gate a WRITE endpoint of a custom report — see ``user_can_write_report``.
+
+    403 says "view-only", never which roles would be needed (payroll reports
+    disclose nothing about their grants).
+    """
+
+    async def _check(request: Request, user: dict = Depends(require_user)) -> dict:
+        if await user_can_write_report(request, user, report_key, read_only_roles):
+            return user
+        raise HTTPException(status_code=403, detail="You have view-only access to this report")
+
+    return _check
+
+
 async def require_proxy(x_proxy_secret: Optional[str] = Header(None)) -> None:
     """Prove the caller is our Next.js proxy — WITHOUT requiring a session.
 

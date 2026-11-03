@@ -93,6 +93,8 @@ export interface BonusFilters {
   periods: BonusPeriodOption[]
   currentPeriod: string
   teams: { id: string; name: string }[]
+  /** False for view-only roles (Financial TagRole, 2026-11-03). Absent (older backend) ⇒ editable, the old behaviour; the server gate decides. */
+  canEdit?: boolean
 }
 
 export interface Bracket {

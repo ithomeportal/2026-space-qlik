@@ -51,7 +51,16 @@ from app.routers.deps import (
     get_datalake_gold_pool,
     get_pool,
     require_report_access,
+    require_report_write,
+    user_can_write_report,
 )
+
+#: TagRoles that may VIEW the Bonus Calculators but never write (2026-11-03,
+#: request: the Financial role is read-only on payroll). Lower-case, matched
+#: against ``roles.name``. The ``CFO`` TagRole is labelled "Financial".
+#: Every write route (roster, afterhours, FX settings, lock / unlock) is gated
+#: by ``write_gate``; ``/filters`` returns ``canEdit`` so the UI hides HR Settings.
+BONUS_READ_ONLY_ROLES: frozenset[str] = frozenset({"cfo"})
 from app.services.bonus_defaults import (
     DEFAULT_NIGHT_FX_RATE,
     DEFAULT_TEAM_FX_RATE,
@@ -672,6 +681,7 @@ class LockBody(BaseModel):
 
 def _make_bonus_router(scope: BonusScope) -> APIRouter:
     gate = require_report_access(scope.report_key)
+    write_gate = require_report_write(scope.report_key, BONUS_READ_ONLY_ROLES)
     r = APIRouter(
         tags=[f"bonus-calculator-{scope.key}"],
         prefix=scope.url_prefix,
@@ -680,7 +690,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
     @r.get("/filters")
     async def filters(
         request: Request,
-        _user: dict = Depends(gate),
+        user: dict = Depends(gate),
     ):
         """Selectable periods + team list + current period."""
         current = _current_period_key()
@@ -694,6 +704,9 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
                 "periods": periods,
                 "currentPeriod": current,
                 "teams": [{"id": t, "name": scope.team_names[t]} for t in scope.teams],
+                "canEdit": await user_can_write_report(
+                    request, user, scope.report_key, BONUS_READ_ONLY_ROLES
+                ),
             },
         }
 
@@ -806,14 +819,14 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
 
     # Roster + afterhours writes are effective-dated and lock-guarded
     # (2026-10-31) — see app/routers/bonus_roster_writes.py.
-    register_roster_writes(r, scope, gate)
+    register_roster_writes(r, scope, write_gate)
 
 
     @r.put("/settings")
     async def put_settings(
         request: Request,
         body: FxSettings,
-        user: dict = Depends(gate),
+        user: dict = Depends(write_gate),
     ):
         """HR pins the board-approved team FX + night FX for a period (Q3/Q5)."""
         _parse_period(body.period_key)  # validates format
@@ -844,7 +857,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
     async def lock_period(
         request: Request,
         body: LockBody,
-        user: dict = Depends(gate),
+        user: dict = Depends(write_gate),
     ):
         """Lock a month as HR/Finance-approved (PDF best-practice)."""
         _parse_period(body.period_key)
@@ -866,7 +879,7 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
     async def unlock_period(
         request: Request,
         period_key: str,
-        user: dict = Depends(gate),
+        user: dict = Depends(write_gate),
     ):
         _parse_period(period_key)
         primary = get_pool(request)

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, HandCoins, Loader2, Settings, Lock } from "lucide-react"
+import { ArrowLeft, Eye, HandCoins, Loader2, Settings, Lock } from "lucide-react"
 import { ReportGuard } from "@/components/ReportGuard"
 import { BonusApiProvider, useBonusFilters, useBonusReport } from "@/lib/bonus-api"
 import { BRAND, BRAND_DARK } from "@/app/reports/bonus-calculator/format"
@@ -85,6 +85,10 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
   const effectivePeriod = period ?? filters?.currentPeriod
   const visibleTeams = report?.teams.filter((t) => !teamFilter || t.id === teamFilter) ?? []
   const locked = report?.lock.status === "approved"
+  // View-only roles (the Financial TagRole, 2026-11-03) never see HR Settings.
+  // The server's write gate is the boundary; this only hides the door.
+  // Absent flag (backend not yet deployed) ⇒ the old behaviour, editable.
+  const canEdit = filters ? filters.canEdit !== false : false
 
   return (
     <div className="min-h-[calc(100vh-64px)] bg-[#F7F7FB]">
@@ -109,12 +113,20 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
                 <Lock className="h-3.5 w-3.5" /> Locked · approved
               </span>
             )}
-            <button
-              onClick={() => setEditorOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-[#561195] hover:bg-white"
-            >
-              <Settings className="h-4 w-4" /> HR Settings
-            </button>
+            {canEdit ? (
+              <button
+                onClick={() => setEditorOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-[#561195] hover:bg-white"
+              >
+                <Settings className="h-4 w-4" /> HR Settings
+              </button>
+            ) : (
+              filters && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-3 py-1.5 text-xs font-semibold">
+                  <Eye className="h-3.5 w-3.5" /> View only
+                </span>
+              )
+            )}
           </div>
         </div>
       </div>
@@ -212,7 +224,7 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
         )}
       </div>
 
-      {editorOpen && <RosterEditor period={effectivePeriod} onClose={() => setEditorOpen(false)} />}
+      {editorOpen && canEdit && <RosterEditor period={effectivePeriod} onClose={() => setEditorOpen(false)} />}
     </div>
   )
 }
