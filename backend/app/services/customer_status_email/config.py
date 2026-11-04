@@ -26,6 +26,7 @@ BILL_TO = "CENTRATX"
 ORIGIN_CITY = "WACO"
 ORIGIN_STATE = "TX"
 ORIGIN_TZ = "America/Chicago"
+ORIGIN_NAME = "CENTRAL TEXAS CORRUGATED"  # as McLeod stop comments name the Waco shipper
 
 SEND_FROM = "mvazquez@unilinktransportation.com"  # Magaly Vazquez, Tracking & Tracing
 T1OPS = "t1ops@unilinktransportation.com"

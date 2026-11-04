@@ -76,7 +76,9 @@ SELECT b.id                                            AS id,
        {_ts('w.dest_sched_arrive_early')}              AS del_sched_early,
        {_ts('w.dest_sched_arrive_late')}               AS del_sched_late,
        {_ts('w.dest_actual_arrival')}                  AS del_in,
-       {_ts('w.dest_actual_departure')}                AS del_out
+       {_ts('w.dest_actual_departure')}                AS del_out,
+       {_ts('w.origin_eta')}                           AS pu_eta,
+       {_ts('w.destin_eta')}                           AS del_eta
 FROM mcleod_gld_budget_report_v4 b
 JOIN mcleod_gld_customer_view    v ON v.id = b.id AND v.company_id = b.company_id
 JOIN mcleod_gld_customer_windows w ON w.id = b.id AND w.company_id = b.company_id

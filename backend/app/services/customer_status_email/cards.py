@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from app.services.customer_status_email.config import (
     ORIGIN_CITY,
+    ORIGIN_NAME,
     ORIGIN_STATE,
     ORIGIN_TZ,
     REPORTS,
@@ -38,7 +39,11 @@ BUCKETS = (IN_PROGRESS, SCHEDULED, DELIVERED)
 DELIVERED_WINDOW = timedelta(hours=24)
 # A GPS fix older than this is not a "current location".
 GPS_MAX_AGE = timedelta(hours=24)
-ETA_STALE_GRACE = timedelta(hours=2)
+# An ETA further past than this on a load not yet arrived is stale: it would sit in
+# the headline block with a pill computed from a moment already gone.
+ETA_STALE_GRACE = timedelta(minutes=30)
+# A fix stamped later than this is bad data — it must not outrank a real one.
+FUTURE_FIX_TOLERANCE = timedelta(minutes=10)
 
 # McLeod brokerage_status of the ACTIVE leg → plain customer wording.
 STATUS_LABELS = {
@@ -74,7 +79,9 @@ class Card:
     status_label: Optional[str] = None
     location: Optional[str] = None      # "CHRISTINE, TX"
     location_at: Optional[datetime] = None
-    eta: Optional[datetime] = None
+    last_reported: Optional[str] = None  # the yard the load waits at, when no recent fix
+    eta: Optional[datetime] = None      # final-stop ETA on the stop's clock, else leg ETA (CST)
+    pu_eta: Optional[datetime] = None   # McLeod origin_eta, until the truck reaches the pickup
     eta_place: Optional[str] = None     # set when the ETA is to an intermediate leg
     eta_is_cst: bool = False            # intermediate-leg ETA stays on the CST clock
     hours_vs_appt: Optional[float] = None  # +behind / −ahead, final leg only
@@ -83,6 +90,11 @@ class Card:
     pod_link: Optional[str] = None
     has_pod: bool = False
     sort_key: datetime = field(default=datetime.max, compare=False)
+
+    @property
+    def arrived_at(self) -> Optional[datetime]:
+        """When the truck reached the consignee; a departure alone also proves it."""
+        return self.del_in or self.del_out
 
 
 @dataclass(frozen=True)
@@ -133,15 +145,23 @@ def on_time(actual: Optional[datetime], deadline: Optional[datetime]) -> Optiona
 
 # McLeod stop comments: "<verb> <PLACE, CITY, ST> at|for MM/DD/YY HHMM[ to MM/DD/YY HHMM]."
 _MCLEOD_TS = r"(\d\d/\d\d/\d\d) (\d\d)(\d\d)"
-_YARD_PATTERNS = (
-    # (regex, customer wording) — {place} is the yard, {at} / {to} formatted times.
-    (re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
-     "At {place} for customs clearance since {at}."),
+_EMPTY_AT = re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$")
+_STOP_PATTERNS = (
+    # (regex, wording at a border yard, wording at the Waco shipper) — {place} is
+    # the stop, {at} / {to} formatted times.
+    (_EMPTY_AT,
+     "At {place} for customs clearance since {at}.",
+     "At {place} since {at}."),
     (re.compile(rf"^Departed (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
-     "Cleared customs and departed {place} on {at}; continuing to final destination."),
+     "Cleared customs and departed {place} on {at}; continuing to final destination.",
+     "Departed {place} on {at}."),
     (re.compile(rf"^Appointment confirmed at (?P<place>.+?) for {_MCLEOD_TS} to "
                 rf"(\d\d/\d\d/\d\d) (\d\d)(\d\d)\.?$"),
-     "Border crossing appointment confirmed at {place}: {at} to {to}."),
+     "Border crossing appointment confirmed at {place}: {at} to {to}.",
+     "Pickup appointment confirmed at {place}: {at} to {to}."),
+    (re.compile(rf"^Loaded at the shipper (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
+     "Loaded at the shipper {place} on {at}.",
+     "Loaded at the shipper {place} on {at}."),
 )
 
 
@@ -149,6 +169,33 @@ def _fmt_mcleod(day: str, hh: str, mm: str) -> str:
     """'10/15/26', '13', '00' -> '10/15/2026 @ 01:00 PM'."""
     h = int(hh)
     return f"{day[:6]}20{day[6:]} @ {h % 12 or 12:02d}:{mm} {'AM' if h < 12 else 'PM'}"
+
+
+def _is_own_consignee(place: str, consignee: Optional[str]) -> bool:
+    final = normalise(consignee)
+    return bool(final) and normalise(place).startswith(final)
+
+
+def _is_origin(place: str) -> bool:
+    """The Waco shipper — where the load starts, so never a border yard.
+
+    McLeod comments name it with or without its city ("Loaded at the shipper
+    Central Texas Corrugated at …").
+    """
+    name = normalise(place)
+    return name.startswith(ORIGIN_NAME) or name.endswith(f"{ORIGIN_CITY}, {ORIGIN_STATE}")
+
+
+def last_reported_place(comment: Optional[str], consignee: Optional[str]) -> Optional[str]:
+    """The yard a load is waiting at, read from its newest stop comment.
+
+    Only "Empty at consignee <yard>" places the truck there: "Departed" means it
+    left and "Appointment confirmed" means it has not arrived yet.
+    """
+    m = _EMPTY_AT.match((comment or "").strip())
+    if not m or _is_own_consignee(m.group("place"), consignee) or _is_origin(m.group("place")):
+        return None
+    return m.group("place")
 
 
 def customer_comment(comment: Optional[str], consignee: Optional[str]) -> Optional[str]:
@@ -160,17 +207,18 @@ def customer_comment(comment: Optional[str], consignee: Optional[str]) -> Option
     Mexican leg continues. McLeod closes the US leg as delivered, so its comment
     reads "Empty at consignee TRANCASA EL PASO …" — accurate, but a customer
     reads it as a delivery (user, 2026-10-20). A comment that names the order's
-    own consignee is left as is.
+    own consignee is left as is, and the Waco shipper is worded as a pickup: "not
+    the consignee" alone called it a border yard (report of 2026-11-04).
     """
     if not comment:
         return comment
-    final = normalise(consignee)
-    for pattern, wording in _YARD_PATTERNS:
+    for pattern, at_yard, at_origin in _STOP_PATTERNS:
         m = pattern.match(comment.strip())
         if not m:
             continue
-        if final and normalise(m.group("place")).startswith(final):
+        if _is_own_consignee(m.group("place"), consignee):
             return comment
+        wording = at_origin if _is_origin(m.group("place")) else at_yard
         g = m.groups()
         to = _fmt_mcleod(*g[4:7]) if len(g) >= 7 else ""
         return wording.format(place=m.group("place"), at=_fmt_mcleod(*g[1:4]), to=to)
@@ -192,46 +240,65 @@ def _num(value: object) -> int:
         return 0
 
 
-def cst_to_local(value: datetime, tz: str) -> datetime:
-    """A naive CST wall time → the same instant as naive wall time in ``tz``."""
-    return value.replace(tzinfo=ZoneInfo(ORIGIN_TZ)).astimezone(ZoneInfo(tz)).replace(tzinfo=None)
+def utc_to_local(value: datetime, tz: str) -> datetime:
+    """Naive UTC digits → the same instant as naive wall time in ``tz``."""
+    return value.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz)).replace(tzinfo=None)
+
+
+def _final_eta(eta_local: datetime, order: dict) -> dict:
+    """An ETA to the final stop, with hours against the appointment when there is one."""
+    deadline = order.get("del_sched_late")
+    hours = {"hours_vs_appt": round((eta_local - deadline).total_seconds() / 3600, 1)} if deadline else {}
+    return {"eta": eta_local, **hours}
 
 
 def _tracking(order: dict, legs: list[dict], active: Optional[dict],
               now_cst: datetime, dest_tz: str) -> dict:
-    """Last GPS city, ETA and ahead/behind from the Augie feed (movement grain).
+    """The ETA and ahead/behind: McLeod's final-stop ETA, else Augie (movement grain).
 
-    ⚠ Two clocks: Augie's ``new_eta`` / ``gps_updated_dt`` are naive CST (its own
-    app compares them with NOW() in Chicago), while McLeod appointments are the
-    STOP's local time. The ETA is converted to the destination's clock before it
-    is subtracted or printed — else an El Paso load reads an hour late.
+    McLeod's stop ETA (``destin_eta``,
+    the field Ops chose 2026-11-03) is order-grain and on the stop's clock.
+
+    ⚠ Two clocks: Augie's ``new_eta`` holds naive UTC digits (measured 2026-10-23 and
+    2026-11-04; augie-app CLAUDE.md), while McLeod's times are the STOP's local
+    clock. The ETA is converted to the destination's clock before it is subtracted
+    or printed — printed as CST it read "11.3 Hours BEHIND" for a true 5.3.
 
     ⚠ On a cross-border load Augie's ETA is to the CURRENT leg's end (e.g. the
     Laredo yard), not the consignee — so hours ahead/behind is shown only when
     that leg ends in the order's destination city; otherwise the ETA is labelled
     with the leg's own destination and carries no pill.
     """
+    mcleod_eta = order.get("del_eta")
+    stop_now = now_cst.astimezone(ZoneInfo(dest_tz)).replace(tzinfo=None)
+    if mcleod_eta and mcleod_eta >= stop_now - ETA_STALE_GRACE:
+        return _final_eta(mcleod_eta, order)
+
     out: dict = {}
-    naive_now = now_cst.replace(tzinfo=None)
+    utc_now = now_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
     active_id = str((active or {}).get("movement_id") or "").strip()
     leg = next((lg for lg in legs if str(lg.get("movement_id") or "").strip() == active_id), None)
     # An ETA already in the past on a load still moving is stale, not news:
     # measured 2026-10-20, Augie kept yesterday's ETA on loads at the border
-    # and the pill read "53.3 Hours AHEAD". The grace covers the stop's local
-    # clock running up to an hour behind CST.
-    if leg and leg.get("eta") and leg["eta"] >= naive_now - ETA_STALE_GRACE:
-        final = normalise(leg.get("leg_dest_city")) == normalise(order.get("dest_city"))
-        eta_local = cst_to_local(leg["eta"], dest_tz) if final else leg["eta"]
-        out["eta"] = eta_local
-        out["eta_is_cst"] = not final
-        deadline = order.get("del_sched_late") if final else None
-        if final and deadline:
-            out["hours_vs_appt"] = round((eta_local - deadline).total_seconds() / 3600, 1)
-        elif not final:
-            out["eta_place"] = ", ".join(
-                p for p in (leg.get("leg_dest_city"), leg.get("leg_dest_state")) if p)
+    # and the pill read "53.3 Hours AHEAD".
+    if leg and leg.get("eta") and leg["eta"] >= utc_now - ETA_STALE_GRACE:
+        if normalise(leg.get("leg_dest_city")) == normalise(order.get("dest_city")):
+            return _final_eta(utc_to_local(leg["eta"], dest_tz), order)
+        out["eta"] = utc_to_local(leg["eta"], ORIGIN_TZ)
+        out["eta_is_cst"] = True
+        out["eta_place"] = ", ".join(
+            p for p in (leg.get("leg_dest_city"), leg.get("leg_dest_state")) if p)
     return out
+
+
+def _pickup_eta(order: dict, now_cst: datetime) -> Optional[datetime]:
+    """McLeod's ``origin_eta``, until the truck reaches the (Waco) pickup."""
+    eta = order.get("pu_eta")
+    if not eta or order.get("pu_in") or order.get("pu_out"):
+        return None
+    waco_now = now_cst.astimezone(ZoneInfo(ORIGIN_TZ)).replace(tzinfo=None)
+    return eta if eta >= waco_now - ETA_STALE_GRACE else None
 
 
 def best_location(candidates: list[tuple[Optional[str], Optional[datetime]]],
@@ -240,10 +307,11 @@ def best_location(candidates: list[tuple[Optional[str], Optional[datetime]]],
 
     Sources (2026-10-20): Augie GPS per leg, Augie phone/e-mail pings, and
     TTControl (carrier share-link polls + MacroPoint). Each covers different
-    loads — share links mostly the Mexican leg Augie never sees.
+    loads — share links mostly the Mexican leg Augie never sees. A future stamp is
+    bad data: "freshest" would otherwise let it beat every real fix.
     """
     valid = [(place, at) for place, at in candidates
-             if place and at and naive_now - at <= GPS_MAX_AGE]
+             if place and at and -FUTURE_FIX_TOLERANCE <= naive_now - at <= GPS_MAX_AGE]
     if not valid:
         return {}
     place, at = max(valid, key=lambda c: c[1])
@@ -254,7 +322,9 @@ def _location_candidates(legs: list[dict], ping: Optional[dict], tt: Optional[di
     def join(*parts: Optional[str]) -> Optional[str]:
         text = ", ".join(p for p in parts if p)
         return text or None
-    cands = [(join(lg.get("geo_city"), lg.get("geo_state")), lg.get("gps_at")) for lg in legs]
+    # Augie's gps_updated_dt holds UTC digits; everything here compares on the CST clock.
+    cands = [(join(lg.get("geo_city"), lg.get("geo_state")),
+              utc_to_local(lg["gps_at"], ORIGIN_TZ) if lg.get("gps_at") else None) for lg in legs]
     if ping:
         cands.append((join(ping.get("city"), ping.get("state")), ping.get("at_cst")))
     if tt:
@@ -270,7 +340,9 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
     legs = details.get("augie", {}).get(oid, [])
     tt = details.get("tt", {}).get(oid) or {}
     tracking = {}
-    if bucket == IN_PROGRESS:
+    arrived = bool(order.get("del_in") or order.get("del_out"))
+    # A load at its consignee needs neither an ETA nor an earlier fix from the road.
+    if bucket == IN_PROGRESS and not arrived:
         tracking = {
             **_tracking(order, legs, active, now_cst, dest_tz),
             **best_location(_location_candidates(legs, details.get("pings", {}).get(oid), tt),
@@ -281,6 +353,10 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
         (m["track_link"] for m in sorted(moves, key=lambda m: -_num(m.get("movement_id")))
          if m.get("track_link")), None)
     comment = details.get("comments", {}).get(oid)
+    raw_comment = (comment or {}).get("comment")
+    if bucket == IN_PROGRESS and "location" not in tracking and not arrived:
+        tracking = {**tracking,
+                    "last_reported": last_reported_place(raw_comment, order.get("consignee"))}
     pod = details.get("pods", {}).get(oid) or {}
     status_code = ((active or {}).get("brokerage_status") or "").strip()
     sort_key = {
@@ -307,8 +383,9 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
         pu_on_time=on_time(order.get("pu_in"), order.get("pu_sched_late")),
         del_on_time=on_time(order.get("del_in"), order.get("del_sched_late")),
         status_label=STATUS_LABELS.get(status_code) if bucket == IN_PROGRESS else None,
-        comment=customer_comment((comment or {}).get("comment"), order.get("consignee"))
+        comment=customer_comment(raw_comment, order.get("consignee"))
         if bucket == IN_PROGRESS else None,
+        pu_eta=_pickup_eta(order, now_cst) if bucket != DELIVERED else None,
         track_link=link if bucket == IN_PROGRESS else None,
         pod_link=pod.get("pod_file_url") if bucket == DELIVERED else None,
         has_pod=bool(pod.get("has_pod")) if bucket == DELIVERED else False,

@@ -95,6 +95,8 @@ def hours_pill(hours: Optional[float]) -> str:
     """Positive = the ETA is AFTER the appointment's late edge."""
     if hours is None:
         return ""
+    if abs(hours) < 0.05:
+        return pill("On schedule", True)
     if hours <= -AHEAD_CAP_HOURS:
         # Cross-border trucks reach Reynosa days before the plant's appointment
         # (measured 54-78 h); a number that large reads as an error.
@@ -122,24 +124,67 @@ def _lane_cell(card: Card, with_bol: bool = True) -> str:
     return _head("Consignee / Lane") + "".join(rows)
 
 
+def _stamp(value: datetime, colour: str) -> str:
+    """The block's headline: the time the customer cares about most (Jaime 2026-11-03,
+    "que se vea grande y muy visual"). Two lines so it fits the column without wrapping."""
+    css = f"font-size:20px;font-weight:700;line-height:24px;color:{colour};white-space:nowrap;"
+    return (f'<div {_s(css)}>{value.strftime("%m/%d/%Y")}</div>'
+            f'<div {_s(css)}>{value.strftime("%I:%M %p")}</div>')
+
+
+def _block(label: str, colour: str, inner: str) -> str:
+    """A bordered table cell: meaning stays in text + border when print drops fills."""
+    label_css = (f"font-size:11px;font-weight:700;color:{colour};letter-spacing:0.3px;"
+                 "text-transform:uppercase;margin-bottom:2px;")
+    return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            f'{_s("border-collapse:collapse;margin-bottom:6px;")}><tr>'
+            f'<td {_s(f"border:2px solid {colour};padding:6px 8px;")}>'
+            f'<div {_s(label_css)}>{label}</div>{inner}</td></tr></table>')
+
+
+def _eta_block(card: Card) -> str:
+    if card.arrived_at:
+        colour = BAD if card.del_on_time is False else GOOD
+        return _block("Arrived", colour, _stamp(card.arrived_at, colour)
+                      + _pill_line(on_time_pill(card.del_on_time)))
+    if card.eta and not card.eta_is_cst:
+        late = card.hours_vs_appt is not None and card.hours_vs_appt >= 0.05
+        colour = BAD if late else NAVY
+        return _block("ETA to delivery", colour, _stamp(card.eta, colour)
+                      + _pill_line(hours_pill(card.hours_vs_appt)))
+    # Never present the appointment as an ETA: it is what was promised, not a forecast.
+    appt = (_small("Delivery appt.") + _time(fmt_dt(card.del_sched_late))
+            if card.del_sched_late else "")
+    return _block("ETA pending", MUTED, appt)
+
+
 def _location_cell(card: Card) -> str:
-    rows = [_big(_e(card.location))]
+    rows = [_eta_block(card)]
+    if card.location:
+        rows.append(_big(escape(card.location)))
     if card.location_at:
         rows.append(_small(f"GPS {fmt_dt(card.location_at)} CST"))
-    if card.eta:
+    if card.last_reported:
+        rows.append(_small(f"Last reported at {escape(card.last_reported)}", INK))
+    if card.eta and card.eta_is_cst:
         where = f" to {escape(card.eta_place)}" if card.eta_place else ""
-        clock = " CST" if card.eta_is_cst else ""
-        rows.append(_small(f"ETA{where}: {fmt_dt(card.eta)}{clock}", INK))
-    status = escape(card.status_label or "In progress").upper()
-    rows.append(f'<div {_s("margin-top:6px;")}>'
-                f'<span {_s(f"font-size:11px;color:{INK};margin-right:6px;")}>{status}</span>'
-                f'{hours_pill(card.hours_vs_appt)}</div>')
+        rows.append(_small(f"ETA{where}: {fmt_dt(card.eta)} CST", INK))
+    label = ("Departed destination" if card.del_out
+             else "At destination" if card.del_in
+             else card.status_label or "In progress")
+    rows.append(f'<div {_s(f"font-size:11px;color:{INK};margin-top:6px;")}>'
+                f'{escape(label).upper()}</div>')
     return _head("Current Location / ETA") + "".join(rows)
+
+
+def _pickup_eta_line(card: Card) -> str:
+    return _small(f"ETA to pick up: {fmt_dt(card.pu_eta)}", INK) if card.pu_eta else ""
 
 
 def _times_in_progress(card: Card) -> str:
     pu = card.pu_in or card.pu_out
     rows = [_big(fmt_dt(pu)),
+            _pickup_eta_line(card),
             _small(f"Sched. pick up {fmt_dt(card.pu_sched_late)}"),
             _pill_line(on_time_pill(card.pu_on_time)),
             _small("-----"),
@@ -152,7 +197,8 @@ def _times_scheduled(card: Card, which: str) -> str:
         title, early, late = "Pick Up Schedule Times", card.pu_sched_early, card.pu_sched_late
     else:
         title, early, late = "Delivery Schedule Times", card.del_sched_early, card.del_sched_late
-    return _head(title) + _big(fmt_dt(early)) + _big(fmt_dt(late))
+    eta = _pickup_eta_line(card) if which == "pu" else ""
+    return _head(title) + _big(fmt_dt(early)) + _big(fmt_dt(late)) + eta
 
 
 def _times_actual(title: str, t_in, t_out, sched, flag) -> str:

@@ -17,7 +17,7 @@ import asyncio
 import os
 import re
 import types
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,6 +28,9 @@ from app.services.customer_status_email import cards, config, data, html, sender
 CST = ZoneInfo("America/Chicago")
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=CST)
 NAIVE_NOW = NOW.replace(tzinfo=None)
+# Augie's new_eta / gps_updated_dt hold UTC digits (2026-11-04: 126 of 275 recent
+# fixes were ahead of Central time, none ahead of UTC) — fixtures use real UTC.
+NAIVE_UTC = NOW.astimezone(timezone.utc).replace(tzinfo=None)
 MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
 
 
@@ -148,7 +151,7 @@ def test_on_time_uses_the_late_edge_inclusive():
     assert cards.on_time(None, t) is None and cards.on_time(t, None) is None
 
 
-def _details(eta, leg_city="DONNA", gps_at=NAIVE_NOW - timedelta(minutes=5)):
+def _details(eta, leg_city="DONNA", gps_at=NAIVE_UTC - timedelta(minutes=5)):
     return {
         "movements": {"0349842": [{"movement_id": "572650", "brokerage_status": "PROGRESS",
                                    "track_link": "https://MacroPoint-Lite.com/x"}]},
@@ -162,8 +165,8 @@ def _details(eta, leg_city="DONNA", gps_at=NAIVE_NOW - timedelta(minutes=5)):
 
 def test_final_leg_eta_gives_hours_vs_appointment():
     c = cards.build_card(_order(), cards.IN_PROGRESS,
-                         _details(datetime(2026, 10, 20, 21, 30)), NOW)
-    assert c.hours_vs_appt == 3.5 and c.eta_place is None
+                         _details(datetime(2026, 10, 21, 1, 30)), NOW)  # 20:30 local
+    assert c.hours_vs_appt == 2.5 and c.eta_place is None
     assert c.location == "CHRISTINE, TX" and c.status_label == "In transit"
     assert c.track_link and c.comment == "In transit"
 
@@ -178,13 +181,13 @@ def test_an_eta_already_past_is_dropped():
     """Measured 2026-10-20: yesterday's ETA on a load at the border read
     '53.3 Hours AHEAD'."""
     c = cards.build_card(_order(), cards.IN_PROGRESS,
-                         _details(NAIVE_NOW - timedelta(hours=20)), NOW)
+                         _details(NAIVE_UTC - timedelta(hours=20)), NOW)
     assert c.eta is None and c.hours_vs_appt is None
 
 
 def test_an_old_gps_fix_is_not_a_current_location():
     c = cards.build_card(_order(), cards.IN_PROGRESS,
-                         _details(None, gps_at=NAIVE_NOW - timedelta(hours=30)), NOW)
+                         _details(None, gps_at=NAIVE_UTC - timedelta(hours=30)), NOW)
     assert c.location is None
 
 
@@ -418,7 +421,8 @@ def test_orders_sql_shape():
     assert "b.status IN ('A', 'P', 'D')" in sql  # void never read
     assert "v.id = b.id AND v.company_id = b.company_id" in sql
     assert "w.id = b.id AND w.company_id = b.company_id" in sql
-    assert sql.count("> '2000-01-01'") == 8  # every McLeod timestamp sentinel-guarded
+    assert sql.count("> '2000-01-01'") == 10  # every McLeod timestamp sentinel-guarded
+    assert "AS pu_eta" in sql and "AS del_eta" in sql
     assert "NULLIF(btrim(v.blnum), '')" in sql and "NULLIF(btrim(v.carrier_trailer), '')" in sql
 
 
@@ -539,10 +543,10 @@ def test_naive_clock_is_rejected(patched):
 
 
 def test_eta_is_moved_to_the_destination_clock():
-    """Augie's new_eta is CST; an El Paso appointment is Mountain time. ETA 10:00
-    CST = 09:00 MT against a 09:30 MT appointment is 0.5 h AHEAD, not behind."""
+    """Augie's new_eta is UTC; an El Paso appointment is Mountain time. ETA 15:00
+    UTC = 09:00 MT against a 09:30 MT appointment is 0.5 h AHEAD, not behind."""
     order = _order(dest_city="EL PASO", del_sched_late=datetime(2026, 10, 20, 9, 30))
-    det = _details(datetime(2026, 10, 20, 10, 0), leg_city="EL PASO")
+    det = _details(datetime(2026, 10, 20, 15, 0), leg_city="EL PASO")
     early = datetime(2026, 10, 20, 8, 0, tzinfo=CST)
     c = cards.build_card(order, cards.IN_PROGRESS, det, early, "America/Denver")
     assert c.eta == datetime(2026, 10, 20, 9, 0) and c.hours_vs_appt == -0.5
@@ -647,10 +651,9 @@ def test_border_yard_comments_do_not_read_as_a_delivery():
     # The order's OWN consignee is not a yard — unchanged.
     own = "Appointment confirmed at PCA DONNA, DONNA, TX for 10/20/26 1800 to 10/20/26 1800."
     assert cc(own, "PCA DONNA") == own
-    # Anything else (Augie free text, LOADSHIP at the shipper) is untouched.
-    for text in ("In transit in Austin, TX; ETA Donna 9:00 AM.",
-                 "Loaded at the shipper Central Texas Corrugated at 10/19/26 1335."):
-        assert cc(text, "PCA DONNA") == text
+    # Augie free text is untouched.
+    text = "In transit in Austin, TX; ETA Donna 9:00 AM."
+    assert cc(text, "PCA DONNA") == text
     assert cc(None, "PCA DONNA") is None
 
 
@@ -776,7 +779,7 @@ def test_ttcontrol_without_a_secret_is_skipped(monkeypatch):
 
 
 def test_freshest_location_wins_across_sources():
-    det = _details(None, gps_at=NAIVE_NOW - timedelta(hours=3))
+    det = _details(None, gps_at=NAIVE_UTC - timedelta(hours=3))
     det["pings"] = {"0349842": {"city": "Falfurrias", "state": "TX",
                                 "at_cst": NAIVE_NOW - timedelta(hours=1)}}
     det["tt"] = {"0349842": {"share_link": "https://cloud.samsara.com/o/1/abc",
@@ -798,3 +801,176 @@ def test_ops_answer_2026_10_20_laredo_consignees():
     assert m(laredo, "Empaques Cartones y Suministros", "TLAQUEPAQUE, JA").code == "ALTOSAJA"
     assert m(laredo, "ALTA TRANSFORMACIONES", "TLAJOMULCO DE ZUNIGA, JA").code == "ALTATLJ1"
     assert m(laredo, "Alta Transformacion", "GUADALAJARA, JA").code == "ALTAGUJA"
+
+
+# ---------------------------------------------------------------------------
+# 7. Column 3 — McLeod stop ETA (origin_eta / destin_eta, Ops request 2026-11-03)
+# ---------------------------------------------------------------------------
+
+NOV_NOW = datetime(2026, 11, 4, 15, 0, tzinfo=CST)  # CST again: UTC-6
+
+
+def test_reported_load_c_1103_9_reads_5_3_hours_behind_not_11_3():
+    """The 11/04 3 PM DONNA report: 'GPS 08:44 PM CST' in a 3 PM e-mail and
+    '11.3 Hours BEHIND'. Both were UTC digits printed as CST."""
+    order = _order(del_sched_late=datetime(2026, 11, 4, 13, 0))
+    det = _details(datetime(2026, 11, 5, 0, 20), gps_at=datetime(2026, 11, 4, 20, 44))
+    c = cards.build_card(order, cards.IN_PROGRESS, det, NOV_NOW)
+    assert c.location_at == datetime(2026, 11, 4, 14, 44)
+    assert c.eta == datetime(2026, 11, 4, 18, 20)
+    assert c.hours_vs_appt == 5.3
+
+
+def test_mcleod_stop_eta_wins_and_is_already_on_the_stop_clock():
+    """Jaime 11/03: use the stop's ETA field. It is the stop's wall clock — no shift."""
+    order = _order(dest_city="EL PASO", del_sched_late=datetime(2026, 10, 20, 13, 30),
+                   del_eta=datetime(2026, 10, 20, 13, 0))
+    det = _details(datetime(2026, 10, 21, 4, 0), leg_city="EL PASO")  # Augie disagrees
+    c = cards.build_card(order, cards.IN_PROGRESS, det, NOW, "America/Denver")
+    assert c.eta == datetime(2026, 10, 20, 13, 0) and c.hours_vs_appt == -0.5
+    assert c.eta_place is None and c.eta_is_cst is False
+
+
+def test_mcleod_eta_staleness_is_judged_on_the_stop_clock():
+    # 12:00 CDT = 11:00 MT. 10:45 is 15 min past on the stop's clock: still shown.
+    kept = _order(del_eta=datetime(2026, 10, 20, 10, 45))
+    assert cards.build_card(kept, cards.IN_PROGRESS, {}, NOW, "America/Denver").eta == kept["del_eta"]
+    # 10:15 is 45 min past there: stale, whatever the appointment says.
+    gone = _order(del_eta=datetime(2026, 10, 20, 10, 15))
+    assert cards.build_card(gone, cards.IN_PROGRESS, {}, NOW, "America/Denver").eta is None
+
+
+def test_an_augie_eta_is_judged_stale_on_the_utc_clock():
+    # 14:00 UTC is 3 h past at 17:00 UTC, though its digits are after 12:00 CDT.
+    c = cards.build_card(_order(), cards.IN_PROGRESS, _details(datetime(2026, 10, 20, 14, 0)), NOW)
+    assert c.eta is None
+
+
+def test_a_stale_mcleod_eta_falls_back_to_augie():
+    order = _order(del_eta=NAIVE_NOW - timedelta(hours=9))
+    c = cards.build_card(order, cards.IN_PROGRESS, _details(datetime(2026, 10, 21, 1, 30)), NOW)
+    assert c.eta == datetime(2026, 10, 20, 20, 30)
+
+
+def test_a_future_dated_fix_never_wins():
+    det = _details(None, gps_at=NAIVE_UTC - timedelta(hours=2))
+    det["tt"] = {"0349842": {"place": "Nowhere, TX", "at_cst": NAIVE_NOW + timedelta(hours=1)}}
+    c = cards.build_card(_order(), cards.IN_PROGRESS, det, NOW)
+    assert c.location == "CHRISTINE, TX"
+
+
+def test_arrived_at_the_consignee_replaces_any_eta():
+    order = _order(del_in=datetime(2026, 10, 20, 9, 8), del_eta=datetime(2026, 10, 20, 20, 0))
+    c = cards.build_card(order, cards.IN_PROGRESS, _details(datetime(2026, 10, 21, 1, 0)), NOW)
+    assert c.eta is None and c.hours_vs_appt is None
+    out = html.card_in_progress(c)
+    assert "Arrived" in out and "10/20/2026" in out and "09:08 AM" in out
+    assert "AT DESTINATION" in out and "IN TRANSIT" not in out
+    assert "ETA pending" not in out and "CHRISTINE" not in out
+    assert c.location is None and c.location_at is None
+    assert out.count("On-Time") == 2  # pick up + arrival
+
+
+def test_a_late_arrival_is_not_shown_in_green():
+    order = _order(del_in=datetime(2026, 10, 20, 19, 0), pu_in=None, pu_out=None)
+    out = html.card_in_progress(cards.build_card(order, cards.IN_PROGRESS, {}, NOW))
+    assert "Late" in out and f"border:2px solid {html.BAD}" in out
+
+
+def test_a_departure_without_an_arrival_still_means_arrived():
+    order = _order(del_out=datetime(2026, 10, 20, 9, 30), del_eta=datetime(2026, 10, 20, 20, 0))
+    c = cards.build_card(order, cards.IN_PROGRESS, {}, NOW)
+    out = html.card_in_progress(c)
+    assert c.eta is None and "Arrived" in out and "09:30 AM" in out
+    assert "DEPARTED DESTINATION" in out and "ETA to delivery" not in out
+
+
+YARD = "Empty at consignee EC Logistics Inc., PHARR, TX at 11/03/26 0700."
+
+
+def _yard_details(comment=YARD, gps_at=None):
+    det = _details(None, gps_at=gps_at)
+    det["comments"] = {"0349842": {"comment": comment}}
+    return det
+
+
+def test_a_yard_comment_fills_the_location_only_without_a_recent_fix():
+    c = cards.build_card(_order(), cards.IN_PROGRESS, _yard_details(), NOW)
+    assert c.location is None and c.last_reported == "EC Logistics Inc., PHARR, TX"
+    assert "Last reported at EC Logistics Inc., PHARR, TX" in html.card_in_progress(c)
+    fresh = _yard_details(gps_at=NAIVE_UTC - timedelta(hours=1))
+    c = cards.build_card(_order(), cards.IN_PROGRESS, fresh, NOW)
+    assert c.location == "CHRISTINE, TX" and c.last_reported is None
+
+
+def test_last_reported_is_only_a_place_the_truck_is_still_at():
+    for comment in ("Empty at consignee PCA DONNA, DONNA, TX at 11/03/26 0700.",  # its own consignee
+                    "Departed EC Logistics Inc., PHARR, TX at 11/03/26 0700.",    # already left
+                    "Appointment confirmed at EC Logistics Inc., PHARR, TX for "
+                    "11/03/26 0700 to 11/03/26 0900.",                           # not there yet
+                    "Empty at consignee Central Texas Corrugated, WACO, TX at 11/03/26 0700.",
+                    "In transit in Austin, TX."):
+        c = cards.build_card(_order(), cards.IN_PROGRESS, _yard_details(comment), NOW)
+        assert c.last_reported is None, comment
+    arrived = _order(del_in=datetime(2026, 10, 20, 9, 8))
+    assert cards.build_card(arrived, cards.IN_PROGRESS, _yard_details(), NOW).last_reported is None
+
+
+def test_the_waco_shipper_is_never_called_a_border_yard():
+    """The 11/04 report: 'Border crossing appointment confirmed at Central Texas
+    Corrugated, WACO, TX'. Waco is where the load starts."""
+    cc = cards.customer_comment
+    assert cc("Appointment confirmed at Central Texas Corrugated, WACO, TX for "
+              "11/04/26 0300 to 11/04/26 0300.", "PCA DONNA") == (
+        "Pickup appointment confirmed at Central Texas Corrugated, WACO, TX: "
+        "11/04/2026 @ 03:00 AM to 11/04/2026 @ 03:00 AM.")
+    assert cc("Departed Central Texas Corrugated, WACO, TX at 11/04/26 0300.", "PCA DONNA") == (
+        "Departed Central Texas Corrugated, WACO, TX on 11/04/2026 @ 03:00 AM.")
+    assert cc("Departed Central Texas Corrugated at 11/04/26 0300.", "PCA DONNA") == (
+        "Departed Central Texas Corrugated on 11/04/2026 @ 03:00 AM.")  # no city
+
+
+def test_loaded_comment_gets_the_report_date_format():
+    assert cards.customer_comment("Loaded at the shipper Central Texas Corrugated at 11/04/26 0040.",
+                                  "PCA DONNA") == (
+        "Loaded at the shipper Central Texas Corrugated on 11/04/2026 @ 12:40 AM.")
+
+
+def test_the_eta_is_large_and_carries_its_pill():
+    """Jaime 11/03: 'que se vea grande y muy visual'."""
+    order = _order(del_sched_late=datetime(2026, 10, 20, 13, 0), del_eta=datetime(2026, 10, 20, 18, 20))
+    out = html.card_in_progress(cards.build_card(order, cards.IN_PROGRESS, {}, NOW))
+    assert "ETA to delivery" in out and "font-size:20px;font-weight:700" in out
+    assert "10/20/2026" in out and "06:20 PM" in out and "5.3 Hours BEHIND" in out
+
+
+def test_no_eta_says_pending_and_never_labels_the_appointment_as_an_eta():
+    out = html.card_in_progress(cards.build_card(_order(), cards.IN_PROGRESS, {}, NOW))
+    assert "ETA pending" in out and "ETA to delivery" not in out
+    assert out.count("Delivery appt.") == 2  # the block + column 4
+    assert "Hours" not in out
+
+
+def test_an_intermediate_leg_eta_stays_small_under_a_pending_block():
+    det = _details(datetime(2026, 10, 20, 19, 0), leg_city="LAREDO")
+    out = html.card_in_progress(cards.build_card(_order(), cards.IN_PROGRESS, det, NOW))
+    assert "ETA pending" in out and "ETA to LAREDO, TX: 10/20/2026 @ 02:00 PM CST" in out
+
+
+def test_pickup_eta_shows_only_before_the_truck_reaches_the_pickup():
+    future = datetime(2026, 10, 20, 15, 0)
+    waiting = _order(status="A", pu_in=None, pu_out=None, pu_eta=future)
+    c = cards.build_card(waiting, cards.SCHEDULED, {}, NOW)
+    assert c.pu_eta == future
+    assert "ETA to pick up: 10/20/2026 @ 03:00 PM" in html.card_scheduled(c)
+    stale = _order(status="A", pu_in=None, pu_out=None, pu_eta=NAIVE_NOW - timedelta(hours=3))
+    assert cards.build_card(stale, cards.SCHEDULED, {}, NOW).pu_eta is None
+    arrived = _order(pu_eta=future)
+    assert cards.build_card(arrived, cards.IN_PROGRESS, {}, NOW).pu_eta is None
+    unkeyed = _order(pu_in=None, pu_out=None, pu_eta=future)
+    c = cards.build_card(unkeyed, cards.IN_PROGRESS, {}, NOW)
+    assert "ETA to pick up: 10/20/2026 @ 03:00 PM" in html.card_in_progress(c)
+
+
+def test_an_eta_equal_to_the_appointment_reads_on_schedule():
+    assert "On schedule" in html.hours_pill(0.0) and "AHEAD" not in html.hours_pill(0.0)
