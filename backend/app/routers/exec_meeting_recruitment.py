@@ -224,9 +224,12 @@ def _iso(value: Any) -> Optional[str]:
 # Time-off reads
 # ---------------------------------------------------------------------------
 
+# EXTERNAL_CONSULTANT: `isActive` means "may log in" across the fleet, so it no longer
+# means "employee". Compared as text: as the enum, a label a database lacks raises 22P02.
 _TIMEOFF_EXCLUDE = """
       AND email <> ALL($1::text[])
       AND (department IS NULL OR LOWER(TRIM(department)) <> ALL($2::text[]))
+      AND role::text <> 'EXTERNAL_CONSULTANT'
 """
 
 

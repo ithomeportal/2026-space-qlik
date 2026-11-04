@@ -19,6 +19,7 @@ from app.services.keepwarm_monitor import classify_keepwarm_source
 from app.services.msgraph_mailer import graph_configured
 from app.routers import (
     public_display,
+    read_only_guard,
     admin,
     ai_chat,
     admin_cashflow,
@@ -2144,6 +2145,10 @@ async def _timing_log(request: Request, call_next):
 # runs (contract SPEC-CONTRACTS.md §1). Registered after `_timing_log`, so it
 # runs first (Starlette applies the last-added middleware outermost).
 app.middleware("http")(bot_identity.bot_assertion_route_guard)
+
+# READ_ONLY_EMAILS may view and change nothing: 403 on every non-safe method, ahead of
+# every router below (and of any added later).
+app.middleware("http")(read_only_guard.read_only_guard)
 
 app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
