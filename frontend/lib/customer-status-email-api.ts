@@ -96,6 +96,57 @@ export function useCustomerEmailActivity(days: number, report: string | null) {
   })
 }
 
+export interface CoverageMissing {
+  orderId: string
+  po: string | null
+  trailer: string | null
+  consignee: string | null
+  lane: string
+  status: string | null
+  deliveryAppt: string | null
+  etaPassed: string | null
+  shownInstead: "augie" | "estimate" | null
+}
+
+export interface CoverageReport {
+  key: string
+  subject: string
+  inProgress: number
+  open: number
+  keyed: number
+  augie: number
+  estimated: number
+  missing: CoverageMissing[]
+}
+
+export interface CoverageTrendDay {
+  day: string
+  report: string
+  keyed: number
+  open: number
+}
+
+export interface CoverageData {
+  reports: CoverageReport[]
+  trend: CoverageTrendDay[]
+  asOf: string
+}
+
+// Reads the datalake on every call, so it refreshes far less often than the activity log.
+export function useEtaCoverage() {
+  return useQuery({
+    queryKey: ["customer-status-email", "coverage"],
+    queryFn: async () => {
+      const res = await apiFetch<CoverageData>(`${API_BASE}/coverage`)
+      if (!res.success || !res.data) throw new Error(res.error ?? "Failed to load ETA coverage")
+      return res.data
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: 300_000,
+    ...RETRY,
+  })
+}
+
 export function previewUrl(key: string): string {
   return `/api/proxy/${API_BASE}/${key}/preview`
 }

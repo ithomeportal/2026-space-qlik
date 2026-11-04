@@ -479,7 +479,7 @@ _GOLD = os.environ.get("SAVINGS_DATABASE_URL", "")
 def test_live_every_gold_statement_parses():
     """§81: text is not validity. PREPARE what production runs."""
     statements = [data.ORDERS_SQL, data.FRESHNESS_SQL, data.MOVEMENTS_SQL, data.AUGIE_SQL,
-                  data.COMMENTS_SQL]
+                  data.COMMENTS_SQL, data.TRANSIT_SQL, data.STOP_EVENTS_SQL]
 
     async def run():
         import asyncpg

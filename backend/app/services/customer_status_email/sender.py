@@ -89,6 +89,19 @@ FROM customer_status_email_log
 """
 
 # The Customer E-mail Activity panel reads this (routers/customer_status_email.py).
+# Coverage by day, scheduled sends only: a manual test would double-count a slot.
+COVERAGE_TREND_SQL = """
+SELECT left(slot_key, 10)                 AS day,
+       report_key                         AS report,
+       sum((counts->>'eta_keyed')::int)   AS keyed,
+       sum((counts->>'eta_open')::int)    AS open
+FROM customer_status_email_log
+WHERE claimed_at >= NOW() - make_interval(days => $1)
+  AND status = 'sent' AND mode <> 'manual' AND counts ? 'eta_open'
+GROUP BY 1, 2
+ORDER BY 1, 2
+"""
+
 ACTIVITY_SQL = """
 SELECT report_key, slot_key, mode, status, counts, subject, recipients, loads, error,
        to_char(claimed_at  AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD"T"HH24:MI:SS') AS claimed_at,
@@ -231,12 +244,12 @@ async def run_slot(app: Any, now_cst: Optional[datetime] = None) -> dict:
         record = sent_record(rc, routing, now_cst)
         if rc.is_empty():
             # No loads in any section ⇒ nothing to tell the customer (user 2026-10-20).
-            await _finish(hub, report.key, slot, "skipped", rc.counts(), None, record)
+            await _finish(hub, report.key, slot, "skipped", rc.log_counts(), None, record)
             outcome[report.key] = "skipped"
             continue
         try:
             await deliver(rc, routing, now_cst)
-            await _finish(hub, report.key, slot, "sent", rc.counts(), None, record)
+            await _finish(hub, report.key, slot, "sent", rc.log_counts(), None, record)
             outcome[report.key] = "sent"
         except Exception as exc:  # noqa: BLE001 — isolate; re-raised below
             logger.error("customer status email %s %s failed: %s", report.key, slot, exc)

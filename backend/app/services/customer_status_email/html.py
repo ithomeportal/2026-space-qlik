@@ -152,6 +152,9 @@ def _eta_block(card: Card) -> str:
         colour = BAD if late else NAVY
         return _block("ETA to delivery", colour, _stamp(card.eta, colour)
                       + _pill_line(hours_pill(card.hours_vs_appt)))
+    if card.est_eta:
+        note = "Based on typical transit for this lane, not a confirmed ETA."
+        return _block("Estimated arrival", NAVY, _stamp(card.est_eta, NAVY) + _small(note))
     # Never present the appointment as an ETA: it is what was promised, not a forecast.
     appt = (_small("Delivery appt.") + _time(fmt_dt(card.del_sched_late))
             if card.del_sched_late else "")

@@ -7,6 +7,7 @@ import { ReportGuard } from "@/components/ReportGuard"
 import { useCustomerEmailActivity } from "@/lib/customer-status-email-api"
 import { TodayGrid } from "./TodayGrid"
 import { ActivityTable } from "./ActivityTable"
+import { EtaCoverage } from "./EtaCoverage"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
 
 const WINDOWS = [1, 7, 30, 90] as const
@@ -53,7 +54,7 @@ function Content() {
           <div>
             <h1 className="text-lg font-semibold text-slate-900">Customer E-mail Activity<FavoriteToggle /></h1>
             <p className="text-xs text-slate-500">
-              Automated PCA load-status e-mails: what went out, when, to whom and with how many loads.
+              Automated PCA load-status e-mails: what went out, when, to whom, with how many loads, and which loads still need an ETA.
             </p>
           </div>
         </div>
@@ -96,6 +97,8 @@ function Content() {
         </div>
         {data && <span className="text-xs text-slate-500">{data.rows.length} e-mail(s)</span>}
       </div>
+
+      <EtaCoverage report={report} />
 
       {data && <ActivityTable rows={data.rows} />}
     </div>

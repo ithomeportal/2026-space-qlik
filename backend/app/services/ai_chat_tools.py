@@ -77,6 +77,8 @@ SECTION_ALLOWLIST = frozenset({
     "teams-breakdown", "top-lanes-combo", "top5", "trend", "trend-12m", "trend-30d",
     "trend-daily", "trend-yoy", "trends", "trio-tables", "weekly", "weekly-movers",
     "weekly-performance", "weekly-trends", "workdays", "wow-variation", "activity",
+    # Customer E-mail Activity: ETA keyed on how many loads. Load ids, no addresses.
+    "coverage",
     # Collections Settlement Forecast (2026-10-27): read-only cash in/out.
     "this-week", "weeks", "accuracy", "sources",
     # Ops Portal KPI chart "Fuel" (2026-10-31): public EIA diesel prices, read-only.

@@ -35,6 +35,8 @@ IN_PROGRESS = "in_progress"
 SCHEDULED = "scheduled"
 DELIVERED = "delivered"
 BUCKETS = (IN_PROGRESS, SCHEDULED, DELIVERED)
+MCLEOD = "mcleod"
+AUGIE = "augie"
 
 DELIVERED_WINDOW = timedelta(hours=24)
 # A GPS fix older than this is not a "current location".
@@ -82,6 +84,9 @@ class Card:
     last_reported: Optional[str] = None  # the yard the load waits at, when no recent fix
     eta: Optional[datetime] = None      # final-stop ETA on the stop's clock, else leg ETA (CST)
     pu_eta: Optional[datetime] = None   # McLeod origin_eta, until the truck reaches the pickup
+    eta_source: Optional[str] = None    # MCLEOD / AUGIE: who supplied a final-stop ETA
+    eta_passed: Optional[datetime] = None  # a McLeod ETA hidden because it has gone by
+    est_eta: Optional[datetime] = None  # calculated from lane history (estimate.py), never keyed
     eta_place: Optional[str] = None     # set when the ETA is to an intermediate leg
     eta_is_cst: bool = False            # intermediate-leg ETA stays on the CST clock
     hours_vs_appt: Optional[float] = None  # +behind / −ahead, final leg only
@@ -110,6 +115,15 @@ class ReportCards:
     def counts(self) -> dict[str, int]:
         return {IN_PROGRESS: len(self.in_progress), SCHEDULED: len(self.scheduled),
                 DELIVERED: len(self.delivered)}
+
+    def log_counts(self) -> dict[str, int]:
+        """What each send records, so the panel can show coverage over time."""
+        open_loads = self.awaiting_arrival()
+        return {**self.counts(), "eta_open": len(open_loads),
+                "eta_keyed": sum(c.eta_source == MCLEOD for c in open_loads)}
+
+    def awaiting_arrival(self) -> tuple[Card, ...]:
+        return tuple(c for c in self.in_progress if not c.arrived_at)
 
 
 def is_waco_pickup(order: dict) -> bool:
@@ -145,16 +159,17 @@ def on_time(actual: Optional[datetime], deadline: Optional[datetime]) -> Optiona
 
 # McLeod stop comments: "<verb> <PLACE, CITY, ST> at|for MM/DD/YY HHMM[ to MM/DD/YY HHMM]."
 _MCLEOD_TS = r"(\d\d/\d\d/\d\d) (\d\d)(\d\d)"
-_EMPTY_AT = re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$")
+EMPTY_AT = re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$")
+DEPARTED = re.compile(rf"^Departed (?P<place>.+?) at {_MCLEOD_TS}\.?$")
 _APPOINTMENT = re.compile(rf"^Appointment confirmed at (?P<place>.+?) for {_MCLEOD_TS} to "
                          rf"(\d\d/\d\d/\d\d) (\d\d)(\d\d)\.?$")
 _STOP_PATTERNS = (
     # (regex, wording at a border yard, wording at the Waco shipper) — {place} is
     # the stop, {at} / {to} formatted times.
-    (_EMPTY_AT,
+    (EMPTY_AT,
      "At {place} for customs clearance since {at}.",
      "At {place} since {at}."),
-    (re.compile(rf"^Departed (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
+    (DEPARTED,
      "Cleared customs and departed {place} on {at}; continuing to final destination.",
      "Departed {place} on {at}."),
     (_APPOINTMENT,
@@ -172,6 +187,14 @@ def _fmt_mcleod(day: str, hh: str, mm: str) -> str:
     return f"{day[:6]}20{day[6:]} @ {h % 12 or 12:02d}:{mm} {'AM' if h < 12 else 'PM'}"
 
 
+def parse_mcleod_time(day: str, hh: str, mm: str) -> Optional[datetime]:
+    """'11/04/26', '00', '40' → that wall time; None for an impossible value."""
+    try:
+        return datetime.strptime(f"{day} {hh}{mm}", "%m/%d/%y %H%M")
+    except ValueError:
+        return None
+
+
 def _comment_rank(row: dict) -> tuple[int, datetime, str]:
     """Stop event (latest event time) > free text > appointment; the text settles a tie."""
     text = (row.get("comment") or "").strip()
@@ -181,11 +204,10 @@ def _comment_rank(row: dict) -> tuple[int, datetime, str]:
         m = pattern.match(text)
         if not m:
             continue
-        day, hh, mm = m.groups()[1:4]
-        try:
-            return (2, datetime.strptime(f"{day} {hh}{mm}", "%m/%d/%y %H%M"), text)
-        except ValueError:
-            break
+        at = parse_mcleod_time(*m.groups()[1:4])
+        if at:
+            return (2, at, text)
+        break
     return (1, datetime.min, text)
 
 
@@ -199,12 +221,12 @@ def newest_comment(tied: list[dict]) -> dict:
     return max(tied, key=_comment_rank)
 
 
-def _is_own_consignee(place: str, consignee: Optional[str]) -> bool:
+def is_own_consignee(place: str, consignee: Optional[str]) -> bool:
     final = normalise(consignee)
     return bool(final) and normalise(place).startswith(final)
 
 
-def _is_origin(place: str) -> bool:
+def is_origin(place: str) -> bool:
     """The Waco shipper — where the load starts, so never a border yard.
 
     McLeod comments name it with or without its city ("Loaded at the shipper
@@ -220,8 +242,8 @@ def last_reported_place(comment: Optional[str], consignee: Optional[str]) -> Opt
     Only "Empty at consignee <yard>" places the truck there: "Departed" means it
     left and "Appointment confirmed" means it has not arrived yet.
     """
-    m = _EMPTY_AT.match((comment or "").strip())
-    if not m or _is_own_consignee(m.group("place"), consignee) or _is_origin(m.group("place")):
+    m = EMPTY_AT.match((comment or "").strip())
+    if not m or is_own_consignee(m.group("place"), consignee) or is_origin(m.group("place")):
         return None
     return m.group("place")
 
@@ -244,9 +266,9 @@ def customer_comment(comment: Optional[str], consignee: Optional[str]) -> Option
         m = pattern.match(comment.strip())
         if not m:
             continue
-        if _is_own_consignee(m.group("place"), consignee):
+        if is_own_consignee(m.group("place"), consignee):
             return comment
-        wording = at_origin if _is_origin(m.group("place")) else at_yard
+        wording = at_origin if is_origin(m.group("place")) else at_yard
         g = m.groups()
         to = _fmt_mcleod(*g[4:7]) if len(g) >= 7 else ""
         return wording.format(place=m.group("place"), at=_fmt_mcleod(*g[1:4]), to=to)
@@ -273,11 +295,11 @@ def utc_to_local(value: datetime, tz: str) -> datetime:
     return value.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz)).replace(tzinfo=None)
 
 
-def _final_eta(eta_local: datetime, order: dict) -> dict:
+def _final_eta(eta_local: datetime, order: dict, source: str) -> dict:
     """An ETA to the final stop, with hours against the appointment when there is one."""
     deadline = order.get("del_sched_late")
     hours = {"hours_vs_appt": round((eta_local - deadline).total_seconds() / 3600, 1)} if deadline else {}
-    return {"eta": eta_local, **hours}
+    return {"eta": eta_local, "eta_source": source, **hours}
 
 
 def _tracking(order: dict, legs: list[dict], active: Optional[dict],
@@ -300,9 +322,9 @@ def _tracking(order: dict, legs: list[dict], active: Optional[dict],
     mcleod_eta = order.get("del_eta")
     stop_now = now_cst.astimezone(ZoneInfo(dest_tz)).replace(tzinfo=None)
     if mcleod_eta and mcleod_eta >= stop_now - ETA_STALE_GRACE:
-        return _final_eta(mcleod_eta, order)
+        return _final_eta(mcleod_eta, order, MCLEOD)
 
-    out: dict = {}
+    out: dict = {"eta_passed": mcleod_eta} if mcleod_eta else {}
     utc_now = now_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
     active_id = str((active or {}).get("movement_id") or "").strip()
@@ -312,7 +334,7 @@ def _tracking(order: dict, legs: list[dict], active: Optional[dict],
     # and the pill read "53.3 Hours AHEAD".
     if leg and leg.get("eta") and leg["eta"] >= utc_now - ETA_STALE_GRACE:
         if normalise(leg.get("leg_dest_city")) == normalise(order.get("dest_city")):
-            return _final_eta(utc_to_local(leg["eta"], dest_tz), order)
+            return {**out, **_final_eta(utc_to_local(leg["eta"], dest_tz), order, AUGIE)}
         out["eta"] = utc_to_local(leg["eta"], ORIGIN_TZ)
         out["eta_is_cst"] = True
         out["eta_place"] = ", ".join(
@@ -380,6 +402,12 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
     link = tt.get("share_link") or (active or {}).get("track_link") or next(
         (m["track_link"] for m in sorted(moves, key=lambda m: -_num(m.get("movement_id")))
          if m.get("track_link")), None)
+    # Only while nothing better exists, and only a time still ahead of us: a truck
+    # past its lane's typical arrival has told us the typical trip does not apply.
+    estimate = details.get("estimates", {}).get(oid)
+    if (bucket == IN_PROGRESS and not arrived and estimate and "eta_source" not in tracking
+            and estimate >= now_cst.astimezone(ZoneInfo(dest_tz)).replace(tzinfo=None)):
+        tracking = {**tracking, "est_eta": estimate}
     comment = details.get("comments", {}).get(oid)
     raw_comment = (comment or {}).get("comment")
     if bucket == IN_PROGRESS and "location" not in tracking and not arrived:
@@ -420,6 +448,36 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
         sort_key=sort_key,
         **tracking,
     )
+
+
+def eta_coverage(rc: ReportCards) -> dict:
+    """How many loads on their way carry an ETA Ops keyed in McLeod, and which do not.
+
+    Arrived loads are out: they need no ETA. An Augie ETA or an estimate fills the
+    customer's card, but only a keyed ETA counts here, so this measures the Ops habit.
+    """
+    open_loads = rc.awaiting_arrival()
+    missing = [c for c in open_loads if c.eta_source != MCLEOD]
+    return {
+        "key": rc.report.key,
+        "subject": rc.report.subject,
+        "inProgress": len(rc.in_progress),
+        "open": len(open_loads),
+        "keyed": len(open_loads) - len(missing),
+        "augie": sum(c.eta_source == AUGIE for c in open_loads),
+        "estimated": sum(c.est_eta is not None for c in open_loads),
+        "missing": [{
+            "orderId": c.order_id, "po": c.po, "trailer": c.trailer, "consignee": c.consignee,
+            "lane": c.lane, "status": c.status_label,
+            "deliveryAppt": _iso(c.del_sched_late), "etaPassed": _iso(c.eta_passed),
+            "shownInstead": ("augie" if c.eta_source == AUGIE
+                             else "estimate" if c.est_eta else None),
+        } for c in sorted(missing, key=lambda c: c.sort_key)],
+    }
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value else None
 
 
 def _lane(order: dict) -> str:

@@ -2,6 +2,7 @@
 
     GET  /api/custom/customer-status-email/activity?days=7&report=   sends log + today's grid
     GET  /api/custom/customer-status-email/reports                   the 4 reports + schedule
+    GET  /api/custom/customer-status-email/coverage                  ETA keyed on how many loads
     GET  /api/custom/customer-status-email/{key}/preview             the e-mail as it would go NOW
     POST /api/custom/customer-status-email/{key}/send-test           mail it NOW — ADMIN only,
                                                                      ALWAYS test routing
@@ -27,11 +28,13 @@ from app.clock import cst_now
 from app.config import settings
 from app.routers.deps import get_pool, require_admin, require_user
 from app.routers.digest_auth import CRON_IDENTITY, is_cron_bearer, require_digest_access
+from app.services.customer_status_email.cards import eta_coverage
 from app.services.customer_status_email.config import REPORTS, REPORTS_BY_KEY
 from app.services.customer_status_email.data import StaleFeedError
 from app.services.customer_status_email.html import render
 from app.services.customer_status_email.sender import (
     ACTIVITY_SQL,
+    COVERAGE_TREND_SQL,
     FIRST_SEND_SQL,
     build_all,
     routing_for,
@@ -45,6 +48,8 @@ REPORT_KEY = "customer-status-email"
 # A slot with no log row this long after its hour is MISSED — the job never ran
 # (a dead dyno, an unregistered job). The :20 retry is inside this grace.
 MISSED_AFTER = timedelta(minutes=45)
+
+COVERAGE_TREND_DAYS = 30
 
 router = APIRouter(tags=["customer-status-email"], prefix=f"/custom/{REPORT_KEY}")
 _read_gate = require_digest_access(REPORT_KEY)
@@ -133,6 +138,26 @@ async def activity(
             "now": now.strftime("%Y-%m-%dT%H:%M:%S"),
         },
         "meta": {"total": len(rows), "page": 1, "limit": 1000},
+    }
+
+
+@router.get("/coverage")
+async def coverage(request: Request, _caller: dict = Depends(_read_gate)):
+    """ETA keyed in McLeod on X of Y loads, per report, plus the loads without one."""
+    now = cst_now()
+    try:
+        by_key, _ = await build_all(request.app, now)
+    except StaleFeedError as exc:
+        raise HTTPException(status_code=503, detail=f"order feed unusable: {exc}") from exc
+    async with get_pool(request).acquire() as conn:
+        trend = [dict(r) for r in await conn.fetch(COVERAGE_TREND_SQL, COVERAGE_TREND_DAYS)]
+    return {
+        "success": True,
+        "data": {
+            "reports": [eta_coverage(by_key[r.key]) for r in REPORTS],
+            "trend": trend,
+            "asOf": now.strftime("%Y-%m-%dT%H:%M:%S"),
+        },
     }
 
 

@@ -31,7 +31,8 @@ import httpx
 
 from app.config import settings
 from app.services.customer_status_email.cards import newest_comment
-from app.services.customer_status_email.config import BILL_TO
+from app.services.customer_status_email.config import BILL_TO, ORIGIN_CITY, ORIGIN_STATE
+from app.services.customer_status_email.estimate import build_lanes, estimate_arrival
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,33 @@ WHERE l.order_id = ANY($1::varchar[])
 ORDER BY l.order_id, l.event_utc DESC
 """
 
+# Delivered Waco loads a lane's typical transit is learned from (estimate.py).
+TRANSIT_LOOKBACK_DAYS = 180
+TRANSIT_SQL = f"""
+SELECT b.id                                            AS id,
+       NULLIF(btrim(v.location_name), '')              AS consignee,
+       {_ts('w.orig_actual_departure')}                AS pu_out,
+       w.dest_actual_arrival                           AS del_in,
+       {_ts('w.dest_sched_arrive_late')}               AS del_sched_late
+FROM mcleod_gld_budget_report_v4 b
+JOIN mcleod_gld_customer_view    v ON v.id = b.id AND v.company_id = b.company_id
+JOIN mcleod_gld_customer_windows w ON w.id = b.id AND w.company_id = b.company_id
+WHERE b.customer_id = $1
+  AND b.status = 'D'
+  AND b.ordered_date >= $2
+  AND upper(btrim(b.origin_city_name)) = $3
+  AND upper(btrim(b.origin_state_id)) = $4
+  AND w.dest_actual_arrival > '2000-01-01'
+"""
+
+# What the truck did at each stop. Never shown to a customer, so no type allow-list.
+STOP_EVENTS_SQL = """
+SELECT h.id AS id, btrim(h.comments) AS comment
+FROM mcleod_gld_order_post_hist h
+WHERE h.id = ANY($1::varchar[])
+  AND (h.comments LIKE 'Departed %' OR h.comments LIKE 'Empty at consignee %')
+"""
+
 TTCONTROL_PATH = "/api/share/customer-tracking"
 TTCONTROL_BATCH = 200  # the route's own cap
 TTCONTROL_TIMEOUT_S = 20.0
@@ -221,7 +249,7 @@ async def fetch_details(
     """
     if not orders:
         return {"movements": {}, "augie": {}, "comments": {}, "pods": {}, "pings": {},
-                "tt": {}}
+                "tt": {}, "estimates": {}}
     padded_ids = sorted({o["id"] for o in orders})
     padded_cos = sorted({o["company_id"] for o in orders})
     trimmed_ids = sorted({i.strip() for i in padded_ids})
@@ -252,10 +280,39 @@ async def fetch_details(
         "comments": {oid: newest_comment(tied) for oid, tied in _group(comments).items()},
         "pods": pods,
         "pings": {r["id"].strip(): dict(r) for r in pings},
+        "estimates": await fetch_estimates(gold_pool, orders, now_cst),
         # Only loads still moving need a live link / position.
         "tt": await fetch_ttcontrol(
             sorted({o["id"].strip() for o in orders if (o.get("status") or "").strip() == "P"})),
     }
+
+
+async def fetch_estimates(pool: Any, orders: list[dict], now_cst: datetime) -> dict[str, datetime]:
+    """Calculated arrivals for in-progress loads, keyed by trimmed id.
+
+    Optional and fail-SOFT: a failed read logs an error and the cards say "ETA pending",
+    which is true. The e-mail must not stop over an extra.
+    """
+    moving = [o for o in orders if (o.get("status") or "").strip() == "P"]
+    if not moving:
+        return {}
+    since = now_cst.replace(tzinfo=None) - timedelta(days=TRANSIT_LOOKBACK_DAYS)
+    try:
+        async with pool.acquire() as conn:
+            delivered = [dict(r) for r in await conn.fetch(
+                TRANSIT_SQL, BILL_TO, since, ORIGIN_CITY, ORIGIN_STATE)]
+            ids = sorted({o["id"] for o in moving} | {d["id"] for d in delivered})
+            rows = await conn.fetch(STOP_EVENTS_SQL, ids)
+    except Exception as exc:  # noqa: BLE001 — optional enrichment
+        logger.error("customer status email: estimates unavailable: %s", exc)
+        return {}
+    comments: dict[str, list[str]] = {}
+    for r in rows:
+        comments.setdefault(r["id"].strip(), []).append(r["comment"])
+    lanes = build_lanes(delivered, comments)
+    found = {o["id"].strip(): estimate_arrival(o, comments.get(o["id"].strip(), ()), lanes)
+             for o in moving}
+    return {oid: at for oid, at in found.items() if at}
 
 
 async def fetch_ttcontrol(order_ids: list[str]) -> dict[str, dict]:
