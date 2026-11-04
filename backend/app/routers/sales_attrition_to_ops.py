@@ -4,8 +4,9 @@ Mirrors Bruno's Qlik app `9b669acd-bf18-4467-9dbc-adeaec537670`
 ("BRUNO -- Attrition to Sales") as a portal-native report. Every panel
 reads from `public.mcleod_gld_budget_report_v4` (datalake gold).
 
-Scope (verbatim from PDF + project conventions):
-- team_id     IN (TEAM1..TEAM5, TEAM-DFW)
+Scope (from PDF + project conventions):
+- team_id     IN ALL_TEAMS: the PDF's TEAM1..TEAM5, TEAM-DFW, plus the
+              historical teams (owner decision 2026-11-04, see ALL_TEAMS)
 - company_id  IN (TMS, TMS3)
 - status      IN (D, P)
 - customer_name NOT LIKE '%UNILINK%'   (project-wide exclusion)
@@ -13,7 +14,8 @@ Scope (verbatim from PDF + project conventions):
 
 Endpoints
 ---------
-- GET /filters  — distinct customers (within 365d window) + canonical teams
+- GET /filters  — distinct customers with their codes + canonical teams. Presets
+                  list the last ~13 months; a Custom range lists exactly that range.
 - GET /details  — main per-customer table; honors Date / Teams / Customer /
                   days-bucket; embeds an 8-week #Loads sparkline per row.
 - GET /trend    — three monthly series (#Loads / $Profit / %Margin) over a
@@ -37,7 +39,14 @@ from app.datalake import pad_variants as _pad_variants
 from app.division_marker import division_team_id_sql, team_membership_sql
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
-ALL_TEAMS = ("TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM-DFW")
+# Historical teams, added 2026-11-04 so an old customer is not hidden just because
+# its team no longer ships (none has since 2024-11, so current views are unchanged).
+# Left out on purpose, as non-sales or person-style codes: N/A, ADMIN, CHRMEN,
+# JMCGHEE, CAROD, CARODR. Mirrored in the report's page.tsx.
+ALL_TEAMS = (
+    "TEAM1", "TEAM2", "TEAM3", "TEAM4", "TEAM5", "TEAM6", "TEAM-DFW",
+    "BD1", "BD2", "BD3", "TEAM-OCA",
+)
 COMPANIES = ("TMS", "TMS3")
 OPEN_STATUSES = ("D", "P")
 
@@ -94,6 +103,23 @@ def _resolve_range(
     return today - timedelta(days=365), today
 
 
+def _customer_list_bounds(
+    rng: Optional[str],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> tuple[date, Optional[date]]:
+    """Departure bounds [lower, upper) for the Customer box.
+
+    A Custom range lists exactly that range, however old. A preset keeps the
+    ~13-month list: the trend strip ignores the Date filter, so a preset must not
+    narrow who can be picked for it.
+    """
+    if rng == "custom":
+        s, e = _resolve_range(rng, start_date, end_date)
+        return s, e + timedelta(days=1)
+    return cst_today() - timedelta(days=WINDOW_FLOOR_DAYS), None
+
+
 def _parse_teams(teams: Optional[str]) -> list[str]:
     if not teams:
         return list(ALL_TEAMS)
@@ -148,14 +174,20 @@ def _days_bucket_having(bucket: Optional[str]) -> Optional[str]:
 @router.get("/filters")
 async def filters(
     request: Request,
+    range: Optional[str] = Query("last_365"),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
     _user: dict = Depends(require_report_access("sales-attrition-to-ops")),
 ):
-    """Available teams + distinct customer list (within scope, 13-month floor)."""
+    """Available teams + customers with their codes, within scope and date bounds."""
     pool = get_datalake_gold_pool(request)
-    floor = cst_today() - timedelta(days=WINDOW_FLOOR_DAYS)
+    lower, upper = _customer_list_bounds(range, start_date, end_date)
     rows = await pool.fetch(
         """
-        SELECT DISTINCT TRIM(customer_name) AS customer_name
+        SELECT
+          TRIM(customer_name) AS customer_name,
+          ARRAY_AGG(DISTINCT TRIM(customer_id))
+            FILTER (WHERE NULLIF(TRIM(customer_id), '') IS NOT NULL) AS codes
         FROM public.mcleod_gld_budget_report_v4
         WHERE team_id    = ANY($1)
           AND company_id = ANY($2)
@@ -165,18 +197,26 @@ async def filters(
           AND customer_name IS NOT NULL
           AND TRIM(customer_name) <> ''
           AND origin_actual_departure >= $4
-        ORDER BY customer_name
+          AND ($5::timestamp IS NULL OR origin_actual_departure < $5)
+        GROUP BY 1
+        ORDER BY 1
         """,
         _pad_variants(ALL_TEAMS, width=8),
         _pad_variants(COMPANIES, width=4),
         _pad_variants(OPEN_STATUSES, width=1),
-        floor,
+        lower,
+        upper,
     )
+    named = [r for r in rows if r["customer_name"]]
     return {
         "success": True,
         "data": {
             "teams": list(ALL_TEAMS),
-            "customers": [r["customer_name"] for r in rows if r["customer_name"]],
+            "customers": [r["customer_name"] for r in named],
+            "customer_options": [
+                {"name": r["customer_name"], "codes": list(r["codes"] or [])}
+                for r in named
+            ],
             "buckets": list(DAYS_BUCKETS.keys()),
         },
     }
@@ -245,6 +285,7 @@ async def details(
     WITH filtered AS (
       SELECT
         TRIM(br4.customer_name)            AS customer,
+        NULLIF(TRIM(br4.customer_id), '')  AS customer_code,
         {division_team_id_sql("br4")} AS team,  -- DFW-marker rule, 2026-10-28
         br4.id,
         br4.total_charge,
@@ -257,6 +298,9 @@ async def details(
     agg AS (
       SELECT
         customer,
+        -- A name can hold more than one code (6 names measured 2026-11-04).
+        ARRAY_AGG(DISTINCT customer_code)
+          FILTER (WHERE customer_code IS NOT NULL)                  AS codes,
         -- Pick the team with the most loads as the customer's primary team.
         (ARRAY_AGG(team ORDER BY 1) FILTER (WHERE team IS NOT NULL))[1] AS team,
         COUNT(id) FILTER (WHERE total_charge <> 0)                  AS loads,
@@ -302,6 +346,7 @@ async def details(
     )
     SELECT
       a.customer,
+      a.codes,
       a.team,
       a.loads,
       a.revenue,
@@ -344,6 +389,7 @@ async def details(
     out_rows = [
         {
             "customer": r["customer"],
+            "codes": list(r["codes"] or []),
             "team": r["team"],
             "loads": int(r["loads"] or 0),
             "revenue": float(r["revenue"] or 0),

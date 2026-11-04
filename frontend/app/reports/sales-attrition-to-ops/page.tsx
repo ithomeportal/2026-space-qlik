@@ -15,6 +15,7 @@ import {
   type SaopTrendPoint,
 } from "@/lib/sales-attrition-to-ops-api"
 import { ErrorBanner } from "./ErrorBanner"
+import { Sparkline } from "./Sparkline"
 import { fmtInt, fmtMoney, fmtPct, fmtDate } from "./format"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
@@ -25,7 +26,12 @@ const ALL_TEAMS = [
   "TEAM3",
   "TEAM4",
   "TEAM5",
+  "TEAM6",
   "TEAM-DFW",
+  "BD1",
+  "BD2",
+  "BD3",
+  "TEAM-OCA",
 ] as const
 
 const BUCKET_OPTIONS: { key: SaopBucket; label: string }[] = [
@@ -121,7 +127,7 @@ function SaopContent() {
     [range, startDate, endDate, teams, customer, bucket],
   )
 
-  const { data: filterRes, isLoading: loadingFilters } = useSaopFilters()
+  const { data: filterRes, isLoading: loadingFilters } = useSaopFilters(range, startDate, endDate)
   const filterOptions = filterRes?.data
   const detailsQ = useSaopDetails(filters, sort, page, limit)
   const trendQ = useSaopTrend(teams, customer || undefined)
@@ -129,11 +135,17 @@ function SaopContent() {
   const [customerInput, setCustomerInput] = useState<string>("")
   const customerSuggestions = useMemo(() => {
     const q = customerInput.trim().toLowerCase()
-    if (!q || !filterOptions?.customers) return []
-    return filterOptions.customers
-      .filter((c) => c.toLowerCase().includes(q))
+    if (!q || !filterOptions?.customer_options) return []
+    return filterOptions.customer_options
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.codes.some((code) => code.toLowerCase().includes(q)),
+      )
       .slice(0, 8)
   }, [customerInput, filterOptions])
+  const noCustomerMatch =
+    customerInput.trim() !== "" && !loadingFilters && customerSuggestions.length === 0
 
   const totals = detailsQ.data?.data?.totals
   const rows = detailsQ.data?.data?.rows ?? []
@@ -250,7 +262,7 @@ function SaopContent() {
             <input
               type="text"
               placeholder={
-                loadingFilters ? "Loading…" : customer || "All customers"
+                loadingFilters ? "Loading…" : customer || "All customers (name or code)"
               }
               value={customerInput}
               onChange={(e) => setCustomerInput(e.target.value)}
@@ -260,19 +272,28 @@ function SaopContent() {
             {customerInput && customerSuggestions.length > 0 && (
               <ul className="absolute left-[calc(theme(spacing.2)+4.5rem)] top-full z-30 mt-1 max-h-64 w-64 overflow-auto rounded-md border border-[#E5E7EB] bg-white text-xs shadow-md">
                 {customerSuggestions.map((c) => (
-                  <li key={c}>
+                  <li key={c.name}>
                     <button
                       onMouseDown={() => {
-                        setCustomer(c)
+                        setCustomer(c.name)
                         setCustomerInput("")
                       }}
                       className="block w-full truncate px-3 py-1.5 text-left hover:bg-[#F3F4F6]"
                     >
-                      {c}
+                      {c.name}
+                      {c.codes.length > 0 && (
+                        <span className="ml-2 text-[#6B7280]">{c.codes.join(", ")}</span>
+                      )}
                     </button>
                   </li>
                 ))}
               </ul>
+            )}
+            {noCustomerMatch && (
+              <div className="absolute left-[calc(theme(spacing.2)+4.5rem)] top-full z-30 mt-1 w-64 rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-xs text-[#6B7280] shadow-md">
+                No customer matches in these dates. Older customers appear when
+                you choose Custom and a wider date range.
+              </div>
             )}
             {customer && (
               <button
@@ -399,6 +420,7 @@ function SaopContent() {
               <thead className="bg-[#F9FAFB] text-left text-[10px] uppercase tracking-wider text-[#6B7280]">
                 <tr>
                   <SortableTh label="Customer" k="customer_asc" sort={sort} setSort={setSort} />
+                  <th className="px-3 py-2 font-semibold">Code</th>
                   <th className="px-3 py-2 font-semibold">Team</th>
                   <SortableTh label="#Loads" k="loads_desc" altK="loads_asc" sort={sort} setSort={setSort} numeric />
                   <SortableTh label="$Revenue" k="revenue_desc" altK="revenue_asc" sort={sort} setSort={setSort} numeric />
@@ -415,6 +437,7 @@ function SaopContent() {
                   <tr className="border-b border-[#E5E7EB] bg-[#F3F4F6] font-semibold">
                     <td className="px-3 py-2">Totals</td>
                     <td className="px-3 py-2 text-[#6B7280]">—</td>
+                    <td className="px-3 py-2 text-[#6B7280]">—</td>
                     <td className="px-3 py-2 text-right">{fmtInt(totals.loads)}</td>
                     <td className="px-3 py-2 text-right">{fmtMoney(totals.revenue)}</td>
                     <td className={`px-3 py-2 text-right ${totals.profit < 0 ? "text-[#991B1B]" : ""}`}>
@@ -430,7 +453,7 @@ function SaopContent() {
                 )}
                 {detailsQ.isLoading && (
                   <tr>
-                    <td colSpan={9} className="px-3 py-8 text-center text-[#6B7280]">
+                    <td colSpan={10} className="px-3 py-8 text-center text-[#6B7280]">
                       <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />
                       Loading customers…
                     </td>
@@ -438,7 +461,7 @@ function SaopContent() {
                 )}
                 {!detailsQ.isLoading && rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-3 py-8 text-center text-[#6B7280]">
+                    <td colSpan={10} className="px-3 py-8 text-center text-[#6B7280]">
                       No customers match the current filters.
                     </td>
                   </tr>
@@ -514,6 +537,9 @@ function DetailRow({ row }: { row: SaopDetailsRow }) {
       <td className="max-w-[18rem] truncate px-3 py-1.5 font-medium text-[#111827]" title={row.customer}>
         {row.customer}
       </td>
+      <td className="px-3 py-1.5 font-mono text-[#374151]">
+        {row.codes?.length ? row.codes.join(", ") : "—"}
+      </td>
       <td className="px-3 py-1.5 text-[#374151]">{row.team || "—"}</td>
       <td className="px-3 py-1.5 text-right tabular-nums">{fmtInt(row.loads)}</td>
       <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(row.revenue)}</td>
@@ -535,53 +561,6 @@ function DetailRow({ row }: { row: SaopDetailsRow }) {
         <Sparkline values={row.sparkline} />
       </td>
     </tr>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Sparkline — inline 8-week #Loads mini chart
-// ---------------------------------------------------------------------------
-
-function Sparkline({ values }: { values: number[] }) {
-  if (!values || values.length === 0) {
-    return <span className="text-[10px] text-[#6B7280]">—</span>
-  }
-  const max = Math.max(1, ...values)
-  const w = 80
-  const h = 18
-  const step = w / Math.max(1, values.length)
-  const points = values
-    .map((v, i) => {
-      const x = i * step + step / 2
-      const y = h - (v / max) * h
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(" ")
-  const last = values[values.length - 1]
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="inline-block"
-      role="img"
-      aria-label={`8-week loads sparkline, latest ${last}`}
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="#1B3A5C"
-        strokeWidth={1.4}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle
-        cx={(values.length - 1) * step + step / 2}
-        cy={h - (last / max) * h}
-        r={1.8}
-        fill="#1B3A5C"
-      />
-    </svg>
   )
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
 interface ApiResponse<T> {
   success: boolean
@@ -77,14 +77,22 @@ function keyFilters(f: SaopFilters) {
 // Types
 // ---------------------------------------------------------------------------
 
+export interface SaopCustomerOption {
+  name: string
+  codes: string[]
+}
+
 export interface SaopFilterOptions {
   teams: string[]
   customers: string[]
+  customer_options: SaopCustomerOption[]
   buckets: string[]
 }
 
 export interface SaopDetailsRow {
   customer: string
+  // Optional: Vercel can go live before Render, and the page must survive that.
+  codes?: string[]
   team: string | null
   loads: number
   revenue: number
@@ -129,12 +137,32 @@ export interface SaopTrendResp {
 // Hooks
 // ---------------------------------------------------------------------------
 
-export function useSaopFilters() {
+// A Custom range lists customers from exactly that range; every preset shares the
+// backend's ~13-month list, so presets share one cache entry.
+export function useSaopFilters(
+  range: SaopRange,
+  startDate: string,
+  endDate: string,
+) {
+  const isCustom = range === "custom"
+  const q = new URLSearchParams()
+  q.set("range", isCustom ? "custom" : "last_365")
+  if (isCustom && startDate) q.set("start_date", startDate)
+  if (isCustom && endDate) q.set("end_date", endDate)
   return useQuery({
-    queryKey: ["saop", "filters"],
+    queryKey: [
+      "saop",
+      "filters",
+      isCustom,
+      isCustom ? startDate : "",
+      isCustom ? endDate : "",
+    ],
     queryFn: () =>
-      apiFetch<SaopFilterOptions>("custom/sales-attrition-to-ops/filters"),
+      apiFetch<SaopFilterOptions>(
+        `custom/sales-attrition-to-ops/filters?${q.toString()}`,
+      ),
     staleTime: 10 * 60 * 1000,
+    placeholderData: keepPreviousData,
     ...RETRY,
   })
 }
