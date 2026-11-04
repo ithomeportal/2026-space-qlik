@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import settings
+from app.services.customer_status_email.cards import newest_comment
 from app.services.customer_status_email.config import BILL_TO
 
 logger = logging.getLogger(__name__)
@@ -137,19 +138,24 @@ UNSAFE_COMMENT_PATTERN = (
     r"(unable to|no answer|voicemail|no human|identity|did not answer|not reachable)"
 )
 
+# Every comment of each order's newest minute: they are often posted as a batch, and
+# cards.newest_comment chooses among them so the answer is stable from send to send.
 COMMENTS_SQL = """
-SELECT DISTINCT ON (h.id)
-       h.id                                        AS id,
-       btrim(h.posted_type)                        AS posted_type,
-       h.posted_date                               AS posted_at,
-       btrim(h.comments)                           AS comment
-FROM mcleod_gld_order_post_hist h
-WHERE h.id = ANY($1::varchar[])
-  AND h.company_id = ANY($2::varchar[])
-  AND btrim(h.posted_type) = ANY($3::text[])
-  AND h.comments !~* $4
-  AND h.posted_date >= $5
-ORDER BY h.id, h.posted_date DESC
+SELECT id, posted_type, posted_at, comment
+FROM (
+    SELECT h.id                                    AS id,
+           btrim(h.posted_type)                    AS posted_type,
+           h.posted_date                           AS posted_at,
+           btrim(h.comments)                       AS comment,
+           rank() OVER (PARTITION BY h.id ORDER BY h.posted_date DESC) AS newest
+    FROM mcleod_gld_order_post_hist h
+    WHERE h.id = ANY($1::varchar[])
+      AND h.company_id = ANY($2::varchar[])
+      AND btrim(h.posted_type) = ANY($3::text[])
+      AND h.comments !~* $4
+      AND h.posted_date >= $5
+) c
+WHERE newest = 1
 """
 
 # Augie phone/e-mail location pings (Augment TRACKING_UPDATE webhooks). TRIMMED
@@ -243,7 +249,7 @@ async def fetch_details(
     return {
         "movements": _group(moves),
         "augie": _group(legs),
-        "comments": {r["id"].strip(): dict(r) for r in comments},
+        "comments": {oid: newest_comment(tied) for oid, tied in _group(comments).items()},
         "pods": pods,
         "pings": {r["id"].strip(): dict(r) for r in pings},
         # Only loads still moving need a live link / position.

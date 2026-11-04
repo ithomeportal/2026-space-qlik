@@ -974,3 +974,31 @@ def test_pickup_eta_shows_only_before_the_truck_reaches_the_pickup():
 
 def test_an_eta_equal_to_the_appointment_reads_on_schedule():
     assert "On schedule" in html.hours_pill(0.0) and "AHEAD" not in html.hours_pill(0.0)
+
+
+def test_comments_posted_together_resolve_to_the_same_truthful_one():
+    """McLeod batch-posts stop comments in one minute (22 of 43 loads, 2026-11-04) and
+    DISTINCT ON picked at random, so the comment changed between sends with no news."""
+    tied = [{"comment": "Appointment confirmed at EC Logistics, PHARR, TX for 11/02/26 0900 to 11/02/26 2000."},
+            {"comment": "Loaded at the shipper Central Texas Corrugated at 10/31/26 1000."},
+            {"comment": "Empty at consignee EC Logistics, PHARR, TX at 11/01/26 0700."},
+            {"comment": "Departed ACG Global, LAREDO, TX at 10/31/26 2300."}]
+    assert "Empty at consignee" in cards.newest_comment(tied)["comment"]
+    assert "Empty at consignee" in cards.newest_comment(list(reversed(tied)))["comment"]
+    # The truck left the yard after reaching it: the departure wins.
+    left = [{"comment": "Empty at consignee EC Logistics, PHARR, TX at 11/01/26 0700."},
+            {"comment": "Departed EC Logistics, PHARR, TX at 11/02/26 1600."}]
+    assert "Departed" in cards.newest_comment(left)["comment"]
+    # Free text outranks an appointment, an actual stop event outranks free text.
+    appt = tied[0]
+    free = {"comment": "A driver update from Austin, TX."}  # sorts before the appointment
+    assert cards.newest_comment([appt, free]) == free
+    assert cards.newest_comment([free, tied[1]]) == tied[1]
+    # An impossible time is not a crash.
+    bad = {"comment": "Departed EC Logistics, PHARR, TX at 13/45/26 2500."}
+    assert cards.newest_comment([bad]) == bad
+
+
+def test_comments_sql_keeps_every_comment_of_the_newest_minute():
+    assert "DISTINCT ON" not in data.COMMENTS_SQL
+    assert "rank() OVER (PARTITION BY h.id ORDER BY h.posted_date DESC)" in data.COMMENTS_SQL

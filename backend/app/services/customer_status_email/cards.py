@@ -146,6 +146,8 @@ def on_time(actual: Optional[datetime], deadline: Optional[datetime]) -> Optiona
 # McLeod stop comments: "<verb> <PLACE, CITY, ST> at|for MM/DD/YY HHMM[ to MM/DD/YY HHMM]."
 _MCLEOD_TS = r"(\d\d/\d\d/\d\d) (\d\d)(\d\d)"
 _EMPTY_AT = re.compile(rf"^Empty at consignee (?P<place>.+?) at {_MCLEOD_TS}\.?$")
+_APPOINTMENT = re.compile(rf"^Appointment confirmed at (?P<place>.+?) for {_MCLEOD_TS} to "
+                         rf"(\d\d/\d\d/\d\d) (\d\d)(\d\d)\.?$")
 _STOP_PATTERNS = (
     # (regex, wording at a border yard, wording at the Waco shipper) — {place} is
     # the stop, {at} / {to} formatted times.
@@ -155,8 +157,7 @@ _STOP_PATTERNS = (
     (re.compile(rf"^Departed (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
      "Cleared customs and departed {place} on {at}; continuing to final destination.",
      "Departed {place} on {at}."),
-    (re.compile(rf"^Appointment confirmed at (?P<place>.+?) for {_MCLEOD_TS} to "
-                rf"(\d\d/\d\d/\d\d) (\d\d)(\d\d)\.?$"),
+    (_APPOINTMENT,
      "Border crossing appointment confirmed at {place}: {at} to {to}.",
      "Pickup appointment confirmed at {place}: {at} to {to}."),
     (re.compile(rf"^Loaded at the shipper (?P<place>.+?) at {_MCLEOD_TS}\.?$"),
@@ -169,6 +170,33 @@ def _fmt_mcleod(day: str, hh: str, mm: str) -> str:
     """'10/15/26', '13', '00' -> '10/15/2026 @ 01:00 PM'."""
     h = int(hh)
     return f"{day[:6]}20{day[6:]} @ {h % 12 or 12:02d}:{mm} {'AM' if h < 12 else 'PM'}"
+
+
+def _comment_rank(row: dict) -> tuple[int, datetime, str]:
+    """Stop event (latest event time) > free text > appointment; the text settles a tie."""
+    text = (row.get("comment") or "").strip()
+    if _APPOINTMENT.match(text):
+        return (0, datetime.min, text)
+    for pattern, _, _ in _STOP_PATTERNS:
+        m = pattern.match(text)
+        if not m:
+            continue
+        day, hh, mm = m.groups()[1:4]
+        try:
+            return (2, datetime.strptime(f"{day} {hh}{mm}", "%m/%d/%y %H%M"), text)
+        except ValueError:
+            break
+    return (1, datetime.min, text)
+
+
+def newest_comment(tied: list[dict]) -> dict:
+    """The one comment to show among those posted in the same minute.
+
+    McLeod batch-posts stop comments, so the newest ``posted_date`` is often shared
+    (22 of 43 loads, 2026-11-04) and carries no order of its own. An appointment says
+    what is planned; a stop event says where the truck has actually been.
+    """
+    return max(tied, key=_comment_rank)
 
 
 def _is_own_consignee(place: str, consignee: Optional[str]) -> bool:
