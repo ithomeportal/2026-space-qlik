@@ -12,25 +12,27 @@ import {
   fmtUsdCompact,
   type CustomerRow,
 } from "@/lib/customer-lifespan-api"
-import { Sparkline, StatusChip } from "./ui"
+import { AssignedCell, Sparkline, StatusChip } from "./ui"
 
 const COLUMNS: { k: keyof CustomerRow; label: string; align?: "left" }[] = [
   { k: "name", label: "Customer", align: "left" },
   { k: "status", label: "Status", align: "left" },
+  { k: "assigned_to", label: "TEAM / Sales Exec.", align: "left" },
   { k: "first_ship", label: "First load" },
   { k: "last_ship", label: "Last load" },
-  { k: "days_since_last", label: "Days quiet" },
-  { k: "lifespan_months", label: "Lifespan" },
+  { k: "days_since_last", label: "Days since last load" },
+  { k: "lifespan_months", label: "Customer lifespan" },
   { k: "active_months", label: "Months shipping" },
-  { k: "reactivations", label: "Came back" },
-  { k: "loads", label: "Loads" },
-  { k: "revenue", label: "Revenue" },
+  { k: "reactivations", label: "Reactivations" },
+  { k: "loads", label: "Total loads" },
+  { k: "revenue", label: "Total Revenue ($)" },
+  { k: "margin", label: "Profit ($)" },
   { k: "margin_pct", label: "Margin %" },
-  { k: "avg_monthly_margin", label: "Margin / month" },
+  { k: "avg_monthly_margin", label: "Avg. monthly Profit ($)" },
 ]
 
 // Text and date columns read best A→Z / oldest first; numbers biggest first.
-const ASC_FIRST = new Set<string>(["name", "status", "first_ship", "last_ship"])
+const ASC_FIRST = new Set<string>(["name", "status", "assigned_to", "first_ship", "last_ship"])
 
 export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: (id: string) => void }) {
   const { sorted, sortKey, sortDir, toggleSort } = useSortable(rows, "revenue", "desc", (k) =>
@@ -69,6 +71,7 @@ export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: 
                 <div className="text-[10px] text-[#9CA3AF]">{r.customer_id} · {r.divisions.join(" · ")}</div>
               </td>
               <td className="px-2 py-1.5"><StatusChip status={r.status} /></td>
+              <td className="px-2 py-1.5"><AssignedCell row={r} /></td>
               <td className={td}>{fmtDate(r.first_ship)}</td>
               <td className={td}>{fmtDate(r.last_ship)}</td>
               <td className={td}>{fmtInt(r.days_since_last)}</td>
@@ -77,6 +80,7 @@ export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: 
               <td className={td}>{r.reactivations > 0 ? `${r.reactivations}×` : "—"}</td>
               <td className={td}>{fmtInt(r.loads)}</td>
               <td className={td} title={fmtUsd(r.revenue)}>{fmtUsdCompact(r.revenue)}</td>
+              <td className={`${td} ${r.margin < 0 ? "text-[#DC2626]" : ""}`} title={fmtUsd(r.margin)}>{fmtUsdCompact(r.margin)}</td>
               <td className={`${td} ${(r.margin_pct ?? 0) < 0 ? "text-[#DC2626]" : ""}`}>{fmtPct(r.margin_pct)}</td>
               <td className={td}>{fmtUsd(r.avg_monthly_margin)}</td>
               <td className="px-2 py-1.5"><Sparkline values={r.spark_24m} color={STATUS_META[r.status].color} /></td>

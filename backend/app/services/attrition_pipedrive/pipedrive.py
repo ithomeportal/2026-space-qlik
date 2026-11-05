@@ -33,6 +33,8 @@ TIMEOUT_S = 30.0
 RATE_LIMIT_RETRIES = 4
 RATE_LIMIT_MAX_WAIT_S = 20.0
 RATE_LIMIT_DEFAULT_WAIT_S = 2.0
+PAGE_SIZE = 500
+MAX_PAGES = 100
 
 
 class PipedriveError(RuntimeError):
@@ -130,6 +132,12 @@ class PipedriveClient:
         self, method: str, version: str, path: str,
         params: Optional[dict[str, Any]] = None, body: Optional[dict[str, Any]] = None,
     ) -> Any:
+        return (await self._send(method, version, path, params, body)).get("data")
+
+    async def _send(
+        self, method: str, version: str, path: str,
+        params: Optional[dict[str, Any]] = None, body: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         query = {k: v for k, v in (params or {}).items() if v is not None}
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             try:
@@ -151,7 +159,19 @@ class PipedriveClient:
         payload = resp.json()
         if payload.get("success") is False:
             raise PipedriveError(f"{method} /{version}/{path}: {payload.get('error') or 'unsuccessful'}")
-        return payload.get("data")
+        return payload
+
+    async def _all_pages(self, path: str, params: dict[str, Any]) -> list[dict]:
+        """Every row of a v2 list. Running past the page cap RAISES: a truncated read looks healthy."""
+        rows: list[dict] = []
+        cursor = None
+        for _ in range(MAX_PAGES):
+            payload = await self._send("GET", "v2", path, {**params, "limit": PAGE_SIZE, "cursor": cursor})
+            rows.extend(payload.get("data") or [])
+            cursor = (payload.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                return rows
+        raise PipedriveError(f"GET /v2/{path}: more than {MAX_PAGES} pages")
 
     # ---- resolution (fail closed) ----------------------------------------
 
@@ -187,6 +207,29 @@ class PipedriveClient:
             deal_mcleod_key=deal_mcleod["key"],
             org_mcleod_key=org_mcleod["key"],
         )
+
+    async def read_reactivation_owners(self) -> tuple[list[dict], dict[int, str], dict[int, str]]:
+        """READ ONLY, for the Customer Lifespan report: open REACTIVATION deals,
+        org id → ``ID_McLeod``, user id → name. Does not need the attrition job's
+        routing users, so a deactivated KAM cannot blank this read."""
+        pipelines = await self._request("GET", "v1", "pipelines") or []
+        pipeline = _one(pipelines, "name", cfg.PIPELINE_NAME, "pipeline")
+        deal_fields = await self._request("GET", "v1", "dealFields", {"limit": 500}) or []
+        deal_key = _one(deal_fields, "name", cfg.FIELD_MCLEOD, "deal field")["key"]
+        org_fields = await self._request("GET", "v1", "organizationFields", {"limit": 500}) or []
+        org_key = _one(org_fields, "name", cfg.FIELD_MCLEOD, "organization field")["key"]
+        users = await self._request("GET", "v1", "users") or []
+        deals = await self._all_pages("deals", {"pipeline_id": pipeline["id"], "status": "open"})
+        orgs = await self._all_pages("organizations", {})
+        org_codes = {
+            int(o["id"]): str(code).strip()
+            for o in orgs
+            if (code := (o.get("custom_fields") or {}).get(org_key)) and str(code).strip()
+        }
+        rows = [{"id": int(d["id"]), "title": d.get("title") or "", "owner_id": d.get("owner_id"),
+                 "org_id": d.get("org_id"), "add_time": d.get("add_time") or "",
+                 "code": (d.get("custom_fields") or {}).get(deal_key)} for d in deals]
+        return rows, org_codes, {int(u["id"]): u.get("name") or "" for u in users}
 
     # ---- organizations --------------------------------------------------
 

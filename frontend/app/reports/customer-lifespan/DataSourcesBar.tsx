@@ -47,6 +47,12 @@ export function DataSourcesBar({ asOf }: { asOf: string | undefined }) {
             cut-date check: {fmtInt(recon.matched)}/{fmtInt(recon.excel_orders)} orders match
           </span>
         )}
+        {f?.owners_refresh && (
+          <span>· Sales Exec. from Pipedrive, read {fmtStamp(f.owners_refresh.last_ok_at)}</span>
+        )}
+        {f?.owners_refresh?.last_status === "failed" && (
+          <span className="rounded-full bg-[#FEF3C7] px-2 py-0.5 text-[#92400E]">last Pipedrive read failed</span>
+        )}
         {failed && (
           <span className="rounded-full bg-[#FEE2E2] px-2 py-0.5 text-[#991B1B]">last sync failed</span>
         )}

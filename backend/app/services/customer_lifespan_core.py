@@ -17,7 +17,7 @@ name (421 — customers were renamed).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from itertools import pairwise
 
@@ -27,6 +27,16 @@ AT_RISK_AFTER_DAYS = 30
 WINDOWS = (60, 90, 180)
 DEFAULT_WINDOW = 90
 DIVISIONS = ("all", "corp", "dfw")
+FIRST_YEAR_DAYS = 365
+LIFESPAN_BUCKETS = (
+    (0, 0, "1 month"),
+    (1, 5, "2–6 months"),
+    (6, 11, "7–12 months"),
+    (12, 23, "1–2 years"),
+    (24, 47, "2–4 years"),
+    (48, 95, "4–8 years"),
+    (96, 10_000, "8+ years"),
+)
 
 #: Departures dated after today (seen 2026-10-29: one order on 10-30) wait for
 #: their day — they would push as-of into the future and past the month range.
@@ -42,6 +52,25 @@ SELECT customer_id,
        (ARRAY_AGG(customer_name ORDER BY ship_date DESC))[1]  AS name
   FROM customer_lifespan_orders
  WHERE NOT voided_in_datalake
+   AND ship_date <= {CST_NOW_DATE_SQL}
+ GROUP BY customer_id, date_trunc('month', ship_date), division
+"""
+
+#: The same rows limited to a date range (the Date filter, operator decision
+#: 2026-11-04: it filters everything). ``first_ship``/``last_ship`` are clipped to it.
+CUSTOMER_MONTHS_RANGE_SQL = f"""
+SELECT customer_id,
+       date_trunc('month', ship_date)::date                   AS month,
+       division,
+       COUNT(*)::int                                          AS loads,
+       SUM(revenue)::float8                                   AS revenue,
+       SUM(margin)::float8                                    AS margin,
+       MIN(ship_date)                                         AS first_ship,
+       MAX(ship_date)                                         AS last_ship,
+       (ARRAY_AGG(customer_name ORDER BY ship_date DESC))[1]  AS name
+  FROM customer_lifespan_orders
+ WHERE NOT voided_in_datalake
+   AND ship_date >= $1::date AND ship_date <= $2::date
    AND ship_date <= {CST_NOW_DATE_SQL}
  GROUP BY customer_id, date_trunc('month', ship_date), division
 """
@@ -79,6 +108,9 @@ class Customer:
     cohort_year: int
     divisions: tuple[str, ...]
     months: tuple[Month, ...]
+    #: Every month up to the period end. ``months`` holds only those in the period;
+    #: flows and the true first load read this one.
+    history: tuple[Month, ...] = field(default=())
 
 
 def month_index(d: date) -> int:
@@ -153,6 +185,7 @@ def _customer(ms: list[Month], as_of: date, window: int) -> Customer:
         cohort_year=first.first_ship.year,
         divisions=tuple(sorted(set().union(*(m.divisions for m in ms)))),
         months=tuple(ms),
+        history=tuple(ms),
     )
 
 
@@ -175,75 +208,86 @@ def _mean(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2) if values else None
 
 
-def loss_dates(c: Customer, window: int) -> list[date]:
-    """When each loss was CONFIRMED: the last load before a silence + the window.
+def bucket_of(lifespan_months: int) -> str:
+    return next(label for lo, hi, label in LIFESPAN_BUCKETS if lo <= lifespan_months <= hi)
 
-    Interim losses (the customer came back later) count too — otherwise a
-    customer lost and won back inside the year shows as "came back" but never
-    as "lost" (review 2026-10-29).
+
+def flow_events(c: Customer, window: int, start: date = date.min) -> tuple[list[date], list[date]]:
+    """(last load before each loss, first load of each return) inside the period.
+
+    A loss belongs to the customer's LAST LOAD, and counts only once the silence
+    is longer than the window. ONE source for the KPI tiles, the flow chart's
+    bars and the lists behind them, so the three cannot disagree. A customer lost
+    and won back counts as both (review 2026-10-29).
     """
-    dates = [a.last_ship + timedelta(days=window)
-             for a, b in pairwise(c.months) if (b.first_ship - a.last_ship).days > window]
+    gaps = [(a, b) for a, b in pairwise(c.history) if (b.first_ship - a.last_ship).days > window]
+    lost = [a.last_ship for a, _ in gaps if a.last_ship >= start]
+    back = [b.first_ship for _, b in gaps if b.first_ship >= start]
     if c.status == "lost":
-        dates.append(c.last_ship + timedelta(days=window))
-    return dates
+        lost.append(c.last_ship)
+    return lost, back
 
 
-def summary(customers: list[Customer], as_of: date, window: int) -> dict:
-    """The KPI strip. Every count is a CUSTOMER count over the same scope.
+def is_new(c: Customer, start: date = date.min) -> bool:
+    """The customer's TRUE first load is in the period — not its first load in the range."""
+    return c.first_ship >= start
 
-    ``lost_12m`` / ``reactivated_12m``: customers with at least one loss
-    confirmed / one return in the last 365 days (a customer can be both).
+
+def is_first_year(c: Customer, as_of: date) -> bool:
+    return c.first_ship > as_of - timedelta(days=FIRST_YEAR_DAYS)
+
+
+def summary(customers: list[Customer], as_of: date, window: int, start: date = date.min,
+            customers_total: int | None = None) -> dict:
+    """The KPI strip over the customers with a load in the period.
+
+    ``lost_period`` / ``reactivated_period`` count customers, not events: a
+    customer with two losses in the period is one customer.
+    ``customers_total`` is the all-time count under the same teams + customer.
     """
-    year_ago = as_of - timedelta(days=365)
     base = [c for c in customers if c.status != "lost"]
     lost = [c for c in customers if c.status == "lost"]
-    recent = month_index(as_of) - 11
-    rev_12m = {c.customer_id: sum(m.revenue for m in c.months if month_index(m.month) >= recent)
-               for c in customers}
-    total_12m = sum(rev_12m.values())
-    top10 = sum(sorted(rev_12m.values(), reverse=True)[:10])
-    lost_12m = sum(1 for c in customers if any(d > year_ago for d in loss_dates(c, window)))
-    reactivated = sum(
-        1 for c in customers
-        if any((b.first_ship - a.last_ship).days > window and b.first_ship > year_ago
-               for a, b in pairwise(c.months)))
+    events = [flow_events(c, window, start) for c in customers]
+    revenue = [c.revenue for c in customers]
+    total = sum(revenue)
     return {
-        "customers_total": len(customers),
+        "customers_total": len(customers) if customers_total is None else customers_total,
+        "customers_in_period": len(customers),
         "base": len(base),
         "active": sum(1 for c in base if c.status == "active"),
         "at_risk": sum(1 for c in base if c.status == "at_risk"),
         "lost": len(lost),
-        "new_ytd": sum(1 for c in customers if c.first_ship.year == as_of.year),
-        "new_12m": sum(1 for c in customers if c.first_ship > year_ago),
-        "lost_12m": lost_12m,
-        "reactivated_12m": reactivated,
+        "new_period": sum(1 for c in customers if is_new(c, start)),
+        "lost_period": sum(1 for lost_on, _ in events if lost_on),
+        "reactivated_period": sum(1 for _, back in events if back),
         "avg_lifespan_lost": _mean([c.lifespan_months for c in lost]),
         "median_lifespan_lost": _median([c.lifespan_months for c in lost]),
         "avg_lifespan_base": _mean([c.lifespan_months for c in base]),
-        "avg_lifetime_margin": _mean([c.margin for c in customers]),
-        "revenue_12m": round(total_12m, 2),
-        "margin_12m": round(sum(m.margin for c in customers for m in c.months
-                                if month_index(m.month) >= recent), 2),
-        "top10_share_12m": pct(top10, total_12m),
+        "revenue_period": round(total, 2),
+        "margin_period": round(sum(c.margin for c in customers), 2),
+        "top10_share": pct(sum(sorted(revenue, reverse=True)[:10]), total),
         "first_ship": min((c.first_ship for c in customers), default=None),
     }
 
 
 def _spark(c: Customer, as_of: date, months: int = 24) -> list[float]:
     end = month_index(as_of)
-    by = {month_index(m.month): m.revenue for m in c.months}
+    by = {month_index(m.month): m.revenue for m in c.history}
     return [round(by.get(i, 0.0), 2) for i in range(end - months + 1, end + 1)]
 
 
-def customer_row(c: Customer, as_of: date) -> dict:
+def customer_row(c: Customer, as_of: date, assignment: dict | None = None) -> dict:
+    """``assignment``: team / Sales Exec. (``customer_lifespan_scope.Assignments.of``)."""
     return {
+        "team": None, "assigned_to": None, "pending_assignment": False, **(assignment or {}),
         "customer_id": c.customer_id,
         "name": c.name,
         "divisions": list(c.divisions),
         "first_ship": c.first_ship,
         "last_ship": c.last_ship,
         "lifespan_months": c.lifespan_months,
+        "lifespan_bucket": bucket_of(c.lifespan_months),
+        "age_months": month_index(as_of) - month_index(c.first_ship),
         "active_months": c.active_months,
         "loads": c.loads,
         "revenue": round(c.revenue, 2),
@@ -259,14 +303,14 @@ def customer_row(c: Customer, as_of: date) -> dict:
     }
 
 
-def customer_detail(c: Customer, as_of: date) -> dict:
-    """Every month from the first load to the as-of month, zero-filled."""
+def customer_detail(c: Customer, as_of: date, assignment: dict | None = None) -> dict:
+    """Every month from the first load in the period to its end, zero-filled."""
     by = {month_index(m.month): m for m in c.months}
     series = []
-    for i in range(month_index(c.first_ship), month_index(as_of) + 1):
+    for i in range(month_index(c.months[0].month), month_index(as_of) + 1):
         m = by.get(i)
         rev, mar = (m.revenue, m.margin) if m else (0.0, 0.0)
         series.append({"month": month_label(month_of(i)), "loads": m.loads if m else 0,
                        "revenue": round(rev, 2), "margin": round(mar, 2),
                        "margin_pct": pct(mar, rev)})
-    return {**customer_row(c, as_of), "series": series}
+    return {**customer_row(c, as_of, assignment), "series": series}

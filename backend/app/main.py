@@ -232,18 +232,37 @@ async def _startup_cash_forecast_catchup():
         pass
 
 
+async def _refresh_customer_lifespan_teams():
+    """Customer → team of its latest v4 load. Logs AND re-raises (cron-job-debug §5)."""
+    from app.routers.customer_lifespan import invalidate_cache
+    from app.services.customer_lifespan_store import sync_customer_teams
+
+    try:
+        count = await sync_customer_teams(
+            getattr(app.state, "pool", None), getattr(app.state, "savings_pool", None),
+        )
+        invalidate_cache()
+        logger.info(f"Customer Lifespan teams: {count} customers")
+    except Exception as e:
+        logger.error(f"Customer Lifespan teams FAILED: {type(e).__name__}: {e}", exc_info=True)
+        raise
+
+
 async def _scheduled_customer_lifespan_sync():
     """Background job: re-read every TMS order since 2026-07-01 from v4 (03:30 CST).
 
     Replaces the v4 rows of ``customer_lifespan_orders`` and re-checks the
-    workbook's last two months against the datalake (Customer Lifespan #69).
+    workbook's last two months against the datalake (Customer Lifespan #69), then
+    refreshes each customer's latest team.
     ⚠ Logs AND re-raises: a swallowed exception reads as a healthy run
     (cron-job-debug §5); the run is also recorded in customer_lifespan_sync_log.
+    The two steps are isolated (§4): a failed order sync must not stop the teams.
     """
     from app.clock import cst_now
     from app.routers.customer_lifespan import invalidate_cache
     from app.services.customer_lifespan_store import sync_from_datalake
 
+    failure = None
     try:
         result = await sync_from_datalake(
             getattr(app.state, "pool", None),
@@ -254,28 +273,81 @@ async def _scheduled_customer_lifespan_sync():
         logger.info(f"Customer Lifespan sync: {result}")
     except Exception as e:
         logger.error(f"Customer Lifespan sync FAILED: {e}", exc_info=True)
-        raise
+        failure = e
+    try:
+        await _refresh_customer_lifespan_teams()
+    except Exception as e:  # noqa: BLE001 — logged inside; re-raised below
+        failure = failure or e
+    if failure is not None:
+        raise failure
 
 
 async def _startup_customer_lifespan_catchup():
     """Fire-and-forget: a deploy with no successful sync in 20 h syncs now.
 
     The first deploy has no v4 rows at all; without this the report would wait
-    for 03:30. Failures are logged inside and stop here (the 03:30 run retries).
+    for 03:30. An empty team map is filled on its own, for the same reason.
+    Failures are logged inside and stop here (the 03:30 run retries).
     """
     from datetime import timedelta
 
     from app.clock import cst_now
-    from app.services.customer_lifespan_store import last_ok_sync
+    from app.services.customer_lifespan_store import COUNT_TEAMS_SQL, last_ok_sync
 
+    hub = getattr(app.state, "pool", None)
     try:
-        hub = getattr(app.state, "pool", None)
+        if hub is not None and not await hub.fetchval(COUNT_TEAMS_SQL):
+            await _refresh_customer_lifespan_teams()
+    except Exception as e:  # noqa: BLE001 — stops here; the 03:30 run retries
+        logger.error(f"Customer Lifespan team catch-up failed: {type(e).__name__}: {e}")
+    try:
         last = await last_ok_sync(hub) if hub is not None else None
         if last is not None and cst_now() - last < timedelta(hours=20):
             return
         await _scheduled_customer_lifespan_sync()
     except Exception:  # noqa: BLE001 — logged inside; the 03:30 run retries
         pass
+
+
+async def _scheduled_customer_lifespan_owners():
+    """Hourly, READ-ONLY: owners of the open Pipedrive REACTIVATION deals (deck p.12).
+
+    Logs AND re-raises; recorded in customer_lifespan_refresh_log. A failed run
+    keeps the last good map, and the page says when it last succeeded.
+    """
+    from app.routers.customer_lifespan import invalidate_cache
+    from app.services.attrition_pipedrive.pipedrive import PipedriveClient
+    from app.services.customer_lifespan_pipedrive import refresh_deal_owners
+
+    client = None
+    try:
+        client = PipedriveClient(settings.PIPEDRIVE_DOMAIN, settings.PIPEDRIVE_API_TOKEN)
+        count = await refresh_deal_owners(getattr(app.state, "pool", None), client)
+        invalidate_cache()
+        logger.info(f"Customer Lifespan owners: {count} customers")
+    except Exception as e:
+        logger.error(f"Customer Lifespan owners FAILED: {type(e).__name__}: {e}")
+        raise
+    finally:
+        if client is not None:
+            await client.aclose()
+
+
+async def _startup_customer_lifespan_owners():
+    """Fire-and-forget: a deploy with no good owner read in the last hour reads now."""
+    from datetime import timedelta
+
+    from app.clock import cst_now
+    from app.services.customer_lifespan_store import LAST_REFRESH_OK_SQL
+
+    try:
+        hub = getattr(app.state, "pool", None)
+        last = await hub.fetchval(LAST_REFRESH_OK_SQL, "owners") if hub is not None else None
+        if last is not None and cst_now() - last < timedelta(hours=1):
+            return
+        await _scheduled_customer_lifespan_owners()
+    except Exception as e:  # noqa: BLE001 — stops here; the next hourly run retries
+        logger.error(f"Customer Lifespan owners catch-up failed: {type(e).__name__}: {e}")
 
 
 async def _startup_dpc_cutoff_catchup():
@@ -1770,6 +1842,25 @@ async def lifespan(app: FastAPI):
             "the report will stop at its last synced day"
         )
 
+    # Customer Lifespan (#69, deck 2026-11-03) — hourly READ of the Pipedrive
+    # REACTIVATION deal owners. Writes nothing to the CRM.
+    if settings.PIPEDRIVE_DOMAIN and settings.PIPEDRIVE_API_TOKEN:
+        scheduler.add_job(
+            _scheduled_customer_lifespan_owners,
+            CronTrigger(minute=20, timezone="America/Chicago"),
+            id="hourly_customer_lifespan_owners",
+            name="Customer Lifespan Pipedrive deal owners (read only)",
+            replace_existing=True,
+        )
+        _cl_owners = asyncio.create_task(_startup_customer_lifespan_owners())
+        _BACKGROUND_TASKS.add(_cl_owners)
+        _cl_owners.add_done_callback(_BACKGROUND_TASKS.discard)
+    else:
+        logger.warning(
+            "Customer Lifespan owners NOT scheduled — PIPEDRIVE_DOMAIN / PIPEDRIVE_API_TOKEN unset; "
+            "lost customers will show no Sales Exec."
+        )
+
     # Schedule daily Losses Lanes weekly-movers email at 7:00 AM CST.
     # Runs regardless of TIMEOFF_DATABASE_URL since it only needs the
     # savings_pool (aivn_datalake_gold) + the MS Graph mail creds (Resend = OTP only).
@@ -2069,6 +2160,7 @@ async def lifespan(app: FastAPI):
         "daily_attrition_pipedrive_watch": "Attrition → Pipedrive did-not-run alert, 05:00 CST",
         "daily_cash_forecast_snapshot": "Collections Settlement Forecast history, 06:30 CST",
         "daily_customer_lifespan_sync": "Customer Lifespan v4 sync + reconciliation, 03:30 CST",
+        "hourly_customer_lifespan_owners": "Customer Lifespan Pipedrive deal owners, hourly :20",
     }
     registered = {j.id for j in scheduler.get_jobs()}
     missing_jobs = sorted(set(EXPECTED_JOBS) - registered)

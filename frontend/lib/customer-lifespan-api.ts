@@ -12,13 +12,47 @@ const BASE = "custom/customer-lifespan"
 export type Division = "all" | "corp" | "dfw"
 export type Status = "active" | "at_risk" | "lost"
 export type Grain = "month" | "quarter" | "year"
+export type RangeKey = "last_365" | "mtd" | "last_month" | "ytd" | "custom" | "all"
 export const WINDOWS = [60, 90, 180] as const
 export type Window = (typeof WINDOWS)[number]
+
+/** The filter bar. `teams` null = every team; [] = every chip off. */
+export interface ReportFilters {
+  range: RangeKey
+  start: string
+  end: string
+  teams: string[] | null
+  customer: string
+}
+
+export const DEFAULT_FILTERS: ReportFilters = { range: "last_365", start: "", end: "", teams: null, customer: "" }
+
+/** Team chips are never comma-split: one repeated param each, as the proxy forwards them. */
+export function filtersQuery(f: ReportFilters): string {
+  const qs = new URLSearchParams({ range: f.range })
+  if (f.range === "custom") {
+    qs.set("start", f.start)
+    qs.set("end", f.end)
+  }
+  if (f.teams !== null) {
+    if (f.teams.length === 0) qs.append("teams", "")
+    f.teams.forEach((t) => qs.append("teams", t))
+  }
+  if (f.customer) qs.set("customer", f.customer)
+  return `&${qs.toString()}`
+}
 
 export interface Meta {
   division: Division
   window_days: number
+  /** The last day of the selected dates: statuses are judged here. */
   as_of: string
+  /** The newest load in the table, whatever the filter. */
+  data_as_of: string
+  range: RangeKey
+  range_label: string
+  start: string
+  end: string
   grain?: Grain
   total?: number
 }
@@ -31,21 +65,20 @@ interface Envelope<T> {
 
 export interface Summary {
   customers_total: number
+  customers_in_period: number
   base: number
   active: number
   at_risk: number
   lost: number
-  new_ytd: number
-  new_12m: number
-  lost_12m: number
-  reactivated_12m: number
+  new_period: number
+  lost_period: number
+  reactivated_period: number
   avg_lifespan_lost: number | null
   median_lifespan_lost: number | null
   avg_lifespan_base: number | null
-  avg_lifetime_margin: number | null
-  revenue_12m: number
-  margin_12m: number
-  top10_share_12m: number | null
+  revenue_period: number
+  margin_period: number
+  top10_share: number | null
   first_ship: string | null
 }
 
@@ -70,6 +103,7 @@ export interface CohortRow {
   new: number
   base_now: number
   active_now: number
+  at_risk_now: number
   lost: number
   retained_pct: number | null
   avg_lifespan_base: number | null
@@ -85,13 +119,22 @@ export interface LifespanData {
   survival: { points: { month: number; survival: number; at_risk: number }[]; median_months: number | null }
 }
 
-export interface CustomerRow {
+/** Team in charge (active / at risk) or Pipedrive Sales Exec. (lost). */
+export interface Assignment {
+  team: string | null
+  assigned_to: string | null
+  pending_assignment: boolean
+}
+
+export interface CustomerRow extends Assignment {
   customer_id: string
   name: string
   divisions: string[]
   first_ship: string
   last_ship: string
   lifespan_months: number
+  lifespan_bucket: string
+  age_months: number
   active_months: number
   loads: number
   revenue: number
@@ -108,6 +151,64 @@ export interface CustomerRow {
 
 export interface CustomerDetail extends CustomerRow {
   series: { month: string; loads: number; revenue: number; margin: number; margin_pct: number | null }[]
+}
+
+export interface FlowMember extends Assignment {
+  customer_id: string
+  name: string
+  status: Status
+  days_since_last: number
+  date: string
+}
+
+export interface FlowMembers {
+  new: FlowMember[]
+  reactivated: FlowMember[]
+  lost: FlowMember[]
+}
+
+export interface BoardTile {
+  value: number
+  prior: number | null
+  delta_pct: number | null
+}
+
+export interface BoardRow extends Assignment {
+  customer_id: string
+  name: string
+  status: Status
+  age_months: number
+  days_since_last: number
+  last_ship: string
+}
+
+export interface DecliningRow extends Assignment {
+  customer_id: string
+  name: string
+  avg_monthly_loads: number
+  loads_30d: number
+  change: number
+  change_pct: number
+}
+
+export interface Board {
+  tiles: Record<"active" | "at_risk" | "first_year" | "lost" | "recovered", BoardTile>
+  at_risk: (BoardRow & { profit_90d: number })[]
+  first_year: BoardRow[]
+  declining: DecliningRow[]
+  lost: BoardRow[]
+  lost_since_returned: number
+  recovered: (BoardRow & { returned_on: string })[]
+}
+
+export interface FilterOptions {
+  teams: string[]
+  customers: { customer_id: string; name: string }[]
+}
+
+export interface RefreshStatus {
+  last_ok_at: string | null
+  last_status: string
 }
 
 export interface Reconciliation {
@@ -133,6 +234,8 @@ export interface Freshness {
   last_sync: { status: string; finished_at: string | null; started_at: string; error: string | null } | null
   last_ok_sync_at: string | null
   reconciliation: string | null
+  teams_refresh: RefreshStatus | null
+  owners_refresh: RefreshStatus | null
 }
 
 async function apiGet<T>(path: string): Promise<T> {
@@ -170,18 +273,31 @@ function useSection<T>(path: string, enabled = true) {
   })
 }
 
-const q = (division: Division, section: string, window: Window, extra = "") =>
-  `${division}/${section}?window=${window}${extra}`
+const q = (division: Division, section: string, window: Window, f: ReportFilters, extra = "") =>
+  `${division}/${section}?window=${window}${extra}${filtersQuery(f)}`
 
 export const useFreshness = () => useSection<{ success: boolean; data: Freshness }>("freshness")
-export const useSummary = (d: Division, w: Window) => useSection<Envelope<Summary>>(q(d, "summary", w))
-export const useTrend = (d: Division, w: Window, g: Grain) =>
-  useSection<Envelope<TrendRow[]>>(q(d, "trend", w, `&grain=${g}`))
-export const useCohorts = (d: Division, w: Window) => useSection<Envelope<CohortRow[]>>(q(d, "cohorts", w))
-export const useLifespan = (d: Division, w: Window) => useSection<Envelope<LifespanData>>(q(d, "lifespan", w))
-export const useCustomers = (d: Division, w: Window) => useSection<Envelope<CustomerRow[]>>(q(d, "customers", w))
-export const useCustomer = (d: Division, w: Window, id: string | null) =>
-  useSection<Envelope<CustomerDetail>>(q(d, `customers/${encodeURIComponent(id ?? "")}`, w), id !== null)
+export const useFilterOptions = (d: Division) =>
+  useSection<{ success: boolean; data: FilterOptions }>(`${d}/filters`)
+export const useSummary = (d: Division, w: Window, f: ReportFilters) =>
+  useSection<Envelope<Summary>>(q(d, "summary", w, f))
+export const useBoard = (d: Division, w: Window, f: ReportFilters) =>
+  useSection<Envelope<Board>>(q(d, "board", w, f))
+export const useTrend = (d: Division, w: Window, g: Grain, f: ReportFilters) =>
+  useSection<Envelope<TrendRow[]>>(q(d, "trend", w, f, `&grain=${g}`))
+export const useFlowMembers = (d: Division, w: Window, g: Grain, period: string | null, f: ReportFilters) =>
+  useSection<Envelope<FlowMembers>>(
+    q(d, "flow-customers", w, f, `&grain=${g}&period=${encodeURIComponent(period ?? "")}`),
+    period !== null,
+  )
+export const useCohorts = (d: Division, w: Window, f: ReportFilters) =>
+  useSection<Envelope<CohortRow[]>>(q(d, "cohorts", w, f))
+export const useLifespan = (d: Division, w: Window, f: ReportFilters) =>
+  useSection<Envelope<LifespanData>>(q(d, "lifespan", w, f))
+export const useCustomers = (d: Division, w: Window, f: ReportFilters) =>
+  useSection<Envelope<CustomerRow[]>>(q(d, "customers", w, f))
+export const useCustomer = (d: Division, w: Window, id: string | null, f: ReportFilters) =>
+  useSection<Envelope<CustomerDetail>>(q(d, `customers/${encodeURIComponent(id ?? "")}`, w, f), id !== null)
 
 // ---------------------------------------------------------------- formatting
 
@@ -203,6 +319,17 @@ export const fmtPct = (v: number | null | undefined, digits = 1) => (missing(v) 
 export function fmtMonths(v: number | null | undefined): string {
   if (missing(v)) return "—"
   return v >= 24 ? `${(v / 12).toFixed(1)} yrs` : `${Math.round(v * 10) / 10} mo`
+}
+
+/** One unit for a whole column: always months (deck 2026-11-03). */
+export function fmtMo(v: number | null | undefined): string {
+  return missing(v) ? "—" : `${v.toFixed(1)} mo`
+}
+
+/** "2026 YTD" while that year is still running at the end of the selected dates. */
+export function yearLabel(year: number, asOf: string | undefined): string {
+  if (!asOf || !asOf.startsWith(String(year)) || asOf.endsWith("-12-31")) return String(year)
+  return `${year} YTD`
 }
 
 /** "Oct 24, 2026" from a date-only string, parsed as a LOCAL date (§116). */

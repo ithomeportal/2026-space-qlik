@@ -19,13 +19,18 @@ import {
   fmtPct,
   fmtUsd,
   fmtUsdCompact,
+  fmtDate,
+  useFlowMembers,
   useTrend,
   type Division,
+  type FlowMember,
   type Grain,
+  type ReportFilters,
   type TrendRow,
   type Window,
 } from "@/lib/customer-lifespan-api"
-import { Card, ErrorBox, Loading, Segmented } from "./ui"
+import { ListDrawer, type ListSection } from "./ListDrawer"
+import { AssignedCell, Card, ErrorBox, Loading, Segmented } from "./ui"
 
 const GRAINS = [
   { k: "month", label: "Month" },
@@ -56,12 +61,28 @@ function YearRange({ years, from, to, onChange }: {
   )
 }
 
-function FlowChart({ rows }: { rows: TrendRow[] }) {
+// The tooltip's reading order (deck p.5): the stock first, then the flows.
+const FLOW_ORDER: Record<string, number> = {
+  "Customer base": 0, "Shipping customers": 1, New: 2, "Came back": 3, Lost: 4,
+}
+
+function FlowChart({ rows, onPick }: { rows: TrendRow[]; onPick: (period: string) => void }) {
   const data = rows.map((r) => ({ ...r, label: r.partial ? `${r.period}*` : r.period, lostNeg: -r.lost }))
   return (
     <div className="h-80">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} stackOffset="sign" margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <ComposedChart
+          data={data}
+          stackOffset="sign"
+          margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+          className="cursor-pointer"
+          onClick={(state) => {
+            // null = a click on the legend or margin; Number(null) would open the first period.
+            if (state?.activeTooltipIndex == null) return
+            const row = rows[Number(state.activeTooltipIndex)]
+            if (row) onPick(row.period)
+          }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
           <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={12} />
           <YAxis yAxisId="flow" tick={{ fontSize: 11 }} width={36} allowDecimals={false} />
@@ -70,6 +91,7 @@ function FlowChart({ rows }: { rows: TrendRow[] }) {
           <Tooltip
             formatter={(v, name) => [fmtInt(Math.abs(Number(v))), String(name)]}
             labelFormatter={(l) => `${l}${String(l).endsWith("*") ? " (in progress)" : ""}`}
+            itemSorter={(item) => FLOW_ORDER[String(item.name)] ?? 9}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Bar yAxisId="flow" dataKey="new" name="New" stackId="f" fill={COLORS.new} />
@@ -79,6 +101,27 @@ function FlowChart({ rows }: { rows: TrendRow[] }) {
           <Line yAxisId="stock" dataKey="active" name="Shipping customers" stroke={COLORS.active} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
         </ComposedChart>
       </ResponsiveContainer>
+    </div>
+  )
+}
+
+function ValueTooltip({ active, payload, label }: {
+  active?: boolean
+  payload?: readonly { payload?: unknown }[]
+  label?: string | number
+}) {
+  const r = payload?.[0]?.payload as TrendRow | undefined
+  if (!active || !r) return null
+  const line = (name: string, value: string, color: string) => (
+    <div style={{ color }}>{name}: {value}</div>
+  )
+  return (
+    <div className="rounded border border-[#E5E7EB] bg-white px-3 py-2 text-xs shadow-sm">
+      <div className="mb-1 text-[#111827]">{label}</div>
+      {line("Margin %", fmtPct(r.margin_pct), COLORS.navy)}
+      {line("Profit ($)", fmtUsd(r.margin), COLORS.margin)}
+      {line("Profit per Customer ($)", fmtUsd(r.margin_per_active), COLORS.navy)}
+      {line("Revenue ($)", fmtUsd(r.revenue), "#64748B")}
     </div>
   )
 }
@@ -93,11 +136,11 @@ function ValueChart({ rows }: { rows: TrendRow[] }) {
           <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={12} />
           <YAxis yAxisId="usd" tickFormatter={(v: number) => fmtUsdCompact(v)} tick={{ fontSize: 11 }} width={60} />
           <YAxis yAxisId="per" orientation="right" tickFormatter={(v: number) => fmtUsdCompact(v)} tick={{ fontSize: 11 }} width={60} />
-          <Tooltip formatter={(v, name) => [fmtUsd(Number(v)), String(name)]} />
+          <Tooltip content={<ValueTooltip />} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar yAxisId="usd" dataKey="revenue" name="Revenue" fill={COLORS.revenue} />
-          <Bar yAxisId="usd" dataKey="margin" name="Margin" fill={COLORS.margin} />
-          <Line yAxisId="per" dataKey="margin_per_active" name="Margin per shipping customer" stroke={COLORS.navy} strokeWidth={2} dot={false} />
+          <Bar yAxisId="usd" dataKey="revenue" name="Revenue ($)" fill={COLORS.revenue} />
+          <Bar yAxisId="usd" dataKey="margin" name="Profit ($)" fill={COLORS.margin} />
+          <Line yAxisId="per" dataKey="margin_per_active" name="Profit per Customer ($)" stroke={COLORS.navy} strokeWidth={2} dot={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -115,8 +158,8 @@ function TrendTable({ rows }: { rows: TrendRow[] }) {
             <th className="px-2 py-1.5 text-left font-medium">Period</th>
             <th className={th}>Base</th><th className={th}>Shipping</th><th className={th}>New</th>
             <th className={th}>Came back</th><th className={th}>Lost</th><th className={th}>Net</th>
-            <th className={th}>Revenue</th><th className={th}>Margin</th><th className={th}>Margin %</th>
-            <th className={th}>Margin / customer</th>
+            <th className={th}>Revenue ($)</th><th className={th}>Profit ($)</th><th className={th}>Margin %</th>
+            <th className={th}>Profit per Customer ($)</th>
           </tr>
         </thead>
         <tbody>
@@ -138,9 +181,53 @@ function TrendTable({ rows }: { rows: TrendRow[] }) {
   )
 }
 
-export function TrendPanel({ division, window }: { division: Division; window: Window }) {
+function memberRows(rows: FlowMember[], dateLabel: string): ListSection["rows"] {
+  return rows.map((m) => ({
+    id: m.customer_id,
+    name: m.name,
+    detail: `${dateLabel} ${fmtDate(m.date)}`,
+    right: <AssignedCell row={m} />,
+  }))
+}
+
+function PeriodDrawer({ division, window, grain, period, filters, onClose, onOpen }: {
+  division: Division
+  window: Window
+  grain: Grain
+  period: string
+  filters: ReportFilters
+  onClose: () => void
+  onOpen: (id: string) => void
+}) {
+  const { data, error, isLoading } = useFlowMembers(division, window, grain, period, filters)
+  const d = data?.data
+  const sections: ListSection[] = d ? [
+    { key: "reactivated", label: "Came back", color: COLORS.reactivated, rows: memberRows(d.reactivated, "Returned") },
+    { key: "lost", label: "Lost", color: COLORS.lost, rows: memberRows(d.lost, "Last load") },
+    { key: "new", label: "New", color: COLORS.new, rows: memberRows(d.new, "First load") },
+  ] : []
+  return (
+    <ListDrawer
+      title={period}
+      subtitle="Customers behind this period's bars"
+      sections={sections}
+      loading={isLoading || !d}
+      error={error}
+      onClose={onClose}
+      onOpen={onOpen}
+    />
+  )
+}
+
+export function TrendPanel({ division, window, filters, onOpen }: {
+  division: Division
+  window: Window
+  filters: ReportFilters
+  onOpen: (id: string) => void
+}) {
   const [grain, setGrain] = useState<Grain>("quarter")
-  const { data, error, isLoading } = useTrend(division, window, grain)
+  const [picked, setPicked] = useState<string | null>(null)
+  const { data, error, isLoading } = useTrend(division, window, grain, filters)
   const rows = useMemo(() => data?.data ?? [], [data])
   const years = useMemo(() => Array.from(new Set(rows.map((r) => yearOf(r.period)))), [rows])
   const [range, setRange] = useState<[number, number] | null>(null)
@@ -158,15 +245,31 @@ export function TrendPanel({ division, window }: { division: Division; window: W
     <div className="space-y-4">
       <Card
         title="Customer flow"
-        hint={`Bars: customers won (new), won back after more than ${window} quiet days, and lost (last load before a silence longer than ${window} days — counted only once the silence is confirmed). Lines: the customer base (load in the ${window} days to period end) and customers shipping in the period. * = period still in progress.`}
+        description="Tracks new, returning, and lost customers over time, alongside the customer base and customers shipping in each period."
+        howTo={`Bars show new (green), returning after ${window}+ inactive days (blue), and lost customers (red). Lines show the customer base and customers shipping that period. Bars use the left axis; lines use the right. Click a period to see its customers.`}
         right={controls}
       >
-        {isLoading ? <Loading height="h-80" /> : <FlowChart rows={shown} />}
+        {isLoading ? <Loading height="h-80" /> : <FlowChart rows={shown} onPick={setPicked} />}
       </Card>
-      <Card title="Revenue, margin and margin per shipping customer">
+      <Card
+        title="Revenue, profit and profit per shipping customer"
+        description="Tracks revenue, profit, and average profit per shipping customer over time."
+        howTo="Gray bars show revenue; green bars show profit (left axis). The line shows average profit per shipping customer (right axis)."
+      >
         {isLoading ? <Loading height="h-64" /> : <ValueChart rows={shown} />}
       </Card>
       <Card title="By period">{isLoading ? <Loading /> : <TrendTable rows={shown} />}</Card>
+      {picked && (
+        <PeriodDrawer
+          division={division}
+          window={window}
+          grain={grain}
+          period={picked}
+          filters={filters}
+          onClose={() => setPicked(null)}
+          onOpen={onOpen}
+        />
+      )}
     </div>
   )
 }

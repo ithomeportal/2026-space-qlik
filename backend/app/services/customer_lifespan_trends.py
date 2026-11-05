@@ -17,10 +17,12 @@ first → last lifespans instead would count every 2026 customer as short-lived.
 from __future__ import annotations
 
 from datetime import date
-from itertools import pairwise
 
 from app.services.customer_lifespan_core import (
+    LIFESPAN_BUCKETS,
     Customer,
+    flow_events,
+    is_new,
     month_end,
     month_index,
     month_label,
@@ -29,53 +31,31 @@ from app.services.customer_lifespan_core import (
 )
 
 GRAINS = ("month", "quarter", "year")
-LIFESPAN_BUCKETS = (
-    (0, 0, "1 month"),
-    (1, 5, "2–6 months"),
-    (6, 11, "7–12 months"),
-    (12, 23, "1–2 years"),
-    (24, 47, "2–4 years"),
-    (48, 95, "4–8 years"),
-    (96, 10_000, "8+ years"),
-)
-
-
-def _events(c: Customer, window: int) -> tuple[list[int], list[int]]:
-    """(lost month indexes, reactivated month indexes) for one customer."""
-    lost, back = [], []
-    for a, b in pairwise(c.months):
-        if (b.first_ship - a.last_ship).days > window:
-            lost.append(month_index(a.month))
-            back.append(month_index(b.month))
-    if c.status == "lost":
-        lost.append(month_index(c.months[-1].month))
-    return lost, back
-
 
 def _base_at(c: Customer, end: date, window: int) -> bool:
     """Had a load in the ``window`` days up to ``end`` (a month end, or as-of)."""
     last = None
-    for m in c.months:
+    for m in c.history:
         if m.first_ship > end:
             break
         last = min(m.last_ship, end)
     return last is not None and (end - last).days <= window
 
 
-def monthly(customers: list[Customer], as_of: date, window: int) -> list[dict]:
-    if not customers:
+def monthly(customers: list[Customer], as_of: date, window: int, start: date = date.min) -> list[dict]:
+    months = [month_index(m.month) for c in customers for m in c.months]
+    if not months:
         return []
-    start = min(month_index(c.first_ship) for c in customers)
-    end = month_index(as_of)
     rows = {i: {"active": set(), "new": 0, "lost": 0, "reactivated": 0, "base": 0,
-                "revenue": 0.0, "margin": 0.0} for i in range(start, end + 1)}
+                "revenue": 0.0, "margin": 0.0} for i in range(min(months), month_index(as_of) + 1)}
     for c in customers:
-        rows[month_index(c.first_ship)]["new"] += 1
-        lost, back = _events(c, window)
-        for i in lost:
-            rows[i]["lost"] += 1
-        for i in back:
-            rows[i]["reactivated"] += 1
+        if is_new(c, start):
+            rows[month_index(c.first_ship)]["new"] += 1
+        lost, back = flow_events(c, window, start)
+        for d in lost:
+            rows[month_index(d)]["lost"] += 1
+        for d in back:
+            rows[month_index(d)]["reactivated"] += 1
         for m in c.months:
             r = rows[month_index(m.month)]
             r["active"].add(c.customer_id)
@@ -105,11 +85,12 @@ def _period_end(d: date, grain: str) -> date:
     return date(d.year, 12, 31)
 
 
-def trend(customers: list[Customer], as_of: date, window: int, grain: str) -> list[dict]:
+def trend(customers: list[Customer], as_of: date, window: int, grain: str,
+          start: date = date.min) -> list[dict]:
     if grain not in GRAINS:
         raise ValueError(f"unknown grain {grain!r}")
     out: dict[int, dict] = {}
-    for r in monthly(customers, as_of, window):
+    for r in monthly(customers, as_of, window, start):
         label, key = _period(r["index"], grain)
         p = out.setdefault(key, {"period": label, "active_ids": set(), "monthly_active": [],
                                  "new": 0, "lost": 0, "reactivated": 0, "base": 0,
@@ -138,12 +119,30 @@ def trend(customers: list[Customer], as_of: date, window: int, grain: str) -> li
     return rows
 
 
+def flow_members(customers: list[Customer], window: int, grain: str, period: str,
+                 start: date = date.min) -> dict[str, list[dict]]:
+    """Who is behind one period's bars: ONE ROW PER EVENT, so a list equals its bar."""
+    def in_period(d: date) -> bool:
+        return _period(month_index(d), grain)[0] == period
+
+    out: dict[str, list[dict]] = {"new": [], "reactivated": [], "lost": []}
+    for c in customers:
+        row = {"customer_id": c.customer_id, "name": c.name, "status": c.status,
+               "days_since_last": c.days_since_last}
+        lost, back = flow_events(c, window, start)
+        if is_new(c, start) and in_period(c.first_ship):
+            out["new"].append({**row, "date": c.first_ship})
+        out["reactivated"].extend({**row, "date": d} for d in back if in_period(d))
+        out["lost"].extend({**row, "date": d} for d in lost if in_period(d))
+    return {k: sorted(v, key=lambda e: (e["date"], e["name"]), reverse=True) for k, v in out.items()}
+
+
 def _avg(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 1) if values else None
 
 
-def cohorts(customers: list[Customer], as_of: date) -> list[dict]:
-    """One row per first-load year + its retention across the following years."""
+def cohorts(customers: list[Customer], as_of: date, start: date = date.min) -> list[dict]:
+    """One row per TRUE first-load year + its retention across the years in the range."""
     by_year: dict[int, list[Customer]] = {}
     for c in customers:
         by_year.setdefault(c.cohort_year, []).append(c)
@@ -153,7 +152,7 @@ def cohorts(customers: list[Customer], as_of: date) -> list[dict]:
         base = [c for c in cs if c.status != "lost"]
         lost = [c for c in cs if c.status == "lost"]
         retention = []
-        for y in range(year, as_of.year + 1):
+        for y in range(max(year, start.year), as_of.year + 1):
             shipped = sum(1 for c in cs if any(m.month.year == y for m in c.months))
             retention.append({"year": y, "customers": shipped, "pct": pct(shipped, len(cs))})
         rows.append({
@@ -161,6 +160,7 @@ def cohorts(customers: list[Customer], as_of: date) -> list[dict]:
             "new": len(cs),
             "base_now": len(base),
             "active_now": sum(1 for c in base if c.status == "active"),
+            "at_risk_now": sum(1 for c in base if c.status == "at_risk"),
             "lost": len(lost),
             "retained_pct": pct(len(base), len(cs)),
             "avg_lifespan_base": _avg([c.lifespan_months for c in base]),
@@ -179,7 +179,7 @@ def _tenure(c: Customer) -> tuple[int, bool]:
     Censoring at as-of would credit an at-risk customer with up to ``window``
     silent days a lost one never gets (review 2026-10-29).
     """
-    return month_index(c.last_ship) - month_index(c.first_ship) + 1, c.status == "lost"
+    return c.lifespan_months + 1, c.status == "lost"
 
 
 def survival(customers: list[Customer], as_of: date) -> dict:

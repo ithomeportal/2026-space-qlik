@@ -18,9 +18,9 @@ export const EMPTY_FILTERS: Filters = {
 
 const MIN_REVENUE = [
   { v: 0, label: "Any revenue" },
-  { v: 10_000, label: "≥ $10K lifetime" },
-  { v: 100_000, label: "≥ $100K lifetime" },
-  { v: 1_000_000, label: "≥ $1M lifetime" },
+  { v: 10_000, label: "≥ $10K revenue" },
+  { v: 100_000, label: "≥ $100K revenue" },
+  { v: 1_000_000, label: "≥ $1M revenue" },
 ]
 
 export function applyFilters(rows: CustomerRow[], f: Filters): CustomerRow[] {

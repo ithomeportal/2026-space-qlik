@@ -79,7 +79,43 @@ CREATE TABLE IF NOT EXISTS customer_lifespan_sync_log (
   error           TEXT
 )
 """
-DDL = (ORDERS_DDL, ORDERS_INDEX_DDL, SYNC_LOG_DDL)
+#: The Date filter reads by ship date on every section.
+ORDERS_SHIP_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS customer_lifespan_orders_ship "
+    "ON customer_lifespan_orders (ship_date)"
+)
+#: Latest v4 team per customer (deck 2026-11-03). Absent = never in v4 (only the workbook).
+CUSTOMER_TEAM_DDL = """
+CREATE TABLE IF NOT EXISTS customer_lifespan_customer_team (
+  customer_id  TEXT         PRIMARY KEY,
+  team_id      TEXT         NOT NULL,
+  last_ship    DATE         NOT NULL,
+  refreshed_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+)
+"""
+#: The owner of each customer's open Pipedrive REACTIVATION deal. READ from the CRM, never written back.
+DEAL_OWNER_DDL = """
+CREATE TABLE IF NOT EXISTS customer_lifespan_deal_owner (
+  customer_code TEXT         PRIMARY KEY,
+  owner_name    TEXT         NOT NULL,
+  deal_id       BIGINT       NOT NULL,
+  deal_title    TEXT,
+  refreshed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+)
+"""
+#: One row per team / owner refresh: a job that never ran or keeps failing must be visible.
+REFRESH_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS customer_lifespan_refresh_log (
+  id           BIGSERIAL    PRIMARY KEY,
+  kind         TEXT         NOT NULL,
+  started_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  status       TEXT         NOT NULL,
+  row_count    INTEGER,
+  error        TEXT
+)
+"""
+DDL = (ORDERS_DDL, ORDERS_INDEX_DDL, ORDERS_SHIP_INDEX_DDL, SYNC_LOG_DDL, CUSTOMER_TEAM_DDL, DEAL_OWNER_DDL, REFRESH_LOG_DDL)
 
 # ---------------------------------------------------------------- gold (v4)
 
@@ -114,6 +150,23 @@ SELECT TRIM(v4.id)                       AS order_id,
  WHERE v4.company_id = ANY($1::text[])
    AND v4.id = ANY($2::text[])
 """
+
+#: Every customer × team that shipped, to find the team of its LATEST load. Team
+#: applies the §134 DFW-marker rule; ``team_id`` is per order, 30 customers hold two.
+V4_TEAMS_SQL = f"""
+SELECT TRIM(v4.customer_id)                                 AS customer_id,
+       COALESCE({division_team_id_sql("v4")}, '')           AS team_id,
+       MAX(v4.origin_actual_departure)::date                AS last_ship,
+       COUNT(*)::int                                        AS orders
+  FROM mcleod_gld_budget_report_v4 v4
+ WHERE v4.company_id = ANY($1::text[])
+   AND v4.status = ANY($2::text[])
+   AND v4.origin_actual_departure >= $3
+   AND v4.customer_id IS NOT NULL
+   AND TRIM(v4.customer_id) <> ''
+ GROUP BY 1, 2
+"""
+V4_TEAMS_SINCE = datetime(2020, 1, 1)   # v4 starts 2020-12
 
 # ---------------------------------------------------------------- analytics_hub
 
@@ -158,6 +211,23 @@ LAST_OK_SYNC_SQL = """
 SELECT finished_at FROM customer_lifespan_sync_log
  WHERE status = 'ok' ORDER BY finished_at DESC LIMIT 1
 """
+COUNT_TEAMS_SQL = "SELECT COUNT(*) FROM customer_lifespan_customer_team"
+DELETE_TEAMS_SQL = "DELETE FROM customer_lifespan_customer_team"
+INSERT_TEAM_SQL = """
+INSERT INTO customer_lifespan_customer_team (customer_id, team_id, last_ship) VALUES ($1, $2, $3)
+"""
+LOG_REFRESH_START_SQL = """
+INSERT INTO customer_lifespan_refresh_log (kind, status) VALUES ($1, 'running') RETURNING id
+"""
+LOG_REFRESH_OK_SQL = """
+UPDATE customer_lifespan_refresh_log SET finished_at = NOW(), status = 'ok', row_count = $2 WHERE id = $1
+"""
+LOG_REFRESH_FAILED_SQL = """
+UPDATE customer_lifespan_refresh_log SET finished_at = NOW(), status = 'failed', error = $2 WHERE id = $1
+"""
+LAST_REFRESH_OK_SQL = """
+SELECT MAX(finished_at) FROM customer_lifespan_refresh_log WHERE kind = $1 AND status = 'ok'
+"""
 
 
 def division_of(division_team: str | None) -> str:
@@ -180,6 +250,19 @@ def v4_records(rows) -> list[tuple]:
          division_of(r["division_team"]), r["revenue"], r["carrier_pay"], r["margin"])
         for r in rows
     ]
+
+
+def latest_team_records(rows) -> list[tuple]:
+    """v4 customer × team rows → (customer, team of its latest load, that date). Pure.
+
+    Two teams on one day: the one with more orders, then by name, so a re-run cannot flip it.
+    """
+    best: dict[str, tuple] = {}
+    for r in rows:
+        rank = (r["last_ship"], r["orders"], r["team_id"])
+        if r["customer_id"] not in best or rank > best[r["customer_id"]]:
+            best[r["customer_id"]] = rank
+    return sorted((cid, rank[2], rank[0]) for cid, rank in best.items())
 
 
 def reconcile(excel_tail, v4_tail, v4_window) -> dict:
@@ -269,3 +352,29 @@ async def sync_from_datalake(hub, gold, now_cst: datetime) -> dict:
 
 async def last_ok_sync(hub) -> datetime | None:
     return await hub.fetchval(LAST_OK_SYNC_SQL)
+
+
+async def sync_customer_teams(hub, gold) -> int:
+    """Replace the customer → latest team map in one transaction. RAISES on failure.
+
+    Fetch-then-write; the run row is written first; a read under half the stored
+    rows is refused, so a bad night keeps yesterday's teams.
+    """
+    if hub is None or gold is None:
+        raise RuntimeError("customer lifespan teams: analytics_hub or gold pool missing")
+    log_id = await hub.fetchval(LOG_REFRESH_START_SQL, "teams")
+    try:
+        rows = await gold.fetch(V4_TEAMS_SQL, pad_variants((COMPANY_ID.strip(),), width=4),
+                                list(SHIPPED_STATUSES), V4_TEAMS_SINCE)
+        records = latest_team_records(rows)
+        stored = await hub.fetchval(COUNT_TEAMS_SQL) or 0
+        if not records or len(records) < stored * SHRINK_FLOOR:
+            raise RuntimeError(f"v4 returned {len(records)} customers vs {stored} stored — refusing to shrink")
+        async with hub.acquire() as conn, conn.transaction():
+            await conn.execute(DELETE_TEAMS_SQL)
+            await conn.executemany(INSERT_TEAM_SQL, records)
+        await hub.execute(LOG_REFRESH_OK_SQL, log_id, len(records))
+        return len(records)
+    except Exception as e:
+        await hub.execute(LOG_REFRESH_FAILED_SQL, log_id, f"{type(e).__name__}: {e}"[:500])
+        raise

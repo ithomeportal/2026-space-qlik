@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from app.routers import customer_lifespan as rt
 from app.services import customer_lifespan_core as core
+from app.services import customer_lifespan_scope as sc
 from app.services import customer_lifespan_store as store
 from app.services import customer_lifespan_trends as tr
 from tools import load_customer_lifespan_excel as loader
@@ -100,7 +101,7 @@ def test_summary_counts_one_population():
     s = core.summary(list(_customers().values()), AS_OF, 90)
     assert (s["customers_total"], s["base"], s["active"], s["at_risk"], s["lost"]) == (3, 2, 1, 1, 1)
     assert s["base"] == s["active"] + s["at_risk"]
-    assert s["new_ytd"] == 3 and s["lost_12m"] == 1 and s["reactivated_12m"] == 1
+    assert s["new_period"] == 3 and s["lost_period"] == 1 and s["reactivated_period"] == 1
     assert s["avg_lifespan_lost"] == 7 and s["median_lifespan_lost"] == 7
     assert s["first_ship"] == date(2024, 1, 5)
 
@@ -112,8 +113,8 @@ def test_a_customer_lost_and_won_back_counts_as_both():
     as_of = date(2026, 8, 20)
     cs = core.build_customers(core.merge_rows(rows, "all"), as_of, 90)
     s = core.summary(cs, as_of, 90)
-    assert cs[0].status == "active" and (s["lost_12m"], s["reactivated_12m"]) == (1, 1)
-    assert core.loss_dates(cs[0], 90) == [date(2026, 1, 30)]
+    assert cs[0].status == "active" and (s["lost_period"], s["reactivated_period"]) == (1, 1)
+    assert core.flow_events(cs[0], 90) == ([date(2025, 11, 1)], [date(2026, 8, 15)])
 
 
 def test_customer_detail_is_zero_filled_to_as_of():
@@ -366,9 +367,15 @@ class _HubRead:
         self.rows, self.reads = rows, 0
 
     async def fetch(self, sql, *p):
-        assert sql == core.CUSTOMER_MONTHS_SQL
-        self.reads += 1
-        return self.rows
+        if sql == core.CUSTOMER_MONTHS_SQL:
+            self.reads += 1
+            return self.rows
+        assert sql in (sc.TEAMS_SQL, sc.OWNERS_SQL), sql[:60]
+        return []
+
+    async def fetchval(self, sql, *p):
+        assert sql == sc.OWNERS_EVER_OK_SQL
+        return False
 
 
 class _Req:
@@ -383,15 +390,19 @@ def _fresh_cache():
     rt.invalidate_cache()
 
 
+ALL = rt.Filters(range_key="all")
+
+
 @pytest.mark.asyncio
 async def test_endpoints_share_one_cached_read_and_report_as_of():
     pool = _HubRead(ROWS)
-    body = await rt.summary_view(_Req(pool), rt.Division.all, 90, USER)
-    assert body["meta"] == {"division": "all", "window_days": 90, "as_of": "2024-12-30"}
+    body = await rt.summary_view(_Req(pool), rt.Division.all, 90, ALL, USER)
+    assert body["meta"]["division"] == "all" and body["meta"]["window_days"] == 90
+    assert body["meta"]["as_of"] == "2024-12-30" and body["meta"]["data_as_of"] == "2024-12-30"
     assert body["data"]["base"] == 2
-    cust = await rt.customers_view(_Req(pool), rt.Division.dfw, 90, USER)
+    cust = await rt.customers_view(_Req(pool), rt.Division.dfw, 90, ALL, USER)
     assert {r["customer_id"] for r in cust["data"]} == {"B", "C"}
-    trend = await rt.trend_view(_Req(pool), rt.Division.corp, 90, "year", USER)
+    trend = await rt.trend_view(_Req(pool), rt.Division.corp, 90, "year", ALL, USER)
     assert trend["data"][0]["period"] == "2024"
     assert pool.reads == 1
 
@@ -400,17 +411,17 @@ async def test_endpoints_share_one_cached_read_and_report_as_of():
 async def test_bad_window_grain_customer_and_empty_table():
     pool = _HubRead(ROWS)
     with pytest.raises(HTTPException) as e:
-        await rt.summary_view(_Req(pool), rt.Division.all, 45, USER)
+        await rt.summary_view(_Req(pool), rt.Division.all, 45, ALL, USER)
     assert e.value.status_code == 422
     with pytest.raises(HTTPException) as e:
-        await rt.trend_view(_Req(pool), rt.Division.all, 90, "week", USER)
+        await rt.trend_view(_Req(pool), rt.Division.all, 90, "week", ALL, USER)
     assert e.value.status_code == 422
     with pytest.raises(HTTPException) as e:
-        await rt.customer_view(_Req(pool), rt.Division.corp, "C", 90, USER)
+        await rt.customer_view(_Req(pool), rt.Division.corp, "C", 90, ALL, USER)
     assert e.value.status_code == 404
     rt.invalidate_cache()
     with pytest.raises(HTTPException) as e:
-        await rt.summary_view(_Req(_HubRead([])), rt.Division.all, 90, USER)
+        await rt.summary_view(_Req(_HubRead([])), rt.Division.all, 90, ALL, USER)
     assert e.value.status_code == 503
 
 
@@ -420,7 +431,10 @@ def test_division_is_a_required_path_segment():
     paths = {r.path for r in app.routes if getattr(r, "path", "").startswith("/api/custom/customer-lifespan")}
     assert paths == {
         "/api/custom/customer-lifespan/freshness",
+        "/api/custom/customer-lifespan/{division}/filters",
         "/api/custom/customer-lifespan/{division}/summary",
+        "/api/custom/customer-lifespan/{division}/board",
+        "/api/custom/customer-lifespan/{division}/flow-customers",
         "/api/custom/customer-lifespan/{division}/trend",
         "/api/custom/customer-lifespan/{division}/cohorts",
         "/api/custom/customer-lifespan/{division}/lifespan",
@@ -444,7 +458,9 @@ def test_four_place_mirror_and_roles():
     page = (ROOT / "frontend/app/reports/customer-lifespan/page.tsx").read_text()
     assert 'reportKey="customer-lifespan"' in page
     src = (ROOT / "backend/app/routers/customer_lifespan.py").read_text()
-    assert src.count("require_report_access(REPORT_KEY)") == 7
+    # /freshness + the one shared dependency every /{division}/ route takes.
+    assert src.count("require_report_access(REPORT_KEY)") == 2
+    assert src.count("_user: dict = _ACCESS") == 9
 
 
 def test_job_is_scheduled_and_on_the_roster():

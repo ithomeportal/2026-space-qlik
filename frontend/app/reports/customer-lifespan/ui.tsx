@@ -2,21 +2,30 @@
 
 import type { ReactNode } from "react"
 import { Loader2 } from "lucide-react"
-import { STATUS_META, type Status } from "@/lib/customer-lifespan-api"
+import { STATUS_META, type Assignment, type Status } from "@/lib/customer-lifespan-api"
 
-export function Card({ title, hint, right, children }: {
+export function Card({ title, hint, description, howTo, howToLabel = "How to read", right, children }: {
   title?: string
   hint?: string
+  description?: string
+  howTo?: ReactNode
+  howToLabel?: string
   right?: ReactNode
   children: ReactNode
 }) {
   return (
     <section className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-      {(title || right) && (
+      {(title || right || description) && (
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-          <div>
+          <div className="min-w-0 flex-1">
             {title && <h2 className="text-sm font-semibold text-[#1B3A5C]">{title}</h2>}
             {hint && <p className="mt-0.5 max-w-3xl text-[11px] text-[#6B7280]">{hint}</p>}
+            {description && <p className="mt-0.5 max-w-3xl text-xs text-[#374151]">{description}</p>}
+            {howTo && (
+              <p className="mt-0.5 max-w-3xl text-xs text-[#374151]">
+                <span className="font-semibold">{howToLabel}:</span> {howTo}
+              </p>
+            )}
           </div>
           {right}
         </div>
@@ -24,6 +33,18 @@ export function Card({ title, hint, right, children }: {
       {children}
     </section>
   )
+}
+
+/** TEAM / Sales Exec.: amber when nobody works this lost account yet. */
+export function AssignedCell({ row }: { row: Assignment }) {
+  if (row.pending_assignment) {
+    return (
+      <span className="whitespace-nowrap rounded bg-[#FEF3C7] px-1.5 py-0.5 text-[10px] font-semibold text-[#92400E]">
+        {row.assigned_to}
+      </span>
+    )
+  }
+  return <span className="whitespace-nowrap">{row.assigned_to === "NO TEAM" ? "—" : row.assigned_to ?? "—"}</span>
 }
 
 export function Loading({ height = "h-48" }: { height?: string }) {

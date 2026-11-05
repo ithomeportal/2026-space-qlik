@@ -42,7 +42,8 @@ export function TimelinePanel({ rows, asOf, onOpen }: {
   }, [rows, sort, limit])
 
   if (rows.length === 0) return <div className="py-6 text-center text-xs text-[#6B7280]">No customer matches these filters.</div>
-  const start = Math.min(...rows.map((r) => idx(r.first_ship.slice(0, 7))))
+  // months_active only holds the selected dates; first_ship is the customer's true first load.
+  const start = Math.min(...rows.map((r) => idx(r.months_active[0])))
   const end = idx(asOf.slice(0, 7))
   const span = Math.max(end - start + 1, 1)
   const x = (i: number) => `${((i - start) / span) * 100}%`
@@ -55,7 +56,7 @@ export function TimelinePanel({ rows, asOf, onOpen }: {
         <Segmented label="Sort" value={sort} options={SORTS} onChange={setSort} />
         <Segmented label="Show" value={limit} options={LIMITS} onChange={setLimit} />
         <span className="text-[11px] text-[#6B7280]">
-          {limit ? `the ${limit} largest customers by lifetime revenue` : "every customer"} in the current filters · light bar = lifespan, dark ticks = months with loads
+          {limit ? `the ${limit} largest customers by revenue` : "every customer"} in the current filters · light bar = lifespan, dark ticks = months with loads
         </span>
       </div>
       <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-[#E5E7EB]">
@@ -68,7 +69,7 @@ export function TimelinePanel({ rows, asOf, onOpen }: {
           </div>
         </div>
         {lanes.map((r) => {
-          const first = idx(r.first_ship.slice(0, 7))
+          const first = idx(r.months_active[0])
           const last = idx(r.last_ship.slice(0, 7))
           const color = STATUS_META[r.status].color
           return (
