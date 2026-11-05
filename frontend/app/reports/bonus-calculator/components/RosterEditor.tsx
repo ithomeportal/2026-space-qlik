@@ -3,11 +3,20 @@
 import { useState } from "react"
 import { X, Plus, Trash2, Lock, Unlock, Loader2 } from "lucide-react"
 import { useBonusRoster, useBonusMutations, type RosterEmployee } from "@/lib/bonus-api"
-import { BRAND, ROLE_LABEL } from "../format"
+import { BRAND, ROLE_LABEL, usd } from "../format"
 
 const ROLES: RosterEmployee["role"][] = ["kam", "freight_match", "tracking_tracing"]
 
-export function RosterEditor({ period, onClose }: { period: string | undefined; onClose: () => void }) {
+export function RosterEditor({
+  period,
+  reviewedTotalUsd,
+  onClose,
+}: {
+  period: string | undefined
+  /** The grand total on screen for this period; Approve refuses if it has moved. */
+  reviewedTotalUsd: number | undefined
+  onClose: () => void
+}) {
   const { data, isLoading } = useBonusRoster(period, true)
   const m = useBonusMutations()
   const d = data?.data
@@ -20,6 +29,8 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
   const fxTeam = teamFx !== "" ? teamFx : d ? String(d.settings.teamFx) : ""
   const fxNight = nightFx !== "" ? nightFx : d ? String(d.settings.nightFx) : ""
   const locked = d?.lock.status === "approved"
+  const fxUnsaved = !!d && !locked && (Number(fxTeam) !== d.settings.teamFx || Number(fxNight) !== d.settings.nightFx)
+  const approveBlocked = !locked && (fxUnsaved || m.saveFx.isPending || reviewedTotalUsd === undefined)
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 py-10" onClick={onClose}>
@@ -89,8 +100,21 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                   {m.saveFx.isPending ? "Saving…" : "Save FX"}
                 </button>
                 <button
-                  onClick={() => (locked ? m.unlock.mutate(periodKey) : m.lock.mutate(periodKey))}
-                  className={`flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-semibold ${
+                  disabled={m.lock.isPending || m.unlock.isPending || approveBlocked}
+                  title={fxUnsaved ? "Save the FX rates before approving" : undefined}
+                  onClick={() => {
+                    const pinned = d.settings.pinned
+                      ? ""
+                      : "\n\nFX is not pinned for this month: the default rates will be stored."
+                    const message = locked
+                      ? `Unlock ${d.period.label}? It returns to live figures. Approving it again stores that day's figures, which may differ from what was paid.`
+                      : `Approve ${d.period.label} at ${usd(reviewedTotalUsd)}? These figures are stored now and stop changing. Do this after the data is confirmed and before paying.${pinned}`
+                    if (!window.confirm(message)) return
+                    if (locked) m.unlock.mutate(periodKey)
+                    else if (reviewedTotalUsd !== undefined)
+                      m.lock.mutate({ period_key: periodKey, reviewed_total_usd: reviewedTotalUsd })
+                  }}
+                  className={`flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-semibold disabled:opacity-50 ${
                     locked ? "border-[#FCA5A5] text-[#B91C1C]" : "border-[#86EFAC] text-[#15803D]"
                   }`}
                 >
@@ -98,6 +122,9 @@ export function RosterEditor({ period, onClose }: { period: string | undefined; 
                   {locked ? "Unlock period" : "Lock period"}
                 </button>
               </div>
+              {fxUnsaved && (
+                <p className="mt-2 text-[11px] font-medium text-[#B45309]">Save the FX rates before approving this month.</p>
+              )}
               {d.settings.pinned && (
                 <p className="mt-2 text-[11px] text-[#94A3B8]">Last pinned by {d.settings.updatedBy ?? "—"}.</p>
               )}

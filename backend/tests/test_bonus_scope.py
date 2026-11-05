@@ -188,7 +188,7 @@ def test_the_wildcard_maps_into_each_ladders_own_top() -> None:
 # ---------------------------------------------------------------------------
 
 
-_TABLE_FIELDS = ("tbl_roster", "tbl_afterhours", "tbl_settings", "tbl_lock", "tbl_history")
+_TABLE_FIELDS = ("tbl_roster", "tbl_afterhours", "tbl_settings", "tbl_lock", "tbl_history", "tbl_paid")
 
 
 def test_no_table_is_shared_between_the_two_calculators() -> None:
@@ -220,16 +220,22 @@ def test_every_sql_statement_names_its_scopes_table() -> None:
     read and WRITE the corporate roster while every other endpoint looked
     correct.
     """
+    from app.routers import bonus_paid_record as bpr
     from app.routers import bonus_roster_writes as bw
 
     src = inspect.getsource(bc)
     # The roster/afterhours writes moved to `bonus_roster_writes` (2026-10-31
-    # effective dating) — scan it too, or its statements escape this guard.
-    body = src[src.index("async def _load_roster") :] + "\n" + inspect.getsource(bw)
+    # effective dating) and the lock writes to `bonus_paid_record` (2026-11-05) —
+    # scan both, or their statements escape this guard.
+    body = (
+        src[src.index("async def _load_roster") :]
+        + "\n" + inspect.getsource(bw)
+        + "\n" + inspect.getsource(bpr)
+    )
     # Only lines that actually address a table — a prose mention of
     # `services/bonus_history.py` in a docstring is not a query.
     sql_ref = re.compile(
-        r"\b(?:FROM|INTO|UPDATE)\s+(bonus_(?:roster|afterhours|settings|period_lock|history))\b"
+        r"\b(?:FROM|INTO|UPDATE)\s+(bonus_(?:roster|afterhours|settings|period_lock|history|paid_snapshot))\b"
     )
     for line in body.split("\n"):
         m = sql_ref.search(line)

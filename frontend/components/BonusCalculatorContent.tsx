@@ -6,6 +6,7 @@ import { ArrowLeft, Eye, HandCoins, Loader2, Settings, Lock } from "lucide-react
 import { ReportGuard } from "@/components/ReportGuard"
 import { BonusApiProvider, useBonusFilters, useBonusReport } from "@/lib/bonus-api"
 import { BRAND, BRAND_DARK } from "@/app/reports/bonus-calculator/format"
+import { ApprovedRecordBanner } from "@/app/reports/bonus-calculator/components/ApprovedRecordBanner"
 import { KpiStrip } from "@/app/reports/bonus-calculator/components/KpiStrip"
 import { CriteriaGuide } from "@/app/reports/bonus-calculator/components/CriteriaGuide"
 import { TeamBlock } from "@/app/reports/bonus-calculator/components/TeamBlock"
@@ -211,6 +212,7 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
 
         {report && (
           <>
+            <ApprovedRecordBanner report={report} />
             <KpiStrip report={report} />
             <CriteriaGuide report={report} />
             {visibleTeams.map((team) => (
@@ -224,7 +226,13 @@ function BonusCalculatorContent({ title, eyebrow }: { title: string; eyebrow: st
         )}
       </div>
 
-      {editorOpen && canEdit && <RosterEditor period={effectivePeriod} onClose={() => setEditorOpen(false)} />}
+      {editorOpen && canEdit && (
+        <RosterEditor
+          period={effectivePeriod}
+          reviewedTotalUsd={report?.period.key === effectivePeriod ? report?.totals.grandBonusUsd : undefined}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </div>
   )
 }

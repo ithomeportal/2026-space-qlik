@@ -1193,6 +1193,34 @@ async def lifespan(app: FastAPI):
                   PRIMARY KEY (period_key, team_id)
                 )
                 """,
+                # The report as approved (2026-11-05, bonus_paid_record.py). One
+                # table per calculator; a re-approval adds a row, none is deleted.
+                """
+                CREATE TABLE IF NOT EXISTS bonus_paid_snapshot (
+                  id          BIGSERIAL PRIMARY KEY,
+                  period_key  TEXT NOT NULL,
+                  report_json JSONB NOT NULL,
+                  approved_by TEXT,
+                  approved_at TIMESTAMPTZ NOT NULL
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS idx_bonus_paid_snapshot_period
+                  ON bonus_paid_snapshot (period_key, id DESC)
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bonus_dfw_paid_snapshot (
+                  id          BIGSERIAL PRIMARY KEY,
+                  period_key  TEXT NOT NULL,
+                  report_json JSONB NOT NULL,
+                  approved_by TEXT,
+                  approved_at TIMESTAMPTZ NOT NULL
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS idx_bonus_dfw_paid_snapshot_period
+                  ON bonus_dfw_paid_snapshot (period_key, id DESC)
+                """,
             ):
                 await app.state.pool.execute(_bonus_ddl)
 

@@ -17,6 +17,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.routers import bonus_calculator as bc
+from app.routers.bonus_paid_record import load_approved_record
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +68,13 @@ async def finalize_due_periods(app, scope) -> dict:
         if already:
             continue
         try:
-            report = await bc.build_bonus_report_data(
-                gold, primary, financial, period_key, scope
+            # A month approved before its cutoff is frozen at the approved figures,
+            # or History would disagree with the report for good.
+            record = await load_approved_record(primary, period_key, scope)
+            report = (
+                record["report"]
+                if record
+                else await bc.build_bonus_report_data(gold, primary, financial, period_key, scope)
             )
         except Exception as exc:  # noqa: BLE001 — one bad period must not block others
             logger.warning("History finalize for %s failed: %s", period_key, exc)

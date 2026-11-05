@@ -12,6 +12,7 @@ Editable HR data (analytics_hub / primary pool):
 - bonus_roster, bonus_afterhours      (who is KAM/FM/T&T, salaries — Q4 seeded)
 - bonus_settings                       (HR board-pinned team_fx + night_fx per period — Q3)
 - bonus_period_lock                    (HR/Finance month approval — PDF best-practice)
+- bonus_paid_snapshot                  (the whole report stored at approval — bonus_paid_record.py)
 
 fxRate is HR-board-pinned (Q3). The DOF/Banxico-FIX value from the optional
 FINANCIAL_DATABASE_URL pool is exposed only as a *suggested* prefill.
@@ -37,6 +38,11 @@ from pydantic import BaseModel, Field
 
 from app.clock import cst_today
 from app.routers import xray_corp, xray_dfw
+from app.routers.bonus_paid_record import (  # noqa: F401 — LockBody re-exported
+    LockBody,
+    register_lock_routes,
+    report_for_display,
+)
 from app.routers.bonus_roster_writes import (  # noqa: F401 — models re-exported
     VALID_ROLES,
     AfterhoursCreate,
@@ -113,6 +119,7 @@ class BonusScope:
     tbl_settings: str
     tbl_lock: str
     tbl_history: str
+    tbl_paid: str
 
     def scorecard_cte(self, kind: str, team_id: str) -> str:
         """OTP/OTD roll-up for one of this scope's teams.
@@ -152,6 +159,7 @@ CORP_SCOPE = BonusScope(
     tbl_settings="bonus_settings",
     tbl_lock="bonus_period_lock",
     tbl_history="bonus_history",
+    tbl_paid="bonus_paid_snapshot",
 )
 
 # DFW: team_id='TEAM-DFW' with sub-teams TM1..TM4 — the same universe
@@ -175,6 +183,7 @@ DFW_SCOPE = BonusScope(
     tbl_settings="bonus_dfw_settings",
     tbl_lock="bonus_dfw_period_lock",
     tbl_history="bonus_dfw_history",
+    tbl_paid="bonus_dfw_paid_snapshot",
 )
 
 BONUS_SCOPES: dict[str, BonusScope] = {s.key: s for s in (CORP_SCOPE, DFW_SCOPE)}
@@ -660,10 +669,6 @@ class FxSettings(BaseModel):
     night_fx: float = Field(gt=0, le=1000)
 
 
-class LockBody(BaseModel):
-    period_key: str
-
-
 # ---------------------------------------------------------------------------
 # Endpoint factory — one router per scope
 # ---------------------------------------------------------------------------
@@ -686,6 +691,15 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         tags=[f"bonus-calculator-{scope.key}"],
         prefix=scope.url_prefix,
     )
+
+    async def build_live(request: Request, period: Optional[str]) -> dict:
+        return await build_bonus_report_data(
+            get_datalake_gold_pool(request),
+            get_pool(request),
+            getattr(request.app.state, "financial_pool", None),
+            period,
+            scope,
+        )
 
     @r.get("/filters")
     async def filters(
@@ -717,12 +731,11 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         period: Optional[str] = Query(None, description="YYYY-MM (the month the 6th-period opens in)"),
         _user: dict = Depends(gate),
     ):
-        """Full calculated bonus report for one period, fed from live datalake."""
-        report_data = await build_bonus_report_data(
-            get_datalake_gold_pool(request),
+        """One period's bonus report: stored figures once approved, else live."""
+        report_data = await report_for_display(
             get_pool(request),
-            getattr(request.app.state, "financial_pool", None),
-            period,
+            _period_bounds(period)[0],
+            lambda: build_live(request, period),
             scope,
         )
         return {"success": True, "data": report_data}
@@ -747,11 +760,10 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
         current = None
         current_key = _current_period_key()
         try:
-            rep = await build_bonus_report_data(
-                get_datalake_gold_pool(request),
+            rep = await report_for_display(
                 primary,
-                getattr(request.app.state, "financial_pool", None),
                 current_key,
+                lambda: build_live(request, current_key),
                 scope,
             )
             rows = []
@@ -853,38 +865,9 @@ def _make_bonus_router(scope: BonusScope) -> APIRouter:
 
 
 
-    @r.post("/lock")
-    async def lock_period(
-        request: Request,
-        body: LockBody,
-        user: dict = Depends(write_gate),
-    ):
-        """Lock a month as HR/Finance-approved (PDF best-practice)."""
-        _parse_period(body.period_key)
-        primary = get_pool(request)
-        await primary.execute(
-            f"""
-            INSERT INTO {scope.tbl_lock} (period_key, status, approved_by, approved_at)
-            VALUES ($1, 'approved', $2, NOW())
-            ON CONFLICT (period_key) DO UPDATE
-              SET status = 'approved', approved_by = EXCLUDED.approved_by, approved_at = NOW()
-            """,
-            body.period_key,
-            user.get("email") or user.get("name") or user.get("sub"),
-        )
-        return {"success": True}
-
-
-    @r.delete("/lock/{period_key}")
-    async def unlock_period(
-        request: Request,
-        period_key: str,
-        user: dict = Depends(write_gate),
-    ):
-        _parse_period(period_key)
-        primary = get_pool(request)
-        await primary.execute(f"DELETE FROM {scope.tbl_lock} WHERE period_key = $1", period_key)
-        return {"success": True}
+    # Approve stores the month's report beside the lock (2026-11-05) — see
+    # app/routers/bonus_paid_record.py.
+    register_lock_routes(r, scope, write_gate, build_live, _parse_period)
 
     return r
 

@@ -219,6 +219,14 @@ export interface BonusReport {
   period: { key: string; label: string; start: string; end: string; weekLabels: string[] }
   fx: { teamFx: number; nightFx: number; pinned: boolean; suggestedDofFx: number | null; updatedBy: string | null }
   lock: { status: string; approvedBy: string | null; approvedAt: string | null }
+  /** Present only while the month shows figures stored at approval (2026-11-05). */
+  approvedRecord?: {
+    approvedAt: string | null
+    approvedBy: string | null
+    approvedTotalUsd: number
+    liveTotalUsd: number | null
+    differenceUsd: number | null
+  }
 }
 
 export interface RosterEmployee {
@@ -388,9 +396,15 @@ export function useBonusMutations() {
     onError: mutationErrorToast("Save FX"),
   })
   const lock = useMutation({
-    mutationFn: (period_key: string) => apiSend(prefix, "POST", "/lock", { period_key }),
-    onSuccess: ok("Period locked"),
-    onError: mutationErrorToast("Lock period"),
+    mutationFn: (b: { period_key: string; reviewed_total_usd: number }) =>
+      apiSend<{ stored: boolean }>(prefix, "POST", "/lock", b),
+    onSuccess: (res) =>
+      ok(res.data?.stored ? "Period approved and figures stored" : "Period was already approved, nothing changed")(),
+    // A 409 means the figures moved: refresh them so HR reviews the new ones.
+    onError: (error) => {
+      invalidate()
+      mutationErrorToast("Lock period")(error)
+    },
   })
   const unlock = useMutation({
     mutationFn: (period_key: string) => apiSend(prefix, "DELETE", `/lock/${period_key}`),
