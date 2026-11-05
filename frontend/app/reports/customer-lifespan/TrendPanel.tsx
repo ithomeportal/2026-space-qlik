@@ -75,7 +75,7 @@ function FlowChart({ rows, onPick }: { rows: TrendRow[]; onPick: (period: string
           data={data}
           stackOffset="sign"
           margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-          className="cursor-pointer"
+          className="cursor-pointer outline-none [&_*]:outline-none"
           onClick={(state) => {
             // null = a click on the legend or margin; Number(null) would open the first period.
             if (state?.activeTooltipIndex == null) return

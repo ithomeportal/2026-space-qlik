@@ -38,7 +38,7 @@ export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: 
   const { sorted, sortKey, sortDir, toggleSort } = useSortable(rows, "revenue", "desc", (k) =>
     ASC_FIRST.has(k) ? "asc" : "desc",
   )
-  const td = "px-2 py-1.5 text-right tabular-nums"
+  const td = "whitespace-nowrap px-2 py-1.5 text-right tabular-nums"
   return (
     <div className="max-h-[70vh] overflow-auto rounded-lg border border-[#E5E7EB]">
       <table className="w-full text-xs">
@@ -48,7 +48,7 @@ export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: 
               <th
                 key={c.k}
                 onClick={() => toggleSort(c.k)}
-                className={`cursor-pointer select-none whitespace-nowrap px-2 py-2 font-medium hover:text-[#111827] ${
+                className={`cursor-pointer select-none px-2 py-2 align-bottom font-medium hover:text-[#111827] ${
                   c.align === "left" ? "text-left" : "text-right"
                 }`}
               >
@@ -66,7 +66,7 @@ export function CustomersPanel({ rows, onOpen }: { rows: CustomerRow[]; onOpen: 
               onClick={() => onOpen(r.customer_id)}
               className="cursor-pointer border-t border-[#F3F4F6] hover:bg-[#F9FAFB]"
             >
-              <td className="max-w-[260px] px-2 py-1.5">
+              <td className="max-w-[200px] px-2 py-1.5">
                 <div className="truncate font-medium text-[#111827]" title={r.name}>{r.name}</div>
                 <div className="text-[10px] text-[#9CA3AF]">{r.customer_id} · {r.divisions.join(" · ")}</div>
               </td>

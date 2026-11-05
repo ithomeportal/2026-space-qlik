@@ -659,3 +659,9 @@ def test_a_customer_missing_from_history_is_skipped_not_a_500():
 def test_clicking_outside_a_bar_opens_nothing():
     for name in ("TrendPanel.tsx", "LifespanPanel.tsx"):
         assert "state?.activeTooltipIndex == null" in _tsx(name), name
+
+
+def test_drawers_sit_above_the_site_header():
+    """The sticky header is z-50: at z-40 it hid the drawer's title and close button."""
+    for name in ("ListDrawer.tsx", "CustomerDrawer.tsx"):
+        assert "fixed inset-0 z-[60]" in _tsx(name), name

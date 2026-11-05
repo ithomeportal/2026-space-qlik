@@ -48,7 +48,7 @@ export function CustomerDrawer({ division, window, filters, customerId, onClose 
   const { data, error, isLoading } = useCustomer(division, window, customerId, filters)
   const c = data?.data
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex justify-end bg-black/20" onClick={onClose}>
       <aside
         className="h-full w-full max-w-3xl overflow-y-auto bg-white p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}

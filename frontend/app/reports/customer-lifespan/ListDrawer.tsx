@@ -30,7 +30,7 @@ export function ListDrawer({ title, subtitle, sections, loading, error, onClose,
   onOpen: (id: string) => void
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex justify-end bg-black/20" onClick={onClose}>
       <aside className="h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>

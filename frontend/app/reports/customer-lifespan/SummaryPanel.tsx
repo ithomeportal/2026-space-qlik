@@ -55,7 +55,7 @@ type Keyed = { customer_id: string; name: string }
 const customer = <T extends Keyed>(): Column<T> => ({
   label: "Customer",
   left: true,
-  cell: (r) => <span className="block max-w-[220px] truncate font-medium text-[#111827]" title={r.name}>{r.name}</span>,
+  cell: (r) => <span className="block max-w-[170px] truncate font-medium text-[#111827]" title={r.name}>{r.name}</span>,
 })
 
 const assigned = <T extends Assignment>(): Column<T> => ({
@@ -64,7 +64,8 @@ const assigned = <T extends Assignment>(): Column<T> => ({
   cell: (r) => <AssignedCell row={r} />,
 })
 
-function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen }: {
+function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen, tall }: {
+  tall?: boolean
   title: ReactNode
   note?: string
   rows: T[]
@@ -72,17 +73,17 @@ function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen }: {
   onOpen: (id: string) => void
 }) {
   return (
-    <section className="flex min-h-0 flex-col rounded-lg border-2 border-[#1B3A5C] bg-white p-3">
+    <section className={`flex min-h-0 flex-col rounded-lg border-2 border-[#1B3A5C] bg-white p-3 ${tall ? "xl:row-span-2" : ""}`}>
       <h3 className="text-sm font-semibold text-[#1B3A5C]">
         {title} <span className="text-xs font-normal text-[#6B7280]">({fmtInt(rows.length)})</span>
       </h3>
       {note && <p className="text-[11px] text-[#6B7280]">{note}</p>}
-      <div className="mt-2 max-h-72 overflow-auto">
+      <div className={`mt-2 overflow-auto ${tall ? "max-h-[38rem]" : "max-h-72"}`}>
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-[#1B5E82] text-white">
             <tr>
               {columns.map((c) => (
-                <th key={c.label} className={`whitespace-nowrap px-2 py-1.5 font-semibold ${c.left ? "text-left" : "text-right"}`}>{c.label}</th>
+                <th key={c.label} className={`px-2 py-1.5 align-bottom font-semibold ${c.left ? "text-left" : "text-right"}`}>{c.label}</th>
               ))}
             </tr>
           </thead>
@@ -90,7 +91,7 @@ function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen }: {
             {rows.map((r) => (
               <tr key={r.customer_id} onClick={() => onOpen(r.customer_id)} className="cursor-pointer border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
                 {columns.map((c) => (
-                  <td key={c.label} className={`px-2 py-1 tabular-nums ${c.left ? "text-left" : "text-right"}`}>{c.cell(r)}</td>
+                  <td key={c.label} className={`whitespace-nowrap px-2 py-1 tabular-nums ${c.left ? "text-left" : "text-right"}`}>{c.cell(r)}</td>
                 ))}
               </tr>
             ))}
@@ -138,6 +139,7 @@ export function SummaryPanel({ division, window, filters, onOpen }: {
             { label: "Profit last 90 days", cell: (r) => fmtUsd(r.profit_90d) }]}
         />
         <BoardTable
+          tall
           title="Customers with declining load volume"
           note="Loads in the last 30 days under the customer's monthly average of the 12 months before them. Customers under 2 loads a month are left out."
           rows={b.declining}

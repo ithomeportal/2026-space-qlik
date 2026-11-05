@@ -42,7 +42,7 @@ function Distribution({ buckets, onPick }: { buckets: LifespanData["buckets"]; o
         <BarChart
           data={buckets}
           margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-          className="cursor-pointer"
+          className="cursor-pointer outline-none [&_*]:outline-none"
           onClick={(state) => {
             // null = a click on the legend or margin; Number(null) would open the first bucket.
             if (state?.activeTooltipIndex == null) return
@@ -57,7 +57,7 @@ function Distribution({ buckets, onPick }: { buckets: LifespanData["buckets"]; o
             formatter={(v, name) => [fmtInt(Number(v)), String(name)]}
             labelFormatter={(l, payload) => {
               const rev = payload?.[0]?.payload?.revenue
-              return `${l} · lifetime revenue ${fmtUsdCompact(typeof rev === "number" ? rev : null)}`
+              return `${l} · revenue ${fmtUsdCompact(typeof rev === "number" ? rev : null)}`
             }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -136,7 +136,7 @@ function bucketSections(rows: CustomerRow[], bucket: string): ListSection[] {
       .map((r) => ({
         id: r.customer_id,
         name: r.name,
-        detail: `${fmtInt(r.days_since_last)} days since last load · ${fmtUsdCompact(r.revenue)} revenue`,
+        detail: `${fmtInt(r.days_since_last)} ${r.days_since_last === 1 ? "day" : "days"} since last load · ${fmtUsdCompact(r.revenue)} revenue`,
         right: <AssignedCell row={r} />,
       })),
   }))
