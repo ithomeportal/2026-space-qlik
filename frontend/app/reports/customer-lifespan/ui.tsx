@@ -4,6 +4,9 @@ import type { ReactNode } from "react"
 import { Loader2 } from "lucide-react"
 import { STATUS_META, type Assignment, type Status } from "@/lib/customer-lifespan-api"
 
+/** Red below zero, by value. A blank is not a negative. */
+export const negativeClass = (v: number | null | undefined) => (v != null && v < 0 ? "text-[#DC2626]" : "")
+
 export function Card({ title, hint, description, howTo, howToLabel = "How to read", right, children }: {
   title?: string
   hint?: string

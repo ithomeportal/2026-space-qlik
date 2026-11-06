@@ -26,15 +26,22 @@ import {
   type ReportFilters,
   type Window,
 } from "@/lib/customer-lifespan-api"
-import { AssignedCell, ErrorBox, Loading, StatusChip } from "./ui"
+import { AssignedCell, ErrorBox, Loading, StatusChip, negativeClass } from "./ui"
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, negativeIf }: { label: string; value: string; negativeIf?: number | null }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wide text-[#6B7280]">{label}</div>
-      <div className="text-sm font-semibold tabular-nums text-[#111827]">{value}</div>
+      <div className={`text-sm font-semibold tabular-nums ${negativeClass(negativeIf) || "text-[#111827]"}`}>{value}</div>
     </div>
   )
+}
+
+/** Tooltip value: red below zero. A month with no margin % stays a dash: Number(null) would print 0.0%. */
+function tooltipValue(v: unknown, name: unknown) {
+  const n = v == null ? null : Number(v)
+  const text = name === "Margin %" ? fmtPct(n) : fmtUsd(n)
+  return <span className={negativeClass(n)}>{text}</span>
 }
 
 /** Side panel: one customer's months since the first load (the workbook's per-customer sheet). */
@@ -78,9 +85,9 @@ export function CustomerDrawer({ division, window, filters, customerId, onClose 
               <Fact label="Days since last load" value={fmtInt(c.days_since_last)} />
               <Fact label="Loads" value={fmtInt(c.loads)} />
               <Fact label="Revenue" value={fmtUsdCompact(c.revenue)} />
-              <Fact label="Profit" value={fmtUsdCompact(c.margin)} />
-              <Fact label="Margin %" value={fmtPct(c.margin_pct)} />
-              <Fact label="Avg. monthly Profit" value={fmtUsd(c.avg_monthly_margin)} />
+              <Fact label="Profit" value={fmtUsdCompact(c.margin)} negativeIf={c.margin} />
+              <Fact label="Margin %" value={fmtPct(c.margin_pct)} negativeIf={c.margin_pct} />
+              <Fact label="Avg. monthly Profit" value={fmtUsd(c.avg_monthly_margin)} negativeIf={c.avg_monthly_margin} />
               <Fact label="First-load year" value={String(c.cohort_year)} />
             </div>
             <div className="mt-4 h-72">
@@ -91,7 +98,7 @@ export function CustomerDrawer({ division, window, filters, customerId, onClose 
                   <YAxis yAxisId="usd" tickFormatter={(v: number) => fmtUsdCompact(v)} tick={{ fontSize: 11 }} width={56} />
                   <YAxis yAxisId="pct" orientation="right" tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11 }} width={40} />
                   <Tooltip
-                    formatter={(v, name) => [name === "Margin %" ? fmtPct(Number(v)) : fmtUsd(Number(v)), String(name)]}
+                    formatter={(v, name) => [tooltipValue(v, name), String(name)]}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar yAxisId="usd" dataKey="revenue" name="Revenue" fill={COLORS.revenue} />
@@ -116,8 +123,8 @@ export function CustomerDrawer({ division, window, filters, customerId, onClose 
                     <td className="px-2 py-1">{fmtMonth(p.month)}</td>
                     <td className="px-2 py-1 text-right">{fmtInt(p.loads)}</td>
                     <td className="px-2 py-1 text-right">{fmtUsd(p.revenue)}</td>
-                    <td className={`px-2 py-1 text-right ${p.margin < 0 ? "text-[#DC2626]" : ""}`}>{fmtUsd(p.margin)}</td>
-                    <td className="px-2 py-1 text-right">{fmtPct(p.margin_pct)}</td>
+                    <td className={`px-2 py-1 text-right ${negativeClass(p.margin)}`}>{fmtUsd(p.margin)}</td>
+                    <td className={`px-2 py-1 text-right ${negativeClass(p.margin_pct)}`}>{fmtPct(p.margin_pct)}</td>
                   </tr>
                 ))}
               </tbody>

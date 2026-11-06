@@ -1,18 +1,22 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react"
+import { useSortable, type SortDir, type SortState } from "@/components/SortableTable"
 import {
   fmtDate,
   fmtInt,
   fmtUsd,
   useBoard,
   type Assignment,
+  type Board,
   type BoardTile,
   type Division,
   type ReportFilters,
+  type Status,
   type Window,
 } from "@/lib/customer-lifespan-api"
-import { AssignedCell, ErrorBox, Loading, StatusChip } from "./ui"
+import { AssignedCell, ErrorBox, Loading, StatusChip, negativeClass } from "./ui"
 
 /** Whether a rise is good news: fewer at-risk or lost customers is green. */
 function Delta({ tile, riseIsGood }: { tile: BoardTile; riseIsGood: boolean }) {
@@ -45,33 +49,129 @@ function Tile({ label, tile, riseIsGood, sub }: { label: string; tile: BoardTile
 }
 
 interface Column<T> {
+  /** The row field this column sorts on: a real field, or the header does nothing. */
+  key: Extract<keyof T, string>
   label: string
   cell: (row: T) => ReactNode
   left?: boolean
+  /** Direction of the first click. Default: text A→Z, numbers biggest first. */
+  firstDir?: SortDir
 }
 
-type Keyed = { customer_id: string; name: string }
+type Keyed = Assignment & { customer_id: string; name: string }
+type AtRiskRow = Board["at_risk"][number]
+type DecliningRow = Board["declining"][number]
+type FirstYearRow = Board["first_year"][number]
+type LostRow = Board["lost"][number]
+type RecoveredRow = Board["recovered"][number]
 
-const customer = <T extends Keyed>(): Column<T> => ({
+const CUSTOMER_COLUMN: Column<Keyed> = {
+  key: "name",
   label: "Customer",
   left: true,
   cell: (r) => <span className="block max-w-[170px] truncate font-medium text-[#111827]" title={r.name}>{r.name}</span>,
-})
+}
 
-const assigned = <T extends Assignment>(): Column<T> => ({
+const ASSIGNED_COLUMN: Column<Keyed> = {
+  key: "assigned_to",
   label: "Team / Sales Exec.",
   left: true,
   cell: (r) => <AssignedCell row={r} />,
-})
+}
 
-function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen, tall }: {
+const days = (r: { days_since_last: number }) => fmtInt(r.days_since_last)
+const age = (r: { age_months: number }) => `${fmtInt(r.age_months)} mo`
+const signed = (v: number, suffix = "") => `${v > 0 ? "+" : ""}${v}${suffix}`
+const status = (r: { status: Status }) => <StatusChip status={r.status} />
+
+function ChangePct({ value }: { value: number }) {
+  const pct = Math.round(value)
+  return <span className={negativeClass(pct)}>{signed(pct, "%")}</span>
+}
+
+const AT_RISK_COLUMNS: Column<AtRiskRow>[] = [
+  CUSTOMER_COLUMN,
+  ASSIGNED_COLUMN,
+  { key: "age_months", label: "Age", cell: age },
+  { key: "days_since_last", label: "Days since last load", cell: days },
+  { key: "profit_90d", label: "Profit last 90 days", cell: (r) => <span className={negativeClass(r.profit_90d)}>{fmtUsd(r.profit_90d)}</span> },
+]
+
+// A drop's first click shows the worst one: on a negative column, "biggest first" is the least bad.
+const DECLINING_COLUMNS: Column<DecliningRow>[] = [
+  CUSTOMER_COLUMN,
+  ASSIGNED_COLUMN,
+  { key: "avg_monthly_loads", label: "Avg. loads / mo", cell: (r) => r.avg_monthly_loads.toFixed(1) },
+  { key: "loads_30d", label: "Loads last 30 days", cell: (r) => fmtInt(r.loads_30d) },
+  { key: "change", label: "Change #", firstDir: "asc", cell: (r) => <span className={negativeClass(r.change)}>{signed(r.change)}</span> },
+  { key: "change_pct", label: "Change %", firstDir: "asc", cell: (r) => <ChangePct value={r.change_pct} /> },
+]
+
+const FIRST_YEAR_COLUMNS: Column<FirstYearRow>[] = [
+  CUSTOMER_COLUMN,
+  ASSIGNED_COLUMN,
+  { key: "age_months", label: "Age", cell: age },
+  { key: "days_since_last", label: "Days since last load", cell: days },
+  { key: "status", label: "Status", left: true, cell: status },
+]
+
+const LOST_COLUMNS: Column<LostRow>[] = [
+  CUSTOMER_COLUMN,
+  ASSIGNED_COLUMN,
+  { key: "days_since_last", label: "Days since last load", cell: days },
+  { key: "last_ship", label: "Last load date", firstDir: "asc", cell: (r) => fmtDate(r.last_ship) },
+]
+
+const RECOVERED_COLUMNS: Column<RecoveredRow>[] = [
+  CUSTOMER_COLUMN,
+  ASSIGNED_COLUMN,
+  { key: "days_since_last", label: "Days since last load", cell: days },
+  { key: "status", label: "Status", left: true, cell: status },
+]
+
+/**
+ * White on the dark header in every state: SortableTh's active colour is navy, unreadable here.
+ * The arrow is INLINE so it can wrap under the label: a flex row adds its width to every
+ * column's minimum and pushes Change % out of the half-width tables (measured at 1440 px).
+ */
+function SortHeader<T>({ column, sort }: { column: Column<T>; sort: SortState }) {
+  const active = sort.sortKey === column.key
+  const Icon = !active ? ArrowUpDown : sort.sortDir === "asc" ? ArrowUp : ArrowDown
+  const ariaSort = !active ? "none" : sort.sortDir === "asc" ? "ascending" : "descending"
+  return (
+    <th aria-sort={ariaSort} className={`px-2 py-1.5 align-bottom font-semibold ${column.left ? "text-left" : "text-right"}`}>
+      <button
+        type="button"
+        onClick={() => sort.toggleSort(column.key)}
+        title={`Sort by ${column.label}`}
+        className={`font-semibold hover:underline ${column.left ? "text-left" : "text-right"}`}
+      >
+        {column.label}
+        <Icon aria-hidden className={`ml-0.5 inline h-3 w-3 align-[-2px] ${active ? "" : "opacity-50"}`} />
+      </button>
+    </th>
+  )
+}
+
+function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen, tall, defaultSort }: {
   tall?: boolean
   title: ReactNode
   note?: string
   rows: T[]
   columns: Column<T>[]
   onOpen: (id: string) => void
+  /** The order the API already sends, when it IS a column: otherwise that column's first click looks dead. */
+  defaultSort?: { key: Extract<keyof T, string>; dir: SortDir }
 }) {
+  // "NO TEAM" renders as a dash, so it sorts with the blanks rather than among the N's.
+  const sortable = useMemo(
+    () => rows.map((r) => (r.assigned_to === "NO TEAM" ? { ...r, assigned_to: null } : r)),
+    [rows],
+  )
+  const { sorted, ...sort } = useSortable(sortable, defaultSort?.key ?? null, defaultSort?.dir ?? "desc", (key) => {
+    const c = columns.find((col) => col.key === key)
+    return c ? c.firstDir ?? (c.left ? "asc" : "desc") : "desc"
+  })
   return (
     <section className={`flex min-h-0 flex-col rounded-lg border-2 border-[#1B3A5C] bg-white p-3 ${tall ? "xl:row-span-2" : ""}`}>
       <h3 className="text-sm font-semibold text-[#1B3A5C]">
@@ -82,16 +182,14 @@ function BoardTable<T extends Keyed>({ title, note, rows, columns, onOpen, tall 
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-[#1B5E82] text-white">
             <tr>
-              {columns.map((c) => (
-                <th key={c.label} className={`px-2 py-1.5 align-bottom font-semibold ${c.left ? "text-left" : "text-right"}`}>{c.label}</th>
-              ))}
+              {columns.map((c) => <SortHeader key={c.key} column={c} sort={sort} />)}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {sorted.map((r) => (
               <tr key={r.customer_id} onClick={() => onOpen(r.customer_id)} className="cursor-pointer border-t border-[#F3F4F6] hover:bg-[#F9FAFB]">
                 {columns.map((c) => (
-                  <td key={c.label} className={`whitespace-nowrap px-2 py-1 tabular-nums ${c.left ? "text-left" : "text-right"}`}>{c.cell(r)}</td>
+                  <td key={c.key} className={`whitespace-nowrap px-2 py-1 tabular-nums ${c.left ? "text-left" : "text-right"}`}>{c.cell(r)}</td>
                 ))}
               </tr>
             ))}
@@ -115,9 +213,6 @@ export function SummaryPanel({ division, window, filters, onOpen }: {
   if (error) return <ErrorBox error={error} />
   if (isLoading || !data) return <Loading />
   const b = data.data
-  const days = (r: { days_since_last: number }) => fmtInt(r.days_since_last)
-  const age = (r: { age_months: number }) => `${fmtInt(r.age_months)} mo`
-  const signed = (v: number, suffix = "") => `${v > 0 ? "+" : ""}${v}${suffix}`
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-medium text-[#1B3A5C]">Customer Retention | Summary</h2>
@@ -133,10 +228,8 @@ export function SummaryPanel({ division, window, filters, onOpen }: {
           title="At Risk customers"
           rows={b.at_risk}
           onOpen={onOpen}
-          columns={[customer(), assigned(),
-            { label: "Age", cell: age },
-            { label: "Days since last load", cell: days },
-            { label: "Profit last 90 days", cell: (r) => fmtUsd(r.profit_90d) }]}
+          columns={AT_RISK_COLUMNS}
+          defaultSort={{ key: "profit_90d", dir: "desc" }}
         />
         <BoardTable
           tall
@@ -144,37 +237,27 @@ export function SummaryPanel({ division, window, filters, onOpen }: {
           note="Loads in the last 30 days under the customer's monthly average of the 12 months before them. Customers under 2 loads a month are left out."
           rows={b.declining}
           onOpen={onOpen}
-          columns={[customer(), assigned(),
-            { label: "Avg. loads / mo", cell: (r) => r.avg_monthly_loads.toFixed(1) },
-            { label: "Loads last 30 days", cell: (r) => fmtInt(r.loads_30d) },
-            { label: "Change #", cell: (r) => signed(r.change) },
-            { label: "Change %", cell: (r) => <span className="text-[#DC2626]">{signed(Math.round(r.change_pct), "%")}</span> }]}
+          columns={DECLINING_COLUMNS}
+          defaultSort={{ key: "change", dir: "asc" }}
         />
         <BoardTable
           title="First-year customers"
           rows={b.first_year}
           onOpen={onOpen}
-          columns={[customer(), assigned(),
-            { label: "Age", cell: age },
-            { label: "Days since last load", cell: days },
-            { label: "Status", left: true, cell: (r) => <StatusChip status={r.status} /> }]}
+          columns={FIRST_YEAR_COLUMNS}
         />
         <BoardTable
           title={<><span className="text-[#DC2626]">LOST</span> customers</>}
           note={b.lost_since_returned > 0 ? `${fmtInt(b.lost_since_returned)} of them have since come back.` : undefined}
           rows={b.lost}
           onOpen={onOpen}
-          columns={[customer(), assigned(),
-            { label: "Days since last load", cell: days },
-            { label: "Last load date", cell: (r) => fmtDate(r.last_ship) }]}
+          columns={LOST_COLUMNS}
         />
         <BoardTable
           title={<><span className="text-[#059669]">RECOVERED</span> customers</>}
           rows={b.recovered}
           onOpen={onOpen}
-          columns={[customer(), assigned(),
-            { label: "Days since last load", cell: days },
-            { label: "Status", left: true, cell: (r) => <StatusChip status={r.status} /> }]}
+          columns={RECOVERED_COLUMNS}
         />
       </div>
     </div>
