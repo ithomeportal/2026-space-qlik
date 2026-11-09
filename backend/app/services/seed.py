@@ -101,41 +101,41 @@ CUSTOM_REPORTS = [
         "key": "xray-dfw-tm1",  # -> /reports/xray-dfw-tm1
         "title": "XRay DFW TM1",
         "description": "XRay DFW Mng locked to TM1 — KPIs, lanes, trends, risk and contract/spot split for TM1 only",
-        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM1 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same engine as XRay DFW Mng · access strictly DFW KAM1 + leadership",
         "category": "Executive",
         "tags": ["dfw", "tm1", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM1", "Executive"],
+        "roles": ["DFW KAM1", "Executive"],
     },
     {
         "key": "xray-dfw-tm2",  # -> /reports/xray-dfw-tm2
         "title": "XRay DFW TM2",
         "description": "XRay DFW Mng locked to TM2 — KPIs, lanes, trends, risk and contract/spot split for TM2 only",
-        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM2 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same engine as XRay DFW Mng · access strictly DFW KAM2 + leadership",
         "category": "Executive",
         "tags": ["dfw", "tm2", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM2", "Executive"],
+        "roles": ["DFW KAM2", "Executive"],
     },
     {
         "key": "xray-dfw-tm3",  # -> /reports/xray-dfw-tm3
         "title": "XRay DFW TM3",
         "description": "XRay DFW Mng locked to TM3 — KPIs, lanes, trends, risk and contract/spot split for TM3 only",
-        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM3 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same engine as XRay DFW Mng · access strictly DFW KAM3 + leadership",
         "category": "Executive",
         "tags": ["dfw", "tm3", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM3", "Executive"],
+        "roles": ["DFW KAM3", "Executive"],
     },
     {
         "key": "xray-dfw-tm4",  # -> /reports/xray-dfw-tm4
         "title": "XRay DFW TM4",
         "description": "XRay DFW Mng locked to TM4 — KPIs, lanes, trends, risk and contract/spot split for TM4 only",
-        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same engine as XRay DFW Mng · access strictly DFW-TM4 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same engine as XRay DFW Mng · access strictly DFW KAM4 + leadership",
         "category": "Executive",
         "tags": ["dfw", "tm4", "x-ray", "management", "kpi", "otp", "otd"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM4", "Executive"],
+        "roles": ["DFW KAM4", "Executive"],
     },
     {
         "key": "ceo-executive",  # -> /reports/ceo-executive
@@ -266,41 +266,41 @@ CUSTOM_REPORTS = [
         "key": "dfw-podium-top-tm1",  # -> /reports/dfw-podium-top-tm1
         "title": "DFW Podium Top TM1",
         "description": "DFW Podium Top locked to TM1 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM1 only",
-        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM1 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM1 (server-locked) · same query as DFW Podium Top · access strictly DFW KAM1 + leadership",
         "category": "Operations",
         "tags": ["dfw", "tm1", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM1", "Executive"],
+        "roles": ["DFW KAM1", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm2",  # -> /reports/dfw-podium-top-tm2
         "title": "DFW Podium Top TM2",
         "description": "DFW Podium Top locked to TM2 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM2 only",
-        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM2 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM2 (server-locked) · same query as DFW Podium Top · access strictly DFW KAM2 + leadership",
         "category": "Operations",
         "tags": ["dfw", "tm2", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM2", "Executive"],
+        "roles": ["DFW KAM2", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm3",  # -> /reports/dfw-podium-top-tm3
         "title": "DFW Podium Top TM3",
         "description": "DFW Podium Top locked to TM3 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM3 only",
-        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM3 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM3 (server-locked) · same query as DFW Podium Top · access strictly DFW KAM3 + leadership",
         "category": "Operations",
         "tags": ["dfw", "tm3", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM3", "Executive"],
+        "roles": ["DFW KAM3", "Executive"],
     },
     {
         "key": "dfw-podium-top-tm4",  # -> /reports/dfw-podium-top-tm4
         "title": "DFW Podium Top TM4",
         "description": "DFW Podium Top locked to TM4 — This-Week TOP-3 Profit / Margin / Loads + full Today Loads / Profit lists for TM4 only",
-        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same query as DFW Podium Top · access strictly DFW-TM4 + leadership",
+        "note": "Scope: TEAM-DFW + team=TM4 (server-locked) · same query as DFW Podium Top · access strictly DFW KAM4 + leadership",
         "category": "Operations",
         "tags": ["dfw", "tm4", "podium", "top", "leaderboard", "rate-conf", "profit", "margin", "loads"],
         "owner_name": "Diego",
-        "roles": ["DFW-TM4", "Executive"],
+        "roles": ["DFW KAM4", "Executive"],
     },
     {
         "key": "losses-lanes",  # -> /reports/losses-lanes
