@@ -27,6 +27,27 @@ const PODIUM_RETRY = {
 
 export type PodiumRange = "today" | "wtd" | "mtd" | "custom"
 
+// Which date the range filters (PDF 2026-11-09 R1). Same population either way:
+// DFW loads with a Rate-Conf posting, never Void — only the date moves.
+export type PodiumBasis = "rate_conf" | "departure"
+
+// v4 status codes the Status filter offers (R2). Void is excluded for every
+// user (Bruno 2026-07-07), so it is never an option. Backend allowlists these.
+export type PodiumStatus = "D" | "P" | "A"
+
+export const STATUS_LABELS: Record<PodiumStatus, string> = {
+  D: "Delivered",
+  P: "In Progress",
+  A: "Available",
+}
+
+export const STATUS_OPTIONS: PodiumStatus[] = ["D", "P", "A"]
+
+export function statusLabel(code: string | null): string {
+  if (!code) return "—"
+  return STATUS_LABELS[code as PodiumStatus] ?? code
+}
+
 export interface PodiumKpis {
   loads: number
   profit: number
@@ -39,6 +60,9 @@ export interface PodiumRow {
   order_id: string | null
   posted_by: string | null
   posted_date: string | null
+  /** v4 origin_actual_departure; null until the load departs (the 1900 sentinel). */
+  departed: string | null
+  status: string | null
   customer: string | null
   origin: string | null
   destination: string | null
@@ -53,6 +77,8 @@ export interface PodiumRow {
 
 export interface PodiumOverview {
   range: PodiumRange
+  basis: PodiumBasis
+  status: PodiumStatus[]
   kpis: PodiumKpis
   rows: PodiumRow[]
 }
@@ -61,17 +87,40 @@ export interface PodiumOverview {
 // focus refetch triggers immediately on tab return.
 const FIFTEEN_MIN = 15 * 60 * 1000
 
+export function buildOverviewQs(
+  range: PodiumRange,
+  start: string | undefined,
+  end: string | undefined,
+  basis: PodiumBasis,
+  statuses: readonly PodiumStatus[],
+): string {
+  const isCustom = range === "custom" && !!start && !!end
+  const qs = new URLSearchParams()
+  qs.set("range", isCustom ? "custom" : range)
+  if (isCustom) {
+    qs.set("start", start!)
+    qs.set("end", end!)
+  }
+  if (basis !== "rate_conf") qs.set("basis", basis)
+  // Repeated params, never comma-joined (§45 — the proxy forwards with append).
+  for (const s of statuses) qs.append("status", s)
+  return qs.toString()
+}
+
 export function usePodiumOverview(
   range: PodiumRange,
   start?: string,
   end?: string,
+  basis: PodiumBasis = "rate_conf",
+  statuses: readonly PodiumStatus[] = [],
 ) {
   const isCustom = range === "custom" && !!start && !!end
-  const qs = isCustom
-    ? `range=custom&start=${encodeURIComponent(start!)}&end=${encodeURIComponent(end!)}`
-    : `range=${range}`
+  // Canonical order so [D,P] and [P,D] share one cache entry; the key covers
+  // every input of the query string (queryKey must cover qs()).
+  const sortedStatuses = STATUS_OPTIONS.filter((s) => statuses.includes(s))
+  const qs = buildOverviewQs(range, start, end, basis, sortedStatuses)
   return useQuery({
-    queryKey: ["podium-dfw", "overview", range, start ?? null, end ?? null],
+    queryKey: ["podium-dfw", "overview", qs],
     queryFn: () => apiFetch<PodiumOverview>(`custom/podium-dfw/overview?${qs}`),
     // Don't fire a half-built custom request (one date picked, other empty).
     enabled: range !== "custom" || isCustom,

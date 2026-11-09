@@ -376,6 +376,16 @@ def _base_sql(
           AND rp.in_window > 0
           AND br.team_id = ANY(${p_teams}::text[])
           AND br.status <> 'V'
+          -- Bruno PDF 2026-11-09 R1 — "is_tonu IN ('N', 'null')": TONU
+          -- (truck-ordered-not-used) orders leave EVERY KPI, the weekly chart,
+          -- the Orders table and therefore Rank + the public TV board.
+          -- ⚠ 'null' in the PDF means SQL NULL, not the string. v4.is_tonu is
+          -- varchar(1) holding only 'N' (no order after 2026-08-21), NULL (every
+          -- order since) and 'Y' (50 rows). A literal IN ('N','null') keeps no
+          -- current order — the report would read EMPTY. COALESCE keeps the
+          -- whitelist exact: 'N' or NULL in, 'Y' and any future code out.
+          -- Measured 2026-11-09: 11 DFW TONU orders YTD.
+          AND COALESCE(br.is_tonu, 'N') = 'N'
           -- Bruno (PDF 2026-08-31 "Booker Performance Scorecard", Scorecard
           -- tab) R1/R2 — placeholder rates are not real bookings. R1: carrier
           -- cost of exactly 0. R2: the hard-coded rate pairs

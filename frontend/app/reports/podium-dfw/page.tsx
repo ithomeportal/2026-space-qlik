@@ -10,8 +10,13 @@ import {
   fmtInt,
   fmtPct,
   fmtDateTime,
+  statusLabel,
+  STATUS_LABELS,
+  STATUS_OPTIONS,
+  type PodiumBasis,
   type PodiumRange,
   type PodiumRow,
+  type PodiumStatus,
 } from "@/lib/podium-dfw-api"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
@@ -99,6 +104,15 @@ function PodiumDfwContent() {
   const [customEnd, setCustomEnd] = useState("")
   const [teamFilter, setTeamFilter] = useState<TeamFilter>("all")
   const [filters, setFilters] = useState<TextFilters>(EMPTY_FILTERS)
+  // PDF 2026-11-09 — R1 date basis (server-side), R2 Status (server-side, so
+  // the backend KPIs already span the same rows; empty = every status).
+  const [basis, setBasis] = useState<PodiumBasis>("rate_conf")
+  const [statuses, setStatuses] = useState<PodiumStatus[]>([])
+  const byDeparture = basis === "departure"
+  const toggleStatus = (code: PodiumStatus) =>
+    setStatuses((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    )
 
   // Custom range is active only once BOTH dates are chosen; until then the
   // selected preset pill still drives the query.
@@ -110,6 +124,8 @@ function PodiumDfwContent() {
     effRange,
     isCustom ? customStart : undefined,
     isCustom ? customEnd : undefined,
+    basis,
+    statuses,
   )
 
   // Clicking a preset pill clears any custom dates (and vice-versa in the
@@ -304,6 +320,81 @@ function PodiumDfwContent() {
             </div>
           </div>
 
+          {/* Date basis — which date the Range filters (R1 2026-11-09). */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Date by
+            </span>
+            <span className={"text-xs " + (byDeparture ? "text-[#6B7280]" : "font-semibold text-[#1B3A5C]")}>
+              Rate Conf
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={byDeparture}
+              aria-label="Filter the date range by origin actual departure instead of the Rate Conf date"
+              title={
+                byDeparture
+                  ? "Range filters the origin actual departure"
+                  : "Range filters the Rate Conf Received date"
+              }
+              onClick={() => setBasis(byDeparture ? "rate_conf" : "departure")}
+              className={
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors " +
+                (byDeparture ? "bg-[#1B3A5C]" : "bg-[#D1D5DB]")
+              }
+            >
+              <span
+                className={
+                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                  (byDeparture ? "translate-x-[18px]" : "translate-x-0.5")
+                }
+              />
+            </button>
+            <span className={"text-xs " + (byDeparture ? "font-semibold text-[#1B3A5C]" : "text-[#6B7280]")}>
+              Departure
+            </span>
+          </div>
+
+          {/* Status (R2 2026-11-09) — none picked = all. Void is never offered. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Status
+            </span>
+            <div className="inline-flex rounded-md border border-[#E5E7EB] bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setStatuses([])}
+                aria-pressed={statuses.length === 0}
+                className={
+                  statuses.length === 0
+                    ? "rounded px-3 py-1 text-xs font-semibold bg-[#0F766E] text-white"
+                    : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+                }
+              >
+                All
+              </button>
+              {STATUS_OPTIONS.map((code) => {
+                const on = statuses.includes(code)
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => toggleStatus(code)}
+                    aria-pressed={on}
+                    className={
+                      on
+                        ? "rounded px-3 py-1 text-xs font-semibold bg-[#0F766E] text-white"
+                        : "rounded px-3 py-1 text-xs text-[#374151] hover:bg-[#F3F4F6]"
+                    }
+                  >
+                    {STATUS_LABELS[code]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
               Team
@@ -326,7 +417,7 @@ function PodiumDfwContent() {
           </div>
 
           <span className="ml-auto text-xs text-[#9CA3AF]">
-            TEAM-DFW · Rate Conf Received
+            TEAM-DFW · Rate Conf Received{byDeparture ? " · by departure" : ""}
           </span>
         </div>
       </CollapsibleFilterBar>
@@ -401,7 +492,8 @@ function PodiumDfwContent() {
         <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white">
           <div className="flex items-center justify-between border-b border-[#E5E7EB] px-3 py-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#374151]">
-              Bookings {isCustom ? `${customStart} → ${customEnd}` : rangeLabel(range)}
+              {byDeparture ? "Departed" : "Bookings"}{" "}
+              {isCustom ? `${customStart} → ${customEnd}` : rangeLabel(range)}
             </h2>
             <span className="text-xs text-[#9CA3AF]">
               {rows.length} row{rows.length === 1 ? "" : "s"}
@@ -431,12 +523,12 @@ function PodiumDfwContent() {
               ) : (
                 <>
                   <p className="text-sm text-[#374151]">
-                    {isCustom
-                      ? `No loads posted between ${customStart} and ${customEnd}.`
-                      : `No loads posted yet ${rangeLabel(range).toLowerCase()}.`}
+                    {emptyMessage(byDeparture, isCustom, customStart, customEnd, range)}
                   </p>
                   <p className="text-xs text-[#9CA3AF]">
-                    Rate Confirmations will appear here as soon as they hit McLeod.
+                    {byDeparture
+                      ? "Loads appear here once McLeod records their origin departure."
+                      : "Rate Confirmations will appear here as soon as they hit McLeod."}
                   </p>
                 </>
               )}
@@ -450,6 +542,8 @@ function PodiumDfwContent() {
                     <SortableTh label="#Order"        columnKey="order_id"      state={sort} className={TH_CLASS} />
                     <SortableTh label="Posted by"     columnKey="posted_by"     state={sort} className={TH_CLASS} />
                     <SortableTh label="Date"          columnKey="posted_date"   state={sort} className={TH_CLASS} />
+                    <SortableTh label="Departed"      columnKey="departed"      state={sort} className={TH_CLASS} />
+                    <SortableTh label="Status"        columnKey="status"        state={sort} className={TH_CLASS} />
                     <SortableTh label="Customer"      columnKey="customer"      state={sort} className={TH_CLASS} />
                     <SortableTh label="Origin"        columnKey="origin"        state={sort} className={TH_CLASS} />
                     <SortableTh label="Destination"   columnKey="destination"   state={sort} className={TH_CLASS} />
@@ -480,6 +574,8 @@ function PodiumDfwContent() {
                         </Td>
                         <Td>{r.posted_by ?? "—"}</Td>
                         <Td className="whitespace-nowrap">{fmtDateTime(r.posted_date)}</Td>
+                        <Td className="whitespace-nowrap">{fmtDateTime(r.departed)}</Td>
+                        <Td className="whitespace-nowrap">{statusLabel(r.status)}</Td>
                         <Td>{r.customer ?? "—"}</Td>
                         <Td>{r.origin ?? "—"}</Td>
                         <Td>{r.destination ?? "—"}</Td>
@@ -510,6 +606,19 @@ function PodiumDfwContent() {
       </div>
     </div>
   )
+}
+
+function emptyMessage(
+  byDeparture: boolean,
+  isCustom: boolean,
+  start: string,
+  end: string,
+  range: PodiumRange,
+): string {
+  const verb = byDeparture ? "departed" : "posted"
+  return isCustom
+    ? `No loads ${verb} between ${start} and ${end}.`
+    : `No loads ${verb} yet ${rangeLabel(range).toLowerCase()}.`
 }
 
 function rangeLabel(r: PodiumRange): string {
