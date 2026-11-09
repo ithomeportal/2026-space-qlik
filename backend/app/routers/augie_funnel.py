@@ -64,6 +64,14 @@ matching reason, so the branch partitions the untracked set exactly:
   other          allow-list, blocking rules, kill switches, timing
 
 Decided by the user 2026-10-17 ("all 5 real reasons").
+
+Voicemail % (2026-11-09) — a share of CALLS
+-------------------------------------------
+``calls`` = ``completed-call`` events on the load (one per finished call),
+``voicemail`` = those with ``data.callStatus = 'VOICEMAIL'``. Summed over the
+same classified set, so per team it is "of the calls Augie made on these
+loads". Third denominator: never divide voicemail by pickups or tracked.
+The missing-information table lives in ``augie_funnel_missing.py``.
 """
 
 from __future__ import annotations
@@ -124,6 +132,24 @@ _INFO_WEBHOOK = (
     " OR (w.webhook_type = 'tracking-event'"
     " AND w.payload -> 'trackingEvent' ->> 'eventSource' = 'PHONE_EMAIL')"
     " OR w.webhook_type = 'stop-update')"
+)
+# Voicemail — one `completed-call` event = one finished call (Augment fires it
+# for every call, incl. voicemail and line-failed; `call-recording` only fires
+# when there is a recording, so it is NOT a call count). `callId` is NULL
+# before 2026-10-21, so calls are counted as ROWS, never DISTINCT callId.
+# Voicemail = `data.callStatus = 'VOICEMAIL'` — the same bucket as the
+# "Reached voicemail" line of Augment's by-carrier workbook (11-05: ours
+# 299/693 = 43%, theirs 276/647 = 43%). Requested 2026-10-29 (Christian).
+_CALL_WEBHOOK = "w.webhook_type = 'completed-call'"
+_VOICEMAIL_WEBHOOK = (
+    "(w.webhook_type = 'completed-call'"
+    " AND w.payload -> 'data' ->> 'callStatus' = 'VOICEMAIL')"
+)
+# Trailer is not in the McLeod mirror at all — only Augment reports it, on a
+# `carrier-update` (`loadCarrierUpdate.trailerNumber`).
+_TRAILER_WEBHOOK = (
+    "(w.webhook_type = 'carrier-update'"
+    " AND COALESCE(BTRIM(w.payload -> 'loadCarrierUpdate' ->> 'trailerNumber'), '') <> '')"
 )
 _CONTACT_WEBHOOK = (
     "((w.webhook_type = 'comment' AND w.payload ->> 'eventSource' = 'PHONE')"
@@ -283,6 +309,9 @@ def _funnel_cte(f: dict) -> tuple[str, list]:
                    BTRIM(a.customer_name)                     AS customer_name,
                    BTRIM(a.override_payee_id::text)           AS carrier_id,
                    BTRIM(a.carrier_name)                      AS carrier_name,
+                   BTRIM(a.carrier_dispatcher_email)          AS dispatcher_email,
+                   BTRIM(a.override_driver_nm)                AS driver_name,
+                   BTRIM(a.override_drvr_cell)                AS driver_phone,
                    BTRIM(a.augie_status::text)                AS augie_status,
                    BTRIM(a.order_status::text)                AS order_status,
                    a.is_load_canceled,
@@ -316,7 +345,10 @@ def _funnel_cte(f: dict) -> tuple[str, list]:
         talk AS (
             SELECT w.load_number AS order_id,
                    bool_or({_INFO_WEBHOOK})    AS info,
-                   bool_or({_CONTACT_WEBHOOK}) AS contact
+                   bool_or({_CONTACT_WEBHOOK}) AS contact,
+                   count(*) FILTER (WHERE {_CALL_WEBHOOK})      AS calls,
+                   count(*) FILTER (WHERE {_VOICEMAIL_WEBHOOK}) AS voicemail,
+                   bool_or({_TRAILER_WEBHOOK})                  AS trailer
               FROM {WEBHOOKS} w
              WHERE w.load_number IN (SELECT order_id FROM loads)
              GROUP BY 1
@@ -329,6 +361,9 @@ def _funnel_cte(f: dict) -> tuple[str, list]:
                          OR COALESCE(k.contact, false)))            AS contacted,
                    (s.order_id IS NOT NULL AND COALESCE(k.info, false)) AS captured,
                    (COALESCE(l.augie_status, '') <> '')             AS has_status,
+                   COALESCE(k.calls, 0)                             AS calls,
+                   COALESCE(k.voicemail, 0)                         AS voicemail,
+                   COALESCE(k.trailer, false)                       AS has_trailer,
                    CASE
                      WHEN s.order_id IS NOT NULL THEN NULL
                      WHEN l.order_status = 'V' OR l.augie_status = 'CANCELED'
@@ -360,11 +395,14 @@ _COUNTS_SQL = """
            count(*) FILTER (WHERE reason = 'international')       AS international,
            count(*) FILTER (WHERE reason = 'multistop')           AS multistop,
            count(*) FILTER (WHERE reason = 'not_covered')         AS not_covered,
-           count(*) FILTER (WHERE reason = 'other')               AS other
+           count(*) FILTER (WHERE reason = 'other')               AS other,
+           COALESCE(sum(calls), 0)                                AS calls,
+           COALESCE(sum(voicemail), 0)                            AS voicemail
 """
 
 _COUNT_KEYS = (
     "pickups", "tracked", "contacted", "captured", "has_status", *REASONS,
+    "calls", "voicemail",
 )
 
 
@@ -392,6 +430,8 @@ def funnel_payload(row: Any) -> dict:
         "contacted_pct": _rate(c["contacted"], c["tracked"]),
         "captured_pct": _rate(c["captured"], c["tracked"]),
         "has_status_pct": _rate(c["has_status"], c["pickups"]),
+        # ⚠ Third denominator: voicemail is a share of CALLS, not of loads.
+        "voicemail_pct": _rate(c["voicemail"], c["calls"]),
         "reason_pct": {r: _rate(c[r], c["pickups"]) for r in REASONS},
     }
 

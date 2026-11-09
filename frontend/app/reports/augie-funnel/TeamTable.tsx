@@ -28,6 +28,8 @@ const COLS: Col[] = [
   { key: "contacted_pct", label: "Contacted %", pct: true },
   { key: "captured", label: "Updates" },
   { key: "captured_pct", label: "% with update", pct: true },
+  { key: "calls", label: "Calls" },
+  { key: "voicemail_pct", label: "Voicemail %", pct: true },
   { key: "not_tracked", label: "Not sent" },
   ...AUGIE_REASONS.map((r) => ({ key: r, label: REASON_LABELS[r] })),
 ]
@@ -52,7 +54,7 @@ export function TeamTable({ rows, loading, error }: Props) {
   else
     body = (
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[960px] text-xs">
+        <table className="w-full min-w-[1100px] text-xs">
           <thead className="bg-[#F9FAFB] text-[#6B7280]">
             <tr>
               {COLS.map((c) => (
@@ -89,7 +91,7 @@ export function TeamTable({ rows, loading, error }: Props) {
   return (
     <Panel
       title="By team"
-      subtitle="% sent is of loads picked up; Contacted % and % with update are of loads sent to Augie. — means nothing to divide by."
+      subtitle="% sent is of loads picked up; Contacted % and % with update are of loads sent to Augie; Voicemail % is of the calls Augie made on these loads. — means nothing to divide by."
     >
       {body}
     </Panel>

@@ -10,6 +10,7 @@ import {
   useAugieFilterOptions,
   useAugieFreshness,
   useAugieLoads,
+  useAugieMissingInfo,
   useAugieSummary,
   useAugieTrend,
   type AugieFunnelFilters,
@@ -18,12 +19,15 @@ import {
   type AugieFunnelRange,
   type AugieFunnelSort,
   type AugieFunnelUnit,
+  type AugieMissingField,
+  AUGIE_MISSING_FIELDS,
 } from "@/lib/augie-funnel-api"
 import { FilterBar, RANGES, type FilterState } from "./FilterBar"
 import { FunnelFlow } from "./FunnelFlow"
 import { TrendChart } from "./TrendChart"
 import { TeamTable } from "./TeamTable"
 import { LoadsTable } from "./LoadsTable"
+import { MissingInfoTable } from "./MissingInfoTable"
 import { FreshnessLine, HowCounted } from "./Notes"
 import { ErrorBlock, LoadingBlock, Panel } from "./Ui"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
@@ -46,6 +50,7 @@ function pick<T extends string>(raw: string | null, allowed: readonly T[], dflt:
 const K = {
   range: "range", s: "s", e: "e", unit: "unit", team: "team",
   customer: "cu", carrier: "ca", q: "q", node: "node", sort: "sort", grain: "grain",
+  missing: "mf",
 } as const
 
 function useUrlState() {
@@ -77,6 +82,11 @@ function Content() {
   const node = pick(sp.get(K.node), NODES, "all")
   const sort = pick(sp.get(K.sort), SORTS, "pickup_desc")
   const grain = pick<AugieFunnelGrain>(sp.get(K.grain), ["day", "week"], "day")
+  const missingField = pick<AugieMissingField | "all">(
+    sp.get(K.missing),
+    ["all", ...AUGIE_MISSING_FIELDS],
+    "all",
+  )
   const startDate = sp.get(K.s) ?? ""
   const endDate = sp.get(K.e) ?? ""
   const team = sp.get(K.team) ?? ""
@@ -127,6 +137,7 @@ function Content() {
   const trend = useAugieTrend(filters, grain)
   const byTeam = useAugieByTeam(filters)
   const loads = useAugieLoads(filters, node, sort)
+  const missing = useAugieMissingInfo(filters, missingField)
 
   const s = summary.data
   const singleDay = s
@@ -208,6 +219,14 @@ function Content() {
           />
 
           <TeamTable rows={byTeam.data} loading={byTeam.isLoading} error={byTeam.error} />
+
+          <MissingInfoTable
+            data={missing.data}
+            loading={missing.isLoading}
+            error={missing.error}
+            field={missingField}
+            onField={(v) => update({ [K.missing]: v === "all" ? null : v })}
+          />
         </>
       )}
 

@@ -29,6 +29,7 @@ from app.routers import (
     attrition_wow_team,
     augie_funnel,
     augie_funnel_digest,
+    augie_funnel_missing,
     auth_email,
     bonus_calculator,
     bot_identity,
@@ -2354,6 +2355,7 @@ app.include_router(carrier_sms.router, prefix="/api")
 app.include_router(edi_load_tenders.router, prefix="/api")
 app.include_router(augie_funnel.router, prefix="/api")
 app.include_router(augie_funnel_digest.router, prefix="/api")
+app.include_router(augie_funnel_missing.router, prefix="/api")
 app.include_router(customer_status_email.router, prefix="/api")
 app.include_router(collections_settlement_forecast.router, prefix="/api")
 app.include_router(customer_lifespan.router, prefix="/api")

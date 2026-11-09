@@ -36,6 +36,7 @@ BAD = "#DC2626"
 FLAT = "#B45309"
 TRACK = "#2563EB"
 CAPTURE = "#15803D"
+VOICEMAIL = "#B45309"  # amber: voicemail is a miss, but not a failure of ours
 MISS = "#9CA3AF"
 LINK = "#2563EB"
 DASH = "&mdash;"
@@ -195,7 +196,9 @@ def _funnel(day: dict, vs_week: dict, d: date) -> str:
                TRACK)
         + _arrow()
         + _box("Carrier contacted", _n(day["contacted"]),
-               f'{_p(day["contacted_pct"])} of loads sent to Augie', TRACK)
+               f'{_p(day["contacted_pct"])} of loads sent to Augie<br>'
+               f'{_p(day["voicemail_pct"])} of {_n(day["calls"])} calls reached voicemail',
+               TRACK)
         + _arrow()
         + _box("Carrier gave an update", _n(day["captured"]),
                f'{_p(day["captured_pct"])} of loads sent to Augie<br>'
@@ -327,6 +330,8 @@ def _teams(teams: list[dict], units: dict[str, dict]) -> str:
                  + _td(_p(u["tracked_pct"]), bold=True, color=TRACK, extra="background:#F9FAFB;")
                  + _td(_p(u["captured_pct"]), bold=True, color=CAPTURE,
                        extra="background:#F9FAFB;")
+                 + _td(_p(u["voicemail_pct"]), bold=True, color=VOICEMAIL,
+                       extra="background:#F9FAFB;")
                  + _td(_n(u["not_tracked"]), bold=True, extra="background:#F9FAFB;")
                  + "</tr>")
         for t in sorted((t for t in teams if t["unit"] == unit), key=lambda t: t["team"] or ""):
@@ -335,6 +340,7 @@ def _teams(teams: list[dict], units: dict[str, dict]) -> str:
                      + _td(_n(t["pickups"])) + _td(_n(t["tracked"]))
                      + _td(_p(t["tracked_pct"]), color=TRACK)
                      + _td(_p(t["captured_pct"]), color=CAPTURE)
+                     + _td(_p(t["voicemail_pct"]), color=VOICEMAIL)
                      + _td(_n(t["not_tracked"]))
                      + "</tr>")
     # Loads with a blank / unknown unit belong to neither summary above; print
@@ -346,10 +352,11 @@ def _teams(teams: list[dict], units: dict[str, dict]) -> str:
                  + _td(_n(t["pickups"])) + _td(_n(t["tracked"]))
                  + _td(_p(t["tracked_pct"]), color=TRACK)
                  + _td(_p(t["captured_pct"]), color=CAPTURE)
+                 + _td(_p(t["voicemail_pct"]), color=VOICEMAIL)
                  + _td(_n(t["not_tracked"]))
                  + "</tr>")
     head = (_th("Unit / team", "left") + _th("Picked up") + _th("Sent to Augie")
-            + _th("% sent") + _th("% with update") + _th("Not sent"))
+            + _th("% sent") + _th("% with update") + _th("Voicemail %") + _th("Not sent"))
     return _table(head, body)
 
 
@@ -382,6 +389,8 @@ def render_html(m: dict[str, Any]) -> str:
               + term("Carrier gave an update",
                      "the carrier gave Augie a location, status or stop update by phone or "
                      "e-mail (same rule as the Augie Daily Activity report).")
+              + term("Voicemail %", "calls Augie made on these loads that reached the "
+                     "driver's or carrier's voicemail, as a share of all its finished calls;")
               + term("% sent", "share of loads picked up;")
               + "contacted and update % are shares of the loads sent to Augie. "
               + term(f"{UP} / {DOWN}", "higher / lower; green is better, red is worse.")

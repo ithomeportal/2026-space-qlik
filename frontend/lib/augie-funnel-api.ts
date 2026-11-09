@@ -167,6 +167,12 @@ export interface AugieFunnelCounts {
   captured_pct: number | null
   has_status_pct: number | null
   reason_pct: Record<AugieFunnelReason, number | null>
+  /** Finished Augie calls (`completed-call` events) on these loads. */
+  calls: number
+  /** Of those, `callStatus = VOICEMAIL`. */
+  voicemail: number
+  /** voicemail ÷ calls — a share of CALLS, not of loads. */
+  voicemail_pct: number | null
 }
 
 export interface AugieFunnelSummary extends AugieFunnelCounts {
@@ -206,6 +212,61 @@ export interface AugieLoadsResult {
   rows: AugieLoadRow[]
   total: number
   truncated: boolean
+}
+
+/** Missing-information field keys — EXACTLY the router's `MISSING_FIELDS`
+ *  (a backend test parses this block; keep one token per line and the blank
+ *  line after it). */
+export type AugieMissingField =
+  | "carrier_id"
+  | "carrier_name"
+  | "dispatcher_email"
+  | "driver_name"
+  | "driver_phone"
+  | "trailer"
+
+export const AUGIE_MISSING_FIELDS: AugieMissingField[] = [
+  "carrier_id",
+  "carrier_name",
+  "dispatcher_email",
+  "driver_name",
+  "driver_phone",
+  "trailer",
+]
+
+export const MISSING_FIELD_LABELS: Record<AugieMissingField, string> = {
+  carrier_id: "Carrier ID",
+  carrier_name: "Carrier name",
+  dispatcher_email: "Dispatcher email",
+  driver_name: "Driver name",
+  driver_phone: "Driver phone",
+  trailer: "Trailer",
+}
+
+/** `n/a` = Trailer on a load never sent to Augie (only Augie reports it). */
+export type AugieFieldStatus = "missing" | "available" | "n/a"
+
+export interface AugieMissingRow {
+  order_id: string
+  unit: string | null
+  team: string | null
+  customer: string | null
+  carrier: string | null
+  pickup_day: string
+  tracked: boolean
+  reason: AugieFunnelReason | null
+  fields: Record<AugieMissingField, AugieFieldStatus>
+}
+
+export interface AugieMissingResult {
+  rows: AugieMissingRow[]
+  total: number
+  truncated: boolean
+  /** Loads examined (canceled left out) and how many miss ≥ 1 field. */
+  checked: number
+  withMissing: number
+  /** Loads missing each field, over the whole filtered set (not the page). */
+  counts: Record<AugieMissingField, number>
 }
 
 export interface AugieFreshness {
@@ -286,6 +347,35 @@ export function useAugieLoads(
         rows: r.data,
         total: Number(r.meta.total ?? r.data.length),
         truncated: Boolean(r.meta.truncated),
+      }
+    },
+    enabled: isComplete(f),
+    placeholderData: keepPreviousData,
+    ...AUGIE_RETRY,
+  })
+}
+
+export function useAugieMissingInfo(
+  f: AugieFunnelFilters,
+  field: AugieMissingField | "all",
+) {
+  return useQuery({
+    queryKey: ["augie-funnel", "missing-info", field, ...augieKey(f)],
+    queryFn: async ({ signal }): Promise<AugieMissingResult> => {
+      const r = await apiEnvelope<AugieMissingRow[]>(
+        `${BASE}/missing-info${augieQs(f, { field })}`,
+        signal,
+      )
+      const counts = (r.meta.counts ?? {}) as Partial<Record<AugieMissingField, number>>
+      return {
+        rows: r.data,
+        total: Number(r.meta.total ?? r.data.length),
+        truncated: Boolean(r.meta.truncated),
+        checked: Number(r.meta.checked ?? 0),
+        withMissing: Number(r.meta.with_missing ?? 0),
+        counts: Object.fromEntries(
+          AUGIE_MISSING_FIELDS.map((k) => [k, Number(counts[k] ?? 0)]),
+        ) as Record<AugieMissingField, number>,
       }
     },
     enabled: isComplete(f),

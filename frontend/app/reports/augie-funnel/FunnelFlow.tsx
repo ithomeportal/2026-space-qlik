@@ -165,6 +165,9 @@ export function FunnelFlow({ data, node, onNode }: Props) {
               {fmtInt(data.tracked - data.contacted)} loads sent to Augie never got a call or
               an update back
             </div>
+            <div className="mt-1 text-[11px] text-[#B45309]">
+              {fmtPct(data.voicemail_pct)} of {fmtInt(data.calls)} Augie calls reached voicemail
+            </div>
           </Box>
         </div>
         <Arrow />

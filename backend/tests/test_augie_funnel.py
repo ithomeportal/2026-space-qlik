@@ -317,7 +317,7 @@ def test_two_denominators_pickups_and_tracked():
     mock's "84% (out of 113 from augie tracking)". *mutation-checked*."""
     row = {"pickups": 164, "tracked": 62, "contacted": 53, "captured": 45,
            "has_status": 118, "canceled": 14, "international": 45,
-           "multistop": 24, "not_covered": 13, "other": 6}
+           "multistop": 24, "not_covered": 13, "other": 6, "calls": 0, "voicemail": 0}
     p = m.funnel_payload(row)
     assert p["tracked_pct"] == 37.8
     assert p["captured_pct"] == 72.6
@@ -403,7 +403,8 @@ def test_subject_names_the_closed_day_and_both_rates():
 
 def _model():
     row = {"pickups": 10, "tracked": 4, "contacted": 3, "captured": 2, "has_status": 7,
-           "canceled": 1, "international": 2, "multistop": 1, "not_covered": 1, "other": 1}
+           "canceled": 1, "international": 2, "multistop": 1, "not_covered": 1, "other": 1,
+           "calls": 8, "voicemail": 3}
     s = m.funnel_payload(row)
     d = date(2026, 10, 16)
     summ = {k: s for k in ("day", "prev_day", "last_week_day", "last7", "prior7", "mtd",
