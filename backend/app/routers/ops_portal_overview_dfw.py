@@ -682,8 +682,8 @@ async def team_performance_by_team(
     exclude_carriers: Optional[List[str]] = Query(None),
     _user: dict = Depends(gate),
 ):
-    # Locked to this team — the "by team" breakdown collapses to a single
-    # team row + Total (both this team), which is the desired isolation.
+    # Division portal: returns EVERY DFW team (the shared function ignores
+    # `team` by design). Never register this on a team-locked clone (§147).
     return await opo.team_performance_by_team(
         request=request, range=range, start_date=start_date, end_date=end_date,
         team=_sub_team(team), customer=customer, load_type=load_type, lanes=lanes,
