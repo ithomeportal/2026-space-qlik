@@ -13,12 +13,14 @@ Definitions (operator-visible in the plan, 2026-11-04):
   would make the titles false.
 * Declining volume: a customer not lost whose loads in the last 30 days are under
   its monthly average over the 365 days before them (or since its first load).
+  A customer with NO load in the last 30 days is left out (Iris 2026-11-09): it has
+  stopped, not declined, and the At Risk table already lists it.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Callable
 
 from app.services.customer_lifespan_core import (
     Customer,
@@ -97,7 +99,7 @@ def declining(customers: list[Customer], recent: dict[str, Recent], as_of: date,
         if c.status == "lost" or r is None or days < MIN_BASELINE_DAYS:
             continue
         avg = r.loads_base / (days / DAYS_PER_MONTH)
-        if avg < MIN_AVG_MONTHLY_LOADS or r.loads_30 >= avg:
+        if r.loads_30 == 0 or avg < MIN_AVG_MONTHLY_LOADS or r.loads_30 >= avg:
             continue
         rows.append({
             "customer_id": c.customer_id, "name": c.name, **assign(c),

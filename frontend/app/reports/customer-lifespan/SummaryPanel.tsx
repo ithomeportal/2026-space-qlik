@@ -234,7 +234,7 @@ export function SummaryPanel({ division, window, filters, onOpen }: {
         <BoardTable
           tall
           title="Customers with declining load volume"
-          note="Loads in the last 30 days under the customer's monthly average of the 12 months before them. Customers under 2 loads a month are left out."
+          note="Loads in the last 30 days under the customer's monthly average of the 12 months before them. Customers under 2 loads a month are left out. Customers with no loads in the last 30 days are left out too; they show under At Risk."
           rows={b.declining}
           onOpen={onOpen}
           columns={DECLINING_COLUMNS}

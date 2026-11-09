@@ -299,6 +299,21 @@ def test_declining_skips_lost_rising_tiny_and_too_new_customers():
     assert board.baseline_days(date(2020, 1, 1), AS_OF) == 365
 
 
+def test_declining_leaves_out_customers_with_no_load_in_the_last_30_days():
+    """Iris 2026-11-09: a customer with 0 loads in the last 30 days is not "declining" —
+    it has stopped, and the At Risk table already lists it (31+ days quiet, not lost)."""
+    cs = _scope(date(2025, 7, 1), AS_OF)
+    stopped = board.declining(cs, {"OLD": board.Recent(0, 240, 0.0)}, AS_OF, lambda c: {})
+    assert stopped == []
+    (kept,) = board.declining(cs, {"OLD": board.Recent(1, 240, 0.0)}, AS_OF, lambda c: {})
+    assert kept["customer_id"] == "OLD" and kept["loads_30d"] == 1
+
+
+def test_declining_note_says_zero_load_customers_are_left_out():
+    src = _tsx("SummaryPanel.tsx")
+    assert "Customers with no loads in the last 30 days are left out" in src
+
+
 def test_deltas_compare_with_the_prior_year_and_never_divide_by_zero():
     prior = {"active": 2, "at_risk": 0, "first_year": 1, "lost": 1, "recovered": 4}
     t = _board(prior=prior)["tiles"]
