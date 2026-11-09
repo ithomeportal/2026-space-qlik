@@ -498,28 +498,12 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
             lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
         )
 
-    # ---- /team-performance-by-team ----------------------------------------
-    @r.get("/team-performance-by-team")
-    async def team_performance_by_team(
-        request: Request,
-        range: Optional[str] = Query("mtd"),
-        start_date: Optional[date] = Query(None),
-        end_date: Optional[date] = Query(None),
-        customer: Optional[List[str]] = Query(None),
-        load_type: Optional[str] = Query(None),
-        lanes: Optional[List[str]] = Query(None),
-        exclude_lanes: Optional[List[str]] = Query(None),
-        carriers: Optional[List[str]] = Query(None),
-        exclude_carriers: Optional[List[str]] = Query(None),
-        _user: dict = Depends(gate),
-    ):
-        # Locked to this team — the "by team" breakdown collapses to a single
-        # team row + Total (both this team), which is the desired isolation.
-        return await opo.team_performance_by_team(
-            request=request, range=range, start_date=start_date, end_date=end_date,
-            team=team, customer=customer, load_type=load_type, lanes=lanes,
-            exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
-        )
+    # ---- /team-performance-by-team: deliberately NOT registered ----------
+    # The shared function IGNORES `team` ("this panel always returns all CORP
+    # teams"), so a clone serving it showed a T1 KAM every CORP team via a
+    # hand-made URL or the Teams AI assistant (2026-11-09). Its only caller, the
+    # Monthly Performance "Team" button, is hidden when `lockedTeam` is set.
+    # Guard: tests/test_ops_portal_corp_team_lock.py
 
     # ---- /service-incident-by-customer ------------------------------------
     @r.get("/service-incident-by-customer")
