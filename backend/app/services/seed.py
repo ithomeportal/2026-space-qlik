@@ -693,6 +693,49 @@ CUSTOM_REPORTS = [
         # managed in /admin/reports. Mirrors the DFW grants on XRay DFW Mng.
         "roles": ["DFW", "Executive", "CEO", "Operations"],
     },
+    # OPS Portal DFW TM1..TM4 (Bruno PDF "BRUNO -- Ops Portal DFW", 2026-11-09):
+    # the DFW portal above locked server-side to one sub-team, like the CORP
+    # T1-T4 portals below. Seed roles apply only on first creation (xmax=0).
+    {
+        "key": "ops-portal-dfw-tm1",  # -> /reports/ops-portal-dfw-tm1
+        "title": "OPS Portal DFW TM1",
+        "description": "Ops Managers Portal – DFW locked to TM1 — KPI combo, month-over-month customer variance, losses, performance, projection, actuals vs last month, by-lane, by-order and the cover/hold boards for TM1 only",
+        "note": "Scope: DFW division (TEAM-DFW + DFW-revenue-code CORP rows) + team=TM1 (server-locked) · same engine as Ops Managers Portal – DFW · no budget panels · access strictly DFW KAM1 + leadership · Bruno 2026-11-09",
+        "category": "Operations",
+        "tags": ["ops", "overview", "dfw", "tm1", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["DFW KAM1", "Executive"],
+    },
+    {
+        "key": "ops-portal-dfw-tm2",  # -> /reports/ops-portal-dfw-tm2
+        "title": "OPS Portal DFW TM2",
+        "description": "Ops Managers Portal – DFW locked to TM2 — KPI combo, month-over-month customer variance, losses, performance, projection, actuals vs last month, by-lane, by-order and the cover/hold boards for TM2 only",
+        "note": "Scope: DFW division (TEAM-DFW + DFW-revenue-code CORP rows) + team=TM2 (server-locked) · same engine as Ops Managers Portal – DFW · no budget panels · access strictly DFW KAM2 + leadership · Bruno 2026-11-09",
+        "category": "Operations",
+        "tags": ["ops", "overview", "dfw", "tm2", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["DFW KAM2", "Executive"],
+    },
+    {
+        "key": "ops-portal-dfw-tm3",  # -> /reports/ops-portal-dfw-tm3
+        "title": "OPS Portal DFW TM3",
+        "description": "Ops Managers Portal – DFW locked to TM3 — KPI combo, month-over-month customer variance, losses, performance, projection, actuals vs last month, by-lane, by-order and the cover/hold boards for TM3 only",
+        "note": "Scope: DFW division (TEAM-DFW + DFW-revenue-code CORP rows) + team=TM3 (server-locked) · same engine as Ops Managers Portal – DFW · no budget panels · access strictly DFW KAM3 + leadership · Bruno 2026-11-09",
+        "category": "Operations",
+        "tags": ["ops", "overview", "dfw", "tm3", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["DFW KAM3", "Executive"],
+    },
+    {
+        "key": "ops-portal-dfw-tm4",  # -> /reports/ops-portal-dfw-tm4
+        "title": "OPS Portal DFW TM4",
+        "description": "Ops Managers Portal – DFW locked to TM4 — KPI combo, month-over-month customer variance, losses, performance, projection, actuals vs last month, by-lane, by-order and the cover/hold boards for TM4 only",
+        "note": "Scope: DFW division (TEAM-DFW + DFW-revenue-code CORP rows) + team=TM4 (server-locked) · same engine as Ops Managers Portal – DFW · no budget panels · access strictly DFW KAM4 + leadership · Bruno 2026-11-09",
+        "category": "Operations",
+        "tags": ["ops", "overview", "dfw", "tm4", "kam", "kpi"],
+        "owner_name": "Diego",
+        "roles": ["DFW KAM4", "Executive"],
+    },
     # Per-team private copies of Ops Portal Overview (Bruno 2026-06-26, PDF
     # Request 1). Same engine as ops-portal-overview but server-locked to one
     # CORP team so a team's KAMs can't see other teams' work or customers.

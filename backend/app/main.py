@@ -63,6 +63,7 @@ from app.routers import (
     ops_portal_overview,
     ops_portal_overview_ceo,
     ops_portal_overview_dfw,
+    ops_portal_overview_dfw_team,
     ops_portal_overview_team,
     ops_team_perf_digest,
     podium_dfw,
@@ -2330,6 +2331,11 @@ for _opo_team_router in ops_portal_overview_team.team_routers:
 # Ops Managers Portal – DFW (Bruno PDF 2026-08-20). Same engine, DFW division
 # scope — see app/routers/ops_portal_overview_dfw.py.
 app.include_router(ops_portal_overview_dfw.r, prefix="/api")
+# OPS Portal DFW TM1..TM4 (Bruno 2026-11-09) — the DFW portal locked to one
+# sub-team; each router carries the DFW scope pin — see
+# app/routers/ops_portal_overview_dfw_team.py.
+for _opo_dfw_team_router in ops_portal_overview_dfw_team.team_routers:
+    app.include_router(_opo_dfw_team_router, prefix="/api")
 # CEO Executive Portal (Bruno PDF "BRUNO -- Exec Portal", 2026-09-03) — the
 # same engine over BOTH divisions, with the division as a required path
 # segment so it can never default to the other one (§100). Registered after

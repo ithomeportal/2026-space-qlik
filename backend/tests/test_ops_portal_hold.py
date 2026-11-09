@@ -389,12 +389,13 @@ def test_every_delegator_advertises_a_sort_key_that_exists() -> None:
     import inspect
 
     from app.routers import ops_portal_overview_dfw as dfw_mod
+    from app.routers import ops_portal_overview_dfw_team as dfw_team_mod
     from app.routers import ops_portal_overview_team as team_mod
 
     default = inspect.signature(hold_mod.hold_board).parameters["sort"].default.default
     assert default in hold_mod._HOLD_SORTS
 
-    for mod in (team_mod, dfw_mod):
+    for mod in (team_mod, dfw_mod, dfw_team_mod):
         src = inspect.getsource(mod)
         shim = src.split('@r.get("/hold")')[1].split("return await")[0]
         declared = shim.split('sort: str = Query("')[1].split('"')[0]

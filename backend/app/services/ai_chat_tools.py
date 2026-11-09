@@ -136,6 +136,7 @@ REPORT_ROUTE_PREFIX: dict[str, str] = {
     **{f"corp-t{n}-customer-score": f"ops-customer-score-t{n}" for n in range(1, 5)},
     **{f"corp-t{n}-direct-compare": f"ops-direct-compare-t{n}" for n in range(1, 5)},
     **{f"corp-t{n}-ops-kam-portal": f"ops-portal-overview-t{n}" for n in range(1, 5)},
+    **{f"ops-portal-dfw-tm{n}": f"ops-portal-overview-dfw-tm{n}" for n in range(1, 5)},
 }
 
 CATALOG_KEYS = frozenset(r["key"] for r in CUSTOM_REPORTS)

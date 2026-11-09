@@ -26,6 +26,7 @@ import pytest
 from app.routers import ops_portal_overview as opo
 from app.routers import ops_portal_overview_ceo as ceo
 from app.routers import ops_portal_overview_dfw as dfw
+from app.routers import ops_portal_overview_dfw_team as dfw_team_mod
 from app.routers import ops_portal_overview_team as team_mod
 from app.routers.ops_portal_overview import variance
 from app.routers.ops_portal_overview._scope import CORP_SCOPE, DFW_SCOPE
@@ -240,7 +241,7 @@ def test_ceo_forwards_every_param_under_both_divisions(monkeypatch, scope, team)
 
 
 def test_not_billed_is_gone_from_every_router() -> None:
-    routers = [opo.router, dfw.r, ceo.r, *team_mod.team_routers]
+    routers = [opo.router, dfw.r, ceo.r, *team_mod.team_routers, *dfw_team_mod.team_routers]
     for router in routers:
         assert not any("customer-not-billed" in r.path for r in router.routes)
     assert not hasattr(opo, "customer_not_billed")

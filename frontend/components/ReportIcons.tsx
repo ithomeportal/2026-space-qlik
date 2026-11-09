@@ -189,6 +189,10 @@ const REPORT_MAP: Record<string, ReportIconAssignment> = {
   // Bruno PDF 2026-08-20 — the DFW division copy. Keyed by the EXACT title
   // string in seed.py; a byte of drift falls through to the generic icon.
   "Ops Managers Portal – DFW":     { icon: LayoutGrid,     family: "operations", tag: "DFW" },
+  "OPS Portal DFW TM1":             { icon: LayoutGrid,     family: "dfw", tag: "TM1" },
+  "OPS Portal DFW TM2":             { icon: LayoutGrid,     family: "dfw", tag: "TM2" },
+  "OPS Portal DFW TM3":             { icon: LayoutGrid,     family: "dfw", tag: "TM3" },
+  "OPS Portal DFW TM4":             { icon: LayoutGrid,     family: "dfw", tag: "TM4" },
   "CORP T1 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T1" },
   "CORP T2 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T2" },
   "CORP T3 OPS Kam Portal":         { icon: LayoutGrid,     family: "corp", tag: "T3" },

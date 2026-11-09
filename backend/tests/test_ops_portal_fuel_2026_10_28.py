@@ -27,6 +27,7 @@ import pytest
 from app.routers import ops_portal_overview as opo
 from app.routers import ops_portal_overview_ceo as ceo
 from app.routers import ops_portal_overview_dfw as dfw
+from app.routers import ops_portal_overview_dfw_team as dfw_team_mod
 from app.routers import ops_portal_overview_team as team_mod
 from app.routers.ops_portal_overview._dates import _resolve_grain_window
 from app.services import ai_chat_tools
@@ -236,6 +237,9 @@ def test_fuel_is_mirrored_in_every_clone_with_its_own_gate():
         assert _gate_key(route.endpoint) == f"corp-{slug}-ops-kam-portal"
     dfw_route = next(x for x in dfw.r.routes if x.path.endswith("/fuel"))
     assert _gate_key(dfw_route.endpoint) == dfw.REPORT_KEY
+    for tm, r in zip(dfw_team_mod.TEAM_CONFIGS, dfw_team_mod.team_routers):
+        route = next(x for x in r.routes if x.path.endswith("/fuel"))
+        assert _gate_key(route.endpoint) == f"ops-portal-dfw-{tm.lower()}"
     ceo_route = next(x for x in ceo.r.routes if x.path.endswith("/fuel"))
     assert "/{division}/fuel" in ceo_route.path
     assert _gate_key(ceo_route.endpoint) == ceo.REPORT_KEY
