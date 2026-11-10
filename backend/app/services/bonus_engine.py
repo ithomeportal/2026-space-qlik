@@ -16,17 +16,17 @@ Rules (do NOT simplify without HR sign-off — see docs/SPEC-BONUS-CALCULATOR.md
 - Wildcard: team profit > $100,000 AND the SAME monthly service avg >= 95%;
   pays max(regular, wildcard). (R8 bug fix: eligibility previously read the
   weeks-union period average, which could clear 95% while the displayed monthly
-  SERVICE was below it — Team 1 May: 94.67% shown yet "Eligible".) NOTE: the
-  $100k profit gate still reads the weekly-bucket sum (`total_profit`); whether
-  it should move to calendar-month profit like the add-ons is OPEN — emailed
-  Bruno 2026-06-08, awaiting reply (see SPEC §R9 PENDING block).
+  SERVICE was below it — Team 1 May: 94.67% shown yet "Eligible".) R21 (HR
+  2026-11-09): the $100k profit gate reads the CALENDAR-MONTH profit on CORP
+  (header PROFIT KPI); DFW keeps the weekly-bucket sum
+  (`BonusConfig.wildcard_gate_on_monthly_profit`).
 - Profit add-ons (per employee): >$130k +$500, >$150k +$500, >=$170k +$500
   (ladder == Bruno's $500/$1,000/$1,500). R9 (2026-06-08): keyed off the
   CALENDAR-MONTH profit (header PROFIT KPI / team["monthlyProfit"]), NOT the
   weekly-bucket sum — the Mon→Sun buckets miss the 1st-3rd so the bucket sum
   could sit below $170k while the header showed >=$170k.
-- Team-1 KAM: monthly profit > $150,000 -> $14,400 MXN / DOF fx (gate still on
-  the weekly-bucket sum — same OPEN question as the wildcard, pending Bruno)
+- Team-1 KAM: monthly profit > $150,000 -> $14,400 MXN / DOF fx (R21: same
+  calendar-month basis as the CORP wildcard gate)
 - Afterhours (Night/Weekend): average of the 4 day-teams' weekly T&T bonus
 """
 
@@ -110,6 +110,10 @@ class BonusConfig:
     service_brackets: List[Dict[str, float]]
     pay_per_load: Dict[str, float]
     monthly_profit_brackets: List[Dict[str, Any]]
+    # R21 (HR, 2026-11-09): which profit the wildcard $100k and Team-1 KAM $150k
+    # gates read. True = the CALENDAR-MONTH profit (header PROFIT KPI), False =
+    # the weekly-bucket sum. Deliberately NO default — each calculator states it.
+    wildcard_gate_on_monthly_profit: bool
 
 
 CORP_BONUS = BonusConfig(
@@ -120,6 +124,9 @@ CORP_BONUS = BonusConfig(
     service_brackets=SERVICE_BRACKETS,
     pay_per_load=PAY_PER_LOAD,
     monthly_profit_brackets=MONTHLY_PROFIT_BRACKETS,
+    # R21: CORP Team 4 Oct 2026 — header $101,283, buckets (Oct 5 → Nov 1) $94,951
+    # ⇒ the wildcard silently paid $0. HR asked; CORP gates on the month now.
+    wildcard_gate_on_monthly_profit=True,
 )
 
 # DFW margin ladder — Bruno PDF 2026-08-20 Request 3, verbatim:
@@ -147,6 +154,9 @@ DFW_BONUS = BonusConfig(
     service_brackets=SERVICE_BRACKETS,
     pay_per_load=PAY_PER_LOAD,
     monthly_profit_brackets=MONTHLY_PROFIT_BRACKETS,
+    # R21: CIO 2026-11-09 — CORP only. DFW keeps the weekly-bucket sum (DFW TM1
+    # Oct 2026 would flip: month $103,468 vs buckets $97,871). Not asked for.
+    wildcard_gate_on_monthly_profit=False,
 )
 
 BONUS_CONFIGS: Dict[str, BonusConfig] = {c.key: c for c in (CORP_BONUS, DFW_BONUS)}
@@ -406,13 +416,18 @@ def calculate_team_bonus(team: Dict[str, Any], cfg: BonusConfig = CORP_BONUS) ->
     # $180,982 ≥ 170k but the 170 bracket silently paid $0). Bruno: the $170k
     # limit was exceeded, so all three $500 ladders must show. Fixtures without a
     # monthly figure fall back to the bucket sum (same fallback shape as
-    # monthlyServicePct, R8). Wildcard still uses the bucket sum (R3/R8 locked).
+    # monthlyServicePct, R8).
     bracket_profit_basis = (
         float(team["monthlyProfit"]) if team.get("monthlyProfit") is not None else total_profit
     )
     profit_brackets = calculate_profit_bracket_bonuses(bracket_profit_basis)
+    # R21 (HR, Daniela Nava 2026-11-09): on CORP the wildcard $100k gate and the
+    # Team-1 KAM $150k gate read the same calendar-month profit as the header and
+    # the add-ons (closes the R9 PENDING question for CORP). DFW keeps the
+    # weekly-bucket sum (cfg flag, CIO decision).
+    gate_profit = bracket_profit_basis if cfg.wildcard_gate_on_monthly_profit else total_profit
     wildcard_index = get_wildcard_bracket_index(normalized_service, cfg)
-    wildcard_eligible = total_profit > 100000 and wildcard_index >= 0
+    wildcard_eligible = gate_profit > 100000 and wildcard_index >= 0
 
     employees = []
     for employee in team["employees"]:
@@ -435,7 +450,7 @@ def calculate_team_bonus(team: Dict[str, Any], cfg: BonusConfig = CORP_BONUS) ->
                 multiplier = rule["serviceBonusPct"]
             regular_weekly_usd.append(multiplier * rule["loads"] * cfg.pay_per_load[role])
 
-        wildcard = calculate_wildcard_bonus(employee, total_profit, normalized_service, cfg)
+        wildcard = calculate_wildcard_bonus(employee, gate_profit, normalized_service, cfg)
         wildcard_weekly_usd = wildcard["wildcardBonusUsd"]
         weekly_usd = [max(value, wildcard_weekly_usd) if wildcard_eligible else value for value in regular_weekly_usd]
         bonus_usd = sum(weekly_usd)
@@ -443,7 +458,7 @@ def calculate_team_bonus(team: Dict[str, Any], cfg: BonusConfig = CORP_BONUS) ->
         wildcard_applied_usd = sum(
             max(0, weekly_usd[index] - regular_weekly_usd[index]) for index in range(len(weekly_usd))
         )
-        kam_bonus = calculate_team1_kam_bonus(team, employee, total_profit, cfg)
+        kam_bonus = calculate_team1_kam_bonus(team, employee, gate_profit, cfg)
         legacy_addons = sum(float(value) for value in employee.get("addOnsUsd", []) or [])
         profit_bracket_bonus_usd = sum(float(bracket["payoutUsd"]) for bracket in profit_brackets)
         add_on_bonus_usd = kam_bonus["kamBonusUsd"] + legacy_addons + profit_bracket_bonus_usd
