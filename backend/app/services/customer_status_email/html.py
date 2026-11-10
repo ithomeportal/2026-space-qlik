@@ -28,6 +28,9 @@ BORDER = "#D1D5DB"
 GOOD, GOOD_BG = "#166534", "#DCFCE7"
 BAD, BAD_BG = "#B91C1C", "#FEE2E2"
 LINK = "#1D4ED8"
+# The pick-up dot (customer feedback 2026-11-10): brighter than the pill text so a
+# 14px glyph still reads as green / red at a glance.
+DOT_GOOD, DOT_BAD = "#16A34A", "#DC2626"
 DASH = "&mdash;"
 
 # (heading, colour) per section — the template's three coloured bars.
@@ -89,6 +92,19 @@ def on_time_pill(flag: Optional[bool]) -> str:
     if flag is None:
         return ""
     return pill("On-Time" if flag else "Late", flag)
+
+
+def status_dot(flag: Optional[bool]) -> str:
+    """A small green / red dot for On-Time / Late, beside a time.
+
+    A coloured TEXT glyph, never a background: Outlook print/PDF drops fills. The
+    title keeps the word for anyone who hovers (colour alone carries the meaning).
+    """
+    if flag is None:
+        return ""
+    word, colour = ("On-Time", DOT_GOOD) if flag else ("Late", DOT_BAD)
+    css = f"font-size:16px;line-height:14px;color:{colour};margin-left:4px;"
+    return f'<span title="{word}" {_s(css)}>&#9679;</span>'
 
 
 def hours_pill(hours: Optional[float]) -> str:
@@ -172,11 +188,8 @@ def _location_cell(card: Card) -> str:
     if card.eta and card.eta_is_cst:
         where = f" to {escape(card.eta_place)}" if card.eta_place else ""
         rows.append(_small(f"ETA{where}: {fmt_dt(card.eta)} CST", INK))
-    label = ("Departed destination" if card.del_out
-             else "At destination" if card.del_in
-             else card.status_label or "In progress")
-    rows.append(f'<div {_s(f"font-size:11px;color:{INK};margin-top:6px;")}>'
-                f'{escape(label).upper()}</div>')
+    # No brokerage-status word here (customer feedback 2026-11-10): "IN PROGRESS",
+    # "AT CARRIER YARD"… read as noise. Card.status_label still feeds the Ops panel.
     return _head("Current Location / ETA") + "".join(rows)
 
 
@@ -186,10 +199,10 @@ def _pickup_eta_line(card: Card) -> str:
 
 def _times_in_progress(card: Card) -> str:
     pu = card.pu_in or card.pu_out
-    rows = [_big(fmt_dt(pu)),
+    # On-Time / Late is a dot beside the pick-up time, not a pill (2026-11-10).
+    rows = [_big(fmt_dt(pu) + status_dot(card.pu_on_time)),
             _pickup_eta_line(card),
             _small(f"Sched. pick up {fmt_dt(card.pu_sched_late)}"),
-            _pill_line(on_time_pill(card.pu_on_time)),
             _small("-----"),
             _small(f"Delivery appt. {fmt_dt(card.del_sched_late)}")]
     return _head("PU &amp; DEL Times") + "".join(rows)

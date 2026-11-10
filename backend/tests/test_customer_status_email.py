@@ -865,10 +865,12 @@ def test_arrived_at_the_consignee_replaces_any_eta():
     assert c.eta is None and c.hours_vs_appt is None
     out = html.card_in_progress(c)
     assert "Arrived" in out and "10/20/2026" in out and "09:08 AM" in out
-    assert "AT DESTINATION" in out and "IN TRANSIT" not in out
+    assert "IN TRANSIT" not in out and "AT DESTINATION" not in out
     assert "ETA pending" not in out and "CHRISTINE" not in out
     assert c.location is None and c.location_at is None
-    assert out.count("On-Time") == 2  # pick up + arrival
+    # The arrival keeps its pill; the pick-up is a dot since 2026-11-10.
+    assert out.count("On-Time") == 2  # arrival pill + the pick-up dot's title
+    assert out.count("&#9679; On-Time") == 1
 
 
 def test_a_late_arrival_is_not_shown_in_green():
@@ -882,7 +884,7 @@ def test_a_departure_without_an_arrival_still_means_arrived():
     c = cards.build_card(order, cards.IN_PROGRESS, {}, NOW)
     out = html.card_in_progress(c)
     assert c.eta is None and "Arrived" in out and "09:30 AM" in out
-    assert "DEPARTED DESTINATION" in out and "ETA to delivery" not in out
+    assert "DEPARTED DESTINATION" not in out and "ETA to delivery" not in out
 
 
 YARD = "Empty at consignee EC Logistics Inc., PHARR, TX at 11/03/26 0700."
@@ -1002,3 +1004,78 @@ def test_comments_posted_together_resolve_to_the_same_truthful_one():
 def test_comments_sql_keeps_every_comment_of_the_newest_minute():
     assert "DISTINCT ON" not in data.COMMENTS_SQL
     assert "rank() OVER (PARTITION BY h.id ORDER BY h.posted_date DESC)" in data.COMMENTS_SQL
+
+
+# ---------------------------------------------------------------------------
+# Customer feedback 2026-11-10 (n8n-report.pdf): the pick-up On-Time / Late pill
+# becomes a small dot beside the pick-up time, and the brokerage-status word under
+# Current Location is gone. Everything else — ARRIVED pill, delivered section,
+# ETA hours pill — stays as it was ("everything else is fine").
+# ---------------------------------------------------------------------------
+STATUS_WORDS = ("IN PROGRESS", "IN TRANSIT", "AT CARRIER YARD", "AT CUSTOMS YARD",
+                "CROSSING THE BORDER", "AT US YARD", "LOADED", "COVERED")
+
+
+def _pu_cell(card) -> str:
+    return html._times_in_progress(card)
+
+
+def test_pickup_on_time_is_a_green_dot_beside_the_time_not_a_pill():
+    c = cards.build_card(_order(), cards.IN_PROGRESS, {}, NOW)
+    assert c.pu_on_time is True
+    cell = _pu_cell(c)
+    assert html.pill("On-Time", True) not in cell and "&#9888;" not in cell
+    # The dot sits on the SAME line as the pick-up time, after it.
+    line = re.search(r"<div [^>]*>10/19/2026 @ 04:36 PM(.*?)</div>", cell)
+    assert line and html.DOT_GOOD in line.group(1) and "&#9679;" in line.group(1)
+    assert 'title="On-Time"' in line.group(1)
+
+
+def test_pickup_late_is_a_red_dot():
+    c = cards.build_card(_order(pu_in=datetime(2026, 10, 20, 2)), cards.IN_PROGRESS, {}, NOW)
+    assert c.pu_on_time is False
+    cell = _pu_cell(c)
+    assert "Late</span>" not in cell.replace('title="Late"', "")
+    assert html.DOT_BAD in cell and 'title="Late"' in cell and html.DOT_GOOD not in cell
+
+
+def test_no_pickup_actual_means_no_dot():
+    c = cards.build_card(_order(pu_in=None, pu_out=None), cards.IN_PROGRESS, {}, NOW)
+    cell = _pu_cell(c)
+    assert "&#9679;" not in cell and "On-Time" not in cell and "Late" not in cell
+
+
+def test_dot_survives_print_and_is_outlook_safe():
+    """Print drops backgrounds: the dot is a coloured TEXT glyph, never a fill."""
+    dot = html.status_dot(True)
+    assert "background" not in dot and f"color:{html.DOT_GOOD}" in dot
+    assert "font-family:" in dot
+    assert html.status_dot(None) == ""
+
+
+def test_brokerage_status_word_is_not_shown():
+    for code in cards.STATUS_LABELS:
+        details = {"movements": {"0349842": [{"movement_id": "1", "brokerage_status": code}]}}
+        c = cards.build_card(_order(), cards.IN_PROGRESS, details, NOW)
+        out = html.card_in_progress(c)
+        for word in STATUS_WORDS:
+            assert word not in out, (code, word)
+    # No active leg at all used to print the fallback "IN PROGRESS".
+    out = html.card_in_progress(cards.build_card(_order(), cards.IN_PROGRESS, {}, NOW))
+    assert "IN PROGRESS" not in out
+
+
+def test_status_label_still_feeds_the_ops_coverage_panel():
+    c = cards.build_card(_order(), cards.IN_PROGRESS, _details(None), NOW)
+    assert c.status_label == "In transit"
+    rc = cards.ReportCards(report=DONNA, in_progress=(c,), scheduled=(), delivered=())
+    assert cards.eta_coverage(rc)["missing"][0]["status"] == "In transit"
+
+
+def test_delivered_and_arrived_pills_are_unchanged():
+    d = _order(status="D", del_in=datetime(2026, 10, 20, 9), del_out=datetime(2026, 10, 20, 10))
+    out = html.card_delivered(cards.build_card(d, cards.DELIVERED, {}, NOW))
+    assert out.count(html.pill("On-Time", True)) == 2
+    arrived = html.card_in_progress(cards.build_card(
+        _order(del_in=datetime(2026, 10, 20, 19)), cards.IN_PROGRESS, {}, NOW))
+    assert html.pill("Late", False) in arrived
