@@ -29,7 +29,9 @@ DIEGO = "dfrodriguez@unilinktransportation.com"
 
 def _row(now=NOW, v4=V4_LAST, mov=MOV_LAST, since=18):
     return {"cst_now": now, "v4_last": v4, "movement_last": mov, "live_last": now,
-            "events_since_v4": since, "events_since_movement": since + 10}
+            "events_since_v4": since, "events_since_movement": since + 10,
+            "customer_windows_last": now - timedelta(minutes=12), "events_since_customer_windows": 0,
+            "pu_del_windows_last": now - timedelta(minutes=7), "events_since_pu_del_windows": 0}
 
 
 def _fresh(now):

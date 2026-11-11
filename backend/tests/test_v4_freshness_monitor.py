@@ -21,10 +21,14 @@ V4_LAST = datetime(2026, 11, 10, 23, 20, 31)  # noqa: DTZ001
 MOV_LAST = datetime(2026, 11, 10, 22, 28, 26)  # noqa: DTZ001
 
 
-def _row(v4=V4_LAST, mov=MOV_LAST, live=NOW, since_v4=245, since_mov=260, now=NOW):
+def _row(v4=V4_LAST, mov=MOV_LAST, live=NOW, since_v4=245, since_mov=260, now=NOW, **extra):
+    # The two windows tables (v6) default to fresh; a test overrides them by key.
     return {
         "cst_now": now, "v4_last": v4, "movement_last": mov, "live_last": live,
         "events_since_v4": since_v4, "events_since_movement": since_mov,
+        "customer_windows_last": now - timedelta(minutes=12), "events_since_customer_windows": 0,
+        "pu_del_windows_last": now - timedelta(minutes=7), "events_since_pu_del_windows": 0,
+        **extra,
     }
 
 
@@ -204,4 +208,6 @@ def test_the_job_is_scheduled_and_on_the_roster() -> None:
     assert 'id="hourly_v4_freshness_check"' in src
     assert 'hour="2,6-22", minute=40' in src
     body = src.split("async def _scheduled_v4_freshness_check", 1)[1].split("\nasync def ", 1)[0]
-    assert "check_v4_freshness(pool)" in body
+    # The hub pool keeps the alert memory across deploys (v6).
+    assert 'check_v4_freshness(pool, hub_pool=getattr(app.state, "pool", None))' in body
+    assert "GF_STATE_DDL" in src  # the state table is created at startup

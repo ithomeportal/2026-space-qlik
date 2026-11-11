@@ -81,7 +81,9 @@ def test_every_companion_names_its_readers() -> None:
 
 def _row():
     return {"cst_now": NOW, "v4_last": V4_LAST, "movement_last": MOV_LAST, "live_last": NOW,
-            "events_since_v4": 18, "events_since_movement": 33}
+            "events_since_v4": 18, "events_since_movement": 33,
+            "customer_windows_last": NOW, "events_since_customer_windows": 0,
+            "pu_del_windows_last": NOW, "events_since_pu_del_windows": 0}
 
 
 class _Pool:

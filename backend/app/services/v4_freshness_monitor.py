@@ -27,6 +27,16 @@ run re-detects it. ⚠ Not watched 22:40–06:40 (the 06:25 check covers the
 night). ⚠ A FUTURE-stamped table (the 11-01 DST fingerprint) delays detection by
 its skew — the 06:25 mail flags future stamps.
 
+v6 (2026-11-11 16:30): the afternoon stop came back PARTLY — v4, movement and
+cashflow wrote again ~16:00 while ``orders_pu_del_windows`` (Hold board) and
+``customer_windows`` (DPC delivery month, Ops portals, PCA mails) stayed at
+12:41 / 13:18. Watching v4 + movement alone would have called that "resumed".
+Both are now WATCHED with the same evidence rule (each re-stamps on a McLeod
+arrival: 41/41 and 37/41 orders measured 11-11), each freezes and resumes on
+its own, and the resumed mail names whatever is still stopped. The alert memory
+now lives in the hub DB (``v4_freshness_state``) so a deploy inside a freeze
+neither repeats the STOPPED mail nor loses the resumed one.
+
 Never raises — log-and-swallow, like every watchdog in this package.
 """
 
@@ -40,6 +50,7 @@ from typing import Any
 
 from app.datalake import pad_variants, sql_str_list
 from app.services import v4_freshness_companions as companions
+from app.services import v4_freshness_state as state
 from app.services.allowed_domains import partition_recipients
 from app.services.msgraph_mailer import send_notification
 
@@ -51,6 +62,8 @@ MIN_EVENTS = 5
 
 V4_TABLE = "public.mcleod_gld_budget_report_v4"
 MOVEMENT_TABLE = "public.mcleod_gld_movement"
+CUSTOMER_WINDOWS_TABLE = "public.mcleod_gld_customer_windows"
+PU_DEL_WINDOWS_TABLE = "public.mcleod_gld_orders_pu_del_windows"
 LIVE_TABLE = "public.app_augment_n8n_data_ra_rt"
 # The live feed holds US (TMS) orders only, so both "last write" stamps are measured
 # on TMS too — an MX-only trickle must not hide a stopped US load (review 11-11).
@@ -78,11 +91,22 @@ class Watched:
     table: str
     last_col: str
     since_col: str
+    read_by: str
 
 
+# Every one is CHANGE-stamped and re-stamped when McLeod records a stop arrival,
+# so "silent while ≥ MIN_EVENTS arrivals happened" means the load, not a quiet
+# hour. Readers verified by grep of app/ 2026-11-11.
 WATCHED: tuple[Watched, ...] = (
-    Watched("v4", V4_TABLE, "v4_last", "events_since_v4"),
-    Watched("movement", MOVEMENT_TABLE, "movement_last", "events_since_movement"),
+    Watched("v4", V4_TABLE, "v4_last", "events_since_v4",
+            "Production, Division Payment, XRay, Podium, the Ops portals, PCA status mails"),
+    Watched("movement", MOVEMENT_TABLE, "movement_last", "events_since_movement",
+            "the Ops portals, XRay, Podium, Admin Aging, PCA status mails"),
+    Watched("customer_windows", CUSTOMER_WINDOWS_TABLE, "customer_windows_last",
+            "events_since_customer_windows",
+            "Division Payment (delivery month), the Ops portals, PCA status mails"),
+    Watched("pu_del_windows", PU_DEL_WINDOWS_TABLE, "pu_del_windows_last",
+            "events_since_pu_del_windows", "the Ops portal Hold board"),
 )
 
 # Gold stamps are naive CST, the live feed too; compared against the CST wall
@@ -97,24 +121,30 @@ _ARRIVED_AFTER = (
 )
 # MATERIALIZED: inlined, the planner re-ran each max() per reference — the
 # movement max is an unindexed ~900 MB seq read (14 s measured 11-11, ~2 s now).
+# customer_windows / pu_del_windows max() = 0.3–0.5 s each, unindexed (measured 11-11).
+_LASTS = ",\n               ".join(
+    f"(SELECT max(updated_dt) FROM {w.table} WHERE company_id IN {_TMS}) AS {w.last_col}"
+    for w in WATCHED
+)
+_COUNTS = ",\n               ".join(
+    f"count(DISTINCT r.id) FILTER (WHERE {_ARRIVED_AFTER.format(col=w.last_col)})::int"
+    f" AS {w.since_col}"
+    for w in WATCHED
+)
+_LEAST = ", ".join(f"COALESCE(t.{w.last_col}, '-infinity')" for w in WATCHED)
 FRESHNESS_SQL = f"""
     WITH t AS MATERIALIZED (
-        SELECT (SELECT max(updated_dt) FROM {V4_TABLE} WHERE company_id IN {_TMS}) AS v4_last,
-               (SELECT max(updated_dt) FROM {MOVEMENT_TABLE} WHERE company_id IN {_TMS}) AS movement_last,
+        SELECT {_LASTS},
                (SELECT max(updated_dt) FROM {LIVE_TABLE})     AS live_last,
                {_CST_NOW} AS cst_now
     )
-    SELECT t.*, c.events_since_v4, c.events_since_movement
+    SELECT t.*, {", ".join(f"c.{w.since_col}" for w in WATCHED)}
     FROM t
-    -- ONE scan of the live table for both counts (it is upsert-bloated).
+    -- ONE scan of the live table for every count (it is upsert-bloated).
     CROSS JOIN LATERAL (
-        SELECT count(DISTINCT r.id) FILTER (
-                   WHERE {_ARRIVED_AFTER.format(col="v4_last")})::int       AS events_since_v4,
-               count(DISTINCT r.id) FILTER (
-                   WHERE {_ARRIVED_AFTER.format(col="movement_last")})::int AS events_since_movement
+        SELECT {_COUNTS}
         FROM {LIVE_TABLE} r
-        WHERE r.updated_dt > LEAST(COALESCE(t.v4_last, '-infinity'),
-                                   COALESCE(t.movement_last, '-infinity')) - interval '1 hour'
+        WHERE r.updated_dt > LEAST({_LEAST}) - interval '1 hour'
           AND NOT COALESCE(r.is_deleted, false)
     ) c
 """
@@ -127,6 +157,7 @@ class TableLag:
     last: datetime | None
     age_s: int | None
     events_since: int
+    read_by: str = ""
 
 
 @dataclass
@@ -139,6 +170,18 @@ class AlertMemory:
 
 
 _MEMORY = AlertMemory()
+
+
+@dataclass
+class HubSync:
+    """``dirty`` = the last save to the hub failed, so the hub row is OLDER than the
+    in-process memory and must not be loaded over it (review 11-11: a working load
+    + failing save re-sent the STOPPED mail every hour)."""
+
+    dirty: bool = False
+
+
+_SYNC = HubSync()
 
 
 def age_text(secs: int) -> str:
@@ -168,7 +211,7 @@ def stale_tables(row: Any) -> list[TableLag]:
         age = None if last is None else int((now - last).total_seconds())
         silent = age is None or age > STALE_MINUTES * 60
         if silent and since >= MIN_EVENTS:
-            out.append(TableLag(w.name, w.table, last, age, since))
+            out.append(TableLag(w.name, w.table, last, age, since, w.read_by))
     return out
 
 
@@ -180,12 +223,14 @@ def _table_html(lags: list[TableLag], live_last: datetime | None) -> str:
     cell = "padding:4px 12px 4px 0;"
     head = "".join(
         f"<th style='{cell}text-align:left;color:#555;font-weight:500;'>{h}</th>"
-        for h in ("table", "last write (CST)", "silent for", "orders picked up / delivered since")
+        for h in ("table", "last write (CST)", "silent for", "orders picked up / delivered since",
+                  "read by")
     )
     body = "".join(
         f"<tr><td style='{cell}'>{t.table.removeprefix('public.')}</td><td style='{cell}'>{_fmt(t.last)}</td>"
         f"<td style='{cell}font-weight:600;'>{'—' if t.age_s is None else age_text(t.age_s)}</td>"
-        f"<td style='{cell}'>{t.events_since}</td></tr>"
+        f"<td style='{cell}'>{t.events_since}</td>"
+        f"<td style='{cell}font-family:-apple-system,Segoe UI,Roboto,sans-serif;'>{t.read_by}</td></tr>"
         for t in lags
     )
     return (
@@ -212,9 +257,9 @@ def _stopped_html(lags: list[TableLag], live_last: datetime | None,
     last write is missing from them.</p>
   {_table_html(lags, live_last)}
   {extra}
-  <p style="margin:16px 0 0;color:#555;">Reports over these tables (Production, Hold,
-    Division Payment, XRay, Podium, the Ops portals and the PCA status mails) show the last
-    loaded state until Data / BI restarts the load; the Cover boards fall back to the live feed.</p>
+  <p style="margin:16px 0 0;color:#555;">The reports over these tables show the last
+    loaded state until Data / BI restarts the load; the Cover boards fall back to the live feed.
+    Each table resumes on its own — the "resumed" mail names any that are still stopped.</p>
   <p style="margin:16px 0 0;color:#888;font-size:12px;">Checked hourly 06:00–22:00 CST;
     one mail per freeze, plus one when writes resume. Owner of the McLeod → gold load:
     Data / BI. Rule: SPEC-CODE-RULES §143.</p>
@@ -242,15 +287,31 @@ async def _count_stuck(pool) -> int | None:
         return None
 
 
-def _resumed_html(names: list[str], row: Any, stuck: int | None = None) -> str:
+def _still_stopped_html(still: list[TableLag]) -> str:
+    """A PARTIAL resume (11-11 16:00: v4 back, Hold board + delivery windows not)."""
+    if not still:
+        return ""
+    items = "".join(
+        f"<li><b>{t.table.removeprefix('public.')}</b> — last write {_fmt(t.last)} CST, "
+        f"{t.events_since} orders picked up / delivered since; read by {t.read_by}</li>"
+        for t in still
+    )
+    return ("<p style='margin:12px 0 4px;font-weight:600;'>⚠ Only a partial resume — still "
+            f"stopped:</p><ul style='margin:0 0 12px;padding-left:18px;'>{items}</ul>")
+
+
+def _resumed_html(names: list[str], row: Any, stuck: int | None = None,
+                  still: list[TableLag] | None = None) -> str:
     lines = "".join(
         f"<li>{w.table.removeprefix('public.')} — last write {_fmt(row[w.last_col])} CST</li>"
         for w in WATCHED if w.name in names
     )
+    title = "Gold McLeod load partly resumed" if still else "✓ Gold McLeod load resumed"
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:640px;">
-  <h2 style="margin:0 0 8px;">✓ Gold McLeod load resumed</h2>
+  <h2 style="margin:0 0 8px;">{title}</h2>
   <ul style="margin:0 0 12px;padding-left:18px;">{lines}</ul>
+  {_still_stopped_html(still or [])}
   <p style="margin:0;color:#555;">{_stuck_line(stuck)}</p>
 </div>"""
 
@@ -275,29 +336,46 @@ async def check_v4_freshness(
     cc: Iterable[str] = CC_RECIPIENTS,
     remind_to: Iterable[str] = REMIND_TO,
     memory: AlertMemory | None = None,
+    hub_pool=None,
+    sync: HubSync | None = None,
 ) -> dict[str, Any]:
-    """Alert once per freeze of v4 / movement, remind every REMIND_HOURS while it
-    lasts, mail when it resumes. Never raises."""
+    """Alert once per freeze of a WATCHED table, remind every REMIND_HOURS while it
+    lasts, mail when it resumes. The memory is read from / written to the hub
+    (``hub_pool``) so it survives a deploy; ``memory`` is the in-process
+    fallback. Never raises."""
     if pool is None:
         logger.warning("check_v4_freshness: savings_pool is None; skipping")
         return {"checked": False, "reason": "no_pool"}
     mem = _MEMORY if memory is None else memory
+    hub = _SYNC if sync is None else sync
+    loaded = None if hub.dirty else await state.load(hub_pool)
+    if loaded is not None:
+        mem.stamps, mem.sent_at = loaded
+    before = (dict(mem.stamps), mem.sent_at)
+    result = await _check(pool, mem, tuple(to), tuple(cc), tuple(remind_to))
+    if hub_pool is not None and (hub.dirty or (mem.stamps, mem.sent_at) != before):
+        hub.dirty = not await state.save(hub_pool, mem)
+    return result
+
+
+async def _check(pool, mem: AlertMemory, to: tuple[str, ...], cc: tuple[str, ...],
+                 remind_to: tuple[str, ...]) -> dict[str, Any]:
     try:
         row = await pool.fetchrow(FRESHNESS_SQL)
     except Exception as e:
         logger.exception("check_v4_freshness: query failed")
         return {"checked": False, "reason": "query_failed", "error": str(e)}
 
-    to, cc = tuple(to), tuple(cc)
     lags = stale_tables(row)
     stale_names = {t.name for t in lags}
     stats = {"stale": sorted(stale_names), "v4_last": _fmt(row["v4_last"]),
              "movement_last": _fmt(row["movement_last"])}
     logger.info("check_v4_freshness: %s", stats)
 
-    resumed = await _maybe_resumed(pool, mem, row, stale_names, to, cc)
+    resumed = await _maybe_resumed(pool, mem, row, lags, to, cc)
+    stats = {**stats, "resumed": resumed}
     if not lags:
-        return {"checked": True, "healthy": True, "resumed": resumed, **stats}
+        return {"checked": True, "healthy": True, **stats}
 
     now = row["cst_now"]
     reminder = all(mem.stamps.get(t.name, "unset") == t.last for t in lags)
@@ -339,10 +417,12 @@ async def _send_stopped(pool, lags: list[TableLag], row: Any, to, cc,
                        _stopped_html(lags, row["live_last"], others, reminder=reminder))
 
 
-async def _maybe_resumed(pool, mem: AlertMemory, row: Any, stale_names: set[str],
+async def _maybe_resumed(pool, mem: AlertMemory, row: Any, lags: list[TableLag],
                          to, cc) -> list[str]:
     """Resumed = the table WROTE since the alert and is no longer stale — never just
-    "the live feed went quiet" while the table is still frozen."""
+    "the live feed went quiet" while the table is still frozen. Per table: the
+    ones still stale are named in the mail (a partial resume)."""
+    stale_names = {t.name for t in lags}
     last_by_name = {w.name: row[w.last_col] for w in WATCHED}
     resumed = [n for n, stamp in mem.stamps.items()
                if n not in stale_names and last_by_name.get(n) != stamp
@@ -350,11 +430,19 @@ async def _maybe_resumed(pool, mem: AlertMemory, row: Any, stale_names: set[str]
     if not resumed:
         return resumed
     stuck = await _count_stuck(pool)
-    result = await _send(to, cc, "[UNILINK Space] Gold McLeod load resumed — "
-                         f"{', '.join(resumed)} written again",
-                         _resumed_html(resumed, row, stuck))
+    partly = f" — still stopped: {', '.join(t.name for t in lags)}" if lags else ""
+    result = await _send(to, cc, f"[UNILINK Space] Gold McLeod load {'partly ' if lags else ''}"
+                         f"resumed — {', '.join(resumed)} written again{partly}",
+                         _resumed_html(resumed, row, stuck, still=lags))
     if result.get("sent"):
+        known = {t.name: t.last for t in lags if mem.stamps.get(t.name, "unset") == t.last}
         mem.stamps = {k: v for k, v in mem.stamps.items() if k not in resumed}
+        if known:
+            # The partial-resume mail named the tables still stopped: for those
+            # ALREADY alerted it is their notice — no reminder in the same run. A
+            # table stale for the FIRST time still gets its own STOPPED mail
+            # (review 11-11: it must never be announced only as "resumed").
+            mem.sent_at = row["cst_now"]
         if not mem.stamps:
             mem.sent_at = None
     else:

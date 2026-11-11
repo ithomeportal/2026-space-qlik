@@ -680,7 +680,8 @@ async def _scheduled_v4_freshness_check():
         pool = getattr(app.state, "savings_pool", None)
         from app.services.v4_freshness_monitor import check_v4_freshness
 
-        result = await check_v4_freshness(pool)
+        # hub_pool keeps the alert memory across deploys (§143 v6).
+        result = await check_v4_freshness(pool, hub_pool=getattr(app.state, "pool", None))
         logger.info(f"v4 freshness check complete: {result}")
     except Exception as e:
         logger.error(f"v4 freshness check failed: {e}")
@@ -1531,6 +1532,16 @@ async def lifespan(app: FastAPI):
                 await app.state.pool.execute(LOG_DDL)
             except Exception as e:  # noqa: BLE001
                 logger.error(f"customer_status_email_log DDL failed: {type(e).__name__}: {e}")
+
+            # Gold-freshness watchdog memory (§143 v6, 2026-11-11) — survives a
+            # deploy inside a freeze. Own try: without it the job falls back to
+            # in-process memory, it never stops alerting.
+            try:
+                from app.services.v4_freshness_state import STATE_DDL as GF_STATE_DDL
+
+                await app.state.pool.execute(GF_STATE_DDL)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"gold_freshness_alert_state DDL failed: {type(e).__name__}: {e}")
 
             # Attrition → Pipedrive (2026-10-22) — the act-once log + run log.
             # Own try: without it the job cannot claim and acts on nobody.

@@ -41,11 +41,9 @@ class Companion:
 
 # Readers verified by grep of app/ on 2026-11-11 — keep in step when a report
 # starts reading another gold table.
+# customer_windows + orders_pu_del_windows moved to the monitor's WATCHED (v6,
+# 11-11): they stayed frozen after v4 resumed, so they are alarms, not evidence.
 COMPANIONS: tuple[Companion, ...] = (
-    Companion("mcleod_gld_customer_windows", "c_customer_windows",
-              "Division Payment (delivery month), Ops portals, PCA status mails"),
-    Companion("mcleod_gld_orders_pu_del_windows", "c_orders_pu_del_windows",
-              "Ops portal Hold board"),
     Companion("mcleod_gld_customer_view", "c_customer_view",
               "XRay DFW, HD Spot, PCA status mails"),
     Companion("mcleod_gld_dispatchers", "c_dispatchers",

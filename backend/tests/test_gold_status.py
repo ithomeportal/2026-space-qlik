@@ -36,7 +36,10 @@ class _Pool:
         assert sql is f.FRESHNESS_SQL
         return {"cst_now": NOW, "v4_last": self.v4_last, "movement_last": self.v4_last,
                 "live_last": NOW, "events_since_v4": self.since,
-                "events_since_movement": self.since}
+                "events_since_movement": self.since,
+                # The windows tables (v6) frozen too: the banner must still read v4 only.
+                "customer_windows_last": self.v4_last, "events_since_customer_windows": self.since,
+                "pu_del_windows_last": self.v4_last, "events_since_pu_del_windows": self.since}
 
 
 def _status(pool, cache=None, clock=lambda: 1000.0):
