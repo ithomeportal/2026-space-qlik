@@ -667,6 +667,24 @@ async def _scheduled_mirror_status_lag_check():
         logger.error(f"Mirror status-lag check failed: {e}")
 
 
+async def _scheduled_v4_freshness_check():
+    """Background job: hourly watchdog — is the McLeod → gold load still WRITING v4? (§143)
+
+    2026-11-11: v4 stopped at 23:20 CST while the live feed kept moving, and no
+    check watched v4's freshness (the 06:25 status-lag mail reads once a day).
+    Alerts once per freeze, mails again when writes resume. SELECT-only.
+    See app/services/v4_freshness_monitor.py.
+    """
+    try:
+        pool = getattr(app.state, "savings_pool", None)
+        from app.services.v4_freshness_monitor import check_v4_freshness
+
+        result = await check_v4_freshness(pool)
+        logger.info(f"v4 freshness check complete: {result}")
+    except Exception as e:
+        logger.error(f"v4 freshness check failed: {e}")
+
+
 async def _scheduled_keepwarm_check():
     """Background job: daily watchdog for the two keep-warm pingers.
 
@@ -1998,6 +2016,21 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Scheduled mirror status-lag check daily 6:25 AM CST")
 
+    # Schedule the hourly v4 freshness watchdog — :40 of 06:00-22:00 CST. The
+    # 06:25 check reads once a day; a load that STOPS (11-11, 23:20) must surface
+    # within the hour. Alerts only when the live feed proves McLeod kept moving.
+    if settings.SAVINGS_DATABASE_URL and graph_configured():
+        scheduler.add_job(
+            _scheduled_v4_freshness_check,
+            CronTrigger(hour="6-22", minute=40, timezone="America/Chicago"),
+            id="hourly_v4_freshness_check",
+            name="Watch the McLeod → gold load (v4 + movement) is still writing",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Scheduled v4 freshness check hourly :40, 06:00-22:00 CST")
+
     # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
     # check so the two ops alerts land together. Alerts only when a pinger has
     # stalled; quiet when healthy. Needs analytics_hub (keepwarm_pings) + MS Graph.
@@ -2178,6 +2211,7 @@ async def lifespan(app: FastAPI):
         "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
         "daily_revenue_code_check": "MX revenue-code lookup freshness, 06:20 CST",
         "daily_mirror_status_lag_check": "v4 order status vs McLeod live feed, 06:25 CST",
+        "hourly_v4_freshness_check": "v4 + movement still writing (gold load), hourly :40 06-22 CST",
         "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",

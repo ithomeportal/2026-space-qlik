@@ -20,6 +20,8 @@ T0 = datetime(2026, 11, 1, 11, 13)  # noqa: DTZ001 — gold stamps are naive CST
 
 TODAY = date(2026, 11, 3)
 LAST = datetime(2026, 11, 3, 5, 10)  # noqa: DTZ001
+V4_FROZEN = datetime(2026, 11, 10, 23, 20, 31)  # noqa: DTZ001
+FROZEN_OFFSET = -424 * 60  # the 2026-11-11 06:25 mail
 
 
 def _day(day, moved, still_a, missing=0, moved_recent=0, still_a_recent=0, last_stuck=None):
@@ -39,10 +41,13 @@ DAILY = [
 class _Pool:
     """Answers each of the job's three statements; any of them can be made to fail."""
 
-    def __init__(self, ids=(), fail=False, offset_s=3600, daily=DAILY, fail_extras=False):
+    def __init__(self, ids=(), fail=False, offset_s=3600, daily=DAILY, fail_extras=False,
+                 events=245, fail_fresh=False):
         self.rows = [{"id": i, "order_status": "P", "live_updated": T0} for i in ids]
         self.fail = fail
         self.fail_extras = fail_extras
+        self.events = events
+        self.fail_fresh = fail_fresh
         self.offset_s = offset_s
         self.daily = daily
         self.sql: list[str] = []
@@ -50,9 +55,13 @@ class _Pool:
 
     async def fetchrow(self, sql, *params):
         self.sql.append(sql)
-        assert sql is m.OFFSET_SQL
         if self.fail_extras:
             raise RuntimeError("canceling statement due to statement timeout")
+        if sql is m.FRESHNESS_SQL:
+            if self.fail_fresh:
+                raise RuntimeError("canceling statement due to statement timeout")
+            return {"v4_last": V4_FROZEN, "events_since_v4": self.events}
+        assert sql is m.OFFSET_SQL
         return {"offset_s": self.offset_s}
 
     async def fetch(self, sql, *params):
@@ -201,3 +210,63 @@ def test_the_job_is_scheduled_and_on_the_roster() -> None:
     assert 'id="daily_mirror_status_lag_check"' in src
     body = src.split("async def _scheduled_mirror_status_lag_check", 1)[1].split("\nasync def ", 1)[0]
     assert "check_mirror_status_lag(pool)" in body
+
+
+# ── v3 (2026-11-11): a STOPPED load is not "still skipping" ─────────────────
+
+def test_a_stopped_load_says_stopped(sent) -> None:
+    asyncio.run(m.check_mirror_status_lag(_Pool(_ids(17), offset_s=FROZEN_OFFSET)))
+    msg = sent[0]
+    assert "STOPPED" in msg["subject"] and "7 h 4 min" in msg["subject"]
+    html = msg["html"]
+    assert "LOAD STOPPED" in html and "2026-11-10 23:20" in html and "245 pickups/deliveries" in html
+    # The skip verdict and the "freshness stays green" claim are both false now.
+    assert "STILL SKIPPING" not in html and "Freshness checks stay green" not in html
+    assert "−424 min ⚠ v4 not written for over 2 h<" in html
+
+
+def test_a_stopped_load_alerts_under_the_threshold(sent) -> None:
+    res = asyncio.run(m.check_mirror_status_lag(_Pool(_ids(1), offset_s=FROZEN_OFFSET)))
+    assert res["alerted"] is True and res["stopped"] is True
+    assert len(sent) == 1
+
+
+def test_normal_lag_is_not_stopped(sent) -> None:
+    res = asyncio.run(m.check_mirror_status_lag(_Pool(_ids(2), offset_s=-14 * 60)))
+    assert res["healthy"] is True and sent == []
+    ev = {"events_since_v4": m.MIN_EVENTS}
+    assert m.is_stopped(-14 * 60, ev) is False and m.is_stopped(None, ev) is False
+    assert m.is_stopped(-(m.STALE_MINUTES * 60 + 1), ev) is True
+    assert m.is_stopped(-(m.STALE_MINUTES * 60 + 1), None) is False
+
+
+def test_skipping_mail_keeps_its_wording(sent) -> None:
+    asyncio.run(m.check_mirror_status_lag(_Pool(_ids(9))))
+    html = sent[0]["html"]
+    assert "Freshness checks stay green" in html and "LOAD STOPPED" not in html
+    assert "STOPPED" not in sent[0]["subject"]
+
+
+def test_stopped_evidence_fails_soft(sent) -> None:
+    # Offset read fine, the live-feed evidence query fails: never "stopped" on
+    # silence alone; the ordinary count alert still goes out.
+    pool = _Pool(_ids(9), offset_s=FROZEN_OFFSET, fail_fresh=True)
+    res = asyncio.run(m.check_mirror_status_lag(pool))
+    assert res["alerted"] is True and res["stopped"] is False
+    assert "STOPPED" not in sent[0]["subject"] and "−424 min" in sent[0]["html"]
+
+
+def test_a_quiet_morning_is_not_stopped(sent) -> None:
+    # v4 is change-stamped: hours of silence with no McLeod stops is normal (review 11-11).
+    res = asyncio.run(m.check_mirror_status_lag(_Pool(_ids(2), offset_s=FROZEN_OFFSET, events=0)))
+    assert res["healthy"] is True and res["stopped"] is False and sent == []
+
+
+def test_stopped_mail_shows_the_zero_threshold(sent) -> None:
+    asyncio.run(m.check_mirror_status_lag(_Pool(_ids(1), offset_s=FROZEN_OFFSET)))
+    assert "0 (load stopped)" in sent[0]["html"]
+
+
+def test_a_stopped_load_alerts_with_nothing_stuck_yet(sent) -> None:
+    res = asyncio.run(m.check_mirror_status_lag(_Pool((), offset_s=FROZEN_OFFSET)))
+    assert res["alerted"] is True and "LOAD STOPPED" in sent[0]["html"]

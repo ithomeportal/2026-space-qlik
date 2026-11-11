@@ -32,6 +32,14 @@ v2 (2026-11-03) — the mail is escalation EVIDENCE, not just a count:
 * **Grace on real time** — v4's stamps ran +1 h, so ``updated_dt < now() - 3 h``
   really waited 4 h. The measured positive offset (clamped) is added back.
 
+v3 (2026-11-11) — a STOPPED load is not "still skipping". v4 stopped writing at
+23:20 CST; at 06:25 its offset read −424 min and the mail still said "STILL
+SKIPPING … freshness checks stay green". When v4's newest row is older than
+``STALE_MINUTES`` the mail now says LOAD STOPPED (last write, pickups/deliveries
+McLeod recorded since), drops the green-freshness claim, and alerts even under the
+threshold. The hourly ``v4_freshness_monitor`` catches a freeze within the hour;
+this daily mail just stops mislabelling one.
+
 Never raises — log-and-swallow, exactly like ``revenue_code_monitor``. The
 offset and per-day queries are optional extras: if they fail the alert still
 goes out with the count alone.
@@ -47,6 +55,12 @@ from app.clock import CST_NOW_DATE_SQL, cst_today
 from app.datalake import pad_variants, sql_str_list
 from app.services.allowed_domains import partition_recipients
 from app.services.msgraph_mailer import send_notification
+from app.services.v4_freshness_monitor import (
+    FRESHNESS_SQL,
+    MIN_EVENTS,
+    STALE_MINUTES,
+    age_text,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -174,6 +188,37 @@ DAILY_SQL = f"""
 """
 
 
+def is_stale_offset(offset_s: int | None) -> bool:
+    return offset_s is not None and -offset_s > STALE_MINUTES * 60
+
+
+def is_stopped(offset_s: int | None, fresh: dict[str, Any] | None) -> bool:
+    """v4 silent past STALE_MINUTES AND McLeod recorded stops since — the load stopped.
+
+    v4 is CHANGE-stamped: silence alone is normal on a quiet morning, so the same
+    evidence gate as the hourly ``v4_freshness_monitor`` (review 11-11). Unknown
+    offset or unreadable live feed ⇒ never "stopped".
+    """
+    if offset_s is None or -offset_s <= STALE_MINUTES * 60 or not fresh:
+        return False
+    return int(fresh.get("events_since_v4") or 0) >= MIN_EVENTS
+
+
+def stopped_verdict(offset_s: int, fresh: dict[str, Any] | None) -> str:
+    """The verdict line when v4 stopped writing — replaces the skip verdict."""
+    last = ""
+    if fresh and fresh.get("v4_last") is not None:
+        last = f" (last write {fresh['v4_last']:%Y-%m-%d %H:%M} CST"
+        if fresh.get("events_since_v4") is not None:
+            last += f"; McLeod recorded {fresh['events_since_v4']} pickups/deliveries since"
+        last += ")"
+    return (
+        f"LOAD STOPPED: v4 has not been written for {age_text(-offset_s)}{last}. Every McLeod "
+        f"change after that is missing from v4 — the counts below include them, so skipped vs "
+        f"behind cannot be told apart until the load runs again."
+    )
+
+
 def clamp_offset(offset_s: int | None) -> int:
     """The positive part of v4's clock offset, capped — added back to the grace."""
     if offset_s is None or offset_s <= 0:
@@ -222,7 +267,11 @@ def _offset_line(offset_s: int | None) -> str:
         return "unavailable"
     sign = "+" if offset_s >= 0 else "−"
     mins = abs(offset_s) // 60
-    note = " ⚠ v4 stamps are in the FUTURE — clock / DST bug" if offset_s > OFFSET_ALERT_SECONDS else ""
+    note = (
+        " ⚠ v4 stamps are in the FUTURE — clock / DST bug" if offset_s > OFFSET_ALERT_SECONDS
+        else f" ⚠ v4 not written for over {age_text(STALE_MINUTES * 60)}" if -offset_s > STALE_MINUTES * 60
+        else ""
+    )
     return f"{sign}{mins} min{note}"
 
 
@@ -249,7 +298,16 @@ def _daily_table(daily: list[dict[str, Any]] | None) -> str:
     )
 
 
+_GREEN_FRESHNESS = (
+    "Freshness checks stay green: the tables keep updating, individual changes are skipped."
+)
+_STOPPED_FRESHNESS = (
+    "The load is not running: nothing new reaches v4 until Data / BI restarts it."
+)
+
+
 def _render_html(problems: list[str], stats: dict[str, Any], daily, verdict_text) -> str:
+    freshness = _STOPPED_FRESHNESS if stats.get("stopped") else _GREEN_FRESHNESS
     items = "".join(f"<li style='margin:0 0 6px;'>{p}</li>" for p in problems)
     verdict_html = (
         f"<p style='margin:0 0 12px;font-weight:600;'>{verdict_text}</p>" if verdict_text else ""
@@ -262,10 +320,10 @@ def _render_html(problems: list[str], stats: dict[str, Any], daily, verdict_text
   <p style="margin:0 0 16px;color:#555;">The Ops Portal Cover boards already hide these loads
     (live feed guard). Production, Hold, Division Payment and the PCA status mails still read
     v4, so picked-up loads are missing there until Data / BI re-syncs the McLeod → gold load.
-    Freshness checks stay green: the tables keep updating, individual changes are skipped.</p>
+    {freshness}</p>
   <table style="border-collapse:collapse;font-family:{MONO_STACK};font-size:13px;">
     <tr><td style="padding:4px 16px 4px 0;color:#555;">stuck orders</td><td style="padding:4px 0;font-weight:600;">{stats.get('stuck')}</td></tr>
-    <tr><td style="padding:4px 16px 4px 0;color:#555;">threshold</td><td style="padding:4px 0;">{THRESHOLD}</td></tr>
+    <tr><td style="padding:4px 16px 4px 0;color:#555;">threshold</td><td style="padding:4px 0;">{'0 (load stopped)' if stats.get('stopped') else THRESHOLD}</td></tr>
     <tr><td style="padding:4px 16px 4px 0;color:#555;">v4 clock offset</td><td style="padding:4px 0;">{_offset_line(stats.get('v4_offset_s'))}</td></tr>
   </table>
   {_daily_table(daily)}
@@ -295,6 +353,15 @@ async def _fetch_daily(pool, offset_s: int | None) -> list[dict[str, Any]] | Non
     return [{k: r[k] for k in keys} for r in rows]
 
 
+async def _fetch_fresh(pool) -> dict[str, Any] | None:
+    try:
+        row = await pool.fetchrow(FRESHNESS_SQL)
+    except Exception:
+        logger.exception("check_mirror_status_lag: freshness query failed (stopped line shortened)")
+        return None
+    return None if row is None else {"v4_last": row["v4_last"], "events_since_v4": row["events_since_v4"]}
+
+
 async def check_mirror_status_lag(
     pool,
     *,
@@ -313,15 +380,33 @@ async def check_mirror_status_lag(
         return {"checked": False, "reason": "query_failed", "error": str(e)}
 
     stuck = [{"id": r["id"], "live_updated": r["live_updated"]} for r in rows]
-    stats = {"stuck": len(stuck), "v4_offset_s": offset_s}
-    problems = assess(stuck)
+    # The live-feed evidence is read only when v4 is old enough to matter.
+    fresh = await _fetch_fresh(pool) if is_stale_offset(offset_s) else None
+    stopped = is_stopped(offset_s, fresh)
+    stats = {"stuck": len(stuck), "v4_offset_s": offset_s, "stopped": stopped}
+    # A stopped load alerts even under the threshold: a freeze shortly before
+    # 06:25 strands only a few orders past the grace yet.
+    problems = assess(stuck, threshold=0 if stopped else THRESHOLD)
+    if stopped and not problems:
+        problems = [f"No order is past the {GRACE_HOURS} h grace yet — the stop is too recent."]
     logger.info("check_mirror_status_lag: %s problems=%d", stats, len(problems))
     if not problems:
         return {"checked": True, "healthy": True, **stats}
     daily = await _fetch_daily(pool, offset_s)
-    verdict_text = verdict(daily)
+    verdict_text = (
+        stopped_verdict(offset_s, fresh) if stopped else verdict(daily)
+    )
     html = _render_html(problems, stats, daily, verdict_text)
     return await _alert(tuple(to), tuple(cc), problems, stats, html, verdict_text)
+
+
+def _subject(stats: dict[str, Any]) -> str:
+    if stats.get("stopped"):
+        return (
+            f"[UNILINK Space] Gold McLeod load STOPPED — v4 not written for "
+            f"{age_text(-stats['v4_offset_s'])}, {stats['stuck']} orders still 'A'"
+        )
+    return f"[UNILINK Space] Gold McLeod mirror behind — {stats['stuck']} orders still 'A'"
 
 
 async def _alert(
@@ -348,7 +433,7 @@ async def _alert(
     result = await send_notification(
         to=to_list,
         cc=cc_list or None,
-        subject=f"[UNILINK Space] Gold McLeod mirror behind — {stats['stuck']} orders still 'A'",
+        subject=_subject(stats),
         html_body=html,
     )
     if not result.get("sent"):
