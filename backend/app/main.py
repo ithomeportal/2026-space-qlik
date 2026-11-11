@@ -18,6 +18,7 @@ from app.config import settings
 from app.services.keepwarm_monitor import classify_keepwarm_source
 from app.services.msgraph_mailer import graph_configured
 from app.routers import (
+    gold_status,
     public_display,
     read_only_guard,
     admin,
@@ -2022,14 +2023,15 @@ async def lifespan(app: FastAPI):
     if settings.SAVINGS_DATABASE_URL and graph_configured():
         scheduler.add_job(
             _scheduled_v4_freshness_check,
-            CronTrigger(hour="6-22", minute=40, timezone="America/Chicago"),
+            # 02:40 too: a stop after 22:40 (11-10 23:20) surfaces before morning.
+            CronTrigger(hour="2,6-22", minute=40, timezone="America/Chicago"),
             id="hourly_v4_freshness_check",
             name="Watch the McLeod → gold load (v4 + movement) is still writing",
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        logger.info("Scheduled v4 freshness check hourly :40, 06:00-22:00 CST")
+        logger.info("Scheduled v4 freshness check :40 at 02:00 and 06:00-22:00 CST")
 
     # Schedule daily keep-warm watchdog — 6:10 AM CST, just before the scorecard
     # check so the two ops alerts land together. Alerts only when a pinger has
@@ -2211,7 +2213,7 @@ async def lifespan(app: FastAPI):
         "daily_scorecard_mirror_check": "n8n scorecard mirror freshness, 06:15 CST",
         "daily_revenue_code_check": "MX revenue-code lookup freshness, 06:20 CST",
         "daily_mirror_status_lag_check": "v4 order status vs McLeod live feed, 06:25 CST",
-        "hourly_v4_freshness_check": "v4 + movement still writing (gold load), hourly :40 06-22 CST",
+        "hourly_v4_freshness_check": "v4 + movement still writing (gold load), :40 at 02 + 06-22 CST; 6 h reminders",
         "daily_keepwarm_check": "Keep-warm heartbeat check, 06:10 CST",
         "daily_rfp_digest": "RFP digest, 17:30 CST Mon-Fri",
         "ops_team_digest": "Ops Portal Team digest, 06:00 & 18:00 CST",
@@ -2310,6 +2312,7 @@ app.include_router(search.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(reports_index.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
+app.include_router(gold_status.router, prefix="/api")  # report banner §143
 app.include_router(admin.router, prefix="/api/admin")
 app.include_router(carriers_savings.router, prefix="/api")
 app.include_router(budget_followup.router, prefix="/api")

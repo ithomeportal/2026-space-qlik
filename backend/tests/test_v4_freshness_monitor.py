@@ -102,7 +102,7 @@ def test_alerts_once_per_freeze(sent) -> None:
     msg = sent[0]
     assert "STOPPED" in msg["subject"] and "v4 not written for 8 h 17 min" in msg["subject"]
     assert msg["to"] == ["dfrodriguez@unilinktransportation.com"]
-    assert msg["cc"] == ["oorozco@unilinktransportation.com"]
+    assert msg["cc"] == ["oorozco@unilinktransportation.com", "dcastrog@unilinktransportation.com"]
     html = msg["html"]
     assert "mcleod_gld_budget_report_v4" in html and "mcleod_gld_movement" in html
     assert "2026-11-10 23:20" in html and ">245<" in html
@@ -202,6 +202,6 @@ def test_the_job_is_scheduled_and_on_the_roster() -> None:
     roster = src.split("EXPECTED_JOBS = {", 1)[1].split("}", 1)[0]
     assert '"hourly_v4_freshness_check":' in roster
     assert 'id="hourly_v4_freshness_check"' in src
-    assert 'hour="6-22", minute=40' in src
+    assert 'hour="2,6-22", minute=40' in src
     body = src.split("async def _scheduled_v4_freshness_check", 1)[1].split("\nasync def ", 1)[0]
     assert "check_v4_freshness(pool)" in body

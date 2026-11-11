@@ -57,8 +57,17 @@ LIVE_TABLE = "public.app_augment_n8n_data_ra_rt"
 _TMS = sql_str_list(pad_variants(("TMS",), width=4))
 
 TO_RECIPIENTS: tuple[str, ...] = ("dfrodriguez@unilinktransportation.com",)
-# Owner of the McLeod → gold load (Data / BI) — Omar Orozco, as in §143.
-CC_RECIPIENTS: tuple[str, ...] = ("oorozco@unilinktransportation.com",)
+# Owner of the McLeod → gold load (Data / BI) — Omar Orozco, as in §143 — and
+# Daniela Castro (owner request 11-11). Both verified in Entra 2026-11-11.
+CC_RECIPIENTS: tuple[str, ...] = (
+    "oorozco@unilinktransportation.com",
+    "dcastrog@unilinktransportation.com",
+)
+# While a freeze lasts, Data / BI is re-notified every REMIND_HOURS (owner 11-11).
+REMIND_TO: tuple[str, ...] = ("oorozco@unilinktransportation.com",)
+REMIND_HOURS = 6
+
+STUCK_TIMEOUT_S = 30.0
 
 MONO_STACK = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace"
 
@@ -122,9 +131,11 @@ class TableLag:
 
 @dataclass
 class AlertMemory:
-    """Last stamp already alerted, per table — replaced, never mutated in place."""
+    """Last stamp already alerted, per table, and when the last STOPPED/reminder
+    mail went out (CST) — fields replaced, never mutated in place."""
 
     stamps: dict[str, datetime | None] = field(default_factory=dict)
+    sent_at: datetime | None = None
 
 
 _MEMORY = AlertMemory()
@@ -186,11 +197,15 @@ def _table_html(lags: list[TableLag], live_last: datetime | None) -> str:
 
 
 def _stopped_html(lags: list[TableLag], live_last: datetime | None,
-                  others: companions.Sweep | None = None) -> str:
+                  others: companions.Sweep | None = None, reminder: bool = False) -> str:
     extra = "" if others is None else companions.section_html(others, _fmt, age_text)
+    title = "⚠ Gold McLeod load STILL STOPPED" if reminder else "⚠ Gold McLeod load STOPPED"
+    note = (f"<p style='margin:0 0 12px;font-weight:600;'>Reminder — sent every {REMIND_HOURS} h "
+            "while the load stays stopped.</p>") if reminder else ""
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:640px;">
-  <h2 style="margin:0 0 8px;">⚠ Gold McLeod load STOPPED</h2>
+  <h2 style="margin:0 0 8px;">{title}</h2>
+  {note}
   <p style="margin:0 0 12px;">The McLeod → gold load has not written these tables for over
     {age_text(STALE_MINUTES * 60)}, while McLeod recorded pickups and deliveries after their last
     write (live n8n feed) — so this is the load, not a quiet hour. Every McLeod change since the
@@ -206,7 +221,28 @@ def _stopped_html(lags: list[TableLag], live_last: datetime | None,
 </div>"""
 
 
-def _resumed_html(names: list[str], row: Any) -> str:
+def _stuck_line(stuck: int | None) -> str:
+    if stuck is None:
+        return ("Orders v4 still shows as A after McLeod moved them could not be counted "
+                "just now — the 06:25 status check lists them.")
+    if stuck == 0:
+        return "No order is stuck at A past the 3 h grace — nothing was left behind."
+    return (f"<b>{stuck} orders</b> are still A in v4 although McLeod already moved them "
+            "(past the 3 h grace) — the 06:25 status check lists them if they stay.")
+
+
+async def _count_stuck(pool) -> int | None:
+    """Orders v4 still calls A that McLeod moved — the 06:25 check's own SQL, once."""
+    from app.services.mirror_status_lag_monitor import LAG_SQL  # imports this module
+
+    try:
+        return len(await pool.fetch(LAG_SQL, 0, timeout=STUCK_TIMEOUT_S))
+    except Exception:
+        logger.exception("check_v4_freshness: stuck-order count failed")
+        return None
+
+
+def _resumed_html(names: list[str], row: Any, stuck: int | None = None) -> str:
     lines = "".join(
         f"<li>{w.table.removeprefix('public.')} — last write {_fmt(row[w.last_col])} CST</li>"
         for w in WATCHED if w.name in names
@@ -215,8 +251,7 @@ def _resumed_html(names: list[str], row: Any) -> str:
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:640px;">
   <h2 style="margin:0 0 8px;">✓ Gold McLeod load resumed</h2>
   <ul style="margin:0 0 12px;padding-left:18px;">{lines}</ul>
-  <p style="margin:0;color:#555;">Changes made while it was stopped may still be missing —
-    the 06:25 status check lists any order v4 still shows as A after McLeod moved it.</p>
+  <p style="margin:0;color:#555;">{_stuck_line(stuck)}</p>
 </div>"""
 
 
@@ -238,9 +273,11 @@ async def check_v4_freshness(
     *,
     to: Iterable[str] = TO_RECIPIENTS,
     cc: Iterable[str] = CC_RECIPIENTS,
+    remind_to: Iterable[str] = REMIND_TO,
     memory: AlertMemory | None = None,
 ) -> dict[str, Any]:
-    """Alert once per freeze of v4 / movement; mail when it resumes. Never raises."""
+    """Alert once per freeze of v4 / movement, remind every REMIND_HOURS while it
+    lasts, mail when it resumes. Never raises."""
     if pool is None:
         logger.warning("check_v4_freshness: savings_pool is None; skipping")
         return {"checked": False, "reason": "no_pool"}
@@ -258,38 +295,68 @@ async def check_v4_freshness(
              "movement_last": _fmt(row["movement_last"])}
     logger.info("check_v4_freshness: %s", stats)
 
-    # Resumed = the table WROTE since the alert and is no longer stale — never just
-    # "the live feed went quiet" while the table is still frozen.
-    last_by_name = {w.name: row[w.last_col] for w in WATCHED}
-    resumed = [n for n, stamp in mem.stamps.items()
-               if n not in stale_names and last_by_name.get(n) != stamp
-               and _is_fresh(last_by_name.get(n), row["cst_now"])]
-    if resumed:
-        result = await _send(to, cc, "[UNILINK Space] Gold McLeod load resumed — "
-                             f"{', '.join(resumed)} written again", _resumed_html(resumed, row))
-        if result.get("sent"):
-            mem.stamps = {k: v for k, v in mem.stamps.items() if k not in resumed}
-        else:
-            logger.error("check_v4_freshness: resumed mail NOT sent (%s)", result.get("reason"))
+    resumed = await _maybe_resumed(pool, mem, row, stale_names, to, cc)
     if not lags:
         return {"checked": True, "healthy": True, "resumed": resumed, **stats}
 
-    if all(mem.stamps.get(t.name, "unset") == t.last for t in lags):
+    now = row["cst_now"]
+    reminder = all(mem.stamps.get(t.name, "unset") == t.last for t in lags)
+    if reminder and not _reminder_due(mem.sent_at, now):
         return {"checked": True, "healthy": False, "alerted": False,
                 "reason": "already_alerted", **stats}
-    worst = next((t for t in lags if t.name == "v4"), lags[0])
-    silent = "never written" if worst.age_s is None else f"not written for {age_text(worst.age_s)}"
-    # Evidence for the reader only, read once per freeze (≈1 GB unindexed) — never the trigger.
-    anchor = max((t.last for t in lags if t.last is not None), default=None)
-    others = await companions.sweep(pool, anchor=anchor, now=row["cst_now"],
-                                    fresh_s=STALE_MINUTES * 60)
-    subject = (f"[UNILINK Space] Gold McLeod load STOPPED — {worst.name} {silent}"
-               f"{companions.subject_suffix(others)}")
-    result = await _send(to, cc, subject, _stopped_html(lags, row["live_last"], others))
+    if reminder:
+        # Owner request 11-11: Data / BI is the addressee of a reminder.
+        to, cc = tuple(remind_to), tuple(dict.fromkeys((*to, *cc)))
+    result = await _send_stopped(pool, lags, row, to, cc, reminder)
     if not result.get("sent"):
         logger.error("check_v4_freshness: alert NOT sent (%s)", result.get("reason"))
         return {"checked": True, "healthy": False, "alerted": False,
                 "reason": result.get("reason"), **stats}
     mem.stamps = {**mem.stamps, **{t.name: t.last for t in lags}}
-    logger.info("check_v4_freshness: alert sent (%s)", ", ".join(sorted(stale_names)))
-    return {"checked": True, "healthy": False, "alerted": True, **stats}
+    mem.sent_at = now
+    logger.info("check_v4_freshness: %s sent (%s)", "reminder" if reminder else "alert",
+                ", ".join(sorted(stale_names)))
+    return {"checked": True, "healthy": False, "alerted": True, "reminder": reminder, **stats}
+
+
+def _reminder_due(sent_at: datetime | None, now: datetime) -> bool:
+    # sent_at None = remembered without a send time (restart semantics) → remind now.
+    return sent_at is None or (now - sent_at).total_seconds() >= REMIND_HOURS * 3600
+
+
+async def _send_stopped(pool, lags: list[TableLag], row: Any, to, cc,
+                        reminder: bool) -> dict[str, Any]:
+    worst = next((t for t in lags if t.name == "v4"), lags[0])
+    silent = "never written" if worst.age_s is None else f"not written for {age_text(worst.age_s)}"
+    # Evidence for the reader only, read once per mail (≈1 GB unindexed) — never the trigger.
+    anchor = max((t.last for t in lags if t.last is not None), default=None)
+    others = await companions.sweep(pool, anchor=anchor, now=row["cst_now"],
+                                    fresh_s=STALE_MINUTES * 60)
+    state = "STILL STOPPED" if reminder else "STOPPED"
+    subject = (f"[UNILINK Space] Gold McLeod load {state} — {worst.name} {silent}"
+               f"{companions.subject_suffix(others)}")
+    return await _send(to, cc, subject,
+                       _stopped_html(lags, row["live_last"], others, reminder=reminder))
+
+
+async def _maybe_resumed(pool, mem: AlertMemory, row: Any, stale_names: set[str],
+                         to, cc) -> list[str]:
+    """Resumed = the table WROTE since the alert and is no longer stale — never just
+    "the live feed went quiet" while the table is still frozen."""
+    last_by_name = {w.name: row[w.last_col] for w in WATCHED}
+    resumed = [n for n, stamp in mem.stamps.items()
+               if n not in stale_names and last_by_name.get(n) != stamp
+               and _is_fresh(last_by_name.get(n), row["cst_now"])]
+    if not resumed:
+        return resumed
+    stuck = await _count_stuck(pool)
+    result = await _send(to, cc, "[UNILINK Space] Gold McLeod load resumed — "
+                         f"{', '.join(resumed)} written again",
+                         _resumed_html(resumed, row, stuck))
+    if result.get("sent"):
+        mem.stamps = {k: v for k, v in mem.stamps.items() if k not in resumed}
+        if not mem.stamps:
+            mem.sent_at = None
+    else:
+        logger.error("check_v4_freshness: resumed mail NOT sent (%s)", result.get("reason"))
+    return resumed

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { FavoritesSidebar } from "@/components/FavoritesSidebar"
+import { GoldStaleBanner } from "@/components/GoldStaleBanner"
 
 /**
  * Shared chrome for every report route: the Favorites rail, plus a continuous
@@ -44,7 +45,11 @@ export default function ReportsLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-[calc(100vh-64px)] bg-[#F9FAFB]">
       <FavoritesSidebar />
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="min-w-0 flex-1">
+        {/* Renders nothing unless the McLeod → gold load is STOPPED (§143). */}
+        <GoldStaleBanner />
+        {children}
+      </div>
     </div>
   )
 }
