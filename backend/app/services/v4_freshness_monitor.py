@@ -39,6 +39,7 @@ from datetime import datetime
 from typing import Any
 
 from app.datalake import pad_variants, sql_str_list
+from app.services import v4_freshness_companions as companions
 from app.services.allowed_domains import partition_recipients
 from app.services.msgraph_mailer import send_notification
 
@@ -184,7 +185,9 @@ def _table_html(lags: list[TableLag], live_last: datetime | None) -> str:
     )
 
 
-def _stopped_html(lags: list[TableLag], live_last: datetime | None) -> str:
+def _stopped_html(lags: list[TableLag], live_last: datetime | None,
+                  others: companions.Sweep | None = None) -> str:
+    extra = "" if others is None else companions.section_html(others, _fmt, age_text)
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:640px;">
   <h2 style="margin:0 0 8px;">⚠ Gold McLeod load STOPPED</h2>
@@ -193,6 +196,7 @@ def _stopped_html(lags: list[TableLag], live_last: datetime | None) -> str:
     write (live n8n feed) — so this is the load, not a quiet hour. Every McLeod change since the
     last write is missing from them.</p>
   {_table_html(lags, live_last)}
+  {extra}
   <p style="margin:16px 0 0;color:#555;">Reports over these tables (Production, Hold,
     Division Payment, XRay, Podium, the Ops portals and the PCA status mails) show the last
     loaded state until Data / BI restarts the load; the Cover boards fall back to the live feed.</p>
@@ -275,8 +279,13 @@ async def check_v4_freshness(
                 "reason": "already_alerted", **stats}
     worst = next((t for t in lags if t.name == "v4"), lags[0])
     silent = "never written" if worst.age_s is None else f"not written for {age_text(worst.age_s)}"
-    subject = f"[UNILINK Space] Gold McLeod load STOPPED — {worst.name} {silent}"
-    result = await _send(to, cc, subject, _stopped_html(lags, row["live_last"]))
+    # Evidence for the reader only, read once per freeze (≈1 GB unindexed) — never the trigger.
+    anchor = max((t.last for t in lags if t.last is not None), default=None)
+    others = await companions.sweep(pool, anchor=anchor, now=row["cst_now"],
+                                    fresh_s=STALE_MINUTES * 60)
+    subject = (f"[UNILINK Space] Gold McLeod load STOPPED — {worst.name} {silent}"
+               f"{companions.subject_suffix(others)}")
+    result = await _send(to, cc, subject, _stopped_html(lags, row["live_last"], others))
     if not result.get("sent"):
         logger.error("check_v4_freshness: alert NOT sent (%s)", result.get("reason"))
         return {"checked": True, "healthy": False, "alerted": False,

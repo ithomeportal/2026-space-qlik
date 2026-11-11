@@ -38,9 +38,10 @@ class _Pool:
         self.fail = fail
         self.sql: list[str] = []
 
-    async def fetchrow(self, sql, *params):
+    async def fetchrow(self, sql, *params, **kw):
         self.sql.append(sql)
-        assert sql is f.FRESHNESS_SQL
+        if sql is not f.FRESHNESS_SQL:
+            return None  # the companion sweep — covered in test_v4_freshness_companions
         if self.fail:
             raise RuntimeError("canceling statement due to statement timeout")
         return self.row
