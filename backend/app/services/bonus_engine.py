@@ -18,8 +18,8 @@ Rules (do NOT simplify without HR sign-off — see docs/SPEC-BONUS-CALCULATOR.md
   weeks-union period average, which could clear 95% while the displayed monthly
   SERVICE was below it — Team 1 May: 94.67% shown yet "Eligible".) R21 (HR
   2026-11-09): the $100k profit gate reads the CALENDAR-MONTH profit on CORP
-  (header PROFIT KPI); DFW keeps the weekly-bucket sum
-  (`BonusConfig.wildcard_gate_on_monthly_profit`).
+  (header PROFIT KPI). R22 (HR 2026-11-11): DFW too — both calculators gate on
+  the month now (`BonusConfig.wildcard_gate_on_monthly_profit`, kept explicit).
 - Profit add-ons (per employee): >$130k +$500, >$150k +$500, >=$170k +$500
   (ladder == Bruno's $500/$1,000/$1,500). R9 (2026-06-08): keyed off the
   CALENDAR-MONTH profit (header PROFIT KPI / team["monthlyProfit"]), NOT the
@@ -154,9 +154,11 @@ DFW_BONUS = BonusConfig(
     service_brackets=SERVICE_BRACKETS,
     pay_per_load=PAY_PER_LOAD,
     monthly_profit_brackets=MONTHLY_PROFIT_BRACKETS,
-    # R21: CIO 2026-11-09 — CORP only. DFW keeps the weekly-bucket sum (DFW TM1
-    # Oct 2026 would flip: month $103,468 vs buckets $97,871). Not asked for.
-    wildcard_gate_on_monthly_profit=False,
+    # R21 (CIO 2026-11-09) kept DFW on the weekly-bucket sum. R22 (HR 2026-11-11,
+    # "space --Bonus HR.pdf"): DFW TM1 Oct 2026 header $103,468 / 97.39% service,
+    # buckets (Oct 5 → Nov 1) $97,871 ⇒ wildcard $0. Owner flipped DFW too:
+    # TM1 $0 → $3,402, afterhours +$1,296. Live replay Jan→Nov: only Oct moved.
+    wildcard_gate_on_monthly_profit=True,
 )
 
 BONUS_CONFIGS: Dict[str, BonusConfig] = {c.key: c for c in (CORP_BONUS, DFW_BONUS)}
@@ -423,8 +425,8 @@ def calculate_team_bonus(team: Dict[str, Any], cfg: BonusConfig = CORP_BONUS) ->
     profit_brackets = calculate_profit_bracket_bonuses(bracket_profit_basis)
     # R21 (HR, Daniela Nava 2026-11-09): on CORP the wildcard $100k gate and the
     # Team-1 KAM $150k gate read the same calendar-month profit as the header and
-    # the add-ons (closes the R9 PENDING question for CORP). DFW keeps the
-    # weekly-bucket sum (cfg flag, CIO decision).
+    # the add-ons (closes the R9 PENDING question). R22 (2026-11-11): DFW too —
+    # the cfg flag stays so each calculator states its basis explicitly.
     gate_profit = bracket_profit_basis if cfg.wildcard_gate_on_monthly_profit else total_profit
     wildcard_index = get_wildcard_bracket_index(normalized_service, cfg)
     wildcard_eligible = gate_profit > 100000 and wildcard_index >= 0

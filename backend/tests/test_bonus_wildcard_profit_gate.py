@@ -8,8 +8,11 @@ Monica Perez (KAM) $250/week, Paula Gonzalez (Freight Match) $200/week.
 
 R9 had already moved the 130/150/170 add-ons to the monthly figure; the wildcard
 and the Team-1 KAM $150k gate were left on the bucket sum pending Bruno (never
-answered). CIO decision 2026-11-09: CORP only — DFW keeps the bucket-sum gate
-(DFW TM1 October would otherwise flip too; not asked for).
+answered). CIO decision 2026-11-09: CORP only — DFW kept the bucket-sum gate.
+
+R22 (HR, 2026-11-11, "space --Bonus HR.pdf"): DFW TM1 October showed PROFIT
+$103,468 and SERVICE 97.39% yet no wildcard — the same gap (buckets Oct 5 → Nov 1
+= $97,871). The owner chose to flip DFW too: both calculators gate on the month.
 """
 
 from __future__ import annotations
@@ -102,16 +105,73 @@ def test_a_team_without_a_monthly_figure_falls_back_to_the_buckets() -> None:
     assert out["wildcardEligible"] is False  # bucket $94,951
 
 
-def test_dfw_keeps_the_bucket_sum_gate() -> None:
-    """CIO 2026-11-09: CORP only. DFW TM1 Oct (month $103,468, buckets $97,871) stays ineligible."""
-    out = be.calculate_team_bonus(_team(team_id="dfw-tm-1"), be.DFW_BONUS)
+# The live DFW TM1 October 2026 shape (stored approved report, 2026-11-10).
+DFW_TM1_OCT_WEEKS = [
+    # (loads, revenue, gross profit) — the bucket profits sum to $97,871 < $100k
+    (92, 262_819.0, 28_886.0),
+    (75, 222_666.0, 23_482.0),
+    (89, 228_364.0, 26_102.0),
+    (77, 175_366.0, 19_401.0),
+]
+
+
+def _dfw_tm1_october() -> dict:
+    team = _team(
+        team_id="dfw-tm-1",
+        monthly_profit=103_468.0,
+        weeks=DFW_TM1_OCT_WEEKS,
+        service=97.3901098901099,
+    )
+    team["name"] = "TM 1"
+    team["employees"] = [
+        {"name": "ARMANDO CALVILLO", "role": "kam", "salaryMxn": 0},
+        {"name": "ANTHARES MONTOYA", "role": "freight_match", "salaryMxn": 0},
+        {"name": "EUGENIO MIRANDA", "role": "freight_match", "salaryMxn": 0},
+        {"name": "EDUARDO AVILA", "role": "tracking_tracing", "salaryMxn": 0},
+        {"name": "ANGELINA ELORZA", "role": "tracking_tracing", "salaryMxn": 0},
+    ]
+    return team
+
+
+def test_dfw_tm1_fixture_reproduces_the_reported_gap() -> None:
+    bucket = sum(gp for _, _, gp in DFW_TM1_OCT_WEEKS)
+    month = _dfw_tm1_october()["monthlyProfit"]
+    assert bucket == pytest.approx(97_871.0)
+    assert bucket < 100_000 < month
+
+
+def test_dfw_tm1_october_pays_the_wildcard() -> None:
+    """R22: DFW gates on the month like CORP — TM1 Oct pays $3,402 (was $0)."""
+    out = be.calculate_team_bonus(_dfw_tm1_october(), be.DFW_BONUS)
+    assert out["wildcardEligible"] is True
+    emp = _by_name(out)
+    assert emp["ARMANDO CALVILLO"]["weeklyUsd"] == [202.5] * 4
+    for name in ("ANTHARES MONTOYA", "EUGENIO MIRANDA", "EDUARDO AVILA", "ANGELINA ELORZA"):
+        assert emp[name]["weeklyUsd"] == [162.0] * 4
+    assert out["teamBonusUsd"] == pytest.approx(3_402.0)
+
+
+def test_dfw_gate_reads_the_month_in_reverse_too() -> None:
+    weeks = [(31, 150_000.0, 30_000.0)] * 4  # bucket $120k
+    out = be.calculate_team_bonus(
+        _team(team_id="dfw-tm-1", weeks=weeks, monthly_profit=99_000.0), be.DFW_BONUS
+    )
     assert out["wildcardEligible"] is False
-    assert out["teamBonusUsd"] == 0.0
+
+
+def test_dfw_tm1_wildcard_lifts_the_afterhours_average() -> None:
+    """Every T&T wildcard change moves the afterhours pay (4-team T&T average)."""
+    report = be.build_bonus_report(
+        "October 2026", "test", "mcleod_tms", [_dfw_tm1_october()],
+        [{"name": "NIGHT ONE", "group": "Night Shift", "salaryMxn": 0, "receivesBonus": True}],
+        cfg=be.DFW_BONUS,
+    )
+    assert report["nightShift"]["trackingTracingAverageBonusUsd"] == pytest.approx(648.0)
 
 
 def test_each_config_declares_its_gate_basis_explicitly() -> None:
     assert be.CORP_BONUS.wildcard_gate_on_monthly_profit is True
-    assert be.DFW_BONUS.wildcard_gate_on_monthly_profit is False
+    assert be.DFW_BONUS.wildcard_gate_on_monthly_profit is True
 
 
 def test_team1_kam_150k_gate_reads_the_month_on_corp() -> None:
