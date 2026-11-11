@@ -50,7 +50,7 @@ function DeliveredTable({
           <tr className="border-b border-[#E5E7EB]">
             <SortableTh label="Order" col="id_asc" colDesc="id_desc" current={sort} onChange={onSort} />
             <SortableTh label="Customer" col="customer_asc" colDesc="customer_desc" current={sort} onChange={onSort} />
-            <SortableTh label="Orig Sched Early" col="ship_asc" colDesc="ship_desc" current={sort} onChange={onSort} />
+            <SortableTh label="Carrier Name" col="carrier_asc" colDesc="carrier_desc" current={sort} onChange={onSort} />
             <SortableTh label="Ship Date" col="ship_asc" colDesc="ship_desc" current={sort} onChange={onSort} />
             <SortableTh label="Delivered" col="delivered_asc" colDesc="delivered_desc" current={sort} onChange={onSort} />
             <SortableTh label="Days" col="days_asc" colDesc="days_desc" current={sort} onChange={onSort} align="right" />
@@ -84,7 +84,9 @@ function DeliveredTable({
                     className="block max-w-full truncate"
                   />
                 </td>
-                <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
+                <td className="max-w-[200px] truncate px-2 py-1.5" title={r.carrier_name ?? undefined}>
+                  {r.carrier_name ?? <span className="text-[#9CA3AF]">—</span>}
+                </td>
                 <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
                 <td className="px-2 py-1.5">{fmtDate(r.dest_actual_arrival)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">

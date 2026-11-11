@@ -206,10 +206,11 @@ export interface AdminCashflowTimingMonthly {
 
 export interface DeliveredNotBilledRow {
   id: string | null
-  orig_sched_early: string | null
   ship_date: string | null
   dest_actual_arrival: string | null
   customer_name: string
+  // Aging Updates 2026-11-11: first movement payee; null = no carrier on the load
+  carrier_name: string | null
   team_id: string
   company_id: string
   total_charge: number
@@ -218,11 +219,11 @@ export interface DeliveredNotBilledRow {
 
 export interface ReadyNotBilledRow {
   id: string | null
-  orig_sched_early: string | null
   ship_date: string | null
   bol_recv_date: string | null
-  status: string
+  status: string // on the wire only — the column left the table 2026-11-11
   customer_name: string
+  carrier_name: string | null
   team_id: string
   company_id: string
   total_charge: number

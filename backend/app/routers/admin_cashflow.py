@@ -17,8 +17,9 @@ Bug fixes vs Bruno's PDF (confirmed with the user 2026-04-30):
   (delivered loads), not the typo ``< '2000'`` in the PDF.
 * "CarrInvoice vs Bill Date" uses ``invoice_recv_date - bill_date`` (matches
   the "C-B" card title and the PDF's page-6 detail-table direction).
-* "Orig Sched Early" column resolves to ``orig_orig_sched_early`` (raw
-  pickup-window early) — closest match to the PDF sample times.
+* "Orig Sched Early" column resolved to ``orig_orig_sched_early`` (raw
+  pickup-window early). REMOVED from both unbilled tables + CSVs, and Status
+  from Ready-to-bill, replaced by Carrier Name (Aging Updates PDF 2026-11-11).
 
 UX additions (over Bruno's flat dashboard):
 
@@ -1035,6 +1036,31 @@ async def timing_monthly(
 
 
 # ---------------------------------------------------------------------------
+# Carrier Name (Aging Updates PDF 2026-11-11) — shared by both unbilled tables
+# and their CSVs. The cashflow mirror has NO carrier column, so it is the FIRST
+# movement's ``payee_name`` (same canonical LATERAL as Podium / Ops Portal).
+#
+# ⚠ Key padding: ``mcleod_gld_cashflow.id`` is UNPADDED ('0352397') while
+# ``mcleod_gld_movement.order_id`` is blank-padded to 8 ('0352397 '). A plain
+# ``m.order_id = c.id`` matched 0 of 552 unbilled rows. Match BOTH spellings on
+# the movement side (never TRIM the indexed column) → index scan on
+# idx_movement_order_company_mv; 255/259 delivered + 101/101 ready resolved.
+# ---------------------------------------------------------------------------
+
+_CARRIER_LATERAL = """
+      LEFT JOIN LATERAL (
+        SELECT m.payee_name
+        FROM public.mcleod_gld_movement m
+        WHERE m.order_id IN (c.id, rpad(c.id, 8))
+          AND m.company_id = c.company_id
+        ORDER BY m.movement_id ASC
+        LIMIT 1
+      ) mov ON TRUE"""
+
+_CARRIER_COL = "NULLIF(TRIM(mov.payee_name), '')"
+
+
+# ---------------------------------------------------------------------------
 # Delivered but not billed — table + grand total
 # ---------------------------------------------------------------------------
 
@@ -1050,6 +1076,8 @@ _DELIVERED_NOT_BILLED_SORTS = {
     "customer_desc": "customer_name DESC NULLS LAST",
     "days_asc": "days_since_delivery ASC NULLS LAST",
     "days_desc": "days_since_delivery DESC NULLS LAST",
+    "carrier_asc": "carrier_name ASC NULLS LAST",
+    "carrier_desc": "carrier_name DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -1095,10 +1123,10 @@ async def delivered_not_billed(
     WITH base AS (
       SELECT
         c.id,
-        c.orig_orig_sched_early                                AS orig_sched_early,
         c.origin_actual_arrival                                AS ship_date,
         c.dest_actual_arrival,
         c.customer_name,
+        {_CARRIER_COL}                                         AS carrier_name,
         c.team_id,
         c.company_id,
         c.total_charge,
@@ -1108,13 +1136,13 @@ async def delivered_not_billed(
                 - c.dest_actual_arrival::date)
           ELSE NULL
         END AS days_since_delivery
-      FROM public.mcleod_gld_cashflow c
+      FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
       WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
     )
     SELECT
-      id, orig_sched_early, ship_date, dest_actual_arrival,
-      customer_name, team_id, company_id, total_charge, days_since_delivery,
+      id, ship_date, dest_actual_arrival,
+      customer_name, carrier_name, team_id, company_id, total_charge, days_since_delivery,
       COUNT(*)         OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -1128,10 +1156,10 @@ async def delivered_not_billed(
     data = [
         {
             "id": r["id"].strip() if r["id"] else None,
-            "orig_sched_early": r["orig_sched_early"].isoformat() if r["orig_sched_early"] else None,
             "ship_date": r["ship_date"].isoformat() if r["ship_date"] else None,
             "dest_actual_arrival": r["dest_actual_arrival"].isoformat() if r["dest_actual_arrival"] else None,
             "customer_name": (r["customer_name"] or "").strip(),
+            "carrier_name": r["carrier_name"],
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
@@ -1185,6 +1213,8 @@ _READY_NOT_BILLED_SORTS = {
     "bol_desc": "bol_recv_date DESC NULLS LAST",
     "days_asc": "days_since_bol_recv ASC NULLS LAST",
     "days_desc": "days_since_bol_recv DESC NULLS LAST",
+    "carrier_asc": "carrier_name ASC NULLS LAST",
+    "carrier_desc": "carrier_name DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -1232,11 +1262,11 @@ async def ready_not_billed(
     WITH base AS (
       SELECT
         c.id,
-        c.orig_orig_sched_early   AS orig_sched_early,
         c.origin_actual_arrival   AS ship_date,
         c.bol_recv_date,
         c.status,
         c.customer_name,
+        {_CARRIER_COL}            AS carrier_name,
         c.team_id,
         c.company_id,
         c.total_charge,
@@ -1246,14 +1276,14 @@ async def ready_not_billed(
                 - c.bol_recv_date::date)
           ELSE NULL
         END AS days_since_bol_recv
-      FROM public.mcleod_gld_cashflow c
+      FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
       WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
         AND TRIM(c.ready_to_bill) = 'Y'
     )
     SELECT
-      id, orig_sched_early, ship_date, bol_recv_date, status,
-      customer_name, team_id, company_id, total_charge, days_since_bol_recv,
+      id, ship_date, bol_recv_date, status,
+      customer_name, carrier_name, team_id, company_id, total_charge, days_since_bol_recv,
       COUNT(*)          OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -1267,11 +1297,13 @@ async def ready_not_billed(
     data = [
         {
             "id": r["id"].strip() if r["id"] else None,
-            "orig_sched_early": r["orig_sched_early"].isoformat() if r["orig_sched_early"] else None,
             "ship_date": r["ship_date"].isoformat() if r["ship_date"] else None,
             "bol_recv_date": r["bol_recv_date"].isoformat() if r["bol_recv_date"] else None,
+            # Status is gone from the UI (Aging Updates 2026-11-11); kept on the
+            # wire — the status sorts stay valid for any bookmarked link.
             "status": (r["status"] or "").strip(),
             "customer_name": (r["customer_name"] or "").strip(),
+            "carrier_name": r["carrier_name"],
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
@@ -1986,7 +2018,7 @@ async def delivered_not_billed_csv(
       c.company_id,
       c.team_id,
       c.customer_name,
-      c.orig_orig_sched_early                  AS orig_sched_early,
+      {_CARRIER_COL}                           AS carrier_name,
       c.origin_actual_arrival                  AS ship_date,
       c.dest_actual_arrival,
       c.total_charge,
@@ -1996,15 +2028,15 @@ async def delivered_not_billed_csv(
               - c.dest_actual_arrival::date)
         ELSE NULL
       END AS days_since_delivery
-    FROM public.mcleod_gld_cashflow c
+    FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
     WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
     ORDER BY {order_by}
     """
     rows = await pool.fetch(sql, *params)
     header = [
-        "Order", "Company", "Team", "Customer",
-        "Orig Sched Early", "Ship Date", "Delivered",
+        "Order", "Company", "Team", "Customer", "Carrier Name",
+        "Ship Date", "Delivered",
         "Days Since Delivery", "Revenue (USD)",
     ]
     body = (
@@ -2013,7 +2045,7 @@ async def delivered_not_billed_csv(
             (r["company_id"] or "").strip(),
             (r["team_id"] or "").strip(),
             (r["customer_name"] or "").strip(),
-            _iso(r["orig_sched_early"]),
+            r["carrier_name"] or "",
             _iso(r["ship_date"]),
             _iso(r["dest_actual_arrival"]),
             r["days_since_delivery"] if r["days_since_delivery"] is not None else "",
@@ -2062,10 +2094,9 @@ async def ready_not_billed_csv(
       c.company_id,
       c.team_id,
       c.customer_name,
-      c.orig_orig_sched_early   AS orig_sched_early,
+      {_CARRIER_COL}            AS carrier_name,
       c.origin_actual_arrival   AS ship_date,
       c.bol_recv_date,
-      c.status,
       c.total_charge,
       CASE
         WHEN c.bol_recv_date > '2000-01-01'::date
@@ -2073,7 +2104,7 @@ async def ready_not_billed_csv(
               - c.bol_recv_date::date)
         ELSE NULL
       END AS days_since_bol_recv
-    FROM public.mcleod_gld_cashflow c
+    FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
     WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
       AND TRIM(c.ready_to_bill) = 'Y'
@@ -2081,8 +2112,8 @@ async def ready_not_billed_csv(
     """
     rows = await pool.fetch(sql, *params)
     header = [
-        "Order", "Company", "Team", "Customer",
-        "Ship Date", "Orig Sched Early", "BOL Recv", "Status",
+        "Order", "Company", "Team", "Customer", "Carrier Name",
+        "Ship Date", "BOL Recv",
         "Days Since BOL Recv", "Revenue (USD)",
     ]
     body = (
@@ -2091,10 +2122,9 @@ async def ready_not_billed_csv(
             (r["company_id"] or "").strip(),
             (r["team_id"] or "").strip(),
             (r["customer_name"] or "").strip(),
+            r["carrier_name"] or "",
             _iso(r["ship_date"]),
-            _iso(r["orig_sched_early"]),
             _iso(r["bol_recv_date"]),
-            (r["status"] or "").strip(),
             r["days_since_bol_recv"] if r["days_since_bol_recv"] is not None else "",
             float(r["total_charge"] or 0),
         ]

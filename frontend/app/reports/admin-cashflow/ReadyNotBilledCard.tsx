@@ -49,10 +49,9 @@ function ReadyTable({
           <tr className="border-b border-[#E5E7EB]">
             <SortableTh label="Order" col="id_asc" colDesc="id_desc" current={sort} onChange={onSort} />
             <SortableTh label="Customer" col="customer_asc" colDesc="customer_desc" current={sort} onChange={onSort} />
+            <SortableTh label="Carrier Name" col="carrier_asc" colDesc="carrier_desc" current={sort} onChange={onSort} />
             <SortableTh label="Ship Date" col="ship_asc" colDesc="ship_desc" current={sort} onChange={onSort} />
-            <SortableTh label="Orig Sched Early" col="ship_asc" colDesc="ship_desc" current={sort} onChange={onSort} />
             <SortableTh label="BOL Recv" col="bol_asc" colDesc="bol_desc" current={sort} onChange={onSort} />
-            <SortableTh label="Status" col="status_asc" colDesc="status_desc" current={sort} onChange={onSort} />
             <SortableTh label="Days" col="days_asc" colDesc="days_desc" current={sort} onChange={onSort} align="right" />
             <SortableTh label="$ Revenue" col="revenue_asc" colDesc="revenue_desc" current={sort} onChange={onSort} align="right" />
           </tr>
@@ -60,13 +59,13 @@ function ReadyTable({
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={8} className="py-8 text-center">
+              <td colSpan={7} className="py-8 text-center">
                 <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
               </td>
             </tr>
           ) : rows.length === 0 ? (
             <tr>
-              <td colSpan={8} className="py-8 text-center text-[#9CA3AF]">
+              <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
                 No ready-but-unbilled loads in current filters 🎉
               </td>
             </tr>
@@ -84,14 +83,11 @@ function ReadyTable({
                     className="block max-w-full truncate"
                   />
                 </td>
-                <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
-                <td className="px-2 py-1.5">{fmtDate(r.orig_sched_early)}</td>
-                <td className="px-2 py-1.5">{fmtDate(r.bol_recv_date)}</td>
-                <td className="px-2 py-1.5">
-                  <span className="rounded bg-[#F3F4F6] px-1.5 py-0.5 text-[10px] text-[#374151]">
-                    {r.status}
-                  </span>
+                <td className="max-w-[200px] truncate px-2 py-1.5" title={r.carrier_name ?? undefined}>
+                  {r.carrier_name ?? <span className="text-[#9CA3AF]">—</span>}
                 </td>
+                <td className="px-2 py-1.5">{fmtDate(r.ship_date)}</td>
+                <td className="px-2 py-1.5">{fmtDate(r.bol_recv_date)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">
                   <DaysBadge days={r.days_since_bol_recv} />
                 </td>
