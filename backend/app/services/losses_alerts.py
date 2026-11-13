@@ -1,8 +1,8 @@
 """Daily 7 AM CST email alert for Losses Lanes weekly movers.
 
-Distribution (updated 2026-04-25):
+Distribution (updated 2026-04-25; Bruce Kimbark dropped 2026-11-13):
     To:  Erick Mendoza (President & CEO), Christian Mendoza (Sr. VP DFW)
-    CC:  Jennifer Alanis (Director DFW), Bruce Kimbark (CFO)
+    CC:  Jennifer Alanis (Director DFW)
     BCC: Melany Salazar M., Diego F. Rodriguez
 
 A single email is sent so CC recipients are visible to the To: line and
@@ -40,7 +40,8 @@ TO_RECIPIENTS: tuple[str, ...] = (
 )
 CC_RECIPIENTS: tuple[str, ...] = (
     "jennifer@unilinktransportation.com",      # Jennifer Alanis — Director DFW
-    "bkimbark@unilinktransportation.com",      # Bruce Kimbark   — CFO Finance
+    # Bruce Kimbark removed 2026-11-13 (Jaime: "que a Bruce no le lleguen más
+    # reportes — ningún reporte"). He is an external advisor since 2026-11-05.
 )
 BCC_RECIPIENTS: tuple[str, ...] = (
     "msalazarm@unilinktransportation.com",     # Melany Salazar M.
@@ -303,8 +304,8 @@ async def send_weekly_movers_email(
         logger.warning("send_weekly_movers_email: empty TO list; skipping send")
         return {"sent": False, "reason": "no_to_recipients"}
 
-    # Single send: To: line shows Erick + Christian, CC line shows Jennifer
-    # + Bruce, BCC stays hidden (Melany + Diego). Graph transport, never raises.
+    # Single send: To: line shows Erick + Christian, CC line shows Jennifer,
+    # BCC stays hidden (Melany + Diego). Graph transport, never raises.
     result = await send_notification(
         to=to_list,
         cc=cc_list or None,
