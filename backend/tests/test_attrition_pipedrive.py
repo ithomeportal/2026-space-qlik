@@ -112,15 +112,19 @@ def test_plan_skips_teams_without_routing_visibly():
 def test_notice_text_is_verbatim():
     assert mail.subject_for("PCA ATLANTA SPECIALTY PLANT", "Miguel Millan") == (
         "PCA ATLANTA SPECIALTY PLANT has been reassigned to Miguel Millan")
-    text = re.sub(r"<[^>]+>", "", mail.body_for("PCA ATLANTA SPECIALTY PLANT", "Miguel Millan"))
+    text = re.sub(r"<[^>]+>", "", mail.body_for(
+        "PCA ATLANTA SPECIALTY PLANT", "Miguel Millan", "Ruben Rodriguez"))
+    # Slide 5 of "Attrition Follow up_KAM's name" (Iris, 2026-11-12): "The company …" and the
+    # KAM by name, after Erick noted the notice did not say who the KAM was.
     assert text == (
         "Team,"
-        "The deal PCA ATLANTA SPECIALTY PLANT has reached 90 days without any loads and has been "
-        "reassigned to Miguel Millan."
-        "Miguel Millan, please meet with the KAM to gather all relevant information before "
-        "reaching out to the customer."
+        "The company PCA ATLANTA SPECIALTY PLANT has reached 90 days without any loads and has "
+        "been reassigned to Miguel Millan."
+        "Miguel Millan, please meet with Ruben Rodriguez, KAM of this account, to gather all "
+        "relevant information before reaching out to the customer."
         "Thank you,"
     )
+    assert "the KAM" not in text
 
 
 def test_30_day_notice_text_is_the_request_pdf():
@@ -143,8 +147,10 @@ def test_30_day_notice_escapes_names():
 
 
 def test_notice_escapes_names():
-    assert "<script>" not in mail.body_for("<script>x</script>", "A & B")
-    assert "A &amp; B" in mail.body_for("x", "A & B")
+    assert "<script>" not in mail.body_for("<script>x</script>", "A & B", "K")
+    assert "A &amp; B" in mail.body_for("x", "A & B", "K")
+    body = mail.body_for("x", "S", "<i>O'Neil & Co</i>")
+    assert "<i>" not in body and "&lt;i&gt;O&#x27;Neil &amp; Co&lt;/i&gt;" in body
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +456,31 @@ def test_reassign_moves_the_tracked_deal_to_sales_and_mails_the_team(env):
     assert m["subject"] == "PCA ATLANTA SPECIALTY PLANT has been reassigned to Miguel Millan"
     assert m["to"] == list(cfg.ROUTING["TEAM2"].notify_to)
     assert m["cc"] == list(cfg.ROUTING["TEAM2"].notify_cc)
+    assert "please meet with <b>Ruben Rodriguez</b>, KAM of this account" in m["html_body"]
+
+
+@pytest.mark.parametrize("team", sorted(cfg.ROUTING))
+def test_every_team_notice_names_its_own_kam(env, team):
+    res = _run(_Hub(), _Gold([_cand(team=team, customer="ACME FOODS", days=90)]))
+    assert res.outcomes[0].status == "reassigned"
+    route = cfg.ROUTING[team]
+    body = env.sent[-1]["html_body"]
+    assert f"please meet with <b>{route.kam.name}</b>, KAM of this account" in body
+    assert route.kam.email in env.sent[-1]["to"]  # slide 4: the named KAM is on the To line
+
+
+def test_a_retried_reassign_notice_still_names_the_kam(env):
+    hub = _Hub()
+    env.mail_ok = False
+    gold = _Gold([_cand(team="TEAM3", customer="ACME FOODS", days=90)])
+    with pytest.raises(runner.RunFailed) as exc:
+        _run(hub, gold)
+    assert [o.status for o in exc.value.result.outcomes] == ["mail_failed"]
+    env.mail_ok = True
+    res = _run(hub, gold)
+    assert [o.status for o in res.outcomes] == ["reassigned"]
+    assert len([w for w in env.pd.writes if w[0] == "owner"]) <= 1  # mail only, no 2nd move
+    assert "please meet with <b>Sergio Hidalgo</b>, KAM of this account" in env.sent[-1]["html_body"]
 
 
 def test_reassign_uses_a_hand_made_deal_and_keeps_its_title(env):

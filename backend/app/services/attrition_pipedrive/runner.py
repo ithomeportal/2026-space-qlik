@@ -402,8 +402,9 @@ async def _mail_team(c: Candidate, subject: str, html_body: str) -> dict:
 
 
 async def _send_notice(c: Candidate, deal_title: str) -> dict:
-    sales = cfg.ROUTING[c.team].sales.name
-    return await _mail_team(c, subject_for(deal_title, sales), body_for(deal_title, sales))
+    route = cfg.ROUTING[c.team]
+    sales, kam = route.sales.name, route.kam.name
+    return await _mail_team(c, subject_for(deal_title, sales), body_for(deal_title, sales, kam))
 
 
 async def _send_30_day_notice(c: Candidate, deal_title: str) -> dict:

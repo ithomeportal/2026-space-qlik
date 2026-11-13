@@ -1,9 +1,13 @@
 """The two team notices — the requests' text VERBATIM.
 
-90 days, reassigned (`space Attrition - Follow up.pdf`, page 5):
+90 days, reassigned (`Attrition Follow up_KAM's name.pptx`, slide 5, 2026-11-12 —
+supersedes `space Attrition - Follow up.pdf` page 5, which said only "the KAM"):
   Subject: (Deal Name) has been reassigned to (Sales Executive)
-  Body:    Team, / The deal … has reached 90 days without any loads and has been
-           reassigned to … / …, please meet with the KAM … / Thank you,
+  Body:    Team, / The company … has reached 90 days without any loads and has been
+           reassigned to … / …, please meet with (Current KAM's name) KAM of this
+           account … / Thank you,
+  (Current KAM's name) = the team's KAM in ``config.ROUTING`` — the person slide 4
+  puts on the To line. Two commas are added around "KAM of this account".
 
 30 days, new deal (`Attrition follow up 30-89 days.pdf`, page 3, 2026-11-03):
   Subject: (Deal Name) | 30 days without loads – New PipeDrive deal created for
@@ -48,15 +52,15 @@ def subject_for(deal_name: str, sales_name: str) -> str:
     return f"{deal_name} has been reassigned to {sales_name}"
 
 
-def body_for(deal_name: str, sales_name: str) -> str:
-    d, s, p = escape(deal_name), escape(sales_name), _paragraph_open()
+def body_for(deal_name: str, sales_name: str, kam_name: str) -> str:
+    d, s, k, p = escape(deal_name), escape(sales_name), escape(kam_name), _paragraph_open()
     return (
         "<div>"
         f"{p}Team,</p>"
-        f"{p}The deal <b>{d}</b> has reached 90 days without any loads and has been "
+        f"{p}The company <b>{d}</b> has reached 90 days without any loads and has been "
         f"reassigned to <b>{s}</b>.</p>"
-        f"{p}{s}, please meet with the KAM to gather all relevant information before "
-        "reaching out to the customer.</p>"
+        f"{p}{s}, please meet with <b>{k}</b>, KAM of this account, to gather all relevant "
+        "information before reaching out to the customer.</p>"
         f"{p}Thank you,</p>"
         "</div>"
     )
