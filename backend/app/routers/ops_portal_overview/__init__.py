@@ -166,6 +166,8 @@ from .incidents import (  # noqa: F401
     service_by_carrier,
     service_incident_by_customer,
 )
+# Bruno PDF 2026-11-17 R3 — New Customer / Deactivated panel.
+from .activity import customer_activity  # noqa: F401
 
 __all__ = [
     "CORP_COMPANIES",
@@ -219,6 +221,7 @@ __all__ = [
     "combo",
     "cover",
     "cover_forecast",
+    "customer_activity",
     "customer_losses",
     "customer_overpay",
     "customer_variance",

@@ -61,6 +61,25 @@ function useRegionToggles(codes: string[]) {
   }
 }
 
+// Bruno PDF 2026-11-17 R2: data labels on the U.S. National line (and its
+// dashed forecast). Weekly windows can hold 50+ points, so labels thin to
+// about MAX_FUEL_LABELS across the visible brush window instead of overlapping.
+const MAX_FUEL_LABELS = 18
+
+function nationalLabel(step: number) {
+  return function NationalLabel(props: unknown) {
+    const { x, y, value, index } = props as { x?: number; y?: number; value?: unknown; index?: number }
+    if (x == null || y == null || value == null || value === "") return null
+    const v = Number(value)
+    if (!Number.isFinite(v) || (index ?? 0) % step !== 0) return null
+    return (
+      <text x={x} y={y - 7} textAnchor="middle" fontSize={9} fontWeight={600} fill={regionColor(NATIONAL_CODE)}>
+        {`$${v.toFixed(2)}`}
+      </text>
+    )
+  }
+}
+
 export function FuelSeries(props: Props) {
   const { rows, grain, barKey, barLabel, showBars, fmt, labelFmt, brush, onBrush, dataEpoch } = props
   const { data: res, isLoading, error } = useOppFuel(grain, true)
@@ -75,6 +94,8 @@ export function FuelSeries(props: Props) {
   useEffect(() => setEpoch((e) => e + 1), [data])
   const isMonth = grain === "month"
   const visible = regions.filter((r) => !toggles.hidden.has(r.code))
+  const labelStep = Math.max(1, Math.ceil((win.end - win.start + 1) / MAX_FUEL_LABELS))
+  const NationalLabel = useMemo(() => nationalLabel(labelStep), [labelStep])
 
   return (
     <div>
@@ -125,7 +146,9 @@ export function FuelSeries(props: Props) {
               dot={false}
               connectNulls
               isAnimationActive={false}
-            />
+            >
+              {r.code === NATIONAL_CODE && <LabelList dataKey={fuelKey(r.code)} content={NationalLabel} />}
+            </Line>
           ))}
           {isMonth &&
             visible.map((r) => (
@@ -141,7 +164,11 @@ export function FuelSeries(props: Props) {
                 dot={false}
                 connectNulls
                 isAnimationActive={false}
-              />
+              >
+                {r.code === NATIONAL_CODE && (
+                  <LabelList dataKey={fuelKey(r.code) + FORECAST_SUFFIX} content={NationalLabel} />
+                )}
+              </Line>
             ))}
           <Brush
             /* ⚠ Load-bearing — see Chart.tsx's `dataEpoch` note. */

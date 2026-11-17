@@ -518,6 +518,29 @@ def _make_team_router(tm: str) -> APIRouter:
             exclude_carriers=exclude_carriers, limit=limit, _user=_user,
         )
 
+    # Bruno PDF 2026-11-17 R3. No `team` param — `tm` is the only team in SQL.
+    @r.get("/customer-activity")
+    async def customer_activity(
+        request: Request,
+        kind: str = Query("new"),
+        range: str | None = Query("mtd"),
+        start_date: date | None = Query(None),
+        end_date: date | None = Query(None),
+        customer: list[str] | None = Query(None),
+        load_type: str | None = Query(None),
+        lanes: list[str] | None = Query(None),
+        exclude_lanes: list[str] | None = Query(None),
+        carriers: list[str] | None = Query(None),
+        exclude_carriers: list[str] | None = Query(None),
+        _user: dict = Depends(gate),
+    ):
+        return await dfw.customer_activity(
+            request=request, kind=kind, team=tm, range=range, start_date=start_date,
+            end_date=end_date, customer=customer, load_type=load_type, lanes=lanes,
+            exclude_lanes=exclude_lanes, carriers=carriers,
+            exclude_carriers=exclude_carriers, _user=_user,
+        )
+
     @r.get("/margin-distribution")
     async def margin_distribution(
         request: Request,

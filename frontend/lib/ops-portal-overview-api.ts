@@ -695,6 +695,31 @@ export interface OppTeamPerfByTeam {
 }
 
 // Per-customer service-fail breakdown ("On time P&D" incident table).
+// Bruno PDF "Ops Portal Updates" 2026-11-17 R3 — New Customer / Deactivated.
+// `new`: first load in the Date window after > 75 d of silence (or first ever);
+// vol/prof/margin_pct/lanes over the window. `deactivated`: no load for > 75 d
+// (ignores the Date filter); profit = last 10 trips.
+export type OppCustomerActivityKind = "new" | "deactivated"
+
+export interface OppNewCustomerRow {
+  customer_name: string
+  vol: number
+  prof: number
+  first_load: string | null
+  last_load: string | null
+  margin_pct: number | null
+  lanes: string[]
+  gap_days: number | null
+}
+
+export interface OppDeactivatedRow {
+  customer_name: string
+  profit: number
+  trips: number
+  last_load: string | null
+  days_since: number | null
+}
+
 export interface OppServiceIncidentRow {
   customer_name: string
   orders: number
@@ -1190,6 +1215,25 @@ export function useOppServiceIncident(f: OppFilters, stopType: "pu" | "del") {
     queryFn: () =>
       apiFetch<OppServiceIncidentRow[]>(
         `${prefix}/service-incident-by-customer${qs(f, { stop_type: stopType })}`,
+      ),
+    ...RETRY,
+  })
+}
+
+// Bruno PDF 2026-11-17 R3. ⚠ queryKey covers everything qs() sends, even the
+// filters the backend ignores for this panel (lanes/carriers; dates on
+// `deactivated`) — a key narrower than the URL serves another URL's cache.
+export function useOppCustomerActivity<K extends OppCustomerActivityKind>(f: OppFilters, kind: K) {
+  const prefix = useApiPrefix()
+  return useQuery({
+    queryKey: [
+      prefix, "opp-customer-activity",
+      kind,
+      f.range, f.startDate, f.endDate, f.team, customerKey(f), f.loadType, laneKey(f),
+    ],
+    queryFn: () =>
+      apiFetch<K extends "new" ? OppNewCustomerRow[] : OppDeactivatedRow[]>(
+        `${prefix}/customer-activity${qs(f, { kind })}`,
       ),
     ...RETRY,
   })

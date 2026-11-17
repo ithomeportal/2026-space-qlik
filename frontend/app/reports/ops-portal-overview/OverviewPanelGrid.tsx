@@ -9,6 +9,7 @@ import { CustomerOverPay } from "./OverPayPanel"
 import { TeamPerformance } from "./MonthlyPerformancePanel"
 import { TeamProjection } from "./MonthlyProjectionPanel"
 import { ServiceIncidentTables } from "./ServiceIncidentTables"
+import { CustomerActivityPanel } from "./CustomerActivityPanel"
 import { MarginDistribution } from "./MarginDistribution"
 
 /**
@@ -18,14 +19,15 @@ import { MarginDistribution } from "./MarginDistribution"
  *
  *   xl:  Row 1  Monthly Performance | KPI chart (wide)     | Projection
  *                                   |                       | Customer Monthly Variance
- *        Row 2  Service Incident    | By Carrier            | (free)
+ *        Row 2  New / Deactivated   | Service Incident · By Carrier (spans 2)
  *        Row 3  Budget Var | Customer Losses | Over Pay | Margin distribution
  *
- * Row 2 is a grid item spanning the left + centre columns, so the right column
- * under Customer Monthly Variance stays empty rather than stretching the tables.
+ * Row 2 (Bruno PDF 2026-11-17 R3): the New Customer | Deactivated panel takes
+ * the left column and the Service Incident + By Carrier pair spans the centre
+ * + right columns (it used to span left + centre and leave the right empty).
  * Below xl everything stacks in DOM order: Performance, chart, Projection,
- * Customer Variance, Service Incident, By Carrier, Budget, Losses, Over Pay,
- * Margin distribution.
+ * Customer Variance, New/Deactivated, Service Incident, By Carrier, Budget,
+ * Losses, Over Pay, Margin distribution.
  *
  * ⚠ `min-w-0` on every grid child: grid items default to `min-width: auto`, so
  * one wide table/chart would push the whole page into horizontal scroll.
@@ -82,6 +84,9 @@ export function OverviewPanelGrid({
             onPickCustomer={onPickCustomer}
             basis={customerVarianceBasis}
           />
+        </div>
+        <div className="min-w-0">
+          <CustomerActivityPanel filters={filters} onPickCustomer={onPickCustomer} />
         </div>
         <ServiceIncidentTables
           filters={filters}

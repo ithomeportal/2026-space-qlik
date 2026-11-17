@@ -58,7 +58,7 @@ SECTION_ALLOWLIST = frozenset({
     "by-day", "by-department", "by-direction", "by-division", "by-hour", "by-job-title", "by-lane",
     "by-lane-diff", "by-month", "by-order", "by-team", "by-week", "carriers", "chart", 
     "combo", "concentration", "contract-spot", "contract-spot-kpis", "convertio-ratio", "cover",
-    "cover-forecast", "customer-attrition", "customer-losses", "customer-overpay",
+    "cover-forecast", "customer-activity", "customer-attrition", "customer-losses", "customer-overpay",
     "customer-spark", "customer-variance", "customers", "customers-margin", "daily",
     "data-freshness", "del/detail", "del/not-our-fault", "del/our-fault", "del/overview",
     "del/pinned", "details", "distribution", "exceptions", "facets", "filter-options",

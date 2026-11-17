@@ -106,6 +106,7 @@ class _StubPool:
 _ENDPOINT_MODULES = (
     "meta", "chart", "variance", "performance",
     "projection", "actuals", "orders", "hold", "incidents", "fuel",
+    "activity",  # 2026-11-17 R3 New Customer / Deactivated
 )
 
 

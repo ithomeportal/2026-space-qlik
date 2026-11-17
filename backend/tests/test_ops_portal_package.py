@@ -59,6 +59,8 @@ EXPECTED_PATHS = {
     "/custom/ops-portal-overview/team-performance-by-team",
     "/custom/ops-portal-overview/service-incident-by-customer",
     "/custom/ops-portal-overview/service-by-carrier",
+    # Bruno PDF 2026-11-17 R3 — New Customer / Deactivated panel.
+    "/custom/ops-portal-overview/customer-activity",
     "/custom/ops-portal-overview/margin-distribution",
     "/custom/ops-portal-overview/team-variance-weekly",
     "/custom/ops-portal-overview/team-variance-by-team",

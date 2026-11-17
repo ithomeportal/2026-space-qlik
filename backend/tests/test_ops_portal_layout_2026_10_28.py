@@ -125,14 +125,17 @@ def test_row1_is_three_columns_with_the_chart_widest() -> None:
 
 def test_row1_order_is_performance_chart_then_projection_over_variance() -> None:
     kids = _top_level_children(_row1())
-    assert len(kids) == 4, kids
-    perf, chart, right, incidents = kids
+    # Bruno PDF 2026-11-17 R3 added row 2's left cell (New / Deactivated).
+    assert len(kids) == 5, kids
+    perf, chart, right, activity, incidents = kids
     assert "<TeamPerformance " in perf
     assert "{chart}" in chart
     # Right column: Projection stacked over Customer Monthly Variance.
     assert right.index("<TeamProjection ") < right.index("<CustomerVariance")
     assert "space-y-4" in right
-    # Row 2 sits in the same grid, spanning left + centre only.
+    # Row 2 sits in the same grid: New / Deactivated in the left column, then
+    # Service Incident + By Carrier spanning centre + right (R3, 2026-11-17).
+    assert "<CustomerActivityPanel " in activity
     assert incidents.startswith("<ServiceIncidentTables")
     assert 'className="xl:col-span-2"' in incidents
     assert "col-span-3" not in _row1()

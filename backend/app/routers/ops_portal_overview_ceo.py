@@ -802,3 +802,28 @@ async def service_by_carrier(
         lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
         exclude_carriers=exclude_carriers, limit=limit, _user=_user,
     )
+
+# Bruno PDF 2026-11-17 R3 — New Customer / Deactivated panel.
+@r.get("/{division}/customer-activity")
+async def customer_activity(
+    request: Request,
+    kind: str = Query('new'),
+    range: Optional[str] = Query('mtd'),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    team: Optional[str] = Query(None),
+    customer: Optional[List[str]] = Query(None),
+    load_type: Optional[str] = Query(None),
+    lanes: Optional[List[str]] = Query(None),
+    exclude_lanes: Optional[List[str]] = Query(None),
+    carriers: Optional[List[str]] = Query(None),
+    exclude_carriers: Optional[List[str]] = Query(None),
+    _user: dict = Depends(gate),
+):
+    scope = scope_of(request)
+    return await opo.customer_activity(
+        request=request, kind=kind, range=range, start_date=start_date, end_date=end_date,
+        team=_sub_team(scope, team), customer=customer, load_type=load_type,
+        lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
+        exclude_carriers=exclude_carriers, _user=_user,
+    )
