@@ -65,6 +65,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
+from app.routers.access_doors_feed_health import add_door_feed_health_route
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 # --------------------------------------------------------------------------
@@ -168,15 +169,45 @@ _EXPECTED_TIME_LOOKUP = """
 # the window below would have left the row on the wrong day.
 # The bound is the shift's own window, not a new number. Mirrors
 # /BOT/n8n-mcp sql/late-arrival-shift-aware.sql — change both together.
-_SHIFT_DATE_EXPR = """
-  CASE
-    WHEN a.expected_time >= TIME '12:00'
+#
+# ⚠ WEEKDAY RULES (2026-11-18). A punch is tested against the PREVIOUS day's
+# start (`ex_prev`), because the shift it might belong to began yesterday — and
+# yesterday can be a different weekday rule. Antonio Pena works nights 18:00
+# Mon-Fri but a DAY shift at 08:00 on Saturday (Katerine, 2026-11-17: "los
+# sábados que llega a las 8am el reporte busca la huella cercana a las 6pm").
+_BACKDATE_PREDICATE = """
+    (a.ex_prev >= TIME '12:00'
      AND a.event_time::time < TIME '12:00'
-     AND a.event_time <= (a.event_time::date - 1) + a.expected_time + INTERVAL '6 hours'
-      THEN a.event_time::date - 1
-    ELSE a.event_time::date
+     AND a.event_time <= (a.event_time::date - 1) + a.ex_prev + INTERVAL '6 hours')
+"""
+_SHIFT_DATE_EXPR = f"""
+  CASE WHEN {_BACKDATE_PREDICATE} THEN a.event_time::date - 1
+       ELSE a.event_time::date
   END
 """
+# The start the chosen shift date is scored against: the back-dated shift's own
+# (yesterday's) start, else today's. Same predicate, so the two cannot disagree.
+_SHIFT_EXPECTED_EXPR = f"""
+  CASE WHEN {_BACKDATE_PREDICATE} THEN a.ex_prev
+       ELSE a.ex_today
+  END
+"""
+
+# Per-weekday start, keyed on e-mail only (table + rationale:
+# /BOT/n8n-mcp sql/late-arrival-schedule-weekday.sql). `weekday` is
+# EXTRACT(dow) of the SHIFT date, 0 = Sunday. A LEFT JOIN on its unique
+# (email, weekday) key — at most one row, so it can never fan a punch out, and
+# uncorrelated, so it hashes instead of running a subplan per punch.
+_WEEKDAY_TABLE = "public.late_arrival_schedule_weekday"
+
+
+def _weekday_join(alias: str, day_expr: str) -> str:
+    return f"""
+        LEFT JOIN {_WEEKDAY_TABLE} {alias}
+          ON {alias}.active
+         AND lower(btrim({alias}.email)) = s.em
+         AND {alias}.weekday = EXTRACT(dow FROM {day_expr})::int
+    """
 
 # Only a punch near the expected start counts as an arrival. Two things follow:
 # a night worker badging OUT at 07:00 is no longer scored as a late arrival, and
@@ -319,12 +350,25 @@ def _first_punch_cte(start_placeholder: str, end_placeholder: str) -> str:
          {_EXCLUDE_IT_SQL}
     ),
     scheduled AS (
-        SELECT p.*, {_EXPECTED_TIME_LOOKUP} AS expected_time
+        SELECT p.*, {_EXPECTED_TIME_LOOKUP} AS base_time
         FROM punches p
     ),
+    weekday_rules AS (
+        -- A weekday row REPLACES the base rule for that day. `ex_today` is the
+        -- start of a shift beginning on the punch's own date, `ex_prev` of one
+        -- that began the day before (the overnight case).
+        SELECT s.*,
+               COALESCE(wt.expected_time, s.base_time) AS ex_today,
+               COALESCE(wp.expected_time, s.base_time) AS ex_prev
+        FROM scheduled s
+        {_weekday_join('wt', 's.event_time::date')}
+        {_weekday_join('wp', 's.event_time::date - 1')}
+    ),
     attributed AS (
-        SELECT a.*, {_SHIFT_DATE_EXPR} AS shift_date
-        FROM scheduled a
+        SELECT a.*,
+               {_SHIFT_DATE_EXPR}     AS shift_date,
+               {_SHIFT_EXPECTED_EXPR} AS expected_time
+        FROM weekday_rules a
     ),
     windowed AS (
         -- A person with no rule counts as in-window by definition: there is no
@@ -393,6 +437,8 @@ def _scored_cte(
 
 
 router = APIRouter(tags=["hr-access-doors"], prefix="/custom/hr-access-doors")
+# Per-reader door-data health (2026-11-18) — see access_doors_feed_health.py.
+add_door_feed_health_route(router, require_report_access("hr-access-doors"))
 
 
 # --------------------------------------------------------------------------

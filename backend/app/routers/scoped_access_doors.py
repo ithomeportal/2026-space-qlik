@@ -46,6 +46,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.clock import cst_today
+from app.routers.access_doors_feed_health import add_door_feed_health_route
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.hr_access_doors import (
     _CHECK_MINUTES_EXPR,
@@ -111,6 +112,9 @@ def build_scoped_access_doors_router(
     """
     router = APIRouter(tags=[report_key], prefix=f"/custom/{report_key}")
     guard = require_report_access(report_key)
+    # Building-wide reader health: names readers and counts, never a person, so
+    # it is identical for every scope — mounted behind THIS report's gate.
+    add_door_feed_health_route(router, guard)
 
     # ----------------------------------------------------------------------
     # /filters  -- dropdown options for name / job_title (no department)

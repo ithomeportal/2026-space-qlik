@@ -24,6 +24,7 @@ import { AccessTrendChart } from "./TrendChart"
 import { AccessJobTitleBarChart } from "./JobTitleBarChart"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
 import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
+import { DoorFeedHealthBanner } from "./DoorFeedHealthBanner"
 
 /**
  * Shared body for every scope-locked "Access Log Doors" report (OPS / Pricing /
@@ -226,6 +227,7 @@ export function ScopedAccessDoorsReport({
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-5">
+        <DoorFeedHealthBanner reportKey={slug} date={endDate} />
         <AccessErrorBanner
           errors={[kpisQ.error, rowsQ.error, trendQ.error, jobTitleQ.error]}
         />

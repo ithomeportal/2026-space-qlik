@@ -86,6 +86,9 @@ SECTION_ALLOWLIST = frozenset({
     # Augie Funnel (2026-11-09): which loads miss carrier/driver fields — flags only,
     # never the values (no phone numbers or e-mail addresses on the wire).
     "missing-info",
+    # Access Doors (2026-11-18): per-READER punch counts vs their normal — reader
+    # names and counts only, no person; says whether the door data is complete.
+    "door-feed-health",
 })
 # Mail renderers, CSV exports, the admin EXPLAIN ANALYZE audit (runs the heaviest
 # queries), per-person door scans, esavings `lane-rates` (a cache miss calls the paid

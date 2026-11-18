@@ -44,7 +44,9 @@ class TestOvernightAttribution:
         """A punch before noon belonging to a >=12:00 shift is attributed to the
         PREVIOUS day — the evening the shift began."""
         sql = _squash(FIRST)
-        assert "expected_time >= TIME '12:00'" in sql
+        # Tested against the PREVIOUS day's start (`ex_prev`) since 2026-11-18:
+        # the shift a pre-noon punch may belong to began yesterday.
+        assert "a.ex_prev >= TIME '12:00'" in sql
         assert "event_time::time < TIME '12:00'" in sql
         assert "event_time::date - 1" in sql
 
@@ -88,7 +90,7 @@ class TestOvernightAttribution:
         the row was on the wrong date before the window was ever consulted.
         """
         sql = _squash(FIRST)
-        assert "a.event_time <= (a.event_time::date - 1) + a.expected_time" in sql
+        assert "a.event_time <= (a.event_time::date - 1) + a.ex_prev" in sql
         assert "INTERVAL '6 hours'" in sql
 
     def test_display_converts_monterrey_to_chicago_with_no_hardcoded_hour(self):

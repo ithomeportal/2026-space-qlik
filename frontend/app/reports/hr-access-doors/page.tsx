@@ -24,6 +24,7 @@ import { HrDeptBarChart } from "./DeptBarChart"
 import { ReportGuard } from "@/components/ReportGuard"
 import { FavoriteToggle } from "@/components/FavoriteToggle"
 import { CollapsibleFilterBar } from "@/components/CollapsibleFilterBar"
+import { DoorFeedHealthBanner } from "@/components/access-doors/DoorFeedHealthBanner"
 function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -182,6 +183,7 @@ function HrAccessDoorsContent() {
 
       {/* Body */}
       <div className="mx-auto w-full max-w-[1920px] flex-1 space-y-4 px-6 py-5">
+        <DoorFeedHealthBanner reportKey="hr-access-doors" date={endDate} />
         <HrErrorBanner
           errors={[kpisQ.error, rowsQ.error, trendQ.error, deptQ.error]}
         />
