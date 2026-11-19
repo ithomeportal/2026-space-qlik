@@ -165,7 +165,7 @@ _ALL_FOUR = (
                            team=None, customer=None)),
     ("customer_variance", dict(range="this_month", start_date=None, end_date=None,
                                team=None, customer=None, limit=50)),
-    ("team_variance_weekly", dict(team=None, customer=None)),
+    ("team_variance_weekly", dict(team=None, customer=None, grain="week")),
     ("team_variance_by_team", dict(range="this_month", start_date=None,
                                    end_date=None, customer=None)),
 )
@@ -304,7 +304,7 @@ def test_the_by_team_split_narrows_by_the_same_column_the_team_pill_uses():
 def test_the_weekly_modal_buckets_both_legs_on_their_own_date_column():
     """The production leg is dated on departure and the budget leg on the
     mirror's "Date" — bucketing both on one column would silently shift one."""
-    pool, _ = _drive(var_mod.team_variance_weekly, team=None, customer=None)
+    pool, _ = _drive(var_mod.team_variance_weekly, team=None, customer=None, grain="week")
     sql = "\n".join(pool.sqls)
     assert "DATE_TRUNC('week', br4.origin_actual_departure)::date AS grp" in sql
     assert 'DATE_TRUNC(\'week\', budget."Date")::date AS grp' in sql

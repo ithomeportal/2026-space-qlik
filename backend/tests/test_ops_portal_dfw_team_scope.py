@@ -119,11 +119,12 @@ def test_the_excluded_routes_really_cannot_be_locked_and_are_never_called() -> N
     perf_src = inspect.getsource(importlib.import_module(
         "app.routers.ops_portal_overview.performance").team_performance_by_team)
     assert "team filter intentionally dropped" in perf_src
-    src = (FRONTEND / "app/reports/ops-portal-overview/PanelShared.tsx").read_text()
-    shim = src.split("export function WeekTeamButtons")[1].split("\n}\n")[0]
-    assert "{!lockedTeam && (" in shim and "onClick={onTeam}" in shim
-    perf = (FRONTEND / "app/reports/ops-portal-overview/MonthlyPerformancePanel.tsx").read_text()
-    assert "{!lockedTeam && (" in perf and "setMonthlyOpen(true)" in perf.split("{!lockedTeam && (")[1]
+    # "Never called": since the Ops Portal Updates PDF (2026-11-18) the
+    # "Team" buttons are gone — the Info modal's Team FILTER re-queries the
+    # per-period endpoints — so no frontend code reaches a *-by-team route.
+    api = (FRONTEND / "lib/ops-portal-overview-api.ts").read_text()
+    for route in ("team-performance-by-team", "team-projection-by-team", "team-variance-by-team"):
+        assert route not in api, route
 
 
 @pytest.mark.parametrize("tm", TMS)

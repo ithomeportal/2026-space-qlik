@@ -65,7 +65,7 @@ export function CustomerActivityPanel({ filters, onPickCustomer }: Props) {
   )
 
   return (
-    <section className="overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
+    <section className="h-full overflow-hidden rounded-lg border border-[#E5E7EB] bg-white shadow-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-sm font-semibold text-[#3B82F6]">
         <button
           type="button"

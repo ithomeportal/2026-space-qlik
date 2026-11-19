@@ -72,6 +72,7 @@ from app.routers.ops_portal_overview._scope import (
     sub_team_of,
 )
 from app.routers.ops_portal_overview._sql import _v4_scope_where
+from app.routers.ops_portal_overview._dates import INFO_GRAIN_PATTERN
 
 REPORT_KEY = "ops-managers-portal-dfw"
 
@@ -659,11 +660,12 @@ async def team_weekly_performance(
     exclude_lanes: Optional[List[str]] = Query(None),
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(gate),
 ):
     return await opo.team_weekly_performance(
         request=request, team=_sub_team(team), customer=customer, load_type=load_type,
-        lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+        lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
     )
 
 # ---- /team-performance-by-team ----------------------------------------
@@ -799,11 +801,12 @@ async def team_projection_weekly(
     exclude_lanes: Optional[List[str]] = Query(None),
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(gate),
 ):
     return await opo.team_projection_weekly(
         request=request, team=_sub_team(team), customer=customer, load_type=load_type,
-        lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+        lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
     )
 
 

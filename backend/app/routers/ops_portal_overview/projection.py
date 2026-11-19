@@ -15,7 +15,16 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, get_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
-from ._dates import _count_workdays, _last_5_weeks, _month_bounds, _week_label
+from ._dates import (
+    INFO_GRAIN_PATTERN,
+    _count_workdays,
+    _info_bucket_end,
+    _info_bucket_of,
+    _info_buckets,
+    _info_label,
+    _info_trunc_sql,
+    _month_bounds,
+)
 from ._scope import scope_of
 from ._sql import _customer_any, _customer_list, _parse_team_scope, _team_id_col, _v4_scope_where
 from ._metrics import _zero_val, _projection_bounds, _projection_from_sums, _safe_float, _team_projection_core
@@ -287,10 +296,13 @@ async def team_projection_weekly(
     # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """Team Monthly Projection "Week" view — per-week ACTUALS for the last 5
-    Mon-Sun weeks (Bruno decision 2026-07-13).
+    """Team Monthly Projection "Info" view — per-period ACTUALS (Bruno decision
+    2026-07-13). Ops Portal Updates PDF 2026-11-18 R3: ``grain`` = day (last
+    12 days) / week (last 8 Mon-Sun weeks, default) / month (last 8 months),
+    current period included; ``weeks`` stays as an alias of ``periods``.
 
     A projection is inherently forward-looking, so a per-week grouping shows
     each recent week's realised figures under the projection's row labels:
@@ -301,7 +313,8 @@ async def team_projection_weekly(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     today = cst_today()
-    week_starts, weeks_start, weeks_end = _last_5_weeks(today)
+    grain = grain or "week"  # direct Python callers may pass None
+    week_starts, weeks_start, weeks_end = _info_buckets(grain, today)
     params: list = []
     where = _v4_scope_where("br4", team, customer, load_type, params, lanes, exclude_lanes, carriers, exclude_carriers, scope=scope)
     params.extend([weeks_start, weeks_end])
@@ -310,7 +323,7 @@ async def team_projection_weekly(
     rows = await pool.fetch(
         f"""
         SELECT
-          DATE_TRUNC('week', br4.origin_actual_departure)::date AS wk,
+          {_info_trunc_sql(grain, 'br4.origin_actual_departure')} AS wk,
           COUNT(*) FILTER (WHERE br4.total_charge IS NOT NULL AND br4.total_charge <> 0) AS vol,
           COALESCE(SUM(br4.total_charge), 0)::numeric AS rev,
           COALESCE(SUM(br4.margin_amt),  0)::numeric AS prof,
@@ -323,22 +336,23 @@ async def team_projection_weekly(
         """,
         *params,
     )
-    by_wk = {r["wk"]: r for r in rows}
+    by_wk = {_info_bucket_of(grain, r["wk"]): r for r in rows}
     weeks_out = []
     for ws in week_starts:
         r = by_wk.get(ws)
-        we = ws + timedelta(days=6)
+        we = _info_bucket_end(grain, ws)
         vol = int(r["vol"] or 0) if r else 0
         rev = _safe_float(r["rev"]) if r else 0.0
         prof = _safe_float(r["prof"]) if r else 0.0
-        # Workdays elapsed in this week (cap the current, partial week at today).
+        # Mon-Sat days elapsed in this period (the current one capped at
+        # today); a Sunday day-bucket has none, so it divides by 1.
         wk_workdays = _count_workdays(ws, min(we, today)) or 1
         team_count = (int(r["team_count"] or 0) if r else 0) or (1 if team else len(scope.sub_teams))
         cap = 500.0 * team_count
         weeks_out.append({
             "start": ws.isoformat(),
             "end": we.isoformat(),
-            "label": _week_label(ws),
+            "label": _info_label(grain, ws),
             "avg_vol_day":  _safe_float(vol / wk_workdays),
             "avg_rev_day":  _safe_float(rev / wk_workdays),
             "avg_prof_day": _safe_float(prof / wk_workdays),
@@ -351,7 +365,7 @@ async def team_projection_weekly(
             "proj_prof_x_l": _safe_float((prof / vol) if vol else 0.0),
             "proj_team_ut":  _safe_float((vol / cap * 100.0) if cap else 0.0),
         })
-    return {"success": True, "data": {"weeks": weeks_out}}
+    return {"success": True, "data": {"grain": grain, "periods": weeks_out, "weeks": weeks_out}}
 
 
 # ---------------------------------------------------------------------------

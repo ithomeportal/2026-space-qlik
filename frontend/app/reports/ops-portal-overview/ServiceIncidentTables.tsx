@@ -22,9 +22,9 @@ interface Props {
   /** Bruno (PDF 2026-07-23) R3: clicking a carrier in the By Carrier table
    *  applies it as the single included carrier filter across every panel. */
   onPickCarrier?: (carrier: string) => void
-  /** Layout 2026-10-28: extra grid classes from the parent (e.g. `xl:col-span-2`)
-   *  so the two panels sit as one grid item spanning the overview's left +
-   *  centre columns instead of the full width. */
+  /** Extra grid classes from the parent: `xl:col-span-2` of Row 2's equal
+   *  3-column grid (PDF 2026-11-18 R1). ⚠ The inner `gap-4` must match the
+   *  parent's so each of the two panels is exactly one column wide. */
   className?: string
 }
 

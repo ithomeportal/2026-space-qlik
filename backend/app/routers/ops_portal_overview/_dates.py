@@ -209,3 +209,77 @@ def _last_5_weeks(today: date) -> tuple[list[date], date, date]:
 def _week_label(ws: date) -> str:
     we = ws + timedelta(days=6)
     return f"{ws.day:02d}/{ws.month:02d} - {we.day:02d}/{we.month:02d}"
+
+
+# ---------------------------------------------------------------------------
+# "Info" modal periods — Ops Portal Updates PDF 2026-11-18 R2-R4
+# ---------------------------------------------------------------------------
+# Monthly Performance / Monthly Projection / Budget Monthly Variance lost their
+# separate "Week" + "Team" buttons for ONE "Info" modal with Day / Week / Month
+# toggles (Week default) and an internal Team filter. Each grain is a fixed
+# rolling window that INCLUDES the current, partial period — exactly as the old
+# 5-week view included the current week. The page Date filter does not apply.
+
+INFO_GRAINS: tuple[str, ...] = ("day", "week", "month")
+INFO_GRAIN_PATTERN = "^(day|week|month)$"
+INFO_PERIODS: dict[str, int] = {"day": 12, "week": 8, "month": 8}
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _info_bucket_end(grain: str, anchor: date) -> date:
+    """Last calendar day of the bucket starting at ``anchor`` (NOT capped)."""
+    if grain == "month":
+        return _month_bounds(anchor)[1]
+    if grain == "week":
+        return anchor + timedelta(days=6)
+    return anchor
+
+
+def _info_buckets(grain: str, today: date) -> tuple[list[date], date, date]:
+    """Bucket anchors (oldest first) + the span ``[start, end]`` for a grain.
+
+    day = last 12 calendar days, week = last 8 Mon-Sun weeks, month = last 8
+    calendar months — the current period always included. ``end`` is the last
+    day of the newest bucket (uncapped): v4 holds no future rows, and the
+    budget leg must cover whole periods (§92).
+    """
+    if grain not in INFO_PERIODS:
+        raise ValueError(f"unknown grain {grain!r}")
+    n = INFO_PERIODS[grain]
+    if grain == "day":
+        anchors = [today - timedelta(days=k) for k in range(n - 1, -1, -1)]
+    elif grain == "week":
+        this_mon = today - timedelta(days=today.weekday())
+        anchors = [this_mon - timedelta(weeks=k) for k in range(n - 1, -1, -1)]
+    else:
+        desc = [today.replace(day=1)]
+        for _ in range(n - 1):
+            desc.append((desc[-1] - timedelta(days=1)).replace(day=1))
+        anchors = list(reversed(desc))
+    return anchors, anchors[0], _info_bucket_end(grain, anchors[-1])
+
+
+def _info_label(grain: str, anchor: date) -> str:
+    """Column header: "18/11" (day), "17/11 - 23/11" (week), "Nov 2026" (month)."""
+    if grain == "day":
+        return f"{anchor.day:02d}/{anchor.month:02d}"
+    if grain == "week":
+        return _week_label(anchor)
+    return f"{_MONTH_ABBR[anchor.month - 1]} {anchor.year}"
+
+
+def _info_trunc_sql(grain: str, col: str) -> str:
+    """``DATE_TRUNC(<grain>, col)::date`` — grain is whitelisted, never raw input."""
+    if grain not in INFO_PERIODS:
+        raise ValueError(f"unknown grain {grain!r}")
+    return f"DATE_TRUNC('{grain}', {col})::date"
+
+
+def _info_bucket_of(grain: str, d: date) -> date:
+    """Python twin of ``_info_trunc_sql`` — normalises a fetched bucket key."""
+    if grain == "month":
+        return d.replace(day=1)
+    if grain == "week":
+        return d - timedelta(days=d.weekday())
+    return d

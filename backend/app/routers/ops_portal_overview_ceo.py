@@ -84,6 +84,7 @@ from app.routers.ops_portal_overview._scope import (
     sub_team_of as _sub_team,
     sub_teams_of as _sub_teams,
 )
+from app.routers.ops_portal_overview._dates import INFO_GRAIN_PATTERN
 
 REPORT_KEY = "ceo-executive-portal"
 
@@ -400,13 +401,14 @@ async def team_variance_weekly(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)
     _require_budget(scope)
     return await opo.team_variance_weekly(
         request=request, team=_sub_team(scope, team), customer=customer,
-        _user=_user,
+        grain=grain, _user=_user,
     )
 
 @r.get("/{division}/team-variance-by-team")
@@ -460,13 +462,14 @@ async def team_weekly_performance(
     exclude_lanes: Optional[List[str]] = Query(None),
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)
     return await opo.team_weekly_performance(
         request=request, team=_sub_team(scope, team), customer=customer,
         load_type=load_type, lanes=lanes, exclude_lanes=exclude_lanes,
-        carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+        carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
     )
 
 @r.get("/{division}/team-performance-by-team")
@@ -561,13 +564,14 @@ async def team_projection_weekly(
     exclude_lanes: Optional[List[str]] = Query(None),
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(gate),
 ):
     scope = scope_of(request)
     return await opo.team_projection_weekly(
         request=request, team=_sub_team(scope, team), customer=customer,
         load_type=load_type, lanes=lanes, exclude_lanes=exclude_lanes,
-        carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+        carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
     )
 
 @r.get("/{division}/team-projection-history")

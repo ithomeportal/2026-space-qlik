@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, type ReactNode } from "react"
 import { Loader2, X } from "lucide-react"
 
 // Bruno (PDF 2026-07-13): generic metric × column matrix modal, reused by the
@@ -31,6 +31,7 @@ export function MetricMatrixModal({
   loading,
   error,
   onClose,
+  toolbar,
 }: {
   title: string
   subtitle?: string
@@ -40,6 +41,8 @@ export function MetricMatrixModal({
   loading?: boolean
   error?: unknown
   onClose: () => void
+  /** 2026-11-18 Info modal: Day/Week/Month + Team controls under the header. */
+  toolbar?: ReactNode
 }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -55,7 +58,7 @@ export function MetricMatrixModal({
       onMouseDown={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F0F9FF] px-4 py-3">
@@ -73,6 +76,7 @@ export function MetricMatrixModal({
           </button>
         </div>
 
+        {toolbar}
         <div className="flex-1 overflow-auto p-4">
           {loading ? (
             <div className="flex items-center justify-center py-12">

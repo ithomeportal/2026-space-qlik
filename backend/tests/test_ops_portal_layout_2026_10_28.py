@@ -34,9 +34,17 @@ def _grid() -> str:
 
 
 def _row1() -> str:
-    """The JSX of the row-1 grid (which also holds row 2)."""
+    """The JSX of the row-1 grid. Since the 2026-11-18 PDF (R1) row 2 is its
+    own equal 3-column grid — see `_row2()`."""
     src = _grid()
     start = src.index("<div className={ROW1_GRID_CLS}>")
+    end = src.index("{/* Row 2")
+    return src[start:end]
+
+
+def _row2() -> str:
+    src = _grid()
+    start = src.index("<div className={ROW2_GRID_CLS}>")
     end = src.index("{/* Row 3")
     return src[start:end]
 
@@ -125,20 +133,24 @@ def test_row1_is_three_columns_with_the_chart_widest() -> None:
 
 def test_row1_order_is_performance_chart_then_projection_over_variance() -> None:
     kids = _top_level_children(_row1())
-    # Bruno PDF 2026-11-17 R3 added row 2's left cell (New / Deactivated).
-    assert len(kids) == 5, kids
-    perf, chart, right, activity, incidents = kids
+    assert len(kids) == 3, kids
+    perf, chart, right = kids
     assert "<TeamPerformance " in perf
     assert "{chart}" in chart
     # Right column: Projection stacked over Customer Monthly Variance.
     assert right.index("<TeamProjection ") < right.index("<CustomerVariance")
     assert "space-y-4" in right
-    # Row 2 sits in the same grid: New / Deactivated in the left column, then
-    # Service Incident + By Carrier spanning centre + right (R3, 2026-11-17).
+    # Row 2 (R3 2026-11-17; R1 2026-11-18): its OWN grid of three EQUAL
+    # tracks — New / Deactivated, then the Service Incident + By Carrier pair
+    # spanning two tracks with the same gap, so each is one track wide.
+    activity, incidents = _top_level_children(_row2())
     assert "<CustomerActivityPanel " in activity
     assert incidents.startswith("<ServiceIncidentTables")
     assert 'className="xl:col-span-2"' in incidents
-    assert "col-span-3" not in _row1()
+    row2_cls = _grid().split("ROW2_GRID_CLS =", 1)[1].split("\n", 1)[0]
+    assert "xl:grid-cols-3" in row2_cls and "gap-4" in row2_cls
+    assert "[&>*]:min-w-0" in row2_cls
+    assert "<ServiceIncidentTables" not in _row1()
 
 
 def test_every_row1_grid_child_has_min_w_0() -> None:
@@ -209,13 +221,15 @@ def test_no_new_panel_file_exceeds_800_lines() -> None:
 
 
 def test_the_toggles_and_drills_survived_the_move() -> None:
+    # 2026-11-18 PDF R2-R4: Week + Team became ONE Info modal per panel, and
+    # every Info modal receives `lockedTeam` (a locked portal shows a badge).
     perf = (_OPP / "MonthlyPerformancePanel.tsx").read_text()
-    assert "<TeamWeeklyModal " in perf and "<TeamMonthlyModal " in perf
-    assert "{!lockedTeam && (" in perf
+    assert "<PerformanceInfoModal filters={filters} lockedTeam={lockedTeam}" in perf
     proj = (_OPP / "MonthlyProjectionPanel.tsx").read_text()
-    for s in ("<ProjectionWeekModal ", "<ProjectionTeamModal ", "<ProjectionTrendModal ", "<ProjProfitTicker "):
+    for s in ("<ProjectionInfoModal filters={filters} lockedTeam={lockedTeam}",
+              "<ProjectionTrendModal ", "<ProjProfitTicker "):
         assert s in proj, s
     budget = (_OPP / "BudgetMonthlyVariancePanel.tsx").read_text()
-    assert "<VarianceWeekModal " in budget and "<VarianceTeamModal " in budget
+    assert "<VarianceInfoModal filters={filters} lockedTeam={lockedTeam}" in budget
     for name in ("CustomerMonthlyVariancePanel.tsx", "CustomerMonthlyLossesPanel.tsx", "OverPayPanel.tsx"):
         assert "<CustomerNameCell name={r.customer_name} onPick={onPickCustomer} />" in (_OPP / name).read_text()

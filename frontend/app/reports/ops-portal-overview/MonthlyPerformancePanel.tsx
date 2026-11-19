@@ -9,9 +9,8 @@ import {
   useOppTeamPerformance,
   type OppFilters,
 } from "@/lib/ops-portal-overview-api"
-import { TeamWeeklyModal } from "./TeamWeeklyModal"
-import { TeamMonthlyModal } from "./TeamMonthlyModal"
-import { PanelCard, Row, AttritionRow } from "./PanelShared"
+import { PerformanceInfoModal } from "./PerformanceInfoModal"
+import { InfoButtons, PanelCard, Row, AttritionRow } from "./PanelShared"
 
 // Moved verbatim out of SidePanels.tsx (layout 2026-10-28) — one panel per file.
 
@@ -22,8 +21,8 @@ import { PanelCard, Row, AttritionRow } from "./PanelShared"
 export function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
   const { data, isLoading, error } = useOppTeamPerformance(filters)
   const v = data?.data
-  const [weeklyOpen, setWeeklyOpen] = useState(false)
-  const [monthlyOpen, setMonthlyOpen] = useState(false)
+  // Ops Portal Updates PDF (2026-11-18) R2: ONE "Info" modal (was Week + Team).
+  const [infoOpen, setInfoOpen] = useState(false)
   // Bruno round-2 (2026-05-13): OTP/OTD coloured bands + highlight Volume/Profit/Margin.
   // Bruno R4 (2026-05-27): "+" opens the Team Weekly Performance modal.
   // Bruno R6/R7: "+" relabelled "Week"; new "Team" button opens the monthly modal.
@@ -35,32 +34,7 @@ export function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; 
       icon="📈"
       loading={isLoading}
       error={error}
-      action={
-        <span className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setWeeklyOpen(true)}
-            title="Weekly Performance — last 5 weeks"
-            className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
-            aria-label="Open Weekly Performance"
-          >
-            Week
-          </button>
-          {/* Bruno (2026-06-26): cross-team breakdown is meaningless on the
-              single-team CORP copies (T1–T4) — hide the button when locked. */}
-          {!lockedTeam && (
-            <button
-              type="button"
-              onClick={() => setMonthlyOpen(true)}
-              title="Monthly Performance — by team"
-              className="flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
-              aria-label="Open Monthly Performance"
-            >
-              Team
-            </button>
-          )}
-        </span>
-      }
+      action={<InfoButtons onInfo={() => setInfoOpen(true)} />}
     >
       <table className="w-full text-xs">
         <tbody>
@@ -100,8 +74,9 @@ export function TeamPerformance({ filters, lockedTeam }: { filters: OppFilters; 
           <AttritionRow label="Lane Attrition %" pct={v?.lane_attr_pct} />
         </tbody>
       </table>
-      {weeklyOpen && <TeamWeeklyModal filters={filters} onClose={() => setWeeklyOpen(false)} />}
-      {monthlyOpen && <TeamMonthlyModal filters={filters} onClose={() => setMonthlyOpen(false)} />}
+      {infoOpen && (
+        <PerformanceInfoModal filters={filters} lockedTeam={lockedTeam} onClose={() => setInfoOpen(false)} />
+      )}
     </PanelCard>
   )
 }

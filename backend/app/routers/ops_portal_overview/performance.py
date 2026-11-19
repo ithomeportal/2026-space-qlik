@@ -6,7 +6,7 @@ Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTO
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
+from datetime import date
 from typing import List, Optional
 
 from fastapi import Depends, Query, Request
@@ -23,7 +23,8 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
-from ._dates import _resolve_range
+from ._dates import (INFO_GRAIN_PATTERN, _info_bucket_end, _info_bucket_of, _info_buckets,
+                     _info_label, _info_trunc_sql, _resolve_range)
 from ._scope import scope_of
 from ._sql import (
     _bill_metrics_sql,
@@ -291,7 +292,9 @@ async def team_performance(
 
 
 # ---------------------------------------------------------------------------
-# /team-weekly-performance — Bruno R4 (2026-05-27): "+" modal, last 5 weeks
+# /team-weekly-performance — Bruno R4 (2026-05-27): "+" modal, last 5 weeks.
+# Ops Portal Updates PDF 2026-11-18 R2: now the "Info" modal — `grain` picks
+# Day (last 12 days) / Week (last 8 weeks, default) / Month (last 8 months).
 # ---------------------------------------------------------------------------
 
 
@@ -306,10 +309,12 @@ async def team_weekly_performance(
     # Bruno (PDF 2026-07-15) R1: Carrier multi-select (Include/Exclude).
     carriers: Optional[List[str]] = Query(None),
     exclude_carriers: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """Same KPI set as §5 Team Monthly Performance, split into the last 5
-    Mon-Sun weeks (current week included).
+    """Same KPI set as §5 Team Monthly Performance, split into periods of
+    ``grain``: the last 12 days / 8 Mon-Sun weeks / 8 months (current period
+    included). The response keeps the ``weeks`` key as an alias of ``periods``.
 
     Three grouped queries (not five fan-outs) keep it inside the small
     datalake pool: production grouped by ISO week, savings grouped by ISO
@@ -324,17 +329,15 @@ async def team_weekly_performance(
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     today = cst_today()
-    this_mon = today - timedelta(days=today.weekday())
-    week_starts = [this_mon - timedelta(weeks=k) for k in range(4, -1, -1)]
-    weeks_start = week_starts[0]
-    weeks_end = week_starts[-1] + timedelta(days=6)
+    grain = grain or "week"  # direct Python callers may pass None
+    week_starts, weeks_start, weeks_end = _info_buckets(grain, today)
+    prod_bucket = _info_trunc_sql(grain, "br4.origin_actual_departure")
+    # Savings rows are MONTHLY (month_date = the 1st): at Day/Week grain a
+    # month's savings land in the period containing the 1st (Bruno's mock).
+    sav_bucket = _info_trunc_sql(grain, "cs.month_date")
 
     def _wk(d: date) -> date:
-        return d - timedelta(days=d.weekday())
-
-    def _label(ws: date) -> str:
-        we = ws + timedelta(days=6)
-        return f"{ws.day:02d}/{ws.month:02d} - {we.day:02d}/{we.month:02d}"
+        return _info_bucket_of(grain, d)
 
     # ---- Production grouped by ISO week ---------------------------------
     prod_params: list = []
@@ -346,7 +349,7 @@ async def team_weekly_performance(
         WITH otp AS ({_scorecard_cte("otp", scope)}),
              otd AS ({_scorecard_cte("otd", scope)}),
              prod AS (
-                SELECT DATE_TRUNC('week', br4.origin_actual_departure)::date AS wk,
+                SELECT {prod_bucket} AS wk,
                        br4.id, {_team_id_select('br4', scope)}, br4.customer_name,
                        TRIM(br4.origin_name) AS origin,
                        TRIM(br4.dest_name)   AS dest,
@@ -403,7 +406,7 @@ async def team_weekly_performance(
     sav_sql = f"""
         WITH {customer_team_cte(scope)}
         SELECT
-          DATE_TRUNC('week', cs.month_date)::date AS wk,
+          {sav_bucket} AS wk,
           COALESCE(SUM(CASE WHEN cs.variance > 0 THEN cs.variance ELSE 0 END), 0)::numeric AS savings,
           COALESCE(SUM(CASE WHEN cs.variance < 0 THEN cs.variance ELSE 0 END), 0)::numeric AS over_pay,
           COALESCE(SUM(cs.variance), 0)::numeric AS net_savings
@@ -411,7 +414,7 @@ async def team_weekly_performance(
         JOIN customer_team ct ON TRIM(cs.customer_name) = ct.customer_name
         WHERE cs.month_date BETWEEN $1 AND $2
         {sav_extra}
-        GROUP BY DATE_TRUNC('week', cs.month_date)::date
+        GROUP BY 1
     """
 
     # ---- Attrition (window-independent, identical across the 5 weeks) ----
@@ -447,8 +450,8 @@ async def team_weekly_performance(
         capacity = 500 * team_count
         weeks.append({
             "start": ws.isoformat(),
-            "end": (ws + timedelta(days=6)).isoformat(),
-            "label": _label(ws),
+            "end": _info_bucket_end(grain, ws).isoformat(),
+            "label": _info_label(grain, ws),
             "customers":  int(p["customers"] or 0) if p else 0,
             "lanes":      int(p["lanes"] or 0) if p else 0,
             "volume":     volume,
@@ -472,7 +475,7 @@ async def team_weekly_performance(
             "lane_attr_pct": _safe_float(lane_attr_pct),
         })
 
-    return {"success": True, "data": {"weeks": weeks}}
+    return {"success": True, "data": {"grain": grain, "periods": weeks, "weeks": weeks}}
 
 
 # ---------------------------------------------------------------------------

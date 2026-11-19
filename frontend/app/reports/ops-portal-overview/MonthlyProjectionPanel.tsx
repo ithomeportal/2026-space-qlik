@@ -7,16 +7,16 @@ import {
   fmtUsd,
   fmtUsdSigned,
   useOppTeamProjection,
-  useOppTeamProjectionByTeam,
   useOppTeamProjectionHistory,
   useOppTeamProjectionWeekly,
   type OppFilters,
   type OppProjectionHistory,
-  type OppTeamProjection,
+  type OppTeamProjectionWeek,
 } from "@/lib/ops-portal-overview-api"
 import { ProjectionTrendModal } from "./ProjectionTrendModal"
 import { MetricMatrixModal, type MatrixCell, type MatrixRow } from "./MetricMatrixModal"
-import { PanelCard, Row, WeekTeamButtons, concPct, signCls } from "./PanelShared"
+import { InfoButtons, PanelCard, Row, signCls } from "./PanelShared"
+import { InfoToolbar, infoSubtitle, useInfoState } from "./InfoControls"
 
 // Moved verbatim out of SidePanels.tsx (layout 2026-10-28) — one panel per file.
 
@@ -28,9 +28,8 @@ export function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; l
   const cf = { team: filters.team, customers: filters.customers, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
   const { data, isLoading, error } = useOppTeamProjection(cf)
   const v = data?.data
-  // Bruno (PDF 2026-07-13): Week / Team break-out modals.
-  const [weekOpen, setWeekOpen] = useState(false)
-  const [teamOpen, setTeamOpen] = useState(false)
+  // Ops Portal Updates PDF (2026-11-18) R3: ONE "Info" modal (was Week + Team).
+  const [infoOpen, setInfoOpen] = useState(false)
   // Request 2026-08-25: the month's high / low / variation for Proj. Profit.
   const [trendOpen, setTrendOpen] = useState(false)
   const { data: histData } = useOppTeamProjectionHistory(cf)
@@ -43,12 +42,7 @@ export function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; l
       loading={isLoading}
       error={error}
       action={
-        <WeekTeamButtons
-          onWeek={() => setWeekOpen(true)}
-          onTeam={() => setTeamOpen(true)}
-          onTrend={() => setTrendOpen(true)}
-          lockedTeam={lockedTeam}
-        />
+        <InfoButtons onInfo={() => setInfoOpen(true)} onTrend={() => setTrendOpen(true)} />
       }
     >
       <table className="w-full text-xs">
@@ -86,8 +80,9 @@ export function TeamProjection({ filters, lockedTeam }: { filters: OppFilters; l
         Actuals as of yesterday&apos;s close (CST) — fixed all day. Avg x Day = last 12 working
         days ÷ 12 (Sat + Sun = 1 day). Proj. = Avg x Day × Pending Days + MTD.
       </p>
-      {weekOpen && <ProjectionWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
-      {teamOpen && <ProjectionTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
+      {infoOpen && (
+        <ProjectionInfoModal filters={filters} lockedTeam={lockedTeam} onClose={() => setInfoOpen(false)} />
+      )}
       {trendOpen && <ProjectionTrendModal filters={filters} onClose={() => setTrendOpen(false)} />}
     </PanelCard>
   )
@@ -169,12 +164,29 @@ function projectionCf(filters: OppFilters) {
   }
 }
 
-function ProjectionWeekModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
-  const { data, isLoading, error } = useOppTeamProjectionWeekly(projectionCf(filters), true)
-  const weeks = data?.data?.weeks ?? []
-  const columns = weeks.map((w) => w.label)
-  const num = (get: (w: (typeof weeks)[number]) => number, fmt: (n: number) => string, signed = false): MatrixCell[] =>
-    weeks.map((w) => {
+// Ops Portal Updates PDF (2026-11-18) R3 — the "Info" modal: per-period
+// ACTUALS under the projection's row labels, per Day / Week / Month, with an
+// internal Team filter (replaces the old Week + Team modals).
+function ProjectionInfoModal({
+  filters,
+  lockedTeam,
+  onClose,
+}: {
+  filters: OppFilters
+  lockedTeam?: string
+  onClose: () => void
+}) {
+  const info = useInfoState(lockedTeam ?? filters.team)
+  const team = lockedTeam ?? info.team
+  const { data, isLoading, error } = useOppTeamProjectionWeekly(
+    { ...projectionCf(filters), team: team || undefined },
+    true,
+    info.grain,
+  )
+  const periods = data?.data?.periods ?? data?.data?.weeks ?? []
+  const columns = periods.map((w) => w.label)
+  const num = (get: (w: OppTeamProjectionWeek) => number, fmt: (n: number) => string, signed = false): MatrixCell[] =>
+    periods.map((w) => {
       const v = get(w)
       return { text: fmt(v), className: signed ? signCls(v) : undefined }
     })
@@ -194,64 +206,22 @@ function ProjectionWeekModal({ filters, onClose }: { filters: OppFilters; onClos
   return (
     <MetricMatrixModal
       title="Monthly Projection"
-      subtitle="last 5 weeks (Mon–Sun) · weekly actuals"
+      subtitle={infoSubtitle(info.grain, team, "actuals per period")}
       icon="🎯"
       columns={columns}
       rows={rows}
       loading={isLoading}
       error={error}
       onClose={onClose}
-    />
-  )
-}
-
-function ProjectionTeamModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
-  const { data, isLoading, error } = useOppTeamProjectionByTeam(projectionCf(filters), true)
-  const total = data?.data?.total
-  const teams = data?.data?.teams ?? []
-  const columns = ["Total", ...teams.map((t) => t.team_id)]
-  const num = (
-    get: (v: OppTeamProjection) => number,
-    fmt: (n: number) => string,
-    { signed = false, showConc = false }: { signed?: boolean; showConc?: boolean } = {},
-  ): MatrixCell[] => {
-    const tv = total ? get(total) : 0
-    const cells: MatrixCell[] = [
-      { text: total ? fmt(tv) : "—", className: signed ? signCls(tv) : undefined },
-    ]
-    for (const t of teams) {
-      const v = get(t)
-      cells.push({
-        text: fmt(v),
-        className: signed ? signCls(v) : undefined,
-        conc: showConc ? concPct(v, tv) : undefined,
-      })
-    }
-    return cells
-  }
-  const rows: MatrixRow[] = [
-    { label: "Avg. Vol x Day",   cells: num((v) => v.avg_vol_day, fmtCount, { showConc: true }) },
-    { label: "Avg. Rev. x Day",  cells: num((v) => v.avg_rev_day, fmtUsd, { showConc: true }) },
-    { label: "Avg. Prof. x Day", cells: num((v) => v.avg_prof_day, fmtUsdSigned, { signed: true, showConc: true }) },
-    { label: "Pending Days",     cells: num((v) => v.pending_workdays, fmtCount) },
-    { label: "Proj. Volume",     cells: num((v) => v.proj_volume, fmtCount, { showConc: true }), highlight: true },
-    { label: "Proj. Revenue",    cells: num((v) => v.proj_revenue, fmtUsd, { showConc: true }) },
-    { label: "Proj. Profit",     cells: num((v) => v.proj_profit, fmtUsdSigned, { signed: true, showConc: true }), highlight: true },
-    { label: "Proj. Margin P %", cells: num((v) => v.proj_margin_pct, fmtPct, { signed: true }) },
-    { label: "Proj. Rev. x L.",  cells: num((v) => v.proj_rev_x_l, fmtUsd) },
-    { label: "Proj. Prf. X L.",  cells: num((v) => v.proj_prof_x_l, fmtUsdSigned, { signed: true }) },
-    { label: "Proj. Team Ut.",   cells: num((v) => v.proj_team_ut, fmtPct) },
-  ]
-  return (
-    <MetricMatrixModal
-      title="Monthly Projection"
-      subtitle="by team"
-      icon="🎯"
-      columns={columns}
-      rows={rows}
-      loading={isLoading}
-      error={error}
-      onClose={onClose}
+      toolbar={
+        <InfoToolbar
+          grain={info.grain}
+          onGrain={info.setGrain}
+          team={team}
+          onTeam={info.setTeam}
+          lockedTeam={lockedTeam}
+        />
+      }
     />
   )
 }

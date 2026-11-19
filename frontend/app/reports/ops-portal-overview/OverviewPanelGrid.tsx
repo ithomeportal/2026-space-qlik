@@ -19,12 +19,15 @@ import { MarginDistribution } from "./MarginDistribution"
  *
  *   xl:  Row 1  Monthly Performance | KPI chart (wide)     | Projection
  *                                   |                       | Customer Monthly Variance
- *        Row 2  New / Deactivated   | Service Incident · By Carrier (spans 2)
+ *        Row 2  New / Deactivated   | Service Incident      | By Carrier   (3 EQUAL)
  *        Row 3  Budget Var | Customer Losses | Over Pay | Margin distribution
  *
- * Row 2 (Bruno PDF 2026-11-17 R3): the New Customer | Deactivated panel takes
- * the left column and the Service Incident + By Carrier pair spans the centre
- * + right columns (it used to span left + centre and leave the right empty).
+ * Row 2 (Bruno PDF 2026-11-17 R3): New Customer | Deactivated left, Service
+ * Incident + By Carrier right. Ops Portal Updates PDF 2026-11-18 R1: the three
+ * are EQUAL sections — Row 2 is its own `xl:grid-cols-3` grid (it used to sit
+ * in Row 1's 1fr | 2.4fr | 1fr tracks, so the pair got ~1.7 columns each).
+ * The pair spans 2 tracks; its inner grid uses the SAME gap (gap-4), so each
+ * of the two is exactly one track wide. Items stretch to one row height.
  * Below xl everything stacks in DOM order: Performance, chart, Projection,
  * Customer Variance, New/Deactivated, Service Incident, By Carrier, Budget,
  * Losses, Over Pay, Margin distribution.
@@ -34,6 +37,10 @@ import { MarginDistribution } from "./MarginDistribution"
  */
 export const ROW1_GRID_CLS =
   "grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)_minmax(0,1fr)] xl:items-start"
+
+// ⚠ gap-4 must match ServiceIncidentTables' inner gap, or the pair stops
+// being exactly two tracks of this grid.
+export const ROW2_GRID_CLS = "grid grid-cols-1 gap-4 xl:grid-cols-3 [&>*]:min-w-0"
 
 interface Props {
   filters: OppFilters
@@ -71,7 +78,7 @@ export function OverviewPanelGrid({
 }: Props) {
   return (
     <>
-      {/* Row 1 (+ Row 2 under the left + centre columns) */}
+      {/* Row 1 */}
       <div className={ROW1_GRID_CLS}>
         <div className="min-w-0">
           <TeamPerformance filters={filters} lockedTeam={lockedTeam} />
@@ -85,7 +92,11 @@ export function OverviewPanelGrid({
             basis={customerVarianceBasis}
           />
         </div>
-        <div className="min-w-0">
+      </div>
+
+      {/* Row 2 — three equal sections (PDF 2026-11-18 R1). */}
+      <div className={ROW2_GRID_CLS}>
+        <div>
           <CustomerActivityPanel filters={filters} onPickCustomer={onPickCustomer} />
         </div>
         <ServiceIncidentTables

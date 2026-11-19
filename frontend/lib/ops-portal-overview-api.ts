@@ -689,9 +689,18 @@ export interface OppWeekPerf {
 }
 
 // Per-team breakdown of Team Performance (one row per team_id + a Total).
-export interface OppTeamPerfByTeam {
-  total: OppTeamPerformance
-  teams: (OppTeamPerformance & { team_id: string })[]
+/**
+ * Ops Portal Updates PDF 2026-11-18 R2-R4 — the "Info" modal's period grain.
+ * day = last 12 days · week = last 8 Mon–Sun weeks (default) · month = last 8
+ * months; the current, partial period is always the last column.
+ */
+export type InfoGrain = "day" | "week" | "month"
+
+/** Wire shape of the three Info endpoints. `weeks` is a legacy alias of `periods`. */
+export interface OppInfoPeriods<T> {
+  grain: InfoGrain
+  periods: T[]
+  weeks?: T[]
 }
 
 // Per-customer service-fail breakdown ("On time P&D" incident table).
@@ -758,10 +767,6 @@ export interface OppTeamVarianceWeek extends OppTeamVariance {
   end: string
   label: string
 }
-export interface OppTeamVarianceByTeam {
-  total: OppTeamVariance
-  teams: (OppTeamVariance & { team_id: string })[]
-}
 export interface OppTeamProjectionWeek {
   start: string
   end: string
@@ -777,10 +782,6 @@ export interface OppTeamProjectionWeek {
   proj_rev_x_l: number
   proj_prof_x_l: number
   proj_team_ut: number
-}
-export interface OppTeamProjectionByTeam {
-  total: OppTeamProjection
-  teams: (OppTeamProjection & { team_id: string })[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,27 +1179,21 @@ export function useOppFuel(grain: OppGrain, enabled: boolean) {
   })
 }
 
-// Bruno R4: "Team Weekly Performance" modal data.
+// Bruno R4: "Team Weekly Performance" modal data — since the 2026-11-18 PDF
+// the Monthly Performance "Info" modal, per `grain`. ⚠ `grain` is in the
+// queryKey: leave it out and the Day/Month toggles read the Week cache.
 export function useOppTeamWeekly(
   f: Pick<OppFilters, "team" | "customers" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   enabled: boolean,
+  grain: InfoGrain = "week",
 ) {
   const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: [prefix, "opp-team-weekly", f.team || "", customerKey(f), f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<{ weeks: OppWeekPerf[] }>(`${prefix}/team-weekly-performance${qs(filters)}`),
+    queryKey: [prefix, "opp-team-weekly", grain, f.team || "", customerKey(f), f.loadType || "", laneKey(f)],
+    queryFn: () =>
+      apiFetch<OppInfoPeriods<OppWeekPerf>>(`${prefix}/team-weekly-performance${qs(filters, { grain })}`),
     enabled,
-    ...RETRY,
-  })
-}
-
-// Per-team breakdown of the Team Performance table (Total + one row per team).
-export function useOppTeamPerformanceByTeam(f: OppFilters) {
-  const prefix = useApiPrefix()
-  return useQuery({
-    queryKey: [prefix, "opp-team-performance-by-team", f.range, f.startDate, f.endDate, f.team, customerKey(f), f.loadType, laneKey(f)],
-    queryFn: () => apiFetch<OppTeamPerfByTeam>(`${prefix}/team-performance-by-team${qs(f)}`),
     ...RETRY,
   })
 }
@@ -1266,22 +1261,17 @@ export function useOppMarginDistribution(f: OppFilters) {
 // Bruno (PDF 2026-07-13): Week / Team breakouts (lazy — only fetched when the
 // modal opens). Variance-weekly + projection variants use a fixed rolling
 // window, so they carry no date range in the querystring.
-export function useOppTeamVarianceWeekly(f: OppFilters, enabled: boolean) {
+export function useOppTeamVarianceWeekly(
+  f: Pick<OppFilters, "team" | "customers">,
+  enabled: boolean,
+  grain: InfoGrain = "week",
+) {
   const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", team: f.team, customers: f.customers }
   return useQuery({
-    queryKey: [prefix, "opp-team-variance-weekly", f.team || "", customerKey(f)],
-    queryFn: () => apiFetch<{ weeks: OppTeamVarianceWeek[] }>(`${prefix}/team-variance-weekly${qs(filters)}`),
-    enabled,
-    ...RETRY,
-  })
-}
-
-export function useOppTeamVarianceByTeam(f: OppFilters, enabled: boolean) {
-  const prefix = useApiPrefix()
-  return useQuery({
-    queryKey: [prefix, "opp-team-variance-by-team", f.range, f.startDate, f.endDate, customerKey(f)],
-    queryFn: () => apiFetch<OppTeamVarianceByTeam>(`${prefix}/team-variance-by-team${qs(f)}`),
+    queryKey: [prefix, "opp-team-variance-weekly", grain, f.team || "", customerKey(f)],
+    queryFn: () =>
+      apiFetch<OppInfoPeriods<OppTeamVarianceWeek>>(`${prefix}/team-variance-weekly${qs(filters, { grain })}`),
     enabled,
     ...RETRY,
   })
@@ -1313,26 +1303,14 @@ export function useOppTeamProjectionHistory(
 export function useOppTeamProjectionWeekly(
   f: Pick<OppFilters, "team" | "customers" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
   enabled: boolean,
+  grain: InfoGrain = "week",
 ) {
   const prefix = useApiPrefix()
   const filters: OppFilters = { range: "full", ...f }
   return useQuery({
-    queryKey: [prefix, "opp-team-projection-weekly", f.team || "", customerKey(f), f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<{ weeks: OppTeamProjectionWeek[] }>(`${prefix}/team-projection-weekly${qs(filters)}`),
-    enabled,
-    ...RETRY,
-  })
-}
-
-export function useOppTeamProjectionByTeam(
-  f: Pick<OppFilters, "team" | "customers" | "loadType" | "lanes" | "excludeLanes" | "carriers" | "excludeCarriers">,
-  enabled: boolean,
-) {
-  const prefix = useApiPrefix()
-  const filters: OppFilters = { range: "full", ...f }
-  return useQuery({
-    queryKey: [prefix, "opp-team-projection-by-team", customerKey(f), f.loadType || "", laneKey(f)],
-    queryFn: () => apiFetch<OppTeamProjectionByTeam>(`${prefix}/team-projection-by-team${qs(filters)}`),
+    queryKey: [prefix, "opp-team-projection-weekly", grain, f.team || "", customerKey(f), f.loadType || "", laneKey(f)],
+    queryFn: () =>
+      apiFetch<OppInfoPeriods<OppTeamProjectionWeek>>(`${prefix}/team-projection-weekly${qs(filters, { grain })}`),
     enabled,
     ...RETRY,
   })

@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.routers import ops_portal_overview as opo
 from app.datalake import not_dfw_tagged
 from app.routers.deps import get_datalake_gold_pool, require_report_access
+from app.routers.ops_portal_overview._dates import INFO_GRAIN_PATTERN
 
 
 # Single source of truth for the per-team config: (team_id, url-slug, TagRole).
@@ -491,11 +492,12 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         exclude_lanes: Optional[List[str]] = Query(None),
         carriers: Optional[List[str]] = Query(None),
         exclude_carriers: Optional[List[str]] = Query(None),
+        grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
         _user: dict = Depends(gate),
     ):
         return await opo.team_weekly_performance(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     # ---- /team-performance-by-team: deliberately NOT registered ----------
@@ -604,10 +606,11 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
     async def team_variance_weekly(
         request: Request,
         customer: Optional[List[str]] = Query(None),
+        grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
         _user: dict = Depends(gate),
     ):
         return await opo.team_variance_weekly(
-            request=request, team=team, customer=customer, _user=_user,
+            request=request, team=team, customer=customer, grain=grain, _user=_user,
         )
 
     @r.get("/team-projection-weekly")
@@ -619,11 +622,12 @@ def _make_team_router(team: str, slug: str, role: str) -> APIRouter:
         exclude_lanes: Optional[List[str]] = Query(None),
         carriers: Optional[List[str]] = Query(None),
         exclude_carriers: Optional[List[str]] = Query(None),
+        grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
         _user: dict = Depends(gate),
     ):
         return await opo.team_projection_weekly(
             request=request, team=team, customer=customer, load_type=load_type,
-            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, _user=_user,
+            lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers, exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     # ---- /team-projection-history -----------------------------------------

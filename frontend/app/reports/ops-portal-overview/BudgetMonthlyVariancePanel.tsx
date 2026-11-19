@@ -6,13 +6,13 @@ import {
   fmtPct,
   fmtUsdSigned,
   useOppTeamVariance,
-  useOppTeamVarianceByTeam,
   useOppTeamVarianceWeekly,
   type OppFilters,
   type OppTeamVariance,
 } from "@/lib/ops-portal-overview-api"
 import { MetricMatrixModal, type MatrixCell, type MatrixRow } from "./MetricMatrixModal"
-import { PanelCard, Row, WeekTeamButtons, concPct, signCls } from "./PanelShared"
+import { InfoButtons, PanelCard, Row, signCls } from "./PanelShared"
+import { InfoToolbar, infoSubtitle, useInfoState } from "./InfoControls"
 
 // Moved verbatim out of SidePanels.tsx (layout 2026-10-28) — one panel per file.
 
@@ -23,9 +23,8 @@ import { PanelCard, Row, WeekTeamButtons, concPct, signCls } from "./PanelShared
 export function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilters; lockedTeam?: string }) {
   const { data, isLoading, error } = useOppTeamVariance(filters)
   const v = data?.data
-  // Bruno (PDF 2026-07-13): Week / Team break-out modals.
-  const [weekOpen, setWeekOpen] = useState(false)
-  const [teamOpen, setTeamOpen] = useState(false)
+  // Ops Portal Updates PDF (2026-11-18) R4: ONE "Info" modal (was Week + Team).
+  const [infoOpen, setInfoOpen] = useState(false)
   return (
     <PanelCard
       title="Budget Monthly Variance"
@@ -33,11 +32,7 @@ export function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilter
       loading={isLoading}
       error={error}
       action={
-        <WeekTeamButtons
-          onWeek={() => setWeekOpen(true)}
-          onTeam={() => setTeamOpen(true)}
-          lockedTeam={lockedTeam}
-        />
+        <InfoButtons onInfo={() => setInfoOpen(true)} />
       }
     >
       <table className="w-full text-xs">
@@ -51,23 +46,39 @@ export function TeamBudgetVariance({ filters, lockedTeam }: { filters: OppFilter
           <Row label="Prf. X L."  value={v ? fmtUsdSigned(v.prof_x_l) : "—"}  signed numeric={v?.prof_x_l ?? 0} />
         </tbody>
       </table>
-      {weekOpen && <VarianceWeekModal filters={filters} onClose={() => setWeekOpen(false)} />}
-      {teamOpen && <VarianceTeamModal filters={filters} onClose={() => setTeamOpen(false)} />}
+      {infoOpen && (
+        <VarianceInfoModal filters={filters} lockedTeam={lockedTeam} onClose={() => setInfoOpen(false)} />
+      )}
     </PanelCard>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Bruno (PDF 2026-07-13) — Week / Team break-out modals for the Team Budget
-// Variance and Team Monthly Projection panels.
+// Ops Portal Updates PDF (2026-11-18) R4 — the "Info" modal: the old Week
+// matrix per Day / Week / Month, with an internal Team filter. The old "Team"
+// (side-by-side by team) modal is gone; the filter replaces it.
 // ---------------------------------------------------------------------------
 
-function VarianceWeekModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
-  const { data, isLoading, error } = useOppTeamVarianceWeekly(filters, true)
-  const weeks = data?.data?.weeks ?? []
-  const columns = weeks.map((w) => w.label)
+function VarianceInfoModal({
+  filters,
+  lockedTeam,
+  onClose,
+}: {
+  filters: OppFilters
+  lockedTeam?: string
+  onClose: () => void
+}) {
+  const info = useInfoState(lockedTeam ?? filters.team)
+  const team = lockedTeam ?? info.team
+  const { data, isLoading, error } = useOppTeamVarianceWeekly(
+    { team: team || undefined, customers: filters.customers },
+    true,
+    info.grain,
+  )
+  const periods = data?.data?.periods ?? data?.data?.weeks ?? []
+  const columns = periods.map((w) => w.label)
   const num = (get: (w: OppTeamVariance) => number, fmt: (n: number) => string, signed = true): MatrixCell[] =>
-    weeks.map((w) => {
+    periods.map((w) => {
       const v = get(w)
       return { text: fmt(v), className: signed ? signCls(v) : undefined }
     })
@@ -83,60 +94,22 @@ function VarianceWeekModal({ filters, onClose }: { filters: OppFilters; onClose:
   return (
     <MetricMatrixModal
       title="Budget Monthly Variance"
-      subtitle="last 5 weeks (Mon–Sun)"
+      subtitle={infoSubtitle(info.grain, team, "actual − budget (current period vs its whole goal)")}
       icon="📊"
       columns={columns}
       rows={rows}
       loading={isLoading}
       error={error}
       onClose={onClose}
-    />
-  )
-}
-
-function VarianceTeamModal({ filters, onClose }: { filters: OppFilters; onClose: () => void }) {
-  const { data, isLoading, error } = useOppTeamVarianceByTeam(filters, true)
-  const total = data?.data?.total
-  const teams = data?.data?.teams ?? []
-  const columns = ["Total", ...teams.map((t) => t.team_id)]
-  const num = (
-    get: (v: OppTeamVariance) => number,
-    fmt: (n: number) => string,
-    { signed = true, showConc = false }: { signed?: boolean; showConc?: boolean } = {},
-  ): MatrixCell[] => {
-    const tv = total ? get(total) : 0
-    const cells: MatrixCell[] = [
-      { text: total ? fmt(tv) : "—", className: signed ? signCls(tv) : undefined },
-    ]
-    for (const t of teams) {
-      const v = get(t)
-      cells.push({
-        text: fmt(v),
-        className: signed ? signCls(v) : undefined,
-        conc: showConc ? concPct(v, tv) : undefined,
-      })
-    }
-    return cells
-  }
-  const rows: MatrixRow[] = [
-    { label: "Customers",  cells: num((v) => v.customers, fmtCount, { signed: false, showConc: true }) },
-    { label: "Volume",     cells: num((v) => v.volume_var, fmtCount, { showConc: true }), highlight: true },
-    { label: "Revenue",    cells: num((v) => v.revenue_var, fmtUsdSigned, { showConc: true }) },
-    { label: "Profit",     cells: num((v) => v.profit_var, fmtUsdSigned, { showConc: true }), highlight: true },
-    { label: "Margin P %", cells: num((v) => v.margin_var_pct, fmtPct) },
-    { label: "Rev. x L.",  cells: num((v) => v.rev_x_l, fmtUsdSigned) },
-    { label: "Prf. X L.",  cells: num((v) => v.prof_x_l, fmtUsdSigned) },
-  ]
-  return (
-    <MetricMatrixModal
-      title="Budget Monthly Variance"
-      subtitle="by team"
-      icon="📊"
-      columns={columns}
-      rows={rows}
-      loading={isLoading}
-      error={error}
-      onClose={onClose}
+      toolbar={
+        <InfoToolbar
+          grain={info.grain}
+          onGrain={info.setGrain}
+          team={team}
+          onTeam={info.setTeam}
+          lockedTeam={lockedTeam}
+        />
+      }
     />
   )
 }

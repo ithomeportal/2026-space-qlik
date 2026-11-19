@@ -12,9 +12,12 @@ import {
   type OppFilters,
   type OppWeekPerf,
 } from "@/lib/ops-portal-overview-api"
+import { InfoToolbar, infoSubtitle, useInfoState } from "./InfoControls"
 
 interface Props {
   filters: OppFilters
+  /** Team-locked portals (CORP T1–T4, DFW TM1–4): the Team filter is a badge. */
+  lockedTeam?: string
   onClose: () => void
 }
 
@@ -24,7 +27,9 @@ interface Props {
 // exactly backwards here: a negative % Δ means the active roster GREW.
 type Kind = "count" | "usd" | "usdSigned" | "pct" | "attritionPct"
 
-// Mirrors the §5 Team Monthly Performance row set, split into the last 5 weeks.
+// Mirrors the §5 Team Monthly Performance row set, split into periods —
+// Ops Portal Updates PDF (2026-11-18) R2: the "Info" modal (Day / Week / Month
+// + an internal Team filter) that replaced the old Week + Team buttons.
 const ROWS: {
   label: string
   field: keyof OppWeekPerf
@@ -70,10 +75,20 @@ function bandCls(pct: number): string {
   return "bg-[#FEE2E2] text-[#991B1B]"
 }
 
-export function TeamWeeklyModal({ filters, onClose }: Props) {
-  const cf = { team: filters.team, customers: filters.customers, loadType: filters.loadType, lanes: filters.lanes, excludeLanes: filters.excludeLanes }
-  const { data, isLoading, error } = useOppTeamWeekly(cf, true)
-  const weeks: OppWeekPerf[] = data?.data?.weeks ?? []
+export function PerformanceInfoModal({ filters, lockedTeam, onClose }: Props) {
+  const info = useInfoState(lockedTeam ?? filters.team)
+  const team = lockedTeam ?? info.team
+  const cf = {
+    team: team || undefined,
+    customers: filters.customers,
+    loadType: filters.loadType,
+    lanes: filters.lanes,
+    excludeLanes: filters.excludeLanes,
+    carriers: filters.carriers,
+    excludeCarriers: filters.excludeCarriers,
+  }
+  const { data, isLoading, error } = useOppTeamWeekly(cf, true, info.grain)
+  const weeks: OppWeekPerf[] = data?.data?.periods ?? data?.data?.weeks ?? []
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -89,14 +104,14 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
       onMouseDown={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F0F9FF] px-4 py-3">
           <div className="flex items-center gap-2">
             <span aria-hidden>📈</span>
-            <div className="text-sm font-semibold text-[#1B3A5C]">Weekly Performance</div>
-            <span className="text-xs text-[#6B7280]">· last 5 weeks (Mon–Sun)</span>
+            <div className="text-sm font-semibold text-[#1B3A5C]">Monthly Performance</div>
+            <span className="text-xs text-[#6B7280]">· {infoSubtitle(info.grain, team)}</span>
           </div>
           <button
             onClick={onClose}
@@ -107,6 +122,13 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
           </button>
         </div>
 
+        <InfoToolbar
+          grain={info.grain}
+          onGrain={info.setGrain}
+          team={team}
+          onTeam={info.setTeam}
+          lockedTeam={lockedTeam}
+        />
         <div className="flex-1 overflow-auto p-4">
           {isLoading && (
             <div className="flex items-center justify-center py-12">
@@ -115,7 +137,7 @@ export function TeamWeeklyModal({ filters, onClose }: Props) {
           )}
           {!!error && !isLoading && (
             <div className="rounded-lg border border-[#FCA5A5] bg-[#FEE2E2] px-3 py-2 text-xs text-[#991B1B]">
-              Weekly performance query failed: {(error as Error).message}
+              Performance query failed: {(error as Error).message}
             </div>
           )}
           {!isLoading && !error && (

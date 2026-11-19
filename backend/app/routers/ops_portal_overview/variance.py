@@ -5,7 +5,7 @@ Part of the ``ops_portal_overview`` package (split 2026-08-14 — see SPEC-CUSTO
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import List, Optional
 
 from fastapi import Depends, Query, Request
@@ -14,7 +14,15 @@ from app.clock import cst_today
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
 from ._constants import customer_team_cte, CORP_TEAMS, CUSTOMER_TEAM_CTE, router
-from ._dates import _last_5_weeks, _resolve_range, _week_label
+from ._dates import (
+    INFO_GRAIN_PATTERN,
+    _info_bucket_end,
+    _info_bucket_of,
+    _info_buckets,
+    _info_label,
+    _info_trunc_sql,
+    _resolve_range,
+)
 from ._scope import scope_of
 from ._sql import _customer_any, _team_id_col, _v4_scope_where
 from ._metrics import _safe_float, _variance_from_sums
@@ -548,18 +556,24 @@ async def team_variance_weekly(
     request: Request,
     team: Optional[str] = Query(None),
     customer: Optional[List[str]] = Query(None),
+    grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
     _user: dict = Depends(require_report_access("ops-portal-overview")),
 ):
-    """Team Budget Variance broken out by the last 5 completed Mon-Sun weeks.
+    """Team Budget Variance broken out by period — the "Info" modal.
 
-    Each week column is the actual − budget variance for that week (same
-    convention as /team-variance). Fixed rolling 5-week window; team/customer
-    filters apply, the page date filter is intentionally ignored.
+    Ops Portal Updates PDF 2026-11-18 R4: ``grain`` = day (last 12 days) /
+    week (last 8 Mon-Sun weeks, default) / month (last 8 months), current
+    period included. Each column is actual − budget for that period (same
+    convention as /team-variance); the budget leg spans the WHOLE period
+    (§92), so the current column compares a partial actual with a full goal —
+    as the current week always has. Team/customer filters apply, the page
+    date filter is intentionally ignored. ``weeks`` aliases ``periods``.
     """
     pool = get_datalake_gold_pool(request)
     scope = scope_of(request)
     today = cst_today()
-    week_starts, weeks_start, weeks_end = _last_5_weeks(today)
+    grain = grain or "week"  # direct Python callers may pass None
+    week_starts, weeks_start, weeks_end = _info_buckets(grain, today)
     params, where, p_s, p_e, bud_extra = _variance_params(
         s=weeks_start, e=weeks_end, team=team, customer=customer, scope=scope,
     )
@@ -568,8 +582,8 @@ async def team_variance_weekly(
         WITH {customer_team_cte(scope, with_budget_team=True)},
         {_variance_legs(
             where=where, p_s=p_s, p_e=p_e, bud_extra=bud_extra, scope=scope,
-            prod_grp="DATE_TRUNC('week', br4.origin_actual_departure)::date",
-            bud_grp='DATE_TRUNC(\'week\', budget."Date")::date',
+            prod_grp=_info_trunc_sql(grain, "br4.origin_actual_departure"),
+            bud_grp=_info_trunc_sql(grain, 'budget."Date"'),
         )}
         SELECT
           grp AS wk,
@@ -582,7 +596,7 @@ async def team_variance_weekly(
         """,
         *params,
     )
-    by_wk = {r["wk"]: r for r in rows}
+    by_wk = {_info_bucket_of(grain, r["wk"]): r for r in rows}
     weeks_out = []
     for ws in week_starts:
         r = by_wk.get(ws)
@@ -593,10 +607,10 @@ async def team_variance_weekly(
             r["profit_actual"] if r else 0, r["profit_budget"] if r else 0,
         )
         obj["start"] = ws.isoformat()
-        obj["end"] = (ws + timedelta(days=6)).isoformat()
-        obj["label"] = _week_label(ws)
+        obj["end"] = _info_bucket_end(grain, ws).isoformat()
+        obj["label"] = _info_label(grain, ws)
         weeks_out.append(obj)
-    return {"success": True, "data": {"weeks": weeks_out}}
+    return {"success": True, "data": {"grain": grain, "periods": weeks_out, "weeks": weeks_out}}
 
 
 @router.get("/team-variance-by-team")

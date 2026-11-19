@@ -62,6 +62,7 @@ from app.routers import ops_portal_overview_dfw as dfw
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 from app.routers.ops_portal_overview._scope import DFW_SCOPE
 from app.routers.ops_portal_overview._sql import _v4_scope_where
+from app.routers.ops_portal_overview._dates import INFO_GRAIN_PATTERN
 
 # One line per report. TM5 is not requested (Bruno 2026-11-09).
 TEAM_CONFIGS: tuple[str, ...] = ("TM1", "TM2", "TM3", "TM4")
@@ -466,12 +467,13 @@ def _make_team_router(tm: str) -> APIRouter:
         exclude_lanes: list[str] | None = Query(None),
         carriers: list[str] | None = Query(None),
         exclude_carriers: list[str] | None = Query(None),
+        grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
         _user: dict = Depends(gate),
     ):
         return await dfw.team_weekly_performance(
             request=request, team=tm, customer=customer, load_type=load_type,
             lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
-            exclude_carriers=exclude_carriers, _user=_user,
+            exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     @r.get("/service-incident-by-customer")
@@ -571,12 +573,13 @@ def _make_team_router(tm: str) -> APIRouter:
         exclude_lanes: list[str] | None = Query(None),
         carriers: list[str] | None = Query(None),
         exclude_carriers: list[str] | None = Query(None),
+        grain: str = Query("week", pattern=INFO_GRAIN_PATTERN),
         _user: dict = Depends(gate),
     ):
         return await dfw.team_projection_weekly(
             request=request, team=tm, customer=customer, load_type=load_type,
             lanes=lanes, exclude_lanes=exclude_lanes, carriers=carriers,
-            exclude_carriers=exclude_carriers, _user=_user,
+            exclude_carriers=exclude_carriers, grain=grain, _user=_user,
         )
 
     # Resolves the dfw/TMn stored series; the DFW shim pins teams=None.

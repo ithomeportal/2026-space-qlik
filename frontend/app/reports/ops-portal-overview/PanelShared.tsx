@@ -286,32 +286,18 @@ export function MiniTh<K extends string>({
 // Variance and Team Monthly Projection panels.
 // ---------------------------------------------------------------------------
 
-export function WeekTeamButtons({
-  onWeek,
-  onTeam,
-  onTrend,
-  lockedTeam,
-}: {
-  onWeek: () => void
-  onTeam: () => void
-  // Request 2026-08-25 — only the projection panel has a stored history, so
-  // the Variance panel calls this without `onTrend` and gets no third button.
-  onTrend?: () => void
-  lockedTeam?: string
-}) {
+// Ops Portal Updates PDF (2026-11-18) R2-R4: the old "Week" + "Team" pair is
+// ONE "Info" button — the modal carries Day/Week/Month + an internal Team
+// filter (InfoControls.tsx). Projection keeps its "Trend" button beside it.
+export function InfoButtons({ onInfo, onTrend }: { onInfo: () => void; onTrend?: () => void }) {
   const btn =
     "flex h-5 items-center justify-center rounded border border-[#BFDBFE] bg-white px-1.5 text-[10px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF]"
   return (
     <span className="flex items-center gap-1">
-      <button type="button" onClick={onWeek} className={btn} title="Break out by the last 5 weeks">
-        Week
+      <button type="button" onClick={onInfo} className={btn} title="Day / Week / Month break-out, by team">
+        Info
       </button>
-      {/* Cross-team breakdown is meaningless on the single-team CORP copies. */}
-      {!lockedTeam && (
-        <button type="button" onClick={onTeam} className={btn} title="Break out by team">
-          Team
-        </button>
-      )}
+      {/* Request 2026-08-25 — only the projection panel has a stored history. */}
       {onTrend && (
         <button
           type="button"
