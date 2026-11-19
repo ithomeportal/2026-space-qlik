@@ -71,8 +71,15 @@ counts AS (
      GROUP BY 1, 2
 ),
 last_seen AS (
-    SELECT z.event_point_name AS reader, max(z.event_time) AS last_event
+    SELECT z.event_point_name AS reader,
+           max(z.event_time) AS last_event,
+           min(z.event_time) FILTER (WHERE z.event_date = $1::date
+                                       AND z.event_time::time <= cut.t) AS first_on_day,
+           max(z.event_time) FILTER (WHERE z.event_date = $1::date
+                                       AND z.event_time::time <= cut.t) AS last_on_day,
+           max(z.event_time) FILTER (WHERE z.event_date < $1::date)     AS prev_event
       FROM public.zk_gld_onlyfingerprint z
+     CROSS JOIN cut
      WHERE z.event_date BETWEEN $1::date - 28 AND $1::date
        AND z.verify_mode_no IS DISTINCT FROM 200
      GROUP BY 1
@@ -80,6 +87,12 @@ last_seen AS (
 SELECT n.reader, n.k, n.n,
        (l.last_event AT TIME ZONE 'America/Monterrey'
                      AT TIME ZONE 'America/Chicago') AS last_event_cst,
+       (l.first_on_day AT TIME ZONE 'America/Monterrey'
+                       AT TIME ZONE 'America/Chicago') AS first_on_day_cst,
+       (l.last_on_day AT TIME ZONE 'America/Monterrey'
+                      AT TIME ZONE 'America/Chicago') AS last_on_day_cst,
+       (l.prev_event AT TIME ZONE 'America/Monterrey'
+                     AT TIME ZONE 'America/Chicago') AS prev_event_cst,
        (SELECT t FROM cut) AS cutoff
   FROM counts n
   LEFT JOIN last_seen l USING (reader)
@@ -94,6 +107,13 @@ class ReaderHealth:
     baseline: float
     last_event_cst: str | None
     down: bool
+    # The reader's own span ON the date (up to the cutoff) and its last record
+    # BEFORE the date. A reader that came back mid-day (2ND FLOOR, 11-18 14:19)
+    # has a fresh `last_event_cst`, so "none since <last_event>" would be false;
+    # the span + previous record say where the gap really is.
+    first_on_day_cst: str | None = None
+    last_on_day_cst: str | None = None
+    prev_event_cst: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,24 +144,41 @@ def classify_building(total_today: int, total_baseline: float) -> bool:
     )
 
 
+_STAMP_KEYS = ("last_event_cst", "first_on_day_cst", "last_on_day_cst", "prev_event_cst")
+
+
+def _iso(ts: Any) -> str | None:
+    return ts.isoformat() if hasattr(ts, "isoformat") else ts
+
+
 def classify_door_feed(rows: Iterable[dict[str, Any]]) -> FeedHealth:
-    """Rows: {reader, k, n, last_event_cst}. A (reader, k) pair with no row is a
+    """Rows: {reader, k, n, last_event_cst, first_on_day_cst, last_on_day_cst,
+    prev_event_cst}. A (reader, k) pair with no row is a
     zero — a reader silent all day is exactly the case this exists to catch."""
     counts: dict[str, dict[int, int]] = {}
-    last: dict[str, str | None] = {}
+    stamps: dict[str, dict[str, str | None]] = {}
     for r in rows:
         name = r["reader"] or "(unnamed reader)"
         counts.setdefault(name, {})[int(r["k"])] = int(r["n"])
-        ts = r.get("last_event_cst")
-        last[name] = ts.isoformat() if hasattr(ts, "isoformat") else ts
+        stamps[name] = {key: _iso(r.get(key)) for key in _STAMP_KEYS}
 
     readers = []
     for name in sorted(counts):
         by_k = counts[name]
         today = by_k.get(0, 0)
         baseline = float(median(by_k.get(k, 0) for k in range(1, BASELINE_WEEKS + 1)))
+        st = stamps.get(name, {})
         readers.append(
-            ReaderHealth(name, today, baseline, last.get(name), classify_reader(today, baseline))
+            ReaderHealth(
+                reader=name,
+                today=today,
+                baseline=baseline,
+                last_event_cst=st.get("last_event_cst"),
+                down=classify_reader(today, baseline),
+                first_on_day_cst=st.get("first_on_day_cst"),
+                last_on_day_cst=st.get("last_on_day_cst"),
+                prev_event_cst=st.get("prev_event_cst"),
+            )
         )
     total_today = sum(r.today for r in readers)
     total_baseline = float(sum(r.baseline for r in readers))
@@ -168,6 +205,9 @@ def feed_health_payload(day: date, health: FeedHealth, cutoff: Any) -> dict[str,
                 "today": r.today,
                 "baseline": r.baseline,
                 "last_event": r.last_event_cst,
+                "first_on_day": r.first_on_day_cst,
+                "last_on_day": r.last_on_day_cst,
+                "prev_event": r.prev_event_cst,
                 "down": r.down,
             }
             for r in health.readers

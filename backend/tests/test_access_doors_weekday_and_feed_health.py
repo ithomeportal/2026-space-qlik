@@ -278,3 +278,155 @@ def test_both_frontends_render_the_banner():
     lib = (root / "lib/door-feed-health.ts").read_text(encoding="utf-8")
     assert "queryKey: [reportKey, \"door-feed-health\", date]" in lib
     assert "new Date(" not in lib
+
+
+# ---------------------------------------------------------------------------
+# C — a reader that came BACK mid-day (2026-11-18): the span, never "none since"
+# ---------------------------------------------------------------------------
+#
+# 2ND FLOOR was silent 11-16 11:28 → 11-18 14:19 and then ran normally. On 11-18
+# its newest record is fresh (19:35), so the old banner line "none since Nov 18,
+# 7:35 PM" was false. The payload now carries the reader's span ON the date and
+# its last record BEFORE it; the banner states those.
+
+NOV_18_SPAN = {
+    "first_on_day_cst": "2026-11-18T14:19:06",
+    "last_on_day_cst": "2026-11-18T19:35:05",
+    "prev_event_cst": "2026-11-16T11:28:06",
+    "last_event_cst": "2026-11-18T19:35:05",
+}
+
+
+def _span_rows() -> list[dict]:
+    rows = _rows({"2ND FLOOR": [58, 259, 269, 262, 270], "3F Door": [66, 43, 40, 45, 38]})
+    for r in rows:
+        if r["reader"] == "2ND FLOOR":
+            r.update(NOV_18_SPAN)
+    return rows
+
+
+class TestReaderSpan:
+    def test_span_and_previous_record_reach_the_payload(self):
+        from datetime import date, time
+
+        h = fh.classify_door_feed(_span_rows())
+        p = fh.feed_health_payload(date(2026, 11, 18), h, time(19, 40))
+        second = next(r for r in p["readers"] if r["reader"] == "2ND FLOOR")
+        assert second["down"] is True and second["today"] == 58
+        assert second["first_on_day"] == "2026-11-18T14:19:06"
+        assert second["last_on_day"] == "2026-11-18T19:35:05"
+        assert second["prev_event"] == "2026-11-16T11:28:06"
+
+    def test_datetimes_are_serialised(self):
+        from datetime import datetime
+
+        rows = _span_rows()
+        for r in rows:
+            if r["reader"] == "2ND FLOOR":
+                r["first_on_day_cst"] = datetime(2026, 11, 18, 14, 19, 6)  # noqa: DTZ001 — naive CST, like asyncpg returns
+        h = fh.classify_door_feed(rows)
+        second = next(r for r in h.readers if r.reader == "2ND FLOOR")
+        assert second.first_on_day_cst == "2026-11-18T14:19:06"
+
+    def test_missing_span_keys_read_as_none(self):
+        h = fh.classify_door_feed(_rows(NOV_17))
+        second = next(r for r in h.readers if r.reader == "2ND FLOOR")
+        assert second.first_on_day_cst is None and second.prev_event_cst is None
+
+    def test_sql_bounds_the_span_to_the_date_and_cutoff(self):
+        sql = _squash(fh.FEED_HEALTH_SQL)
+        assert sql.count("FILTER (WHERE z.event_date = $1::date AND z.event_time::time <= cut.t)") == 2
+        assert "FILTER (WHERE z.event_date < $1::date)" in sql
+        for col in ("first_on_day_cst", "last_on_day_cst", "prev_event_cst"):
+            assert f"AS {col}" in sql
+
+
+def _describe(health: dict) -> list[str]:
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    module = (pathlib.Path(__file__).resolve().parents[2] / "frontend/lib/door-feed-health.ts").as_uri()
+    src = (
+        f"const m = await import({json.dumps(module)});\n"
+        f"console.log(JSON.stringify(m.describeDoorFeed({json.dumps(health)})))"
+    )
+    done = subprocess.run(
+        [node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", src],
+        capture_output=True, text=True, timeout=30, check=True,
+    )
+    return json.loads(done.stdout)
+
+
+def _health(reader: dict) -> dict:
+    return {
+        "date": "2026-11-18", "cutoff": "19:40:00", "degraded": True,
+        "building_degraded": False, "down": [reader["reader"]],
+        "total_today": reader["today"], "total_baseline": reader["baseline"],
+        "readers": [reader],
+    }
+
+
+class TestBannerWording:
+    def test_a_reader_back_mid_day_states_its_span_and_the_gap(self):
+        lines = _describe(_health({
+            "reader": "2ND FLOOR", "today": 58, "baseline": 265.5, "down": True,
+            "last_event": "2026-11-18T19:35:05", "first_on_day": "2026-11-18T14:19:06",
+            "last_on_day": "2026-11-18T19:35:05", "prev_event": "2026-11-16T11:28:06",
+        }))
+        assert lines == [
+            (
+                "The 2ND FLOOR reader sent only 58 records (usually ~266 by this time); "
+                "they run 2:19 PM – 7:35 PM CST, and before that its last record was "
+                "Nov 16, 11:28 AM CST."
+            )
+        ]
+        assert "none since" not in lines[0]
+
+    def test_a_reader_that_stopped_mid_day_shows_where_it_stopped(self):
+        """11-16: 68 records 05:59 → 11:28, previous record the evening before — no gap clause."""
+        lines = _describe(_health({
+            "reader": "2ND FLOOR", "today": 68, "baseline": 270, "down": True,
+            "last_event": "2026-11-16T11:28:06", "first_on_day": "2026-11-16T05:59:46",
+            "last_on_day": "2026-11-16T11:28:06", "prev_event": "2026-11-15T19:09:21",
+        }))
+        assert lines == [
+            (
+                "The 2ND FLOOR reader sent only 68 records (usually ~270 by this time); "
+                "they run 5:59 AM – 11:28 AM CST."
+            )
+        ]
+
+    def test_a_silent_reader_keeps_the_since_line(self):
+        lines = _describe(_health({
+            "reader": "2ND FLOOR", "today": 0, "baseline": 264.5, "down": True,
+            "last_event": "2026-11-16T11:28:06", "first_on_day": None,
+            "last_on_day": None, "prev_event": "2026-11-16T11:28:06",
+        }))
+        assert lines == [
+            (
+                "The 2ND FLOOR reader has no records since Nov 16, 11:28 AM CST "
+                "(usually ~265 by this time)."
+            )
+        ]
+
+    def test_an_older_backend_without_the_span_never_claims_none_since(self):
+        lines = _describe(_health({
+            "reader": "2ND FLOOR", "today": 58, "baseline": 265.5, "down": True,
+            "last_event": "2026-11-18T19:35:05",
+        }))
+        assert lines == ["The 2ND FLOOR reader sent only 58 records (usually ~266 by this time)."]
+
+    def test_a_monday_after_a_quiet_weekend_gets_no_gap_clause(self):
+        """11-16 3F Door: 06:18 start, previous record Sat 11-14 — a weekend, not an outage gap."""
+        lines = _describe(_health({
+            "reader": "3F Door", "today": 11, "baseline": 51, "down": True,
+            "last_event": "2026-11-16T12:53:27", "first_on_day": "2026-11-16T06:18:16",
+            "last_on_day": "2026-11-16T12:53:27", "prev_event": "2026-11-14T17:25:12",
+        }))
+        assert lines == [
+            "The 3F Door reader sent only 11 records (usually ~51 by this time); they run 6:18 AM – 12:53 PM CST."
+        ]

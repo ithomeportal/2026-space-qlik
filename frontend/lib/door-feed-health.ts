@@ -17,6 +17,11 @@ export interface DoorReaderHealth {
   today: number
   baseline: number
   last_event: string | null // naive CST ISO, e.g. "2026-11-16T11:28:06"
+  /** First / last record ON the date (up to the cutoff); null when none. */
+  first_on_day?: string | null
+  last_on_day?: string | null
+  /** Newest record BEFORE the date — where a mid-day comeback's gap began. */
+  prev_event?: string | null
   down: boolean
 }
 
@@ -77,18 +82,56 @@ export function fmtNaiveCst(iso: string): string {
   return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${h12}:${m[5]} ${ampm}`
 }
 
+/** "2026-11-18T14:19:06" -> "2:19 PM" (naive CST, sliced by hand like fmtNaiveCst). */
+export function fmtNaiveCstTime(iso: string): string {
+  const full = fmtNaiveCst(iso)
+  const comma = full.indexOf(", ")
+  return comma >= 0 ? full.slice(comma + 2) : full
+}
+
+/** Whole calendar days between two "YYYY-MM-DD…" strings (b − a), UTC-safe. */
+function dayGap(a: string, b: string): number {
+  const ms = Date.parse(`${b.slice(0, 10)}T00:00:00Z`) - Date.parse(`${a.slice(0, 10)}T00:00:00Z`)
+  return Math.round(ms / 86_400_000)
+}
+
+const LATE_START_HOUR = 12
+
+/**
+ * A reader that sent SOME records on the date. Never "none since <last record>":
+ * once a reader comes back mid-day (2ND FLOOR, 2026-11-18 14:19 after 11-16
+ * 11:28) its newest record is fresh and that sentence is false. Instead state
+ * the span it covered, and — when it had been silent for at least a whole day
+ * before AND only started at noon or later — where the gap began.
+ */
+function partialReaderLine(r: DoorReaderHealth, usual: string): string {
+  const head = `The ${r.reader} reader sent only ${r.today} records (${usual})`
+  if (!r.first_on_day || !r.last_on_day) return `${head}.`
+  const span =
+    r.first_on_day === r.last_on_day
+      ? `its only record was at ${fmtNaiveCstTime(r.first_on_day)} CST`
+      : `they run ${fmtNaiveCstTime(r.first_on_day)} – ${fmtNaiveCstTime(r.last_on_day)} CST`
+  // The gap clause only when the reader ALSO started late (noon or after): a
+  // Monday whose previous record is Saturday afternoon is a weekend, not news.
+  const startedLate = Number(r.first_on_day.slice(11, 13)) >= LATE_START_HOUR
+  const gapBefore =
+    r.prev_event && startedLate && dayGap(r.prev_event, r.first_on_day) >= 2
+      ? `, and before that its last record was ${fmtNaiveCst(r.prev_event)} CST`
+      : ""
+  return `${head}; ${span}${gapBefore}.`
+}
+
 /** One sentence per down reader; a building-wide line when no single reader explains it. */
 export function describeDoorFeed(h: DoorFeedHealth): string[] {
   const lines = h.readers
     .filter((r) => r.down)
     .map((r) => {
       const usual = `usually ~${Math.round(r.baseline)} by this time`
+      if (r.today > 0) return partialReaderLine(r, usual)
       const since = r.last_event
         ? `since ${fmtNaiveCst(r.last_event)} CST`
         : "in the last 4 weeks"
-      return r.today === 0
-        ? `The ${r.reader} reader has no records ${since} (${usual}).`
-        : `The ${r.reader} reader sent only ${r.today} records (${usual}); none ${since}.`
+      return `The ${r.reader} reader has no records ${since} (${usual}).`
     })
   if (lines.length === 0 && h.building_degraded) {
     lines.push(
