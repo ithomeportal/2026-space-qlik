@@ -938,12 +938,24 @@ def test_loaded_comment_gets_the_report_date_format():
         "Loaded at the shipper Central Texas Corrugated on 11/04/2026 @ 12:40 AM.")
 
 
-def test_the_eta_is_large_and_carries_its_pill():
-    """Jaime 11/03: 'que se vea grande y muy visual'."""
+def test_the_eta_is_one_bold_coloured_line_at_the_column_size_and_carries_its_pill():
+    """Jaime 11/20 (reverses 11/03 'grande'): keep it bold and in colour, but the same size as the
+    other columns' values (14px, `_big`) and date + time on ONE line, in the report's format."""
     order = _order(del_sched_late=datetime(2026, 10, 20, 13, 0), del_eta=datetime(2026, 10, 20, 18, 20))
     out = html.card_in_progress(cards.build_card(order, cards.IN_PROGRESS, {}, NOW))
-    assert "ETA to delivery" in out and "font-size:20px;font-weight:700" in out
-    assert "10/20/2026" in out and "06:20 PM" in out and "5.3 Hours BEHIND" in out
+    assert "ETA to delivery" in out and "5.3 Hours BEHIND" in out
+    assert "font-size:20px" not in out
+    stamp = re.search(r'<div style="([^"]*font-weight:700[^"]*)">10/20/2026 @ 06:20 PM</div>', out)
+    assert stamp, "date and time must sit in ONE bold element"
+    css = stamp.group(1)
+    assert "font-size:14px" in css and "white-space:nowrap" in css
+    assert f"color:{html.BAD}" in css  # late ⇒ the block's colour, not plain ink
+
+
+def test_every_eta_block_shares_the_one_line_stamp():
+    """Arrived / ETA / Estimated arrival all render through `_stamp` — one line each."""
+    out = html._stamp(datetime(2026, 11, 21, 11, 55), html.NAVY)
+    assert out.count("<div") == 1 and "11/21/2026 @ 11:55 AM" in out
 
 
 def test_no_eta_says_pending_and_never_labels_the_appointment_as_an_eta():

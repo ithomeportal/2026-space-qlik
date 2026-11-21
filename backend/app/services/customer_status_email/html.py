@@ -141,11 +141,12 @@ def _lane_cell(card: Card, with_bol: bool = True) -> str:
 
 
 def _stamp(value: datetime, colour: str) -> str:
-    """The block's headline: the time the customer cares about most (Jaime 2026-11-03,
-    "que se vea grande y muy visual"). Two lines so it fits the column without wrapping."""
-    css = f"font-size:20px;font-weight:700;line-height:24px;color:{colour};white-space:nowrap;"
-    return (f'<div {_s(css)}>{value.strftime("%m/%d/%Y")}</div>'
-            f'<div {_s(css)}>{value.strftime("%I:%M %p")}</div>')
+    """The block's headline time: ONE line, bold, in the block's colour, at the same 14px as
+    every other column's value (`_big`). Jaime 2026-11-20 reversed his 11-03 "que se vea grande"
+    (20px, two lines): "reducir el tamaño … fecha y hora en un solo renglon pero en negritas y a
+    color". Same `fmt_dt` format as the rest of the report; nowrap keeps date and time together."""
+    css = f"font-size:14px;font-weight:700;color:{colour};white-space:nowrap;"
+    return f'<div {_s(css)}>{fmt_dt(value)}</div>'
 
 
 def _block(label: str, colour: str, inner: str) -> str:
