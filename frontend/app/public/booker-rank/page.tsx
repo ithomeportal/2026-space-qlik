@@ -27,10 +27,11 @@ export const metadata: Metadata = {
 }
 
 interface PageProps {
-  searchParams: { [key: string]: string | string[] | undefined }
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }
 
-export default async function PublicBookerRankPage({ searchParams }: PageProps) {
+export default async function PublicBookerRankPage(props: PageProps) {
+  const searchParams = await props.searchParams
   if (!isValidDisplayKey(searchParams.key)) notFound()
 
   const result = await fetchPublicDisplay<PublicBookerRank>("booker-rank")
