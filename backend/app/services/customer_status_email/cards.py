@@ -37,6 +37,9 @@ DELIVERED = "delivered"
 BUCKETS = (IN_PROGRESS, SCHEDULED, DELIVERED)
 MCLEOD = "mcleod"
 AUGIE = "augie"
+# The ETA an ops user typed in TTControl (manualUpdate, 2026-11-20). Internal label:
+# the customer only ever sees "ETA to delivery", never the app's name.
+TTC = "ttc"
 
 DELIVERED_WINDOW = timedelta(hours=24)
 # A GPS fix older than this is not a "current location".
@@ -84,7 +87,7 @@ class Card:
     last_reported: Optional[str] = None  # the yard the load waits at, when no recent fix
     eta: Optional[datetime] = None      # final-stop ETA on the stop's clock, else leg ETA (CST)
     pu_eta: Optional[datetime] = None   # McLeod origin_eta, until the truck reaches the pickup
-    eta_source: Optional[str] = None    # MCLEOD / AUGIE: who supplied a final-stop ETA
+    eta_source: Optional[str] = None    # MCLEOD / TTC / AUGIE: who supplied a final-stop ETA
     eta_passed: Optional[datetime] = None  # a McLeod ETA hidden because it has gone by
     est_eta: Optional[datetime] = None  # calculated from lane history (estimate.py), never keyed
     eta_place: Optional[str] = None     # set when the ETA is to an intermediate leg
@@ -303,8 +306,9 @@ def _final_eta(eta_local: datetime, order: dict, source: str) -> dict:
 
 
 def _tracking(order: dict, legs: list[dict], active: Optional[dict],
-              now_cst: datetime, dest_tz: str) -> dict:
-    """The ETA and ahead/behind: McLeod's final-stop ETA, else Augie (movement grain).
+              now_cst: datetime, dest_tz: str, manual: Optional[dict] = None) -> dict:
+    """The ETA and ahead/behind: McLeod's final-stop ETA, else the ETA an ops user
+    typed in TTControl (``manual``, 2026-11-20), else Augie (movement grain).
 
     McLeod's stop ETA (``destin_eta``,
     the field Ops chose 2026-11-03) is order-grain and on the stop's clock.
@@ -325,6 +329,13 @@ def _tracking(order: dict, legs: list[dict], active: Optional[dict],
         return _final_eta(mcleod_eta, order, MCLEOD)
 
     out: dict = {"eta_passed": mcleod_eta} if mcleod_eta else {}
+    # TTControl's manual ETA is to the delivery (what the driver/carrier told Ops), UTC.
+    # Same staleness rule as McLeod, on the stop's clock.
+    manual_eta = (manual or {}).get("eta_utc")
+    if manual_eta:
+        manual_local = utc_to_local(manual_eta, dest_tz)
+        if manual_local >= stop_now - ETA_STALE_GRACE:
+            return {**out, **_final_eta(manual_local, order, TTC)}
     utc_now = now_cst.astimezone(timezone.utc).replace(tzinfo=None)
 
     active_id = str((active or {}).get("movement_id") or "").strip()
@@ -379,6 +390,9 @@ def _location_candidates(legs: list[dict], ping: Optional[dict], tt: Optional[di
         cands.append((join(ping.get("city"), ping.get("state")), ping.get("at_cst")))
     if tt:
         cands.append((tt.get("place"), tt.get("at_cst")))
+        # A typed update is a fix as of when it was entered; freshest still wins.
+        manual = tt.get("manual") or {}
+        cands.append((manual.get("location"), manual.get("entered_cst")))
     return cands
 
 
@@ -394,7 +408,7 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
     # A load at its consignee needs neither an ETA nor an earlier fix from the road.
     if bucket == IN_PROGRESS and not arrived:
         tracking = {
-            **_tracking(order, legs, active, now_cst, dest_tz),
+            **_tracking(order, legs, active, now_cst, dest_tz, tt.get("manual")),
             **best_location(_location_candidates(legs, details.get("pings", {}).get(oid), tt),
                             now_cst.replace(tzinfo=None)),
         }
@@ -453,8 +467,8 @@ def build_card(order: dict, bucket: str, details: dict, now_cst: datetime,
 def eta_coverage(rc: ReportCards) -> dict:
     """How many loads on their way carry an ETA Ops keyed in McLeod, and which do not.
 
-    Arrived loads are out: they need no ETA. An Augie ETA or an estimate fills the
-    customer's card, but only a keyed ETA counts here, so this measures the Ops habit.
+    Arrived loads are out: they need no ETA. A TTControl update ETA, an Augie ETA or an
+    estimate fills the customer's card, but only a McLeod-keyed ETA counts here, so this measures the Ops habit.
     """
     open_loads = rc.awaiting_arrival()
     missing = [c for c in open_loads if c.eta_source != MCLEOD]
@@ -465,12 +479,14 @@ def eta_coverage(rc: ReportCards) -> dict:
         "open": len(open_loads),
         "keyed": len(open_loads) - len(missing),
         "augie": sum(c.eta_source == AUGIE for c in open_loads),
+        "ttc": sum(c.eta_source == TTC for c in open_loads),
         "estimated": sum(c.est_eta is not None for c in open_loads),
         "missing": [{
             "orderId": c.order_id, "po": c.po, "trailer": c.trailer, "consignee": c.consignee,
             "lane": c.lane, "status": c.status_label,
             "deliveryAppt": _iso(c.del_sched_late), "etaPassed": _iso(c.eta_passed),
-            "shownInstead": ("augie" if c.eta_source == AUGIE
+            "shownInstead": ("ttc" if c.eta_source == TTC
+                             else "augie" if c.eta_source == AUGIE
                              else "estimate" if c.est_eta else None),
         } for c in sorted(missing, key=lambda c: c.sort_key)],
     }

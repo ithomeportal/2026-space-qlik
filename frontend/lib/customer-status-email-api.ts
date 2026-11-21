@@ -105,7 +105,7 @@ export interface CoverageMissing {
   status: string | null
   deliveryAppt: string | null
   etaPassed: string | null
-  shownInstead: "augie" | "estimate" | null
+  shownInstead: "augie" | "ttc" | "estimate" | null
 }
 
 export interface CoverageReport {

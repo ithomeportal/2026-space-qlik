@@ -15,6 +15,7 @@ function issue(load: CoverageMissing): string {
 
 function shownInstead(load: CoverageMissing): string {
   if (load.shownInstead === "augie") return "Augie ETA"
+  if (load.shownInstead === "ttc") return "TTC update ETA"
   if (load.shownInstead === "estimate") return "Calculated estimate"
   return "ETA pending"
 }

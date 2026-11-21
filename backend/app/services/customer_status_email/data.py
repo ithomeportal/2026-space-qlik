@@ -23,7 +23,7 @@ Traps handled here (docs/SPEC-CUSTOMER-STATUS-EMAIL.md):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -203,6 +203,9 @@ WHERE h.id = ANY($1::varchar[])
 TTCONTROL_PATH = "/api/share/customer-tracking"
 TTCONTROL_BATCH = 200  # the route's own cap
 TTCONTROL_TIMEOUT_S = 20.0
+# Caps on ops-typed free text from TTControl's manualUpdate (a card cell, not a log).
+MANUAL_LOCATION_MAX = 120
+MANUAL_COMMENT_MAX = 300
 
 POD_SQL = """
 SELECT mcleod_order_id AS id, has_pod, pod_file_url
@@ -358,8 +361,57 @@ def parse_ttcontrol(payload: dict) -> dict[str, dict]:
             "share_provider": link.get("provider"),
             "place": pos.get("place"),
             "at_cst": at_cst,
+            # Added by TTControl 2026-11-20; older responses have no key ⇒ None.
+            "manual": parse_manual_update((row or {}).get("manualUpdate")),
         }
     return out
+
+
+def _utc_instant(value: Any) -> Optional[datetime]:
+    """An ISO-8601 string carrying a UTC offset (``Z`` / ``+00:00``) → naive UTC; else None.
+
+    A string with no offset, or another offset, is rejected: guessing its clock is how
+    the e-mail once printed UTC digits as CST (§5 traps).
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if at.utcoffset() != timedelta(0):
+        return None
+    return at.replace(tzinfo=None)
+
+
+def _clean_text(value: Any, cap: int) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())  # also drops newlines / control whitespace
+    return text[:cap] or None
+
+
+def parse_manual_update(raw: Any) -> Optional[dict]:
+    """TTControl ``manualUpdate`` (the newest update an ops user typed) → dict or None.
+
+    ``{location, comment, eta_utc, entered_cst}``. All-or-nothing on the parts that
+    matter: no location or a malformed/non-UTC ``enteredAtUtc`` ⇒ None. A bad ``etaUtc``
+    only drops the ETA (the location is still a fix). Never raises — one malformed row
+    must not cost every load its share link.
+    """
+    if not isinstance(raw, dict):
+        return None
+    location = _clean_text(raw.get("location"), MANUAL_LOCATION_MAX)
+    entered = _utc_instant(raw.get("enteredAtUtc"))
+    if not location or entered is None:
+        return None
+    return {
+        "location": location,
+        "comment": _clean_text(raw.get("comment"), MANUAL_COMMENT_MAX),
+        "eta_utc": _utc_instant(raw.get("etaUtc")),
+        "entered_cst": entered.replace(tzinfo=timezone.utc)
+        .astimezone(ZoneInfo("America/Chicago")).replace(tzinfo=None),
+    }
 
 
 def _group(rows: list) -> dict[str, list[dict]]:
