@@ -283,3 +283,27 @@ class TestExitButtonIsNeverAnArrival:
         # An allow-list of 1/4 would silently delete anyone on a new verify mode.
         sql = _squash(re.sub(r"--[^\n]*", "", FIRST))
         assert not re.search(r"verify_mode_no\s*(=|IN\s*\()", sql)
+
+
+class TestDoorOutageDays:
+    """2026-11-23 — Katerine Meneses: "el huellero estuvo sin funcionar hasta el
+    miércoles". The 2ND FLOOR reader (~80 % of punches) was dark 11-16 11:28 →
+    11-18 14:19 MTY; the few people who badged at 3F Door hours later read as
+    "Out of Time". Days listed in public.door_feed_outage_day (n8n
+    sql/door-feed-outage-day.sql, shared by every door report) are dropped by
+    SHIFT date, here in _scored_cte — every endpoint and the DFW - Delays digest
+    read through it."""
+
+    def test_scored_rows_skip_active_outage_days(self):
+        sql = _squash(SCORED)
+        assert "public.door_feed_outage_day" in sql
+        assert "o.active" in sql
+        # By SHIFT date (event_date here IS the shift date), never the raw punch
+        # date — a night shift starting on an outage day goes with it.
+        assert "o.outage_date = first_punch.event_date" in sql
+        assert "NOT EXISTS" in sql
+
+    def test_outage_filter_is_applied_after_ranking(self):
+        """Dropping whole shift dates after rn is computed cannot renumber the
+        remaining ones; inside first_punch it could."""
+        assert "door_feed_outage_day" not in _squash(FIRST)

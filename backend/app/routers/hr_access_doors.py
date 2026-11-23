@@ -432,6 +432,18 @@ def _scored_cte(
         FROM first_punch
         WHERE rn = 1
           AND event_date BETWEEN {start_placeholder}::date AND {end_placeholder}::date
+          -- 🔴 DOOR OUTAGE DAYS (2026-11-23). The 2ND FLOOR reader (~80 % of
+          -- punches) was dark 11-16 11:28 -> 11-18 14:19 MTY (fingerprint
+          -- re-registration); the few who badged at 3F Door hours later read as
+          -- Out of Time. A shift date listed in public.door_feed_outage_day
+          -- (n8n sql/door-feed-outage-day.sql — shared with DFW Attendance and
+          -- Presence) is not scored by any report here. By SHIFT date
+          -- (`event_date` is the shift date), after `rn`, like the range above.
+          AND NOT EXISTS (
+              SELECT 1 FROM public.door_feed_outage_day o
+               WHERE o.active
+                 AND o.outage_date = first_punch.event_date
+          )
     )
     """
 
