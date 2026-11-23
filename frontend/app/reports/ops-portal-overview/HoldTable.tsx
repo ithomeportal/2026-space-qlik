@@ -32,12 +32,17 @@ import { SortableTh, useSortable, type SortDir } from "@/components/SortableTabl
 
 import { fmtSchedTs } from "./schedTime"
 
+// Same wording as the Admin Aging Cashflow tables — one meaning, one sentence.
+const BLNUM_EMPTY_TITLE = "No BL # yet — the order is not in the billing queue"
+
 const HOLD_COLUMNS: {
   label: string
   key: keyof OppHoldRow
   align: "left" | "right"
 }[] = [
   { label: "Order", key: "order_id", align: "left" },
+  // PDF "space -- Ops Portal DFW" 2026-11-23 — on all 11 portals (one board).
+  { label: "BL #", key: "blnum", align: "left" },
   { label: "Team", key: "team_id", align: "left" },
   { label: "Departure", key: "departure", align: "left" },
   { label: "Customer", key: "customer_name", align: "left" },
@@ -203,6 +208,13 @@ export function HoldTable({ filters }: { filters: OppFilters }) {
                 sorted.map((r) => (
                   <tr key={r.order_id} className="border-b border-[#F3F4F6] hover:bg-[#FAFBFC]">
                     <td className="px-2 py-1.5 font-medium text-[#1B3A5C]">{r.order_id}</td>
+                    <td className="max-w-[160px] truncate px-2 py-1.5 text-[#374151]">
+                      {r.blnum ? (
+                        <span className="font-mono text-[11px]" title={r.blnum}>{r.blnum}</span>
+                      ) : (
+                        <span className="text-[#9CA3AF]" title={BLNUM_EMPTY_TITLE}>—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1.5 text-[#374151]">{r.team_id}</td>
                     <td className="px-2 py-1.5 tabular-nums text-[#6B7280]">
                       {r.departure ?? <span className="text-[#9CA3AF]">—</span>}

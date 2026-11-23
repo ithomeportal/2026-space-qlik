@@ -587,6 +587,10 @@ export interface OppHoldRow {
   on_hold: boolean
   /** Free text, varchar(20), mixed case ('CLAIM', 'accident'). Shown verbatim. */
   hold_reason: string
+  // BL # from McLeod's billing queue (mcleod_gld_billing_blnum_comments),
+  // last-known value; null until the order is in the billing queue — so
+  // in-progress and not-yet-ready rows are blank by nature (2026-11-23).
+  blnum: string | null
   pod: boolean
   pod_age_hours: number | null
   days_to_bill: number | null

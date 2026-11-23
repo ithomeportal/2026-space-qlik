@@ -211,6 +211,9 @@ export interface DeliveredNotBilledRow {
   customer_name: string
   // Aging Updates 2026-11-11: first movement payee; null = no carrier on the load
   carrier_name: string | null
+  // BL # from McLeod's billing queue (mcleod_gld_billing_blnum_comments),
+  // last-known value; null until the order is in the billing queue.
+  blnum: string | null
   team_id: string
   company_id: string
   total_charge: number
@@ -224,6 +227,9 @@ export interface ReadyNotBilledRow {
   status: string // on the wire only — the column left the table 2026-11-11
   customer_name: string
   carrier_name: string | null
+  // BL # from McLeod's billing queue (mcleod_gld_billing_blnum_comments),
+  // last-known value; null until the order is in the billing queue.
+  blnum: string | null
   team_id: string
   company_id: string
   total_charge: number

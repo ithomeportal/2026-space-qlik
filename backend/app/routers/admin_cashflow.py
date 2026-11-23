@@ -54,6 +54,7 @@ from typing import Iterable, Optional
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
+from app.billing_blnum import billing_blnum_join
 from app.clock import cst_today
 from app.datalake import pad_variants as _pad_variants
 from app.division_marker import team_membership_sql
@@ -1059,6 +1060,12 @@ _CARRIER_LATERAL = """
 
 _CARRIER_COL = "NULLIF(TRIM(mov.payee_name), '')"
 
+# BL # (PDF "space -- Aging Updates" 2026-11-23) — the billing-queue blnum,
+# last-known value; BLANK on not-yet-ready rows by nature. The rules live in
+# app/billing_blnum.py, shared with the Ops Portal Unbilled board.
+_UNBILLED_JOINS = _CARRIER_LATERAL + billing_blnum_join("c.id", "c.company_id")
+_BLNUM_COL = "bbl.blnum"
+
 
 # ---------------------------------------------------------------------------
 # Delivered but not billed — table + grand total
@@ -1078,6 +1085,8 @@ _DELIVERED_NOT_BILLED_SORTS = {
     "days_desc": "days_since_delivery DESC NULLS LAST",
     "carrier_asc": "carrier_name ASC NULLS LAST",
     "carrier_desc": "carrier_name DESC NULLS LAST",
+    "blnum_asc": "blnum ASC NULLS LAST",
+    "blnum_desc": "blnum DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -1127,6 +1136,7 @@ async def delivered_not_billed(
         c.dest_actual_arrival,
         c.customer_name,
         {_CARRIER_COL}                                         AS carrier_name,
+        {_BLNUM_COL}                                         AS blnum,
         c.team_id,
         c.company_id,
         c.total_charge,
@@ -1136,13 +1146,13 @@ async def delivered_not_billed(
                 - c.dest_actual_arrival::date)
           ELSE NULL
         END AS days_since_delivery
-      FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
+      FROM public.mcleod_gld_cashflow c{_UNBILLED_JOINS}
       WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
     )
     SELECT
       id, ship_date, dest_actual_arrival,
-      customer_name, carrier_name, team_id, company_id, total_charge, days_since_delivery,
+      customer_name, carrier_name, blnum, team_id, company_id, total_charge, days_since_delivery,
       COUNT(*)         OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -1160,6 +1170,8 @@ async def delivered_not_billed(
             "dest_actual_arrival": r["dest_actual_arrival"].isoformat() if r["dest_actual_arrival"] else None,
             "customer_name": (r["customer_name"] or "").strip(),
             "carrier_name": r["carrier_name"],
+            # None (not "") when the order is not in the billing queue yet.
+            "blnum": r["blnum"],
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
@@ -1215,6 +1227,8 @@ _READY_NOT_BILLED_SORTS = {
     "days_desc": "days_since_bol_recv DESC NULLS LAST",
     "carrier_asc": "carrier_name ASC NULLS LAST",
     "carrier_desc": "carrier_name DESC NULLS LAST",
+    "blnum_asc": "blnum ASC NULLS LAST",
+    "blnum_desc": "blnum DESC NULLS LAST",
     "id_asc": "id ASC",
     "id_desc": "id DESC",
 }
@@ -1267,6 +1281,7 @@ async def ready_not_billed(
         c.status,
         c.customer_name,
         {_CARRIER_COL}            AS carrier_name,
+        {_BLNUM_COL}            AS blnum,
         c.team_id,
         c.company_id,
         c.total_charge,
@@ -1276,14 +1291,14 @@ async def ready_not_billed(
                 - c.bol_recv_date::date)
           ELSE NULL
         END AS days_since_bol_recv
-      FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
+      FROM public.mcleod_gld_cashflow c{_UNBILLED_JOINS}
       WHERE {where} AND {date_frag}{oc_frag}
         AND c.bill_date < '2000-01-01'::date
         AND TRIM(c.ready_to_bill) = 'Y'
     )
     SELECT
       id, ship_date, bol_recv_date, status,
-      customer_name, carrier_name, team_id, company_id, total_charge, days_since_bol_recv,
+      customer_name, carrier_name, blnum, team_id, company_id, total_charge, days_since_bol_recv,
       COUNT(*)          OVER() AS total_count,
       SUM(total_charge) OVER() AS total_revenue
     FROM base
@@ -1304,6 +1319,8 @@ async def ready_not_billed(
             "status": (r["status"] or "").strip(),
             "customer_name": (r["customer_name"] or "").strip(),
             "carrier_name": r["carrier_name"],
+            # None (not "") when the order is not in the billing queue yet.
+            "blnum": r["blnum"],
             "team_id": (r["team_id"] or "").strip(),
             "company_id": (r["company_id"] or "").strip(),
             "total_charge": float(r["total_charge"] or 0),
@@ -1960,12 +1977,25 @@ async def top_delayed_customers_monthly(
 # ---------------------------------------------------------------------------
 
 
+# Spreadsheet formula injection (OWASP "CSV injection"): a TEXT cell opening
+# with one of these runs as a formula in Excel. BL # is clerk-typed free text
+# (2026-11-23), so it is neutralised with a leading apostrophe. Numbers are
+# never touched — a negative revenue stays a number.
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_LEADS):
+        return "'" + value
+    return value
+
+
 def _csv_response(filename: str, header: list[str], rows: Iterable[list]) -> Response:
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(header)
     for r in rows:
-        writer.writerow(r)
+        writer.writerow([_csv_safe(v) for v in r])
     return Response(
         content=buf.getvalue(),
         media_type="text/csv; charset=utf-8",
@@ -2019,6 +2049,7 @@ async def delivered_not_billed_csv(
       c.team_id,
       c.customer_name,
       {_CARRIER_COL}                           AS carrier_name,
+      {_BLNUM_COL}                           AS blnum,
       c.origin_actual_arrival                  AS ship_date,
       c.dest_actual_arrival,
       c.total_charge,
@@ -2028,20 +2059,21 @@ async def delivered_not_billed_csv(
               - c.dest_actual_arrival::date)
         ELSE NULL
       END AS days_since_delivery
-    FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
+    FROM public.mcleod_gld_cashflow c{_UNBILLED_JOINS}
     WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
     ORDER BY {order_by}
     """
     rows = await pool.fetch(sql, *params)
     header = [
-        "Order", "Company", "Team", "Customer", "Carrier Name",
+        "Order", "BL #", "Company", "Team", "Customer", "Carrier Name",
         "Ship Date", "Delivered",
         "Days Since Delivery", "Revenue (USD)",
     ]
     body = (
         [
             (r["id"] or "").strip(),
+            r["blnum"] or "",
             (r["company_id"] or "").strip(),
             (r["team_id"] or "").strip(),
             (r["customer_name"] or "").strip(),
@@ -2095,6 +2127,7 @@ async def ready_not_billed_csv(
       c.team_id,
       c.customer_name,
       {_CARRIER_COL}            AS carrier_name,
+      {_BLNUM_COL}            AS blnum,
       c.origin_actual_arrival   AS ship_date,
       c.bol_recv_date,
       c.total_charge,
@@ -2104,7 +2137,7 @@ async def ready_not_billed_csv(
               - c.bol_recv_date::date)
         ELSE NULL
       END AS days_since_bol_recv
-    FROM public.mcleod_gld_cashflow c{_CARRIER_LATERAL}
+    FROM public.mcleod_gld_cashflow c{_UNBILLED_JOINS}
     WHERE {where} AND {date_frag}{oc_frag}
       AND c.bill_date < '2000-01-01'::date
       AND TRIM(c.ready_to_bill) = 'Y'
@@ -2112,13 +2145,14 @@ async def ready_not_billed_csv(
     """
     rows = await pool.fetch(sql, *params)
     header = [
-        "Order", "Company", "Team", "Customer", "Carrier Name",
+        "Order", "BL #", "Company", "Team", "Customer", "Carrier Name",
         "Ship Date", "BOL Recv",
         "Days Since BOL Recv", "Revenue (USD)",
     ]
     body = (
         [
             (r["id"] or "").strip(),
+            r["blnum"] or "",
             (r["company_id"] or "").strip(),
             (r["team_id"] or "").strip(),
             (r["customer_name"] or "").strip(),

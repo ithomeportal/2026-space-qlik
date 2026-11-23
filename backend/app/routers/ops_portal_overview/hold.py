@@ -128,6 +128,7 @@ from typing import List, Optional
 
 from fastapi import Depends, Query, Request
 
+from app.billing_blnum import billing_blnum_join
 from app.datalake import pad_variants as _pad_variants
 from app.routers.deps import get_datalake_gold_pool, require_report_access
 
@@ -173,6 +174,10 @@ _HOLD_SORTS: dict[str, str] = {
     "profit_desc": "COALESCE(br4.margin_amt,0) DESC",
     "hold_reason_asc": "TRIM(COALESCE(br4.hold_reason,'')) ASC",
     "hold_reason_desc": "TRIM(COALESCE(br4.hold_reason,'')) DESC",
+    # BL # (PDF "space -- Ops Portal DFW" 2026-11-23). Qualified, not the
+    # bare alias: `blnum` is both an output alias and the LATERAL's column.
+    "blnum_asc": "bbl.blnum ASC NULLS LAST",
+    "blnum_desc": "bbl.blnum DESC NULLS LAST",
 }
 
 
@@ -269,6 +274,11 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
           to_char(win.dest_dep_ts,        'YYYY-MM-DD"T"HH24:MI:SS') AS actual_delivery,
           br4.customer_name   AS customer_name,
           COALESCE(TRIM(mov.payee_name), '') AS carrier,
+          -- BL # from McLeod's billing queue, last-known value (app/billing_blnum.py).
+          -- BLANK on every not-yet-ready row by nature: measured 2026-11-23, 0 of
+          -- 274 in-progress and 0 of 145 delivered-not-ready rows have one; 213 of
+          -- 242 delivered + ready-to-bill rows do.
+          bbl.blnum AS blnum,
           NULLIF(TRIM(COALESCE(br4.origin_name,'')) || ' - ' || TRIM(COALESCE(br4.dest_name,'')), ' - ') AS lane,
           COALESCE(br4.total_charge, 0)::numeric      AS revenue,
           -- Carrier Cost is total_carrier_pay, matching the Cover board. NOT
@@ -342,7 +352,7 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
             WHERE m.order_id = br4.id AND m.company_id = br4.company_id
             ORDER BY m.movement_id ASC
             LIMIT 1
-        ) mov ON TRUE
+        ) mov ON TRUE{billing_blnum_join('br4.id', 'br4.company_id')}
         WHERE {where}
         ORDER BY {order_by}
         LIMIT ${p_lim}
@@ -364,6 +374,8 @@ async def hold_board(  # NOT `hold`: `from .hold import hold` in the package
             "actual_delivery": r["actual_delivery"],
             "customer_name": r["customer_name"] or "",
             "carrier":       r["carrier"] or "",
+            # None (not "") when absent, so the UI renders an em-dash.
+            "blnum":         r["blnum"] or None,
             "lane":          r["lane"] or "",
             "revenue":       _safe_float(r["revenue"]),
             "carrier_cost":  _safe_float(r["carrier_cost"]),

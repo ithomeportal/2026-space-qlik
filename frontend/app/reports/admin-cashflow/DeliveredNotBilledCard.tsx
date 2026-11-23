@@ -17,6 +17,7 @@ import {
   Pager,
   SortableTh,
   UnbilledExpandModal,
+  BlnumCell,
   CustomerFilterLink,
 } from "./UnbilledShared"
 
@@ -49,6 +50,7 @@ function DeliveredTable({
         <thead className="text-[10px] uppercase tracking-wider text-[#6B7280]">
           <tr className="border-b border-[#E5E7EB]">
             <SortableTh label="Order" col="id_asc" colDesc="id_desc" current={sort} onChange={onSort} />
+            <SortableTh label="BL #" col="blnum_asc" colDesc="blnum_desc" current={sort} onChange={onSort} />
             <SortableTh label="Customer" col="customer_asc" colDesc="customer_desc" current={sort} onChange={onSort} />
             <SortableTh label="Carrier Name" col="carrier_asc" colDesc="carrier_desc" current={sort} onChange={onSort} />
             <SortableTh label="Ship Date" col="ship_asc" colDesc="ship_desc" current={sort} onChange={onSort} />
@@ -60,13 +62,13 @@ function DeliveredTable({
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center">
+              <td colSpan={8} className="py-8 text-center">
                 <Loader2 className="mx-auto h-4 w-4 animate-spin text-[#6B7280]" />
               </td>
             </tr>
           ) : rows.length === 0 ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
+              <td colSpan={8} className="py-8 text-center text-[#9CA3AF]">
                 No delivered-but-unbilled loads in current filters 🎉
               </td>
             </tr>
@@ -77,6 +79,9 @@ function DeliveredTable({
                 className="border-b border-[#F3F4F6] last:border-0"
               >
                 <td className="px-2 py-1.5 font-mono text-[11px]">{r.id}</td>
+                <td className="max-w-[160px] truncate px-2 py-1.5">
+                  <BlnumCell blnum={r.blnum} />
+                </td>
                 <td className="max-w-[200px] truncate px-2 py-1.5" title={r.customer_name}>
                   <CustomerFilterLink
                     name={r.customer_name}

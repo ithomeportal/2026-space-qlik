@@ -9,6 +9,27 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react"
 // expand-to-pop-up view. Kept here so both cards render identical chrome.
 // ---------------------------------------------------------------------------
 
+// BL # cell (Aging Updates + Ops Portal DFW PDFs, 2026-11-23). The value comes
+// from McLeod's BILLING QUEUE, so a load that is not ready to bill has none yet
+// — the dash says so on hover instead of looking like a broken column. Clerk
+// notes ('378-38826*spot') are part of the value and shown verbatim.
+export const BLNUM_EMPTY_TITLE = "No BL # yet — the order is not in the billing queue"
+
+export function BlnumCell({ blnum }: { blnum: string | null | undefined }) {
+  if (!blnum) {
+    return (
+      <span className="text-[#9CA3AF]" title={BLNUM_EMPTY_TITLE}>
+        —
+      </span>
+    )
+  }
+  return (
+    <span className="font-mono text-[11px]" title={blnum}>
+      {blnum}
+    </span>
+  )
+}
+
 // Bruno R3: expand-to-pop-up overlay. Plain fixed overlay (no Base UI / Radix)
 // to stay React-18 safe, matching the XRay WeeklyPerformanceModal idiom.
 export function UnbilledExpandModal({

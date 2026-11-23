@@ -50,13 +50,13 @@ TS = datetime(2026, 11, 2, 9, 30)  # noqa: DTZ001 — gold timestamps are naive 
 
 DELIVERED_ROW = {
     "id": "0352397", "ship_date": TS, "dest_actual_arrival": TS,
-    "customer_name": "ACME  ", "carrier_name": "ALLIANCE EXPRESS TRANSPORTATION LLC",
+    "customer_name": "ACME  ", "carrier_name": "ALLIANCE EXPRESS TRANSPORTATION LLC", "blnum": None,
     "team_id": "TEAM1 ", "company_id": "TMS ", "total_charge": 1200,
     "days_since_delivery": 9, "total_count": 1, "total_revenue": 1200,
 }
 READY_ROW = {
     "id": "0351107", "ship_date": TS, "bol_recv_date": TS, "status": "D",
-    "customer_name": "BETA", "carrier_name": None,
+    "customer_name": "BETA", "carrier_name": None, "blnum": None,
     "team_id": "TEAM1 ", "company_id": "TMS ", "total_charge": 800,
     "days_since_bol_recv": 4, "total_count": 1, "total_revenue": 800,
 }
@@ -113,7 +113,7 @@ async def test_delivered_csv_columns() -> None:
     _assert_carrier_join(pool.sql[0])
     header, first = resp.body.decode().splitlines()[:2]
     assert header == (
-        "Order,Company,Team,Customer,Carrier Name,Ship Date,Delivered,"
+        "Order,BL #,Company,Team,Customer,Carrier Name,Ship Date,Delivered,"
         "Days Since Delivery,Revenue (USD)"
     )
     assert "ALLIANCE EXPRESS TRANSPORTATION LLC" in first
@@ -126,7 +126,7 @@ async def test_ready_csv_columns_drop_status_and_orig_sched_early() -> None:
     _assert_carrier_join(pool.sql[0])
     header = resp.body.decode().splitlines()[0]
     assert header == (
-        "Order,Company,Team,Customer,Carrier Name,Ship Date,BOL Recv,"
+        "Order,BL #,Company,Team,Customer,Carrier Name,Ship Date,BOL Recv,"
         "Days Since BOL Recv,Revenue (USD)"
     )
 
